@@ -1,3 +1,5 @@
+add_subdirectory(sdl)
+
 find_package(FFmpeg REQUIRED)
 
 add_library(zaro_platform_ffmpeg

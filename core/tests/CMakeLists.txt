@@ -28,6 +28,9 @@ add_executable(zaro_core_tests
     edit/test_snapping.cpp
     edit/test_fuzz.cpp
     io/test_project_io.cpp
+    playback/test_transport.cpp
+    playback/test_ring_buffer.cpp
+    playback/test_scheduler.cpp
     render/test_color_pipeline.cpp
     render/test_frame_cache.cpp
     render/test_compositing.cpp

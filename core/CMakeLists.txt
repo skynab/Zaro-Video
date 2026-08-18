@@ -17,6 +17,9 @@ add_library(zaro_core
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
     src/io/ProjectIo.cpp
+    src/playback/AudioRingBuffer.cpp
+    src/playback/PlaybackScheduler.cpp
+    src/playback/Transport.cpp
     src/render/AudioGraph.cpp
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp

@@ -261,17 +261,25 @@ function called as fast as possible, playback is the same function on a clock.
   first, because it is the oracle a GPU renderer's golden-frame tests compare against.
   A GPU renderer with no independent reference is one nobody can prove anything about.
 
-#### Phase 3b — realtime playback (next)
+#### Phase 3b — realtime playback ✅ **engine complete**, GPU path outstanding
 
-- **Playback engine:** audio clock as master, video frame queue with PTS, present on
-  vsync, drop-frame policy under load, preroll on seek, JKL shuttle, scrub with
-  frame-request coalescing.
-- QRhi device, offscreen render target, texture pool; the transform node as a shader.
+- ✅ **Playback engine**, with the audio device's consumed-sample count as the master
+  clock ([ADR-006](adr/0006-audio-is-the-clock.md)). Bounded frame queue, explicit drop
+  policy, catch-up that skips the backlog rather than working through it, seek, and
+  continuous speed changes.
+- ✅ JKL shuttle with a rational speed ladder — rational because speed multiplies into the
+  position mapping, and 1/3 as a double puts the playhead visibly out within a minute.
+- ✅ Lock-free SPSC ring buffer feeding a real SDL2 audio device, and `zaro-play`, which
+  plays a project against it and reports sync.
+- ⏸️ **Outstanding: the QRhi shader path.** The CPU compositor sustains 640x360 at 59.94
+  in sync with no underruns, and manages about 9 fps at 1080p — it is a reference, not a
+  realtime HD path, and closing that gap is what the GPU is for.
+- ⏸️ Outstanding: scrub-request coalescing, and a preview window.
 
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 164 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 193 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -427,21 +435,20 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-Phase 3a is done: a project renders to a file, deterministically and in sync. Phase 3b is
-the realtime half, and it is where the schedule risk in §4 actually lives.
+The playback engine is done and measured. What remains before Phase 4 is the GPU path,
+because the CPU compositor is the thing standing between the engine and realtime HD.
 
-1. **The playback clock, against the sync harness that already exists.** The harness was
-   built for export but measures the property playback needs; wire it to the playback
-   path before writing the threading, not after it feels wrong.
-2. **Decoder threads with bounded frame queues**, and a drop policy that is decided and
-   written down rather than emergent. Dropping is not a failure mode, it is a feature —
-   what matters is that it drops picture and never audio.
-3. **Audio output device** via Qt Multimedia or SDL2, both already available here. The
-   audio clock is the master; video is presented against it.
-4. **QRhi backend for the transform node**, with golden-frame tests comparing it against
-   the CPU reference from 3a. This is also the point that triggers the `DecodeMode::Auto`
-   revisit in [ADR-003](adr/0003-hardware-decode-readback.md), because the readback that
-   made hardware decode slower disappears once the compositor takes a texture.
+1. **QRhi backend for the transform node**, with golden-frame tests against the CPU
+   reference from 3a. The measurements are unambiguous about why: decode runs at 1840 fps
+   on a 1080p clip and the full composite at 9 fps, so essentially all of the frame time
+   is in the pixel pipeline.
+2. **The `DecodeMode::Auto` revisit** ([ADR-003](adr/0003-hardware-decode-readback.md)).
+   The readback that made hardware decode slower disappears the moment the compositor can
+   take a texture; this is the phase that triggers it.
+3. **Scrub-request coalescing.** Dragging a playhead emits a request per mouse move and
+   only the newest matters; the scheduler's `seek` already discards superseded work, so
+   this is about not queueing it in the first place.
+4. **A preview window**, which is where Phase 4 begins.
 
 Carried forward as known work:
 
@@ -449,6 +456,7 @@ Carried forward as known work:
   Phase 4).
 - Three/four-point editing, linked A/V selection, sync locks (Phase 2 → Phase 4, with the
   UI that defines them).
+- Audio at shuttle speeds other than 1x plays silent; it needs pitch handling.
 - HDR: PQ and HLG are recognised and rejected with a clear error rather than mistreated
   as Rec.709. Tone mapping is §7.3 work.
 - A display-referred working space option, for editors who expect gamma-space dissolves

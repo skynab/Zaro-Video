@@ -8,9 +8,9 @@ locked in.
 
 ## Status
 
-**Phase 3a — compositor and export.** A project of sequences, tracks and clips
-can be edited, saved, composited and rendered to a file, in sync. All of it is
-headless: there is no realtime playback and no window yet.
+**Phase 3b — playback engine.** A project can be edited, saved, composited,
+rendered to a file, and played back in sync against a real audio device. All of
+it is headless: the compositor is still CPU-only and there is no window yet.
 
 | Phase | | |
 |---|---|---|
@@ -18,7 +18,8 @@ headless: there is no realtime playback and no window yet.
 | 1 | Media I/O: probe, decode, hwaccel, seek | **done** |
 | 2 | Project model and edit engine, headless | **done** |
 | 3a | Render graph, audio mixer, export | **done** |
-| 3b | Realtime playback, GPU compositor | next |
+| 3b | Playback engine, audio clock, JKL | **done** |
+| 3c | GPU compositor (QRhi), preview window | next |
 | 4 | Application shell, timeline UI | |
 
 ## Building
@@ -28,7 +29,7 @@ libraries. Catch2 and nlohmann/json are found via `find_package` or fetched
 automatically.
 
 ```
-brew install ffmpeg ninja pkg-config nlohmann-json   # macOS
+brew install ffmpeg sdl2 ninja pkg-config nlohmann-json   # macOS
 ./testdata/generate.sh                   # media fixtures for the tests
 cmake --preset debug
 cmake --build --preset debug
@@ -48,6 +49,7 @@ zaro-frame <file> <index> <out.png>      extract one frame, exactly
 zaro-frame <file> --benchmark 150        decode throughput
 zaro-cut out.zaro a.mov b.mov            build a project from media
 zaro-render project.zaro out.mov         render it, headless
+zaro-play project.zaro --seconds 10       play it, and report sync
 ```
 
 Two verification scripts back the claims the tests cannot make on their own:
@@ -67,10 +69,12 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   model/    Project, Sequence, Track, Clip, MediaRef
   edit/     commands, undo stack, edit operations, snapping
   render/   colour pipeline, compositor, render graph, mixer, cache
+  playback/ scheduler, transport (JKL), audio ring buffer
   io/       versioned JSON project files
 platform/
   ffmpeg/   the only place libav* headers are included
-tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render
+  sdl/      audio output device
+tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render, zaro-play
 testdata/   fixture generator
 cmake/      warning policy, find modules
 docs/       plan and architecture decision records
