@@ -271,15 +271,41 @@ function called as fast as possible, playback is the same function on a clock.
   position mapping, and 1/3 as a double puts the playhead visibly out within a minute.
 - ✅ Lock-free SPSC ring buffer feeding a real SDL2 audio device, and `zaro-play`, which
   plays a project against it and reports sync.
-- ⏸️ **Outstanding: the QRhi shader path.** The CPU compositor sustains 640x360 at 59.94
-  in sync with no underruns, and manages about 9 fps at 1080p — it is a reference, not a
-  realtime HD path, and closing that gap is what the GPU is for.
 - ⏸️ Outstanding: scrub-request coalescing, and a preview window.
+
+#### Phase 3c — the GPU compositor ✅ **implemented and verified, not yet faster**
+
+- ✅ Compositor on QRhi: one GLSL source compiled by `qsb` for Metal, Vulkan and D3D,
+  transform and opacity as a uniform, blend modes as pipeline state
+  ([ADR-007](adr/0007-gpu-compositor-on-qrhi.md)).
+- ✅ Golden-frame tests against the CPU reference, covering scale, position, opacity,
+  rotation in both directions, and all four blend modes.
+- ⏸️ **Outstanding, and now precisely specified by measurement: upload YUV planes rather
+  than converted float RGBA, and fuse the colour conversion into the compositing shader.**
+
+The measurement is the deliverable here as much as the code. At 1080p:
+
+| Stage | Throughput |
+|---|---|
+| Decode (software) | 1840 fps |
+| YUV → linear working space | 103 fps |
+| Compositing, CPU | 63 fps |
+| Compositing, GPU (upload + draw + readback) | **54 fps** |
+| Whole pipeline, measured | ~9 fps |
+
+The GPU compositor is **slower** than the CPU one, because each frame crosses the bus as
+8 MB of float RGBA and comes back as another 8 MB — the same shape as the hardware-decode
+finding in [ADR-003](adr/0003-hardware-decode-readback.md). And the stages do not add up:
+1840, 103 and 63 in series predict 38 fps against a measured 9, with the gap being the
+rest of the per-frame traffic — clearing, cloning into the queue, caching — each moving
+another 8 MB. **The pipeline is memory-bandwidth bound on float RGBA frames, not compute
+bound.** Optimising individual loops will not change that; keeping the frame on the GPU
+will.
 
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 193 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 200 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -435,20 +461,19 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-The playback engine is done and measured. What remains before Phase 4 is the GPU path,
-because the CPU compositor is the thing standing between the engine and realtime HD.
+The GPU compositor is correct and proven equivalent to the reference. Making it *fast* is
+one architectural change, and the numbers in §3c name it exactly.
 
-1. **QRhi backend for the transform node**, with golden-frame tests against the CPU
-   reference from 3a. The measurements are unambiguous about why: decode runs at 1840 fps
-   on a 1080p clip and the full composite at 9 fps, so essentially all of the frame time
-   is in the pixel pipeline.
-2. **The `DecodeMode::Auto` revisit** ([ADR-003](adr/0003-hardware-decode-readback.md)).
-   The readback that made hardware decode slower disappears the moment the compositor can
-   take a texture; this is the phase that triggers it.
-3. **Scrub-request coalescing.** Dragging a playhead emits a request per mouse move and
-   only the newest matters; the scheduler's `seek` already discards superseded work, so
-   this is about not queueing it in the first place.
-4. **A preview window**, which is where Phase 4 begins.
+1. **A YUV texture path.** Upload the decoder's planes directly — 3 MB rather than 8 MB at
+   1080p — and do the Y'CbCr conversion, the transfer curve and the transform in a single
+   shader pass. This removes the 103 fps colour stage entirely rather than speeding it up.
+2. **A GPU-resident frame type**, so `FrameSource` can hand back a texture instead of an
+   `RgbaImage`, and the preview path never reads back at all.
+3. **Then, and only then, the `DecodeMode::Auto` revisit**
+   ([ADR-003](adr/0003-hardware-decode-readback.md)). Hardware decode pays off when its
+   output stays on the GPU, which needs (2), which needs (1). Doing it earlier would just
+   re-measure the same readback.
+4. **A preview window** on the same QRhi device, which is where Phase 4 begins.
 
 Carried forward as known work:
 
@@ -456,8 +481,10 @@ Carried forward as known work:
   Phase 4).
 - Three/four-point editing, linked A/V selection, sync locks (Phase 2 → Phase 4, with the
   UI that defines them).
+- Scrub-request coalescing.
 - Audio at shuttle speeds other than 1x plays silent; it needs pitch handling.
 - HDR: PQ and HLG are recognised and rejected with a clear error rather than mistreated
   as Rec.709. Tone mapping is §7.3 work.
-- A display-referred working space option, for editors who expect gamma-space dissolves
-  to match legacy tools ([ADR-005](adr/0005-working-colour-space.md)).
+- A display-referred working space option ([ADR-005](adr/0005-working-colour-space.md)).
+- QRhi is private API in Qt 6.11, so a Qt minor upgrade may require changes in
+  `platform/qrhi` ([ADR-007](adr/0007-gpu-compositor-on-qrhi.md)).

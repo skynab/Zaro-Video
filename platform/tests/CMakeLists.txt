@@ -1,4 +1,7 @@
+find_package(Qt6 REQUIRED COMPONENTS Gui)
+
 add_executable(zaro_media_tests
+    test_gpu_compositor.cpp
     test_probe.cpp
     test_video_decoder.cpp
     test_audio_decoder.cpp
@@ -8,6 +11,8 @@ add_executable(zaro_media_tests
 target_link_libraries(zaro_media_tests
     PRIVATE
         zaro::platform_ffmpeg
+        zaro::platform_qrhi
+        Qt6::Gui
         zaro::warnings
         Catch2::Catch2WithMain
 )
@@ -18,4 +23,8 @@ target_compile_definitions(zaro_media_tests PRIVATE
     ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media"
 )
 
-catch_discover_tests(zaro_media_tests)
+# The GPU tests need a platform plugin even though they never open a window.
+# Setting it here means ctest works without the caller knowing that.
+catch_discover_tests(zaro_media_tests
+    TEST_SPEC "~[.]"
+    PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

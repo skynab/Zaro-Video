@@ -1,3 +1,4 @@
+add_subdirectory(qrhi)
 add_subdirectory(sdl)
 
 find_package(FFmpeg REQUIRED)

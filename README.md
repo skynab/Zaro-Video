@@ -8,9 +8,11 @@ locked in.
 
 ## Status
 
-**Phase 3b — playback engine.** A project can be edited, saved, composited,
-rendered to a file, and played back in sync against a real audio device. All of
-it is headless: the compositor is still CPU-only and there is no window yet.
+**Phase 3c — GPU compositor.** A project can be edited, saved, composited,
+rendered to a file, and played back in sync against a real audio device. The
+compositor now has a QRhi implementation, verified against the CPU reference —
+though not yet faster than it, for reasons the measurements make precise. Still
+headless: there is no window.
 
 | Phase | | |
 |---|---|---|
@@ -19,17 +21,18 @@ it is headless: the compositor is still CPU-only and there is no window yet.
 | 2 | Project model and edit engine, headless | **done** |
 | 3a | Render graph, audio mixer, export | **done** |
 | 3b | Playback engine, audio clock, JKL | **done** |
-| 3c | GPU compositor (QRhi), preview window | next |
+| 3c | GPU compositor on QRhi, golden-tested | **done** |
+| 3d | YUV texture path, GPU-resident frames | next |
 | 4 | Application shell, timeline UI | |
 
 ## Building
 
-Requires CMake 3.24+, Ninja, a C++20 compiler, and FFmpeg 5.0+ development
-libraries. Catch2 and nlohmann/json are found via `find_package` or fetched
-automatically.
+Requires CMake 3.24+, Ninja, a C++20 compiler, FFmpeg 5.0+, SDL2, and Qt 6.6+
+(for QRhi and the shader compiler). Catch2 and nlohmann/json are found via
+`find_package` or fetched automatically.
 
 ```
-brew install ffmpeg sdl2 ninja pkg-config nlohmann-json   # macOS
+brew install ffmpeg sdl2 qt ninja pkg-config nlohmann-json   # macOS
 ./testdata/generate.sh                   # media fixtures for the tests
 cmake --preset debug
 cmake --build --preset debug
@@ -73,6 +76,7 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   io/       versioned JSON project files
 platform/
   ffmpeg/   the only place libav* headers are included
+  qrhi/     GPU compositor and its shaders
   sdl/      audio output device
 tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render, zaro-play
 testdata/   fixture generator

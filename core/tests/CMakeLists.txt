@@ -54,4 +54,7 @@ target_include_directories(zaro_core_tests PRIVATE
 target_compile_definitions(zaro_core_tests PRIVATE
     ZARO_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
-catch_discover_tests(zaro_core_tests)
+# "~[.]" excludes Catch2's hidden tests -- the benchmarks. They are meant to be
+# run deliberately: the 1080p ones take minutes under a sanitizer, which is long
+# enough to look like a hang in CI.
+catch_discover_tests(zaro_core_tests TEST_SPEC "~[.]")
