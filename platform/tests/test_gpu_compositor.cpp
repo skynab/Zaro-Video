@@ -631,3 +631,56 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     CHECK(cpuSeconds > 0.0);
     CHECK(previewSeconds > 0.0);
 }
+
+TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
+    // The bug this exists for: the preview rendered vertically flipped, and a
+    // check that counted lit pixels reported 96.8% either way. Orientation and
+    // letterbox geometry are invisible to any test that only asks whether
+    // something was drawn.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    // Asymmetric on purpose: white across the top third, black below.
+    RgbaImage source{32, 30};
+    for (std::int32_t y = 0; y < 30; ++y) {
+        for (std::int32_t x = 0; x < 32; ++x) {
+            source.at(x, y) = y < 10 ? premultiplied(1.0F, 1.0F, 1.0F, 1.0F)
+                                     : premultiplied(0.0F, 0.0F, 0.0F, 1.0F);
+        }
+    }
+
+    REQUIRE(compositor->beginFrame(32, 30).ok());
+    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal).ok());
+    REQUIRE(compositor->endFrameOnGpu().ok());
+
+    SECTION("the top of the picture stays at the top") {
+        RgbaImage presented;
+        // Same aspect ratio, so there are no bars to complicate it.
+        REQUIRE(compositor->presentToImage(64, 60, presented).ok());
+        CHECK(presented.at(32, 5).r > 0.5F);   // near the top: white
+        CHECK(presented.at(32, 50).r < 0.5F);  // near the bottom: black
+    }
+
+    SECTION("a wider target gets bars at the sides, not the top") {
+        RgbaImage presented;
+        REQUIRE(compositor->presentToImage(160, 60, presented).ok());
+        // The frame is 32x30, so in a 160x60 target it occupies the middle
+        // 64 pixels horizontally and the full height.
+        CHECK(presented.at(4, 30).a > 0.5F);  // bar: opaque black backdrop
+        CHECK(presented.at(4, 30).r < 0.1F);
+        CHECK(presented.at(80, 5).r > 0.5F);    // picture, still white on top
+        CHECK(presented.at(156, 30).r < 0.1F);  // bar on the other side
+    }
+
+    SECTION("a taller target gets bars above and below") {
+        RgbaImage presented;
+        REQUIRE(compositor->presentToImage(64, 200, presented).ok());
+        CHECK(presented.at(32, 4).r < 0.1F);    // bar at the top
+        CHECK(presented.at(32, 196).r < 0.1F);  // bar at the bottom
+        // Picture occupies the middle 60 rows: 70..130. Its own top third is
+        // white, so sample just inside that.
+        CHECK(presented.at(32, 78).r > 0.5F);
+    }
+}

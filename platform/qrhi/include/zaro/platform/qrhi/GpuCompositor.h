@@ -8,6 +8,12 @@
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/render/RgbaImage.h"
 
+// Forward declared rather than included: QRhi is private Qt API, and pulling it
+// into this header would force every consumer to link Qt6::GuiPrivate.
+class QRhi;
+class QRhiCommandBuffer;
+class QRhiRenderTarget;
+
 namespace zaro::platform::qrhi {
 
 /// The compositor from ADR-002, on the GPU.
@@ -27,6 +33,13 @@ public:
     /// Fails rather than falling back to software: a caller that asked for the
     /// GPU should find out that it did not get it.
     static Result<std::unique_ptr<GpuCompositor>> create();
+
+    /// Use a device someone else owns, rather than creating one.
+    ///
+    /// Textures cannot cross QRhi instances, so anything that wants to display
+    /// what this compositor produced -- a preview widget, which is handed its
+    /// device by Qt -- has to share the device rather than have its own.
+    static Result<std::unique_ptr<GpuCompositor>> adopt(::QRhi& device);
     ~GpuCompositor();
 
     /// Name of the backend actually in use, for diagnostics.
@@ -34,6 +47,13 @@ public:
 
     /// Start a frame, clearing to transparent black.
     [[nodiscard]] Status beginFrame(std::int32_t width, std::int32_t height);
+
+    /// Start a frame that records into a command buffer someone else opened.
+    ///
+    /// A widget has already begun a frame by the time it asks for a picture;
+    /// opening a second one inside it is an error, not a nesting.
+    [[nodiscard]] Status beginFrameOn(::QRhiCommandBuffer* commandBuffer, std::int32_t width,
+                                      std::int32_t height);
 
     /// Composite one source image under a transform.
     [[nodiscard]] Status draw(const render::RgbaImage& source, const model::Transform& transform,
@@ -62,6 +82,29 @@ public:
     /// separately from the cost of the work.
     [[nodiscard]] Status endFrameOnGpu();
 
+    /// Draw the last composited frame into someone else's render target,
+    /// letterboxed to preserve the frame's aspect ratio.
+    ///
+    /// This is how the result reaches the screen without ever touching system
+    /// memory. Only valid on a compositor that adopted the same device the
+    /// target belongs to.
+    [[nodiscard]] Status presentInto(::QRhiCommandBuffer* commandBuffer,
+                                     ::QRhiRenderTarget* target);
+
+    /// The same presentation, letterboxed into a buffer of the given size and
+    /// read back.
+    ///
+    /// What a thumbnail or a still export wants, and what makes the
+    /// presentation path testable without a window: orientation and letterbox
+    /// geometry are exactly the things a numeric "did any pixels light up"
+    /// check cannot see.
+    [[nodiscard]] Status presentToImage(std::int32_t width, std::int32_t height,
+                                        render::RgbaImage& out);
+
+    /// Public so the device-setup helper in the implementation can reach it.
+    /// Opaque to everyone else: the definition lives in the .cpp.
+    struct State;
+
 private:
     GpuCompositor();
 
@@ -71,7 +114,12 @@ private:
     /// Build the compositing pipeline for a blend mode, once.
     [[nodiscard]] Status ensureCompositePipeline(std::size_t blendIndex);
 
-    struct State;
+    /// Create or resize the offscreen target the frame is composited into.
+    [[nodiscard]] Status ensureTarget(std::int32_t width, std::int32_t height);
+
+    /// Reset per-frame recording state and upload the shared geometry.
+    void startRecording();
+
     std::unique_ptr<State> state_;
 };
 

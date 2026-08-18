@@ -69,7 +69,16 @@ void configureBlend(QRhiGraphicsPipeline::TargetBlend& target, BlendMode mode) {
 }  // namespace
 
 struct GpuCompositor::State {
-    std::unique_ptr<QRhi> rhi;
+    /// Set only when this compositor created the device. When a device is
+    /// adopted this stays null and `rhi` points at someone else's.
+    std::unique_ptr<QRhi> ownedRhi;
+    QRhi* rhi{nullptr};
+
+    // Presenting into an external target needs its own pipeline, because a
+    // pipeline is tied to the render pass it was built for.
+    std::unique_ptr<QRhiGraphicsPipeline> presentPipeline;
+    std::unique_ptr<QRhiShaderResourceBindings> presentBindings;
+    std::unique_ptr<QRhiBuffer> presentUniforms;
     std::unique_ptr<QRhiBuffer> vertexBuffer;
     std::unique_ptr<QRhiSampler> sampler;
     QShader vertexShader;
@@ -121,6 +130,8 @@ struct GpuCompositor::State {
     QRhiCommandBuffer* commandBuffer{nullptr};
     QSize size;
     bool inFrame{false};
+    /// False when recording into a command buffer someone else owns.
+    bool ownsFrame{true};
 };
 
 GpuCompositor::GpuCompositor() = default;
@@ -130,6 +141,14 @@ GpuCompositor::~GpuCompositor() {
     }
 }
 
+namespace {
+
+/// Everything that has to exist on whichever device the compositor ends up
+/// using. Shared between creating a device and adopting one.
+Status buildDeviceResources(GpuCompositor::State& state);
+
+}  // namespace
+
 Result<std::unique_ptr<GpuCompositor>> GpuCompositor::create() {
     auto compositor = std::unique_ptr<GpuCompositor>(new GpuCompositor());
     compositor->state_ = std::make_unique<State>();
@@ -137,18 +156,43 @@ Result<std::unique_ptr<GpuCompositor>> GpuCompositor::create() {
 
 #if defined(Q_OS_MACOS)
     QRhiMetalInitParams params;
-    state.rhi.reset(QRhi::create(QRhi::Metal, &params));
+    state.ownedRhi.reset(QRhi::create(QRhi::Metal, &params));
 #elif defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
-    state.rhi.reset(QRhi::create(QRhi::D3D11, &params));
+    state.ownedRhi.reset(QRhi::create(QRhi::D3D11, &params));
 #else
     QRhiVulkanInitParams params;
-    state.rhi.reset(QRhi::create(QRhi::Vulkan, &params));
+    state.ownedRhi.reset(QRhi::create(QRhi::Vulkan, &params));
 #endif
-    if (!state.rhi) {
+    if (!state.ownedRhi) {
         return Error{ErrorCode::Unsupported, "no GPU backend is available"};
     }
+    state.rhi = state.ownedRhi.get();
 
+    if (Status status = buildDeviceResources(state); !status) {
+        return status.error();
+    }
+    return compositor;
+}
+
+Result<std::unique_ptr<GpuCompositor>> GpuCompositor::adopt(::QRhi& device) {
+    auto compositor = std::unique_ptr<GpuCompositor>(new GpuCompositor());
+    compositor->state_ = std::make_unique<State>();
+    State& state = *compositor->state_;
+
+    // Borrowed, not owned. The widget that handed us this device outlives us
+    // and will destroy it itself.
+    state.rhi = reinterpret_cast<QRhi*>(&device);
+
+    if (Status status = buildDeviceResources(state); !status) {
+        return status.error();
+    }
+    return compositor;
+}
+
+namespace {
+
+Status buildDeviceResources(GpuCompositor::State& state) {
     state.vertexShader = loadShader(":/zaro/shaders/composite.vert.qsb");
     state.fragmentShader = loadShader(":/zaro/shaders/composite.frag.qsb");
     state.yuvFragmentShader = loadShader(":/zaro/shaders/composite_yuv.frag.qsb");
@@ -182,18 +226,17 @@ Result<std::unique_ptr<GpuCompositor>> GpuCompositor::create() {
     if (!state.chromaSampler->create()) {
         return Error{ErrorCode::Internal, "cannot create a chroma sampler"};
     }
-    return compositor;
+    return {};
 }
+
+}  // namespace
 
 std::string GpuCompositor::backendName() const {
     return state_->rhi ? state_->rhi->backendName() : "none";
 }
 
-Status GpuCompositor::beginFrame(std::int32_t width, std::int32_t height) {
+Status GpuCompositor::ensureTarget(std::int32_t width, std::int32_t height) {
     State& state = *state_;
-    if (state.inFrame) {
-        return Error{ErrorCode::Internal, "a frame is already in progress"};
-    }
     if (width <= 0 || height <= 0) {
         return Error{ErrorCode::InvalidData, "the output has no size"};
     }
@@ -219,11 +262,14 @@ Status GpuCompositor::beginFrame(std::int32_t width, std::int32_t height) {
         state.bindingLayouts = {};
         state.yuvPipelines = {};
         state.yuvBindingLayouts = {};
+        state.presentPipeline.reset();
+        state.presentBindings.reset();
     }
+    return {};
+}
 
-    if (state.rhi->beginOffscreenFrame(&state.commandBuffer) != QRhi::FrameOpSuccess) {
-        return Error{ErrorCode::Internal, "cannot begin a GPU frame"};
-    }
+void GpuCompositor::startRecording() {
+    State& state = *state_;
     state.inFrame = true;
     state.sourceTextures.clear();
     state.uniformBuffers.clear();
@@ -238,6 +284,42 @@ Status GpuCompositor::beginFrame(std::int32_t width, std::int32_t height) {
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
     batch->uploadStaticBuffer(state.vertexBuffer.get(), kQuad.data());
     state.commandBuffer->resourceUpdate(batch);
+}
+
+Status GpuCompositor::beginFrame(std::int32_t width, std::int32_t height) {
+    State& state = *state_;
+    if (state.inFrame) {
+        return Error{ErrorCode::Internal, "a frame is already in progress"};
+    }
+    if (Status status = ensureTarget(width, height); !status) {
+        return status;
+    }
+    if (state.rhi->beginOffscreenFrame(&state.commandBuffer) != QRhi::FrameOpSuccess) {
+        return Error{ErrorCode::Internal, "cannot begin a GPU frame"};
+    }
+    state.ownsFrame = true;
+    startRecording();
+    return {};
+}
+
+Status GpuCompositor::beginFrameOn(::QRhiCommandBuffer* commandBuffer, std::int32_t width,
+                                   std::int32_t height) {
+    State& state = *state_;
+    if (state.inFrame) {
+        return Error{ErrorCode::Internal, "a frame is already in progress"};
+    }
+    if (commandBuffer == nullptr) {
+        return Error{ErrorCode::InvalidData, "beginFrameOn needs a command buffer"};
+    }
+    if (Status status = ensureTarget(width, height); !status) {
+        return status;
+    }
+    // Record into the caller's frame. A widget has already opened one by the
+    // time it asks us to draw, and opening a second would be an error rather
+    // than a nesting.
+    state.commandBuffer = reinterpret_cast<QRhiCommandBuffer*>(commandBuffer);
+    state.ownsFrame = false;
+    startRecording();
     return {};
 }
 
@@ -398,7 +480,11 @@ Status GpuCompositor::endFrameOnGpu() {
         return Error{ErrorCode::Internal, "endFrame without beginFrame"};
     }
     submitPass();
-    state.rhi->endOffscreenFrame();
+    // Only close the frame if we opened it. When recording into someone else's
+    // command buffer, ending their frame would submit it out from under them.
+    if (state.ownsFrame) {
+        state.rhi->endOffscreenFrame();
+    }
     state.inFrame = false;
     return {};
 }
@@ -779,6 +865,180 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     state.uniformBuffers.push_back(std::move(uniforms));
     state.bindings.push_back(std::move(convertBindings));
     state.bindings.push_back(std::move(bindings));
+    return {};
+}
+
+Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRenderTarget* target) {
+    State& state = *state_;
+    auto* cb = reinterpret_cast<QRhiCommandBuffer*>(commandBuffer);
+    auto* rt = reinterpret_cast<QRhiRenderTarget*>(target);
+
+    if (cb == nullptr || rt == nullptr) {
+        return Error{ErrorCode::InvalidData, "presentInto needs a command buffer and a target"};
+    }
+    if (!state.target) {
+        return Error{ErrorCode::Internal, "there is no composited frame to present"};
+    }
+    if (state.inFrame) {
+        return Error{ErrorCode::Internal, "presentInto while a frame is still open"};
+    }
+
+    // Built once, against the target's render pass. A pipeline is tied to the
+    // pass it was created for, so this cannot reuse the offscreen one.
+    if (!state.presentPipeline) {
+        state.presentUniforms.reset(
+            state.rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, kUniformBytes));
+        if (!state.presentUniforms->create()) {
+            return Error{ErrorCode::Internal, "cannot allocate the present uniform buffer"};
+        }
+
+        state.presentBindings.reset(state.rhi->newShaderResourceBindings());
+        state.presentBindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0,
+                QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
+                state.presentUniforms.get(), 0, static_cast<quint32>(kUniformBytes)),
+            QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
+                                                      state.target.get(), state.sampler.get()),
+        });
+        if (!state.presentBindings->create()) {
+            return Error{ErrorCode::Internal, "cannot create present bindings"};
+        }
+
+        state.presentPipeline.reset(state.rhi->newGraphicsPipeline());
+        QRhiGraphicsPipeline::TargetBlend blend;
+        // The composited frame is premultiplied and goes onto an opaque
+        // backdrop, so `over` is right here too.
+        blend.enable = true;
+        blend.srcColor = QRhiGraphicsPipeline::One;
+        blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        blend.srcAlpha = QRhiGraphicsPipeline::One;
+        blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        state.presentPipeline->setTargetBlends({blend});
+        state.presentPipeline->setShaderStages({{QRhiShaderStage::Vertex, state.vertexShader},
+                                                {QRhiShaderStage::Fragment, state.fragmentShader}});
+
+        QRhiVertexInputLayout inputLayout;
+        inputLayout.setBindings({{2 * sizeof(float)}});
+        inputLayout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float2, 0}});
+        state.presentPipeline->setVertexInputLayout(inputLayout);
+        state.presentPipeline->setShaderResourceBindings(state.presentBindings.get());
+        state.presentPipeline->setRenderPassDescriptor(rt->renderPassDescriptor());
+        if (!state.presentPipeline->create()) {
+            return Error{ErrorCode::Internal, "cannot create the present pipeline"};
+        }
+    }
+
+    // Letterbox: fit the frame inside the target without distorting it. A
+    // preview that quietly stretches the picture is worse than useless, because
+    // every framing decision made against it is wrong.
+    const QSize targetSize = rt->pixelSize();
+    const float frameAspect =
+        static_cast<float>(state.size.width()) / static_cast<float>(state.size.height());
+    const float targetAspect =
+        static_cast<float>(targetSize.width()) / static_cast<float>(targetSize.height());
+    float scaleX = 1.0F;
+    float scaleY = 1.0F;
+    if (frameAspect > targetAspect) {
+        scaleY = targetAspect / frameAspect;
+    } else {
+        scaleX = frameAspect / targetAspect;
+    }
+
+    QMatrix4x4 matrix;
+    // Flip vertically when the backend's framebuffer origin is at the top.
+    //
+    // The composited texture is written with row 0 as the top of the picture.
+    // The present quad maps texture V=0 to the bottom of clip space, so on a
+    // Y-down backend -- Metal, Vulkan, D3D -- the picture arrives upside down,
+    // while on a Y-up one -- OpenGL -- it does not. Getting this wrong is
+    // invisible to any numeric check that only asks whether pixels were lit.
+    const float flip = state.rhi->isYUpInFramebuffer() ? 1.0F : -1.0F;
+    matrix.scale(scaleX, scaleY * flip);
+
+    QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
+    std::array<float, 20> uniformData{};
+    const float* matrixData = matrix.constData();
+    for (int i = 0; i < 16; ++i) {
+        uniformData[static_cast<std::size_t>(i)] = matrixData[i];
+    }
+    uniformData[16] = 1.0F;  // opacity
+    batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
+
+    // Clear to opaque black: the bars either side of a letterboxed frame are
+    // part of the picture area, not a hole in the window.
+    cb->beginPass(rt, QColor::fromRgbF(0, 0, 0, 1), {1.0F, 0}, batch);
+    cb->setGraphicsPipeline(state.presentPipeline.get());
+    cb->setViewport(
+        {0, 0, static_cast<float>(targetSize.width()), static_cast<float>(targetSize.height())});
+    cb->setShaderResources(state.presentBindings.get());
+    const QRhiCommandBuffer::VertexInput vertexInput(state.vertexBuffer.get(), 0);
+    cb->setVertexInput(0, 1, &vertexInput);
+    cb->draw(6);
+    cb->endPass();
+    return {};
+}
+
+Status GpuCompositor::presentToImage(std::int32_t width, std::int32_t height,
+                                     render::RgbaImage& out) {
+    State& state = *state_;
+    if (!state.target) {
+        return Error{ErrorCode::Internal, "there is no composited frame to present"};
+    }
+    if (width <= 0 || height <= 0) {
+        return Error{ErrorCode::InvalidData, "the output has no size"};
+    }
+
+    std::unique_ptr<QRhiTexture> texture(
+        state.rhi->newTexture(QRhiTexture::RGBA32F, QSize(width, height), 1,
+                              QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+    if (!texture->create()) {
+        return Error{ErrorCode::Unsupported, "cannot create a presentation target"};
+    }
+    QRhiColorAttachment attachment(texture.get());
+    std::unique_ptr<QRhiTextureRenderTarget> target(
+        state.rhi->newTextureRenderTarget(QRhiTextureRenderTargetDescription(attachment)));
+    std::unique_ptr<QRhiRenderPassDescriptor> pass(target->newCompatibleRenderPassDescriptor());
+    target->setRenderPassDescriptor(pass.get());
+    if (!target->create()) {
+        return Error{ErrorCode::Internal, "cannot create a presentation render target"};
+    }
+
+    // A different render pass from any previous one, so the pipeline built
+    // against the last target cannot be reused.
+    state.presentPipeline.reset();
+    state.presentBindings.reset();
+
+    QRhiCommandBuffer* cb = nullptr;
+    if (state.rhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess) {
+        return Error{ErrorCode::Internal, "cannot begin a GPU frame"};
+    }
+    if (Status status = presentInto(reinterpret_cast<::QRhiCommandBuffer*>(cb),
+                                    reinterpret_cast<::QRhiRenderTarget*>(target.get()));
+        !status) {
+        state.rhi->endOffscreenFrame();
+        return status;
+    }
+
+    QRhiReadbackResult readback;
+    QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
+    batch->readBackTexture(QRhiReadbackDescription(texture.get()), &readback);
+    cb->resourceUpdate(batch);
+    state.rhi->endOffscreenFrame();
+
+    // Built against a target that is about to be destroyed.
+    state.presentPipeline.reset();
+    state.presentBindings.reset();
+
+    const auto expected =
+        static_cast<qsizetype>(width) * height * static_cast<qsizetype>(sizeof(render::Rgba));
+    if (readback.data.size() < expected) {
+        return Error{ErrorCode::Internal, "the GPU returned less data than the frame needs"};
+    }
+    if (out.width() != width || out.height() != height) {
+        out = render::RgbaImage{width, height};
+    }
+    std::memcpy(out.row(0), readback.data.constData(), static_cast<std::size_t>(expected));
     return {};
 }
 

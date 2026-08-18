@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 203 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 204 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -338,6 +338,36 @@ muxer inferred each packet's duration from the gap to the next — and the final
 no next. It landed in the file with a duration of zero: present in the sample index, so
 the container reported the right frame count, but outside the stream's declared duration
 and undecodable. The file looked complete and decoded one frame short.
+
+#### Phase 4a — the preview window ✅ **complete**
+
+- ✅ `ProgramMonitor`, a `QRhiWidget` whose compositor **adopts the widget's own GPU
+  device**, so the composited texture is drawn straight to the screen and never touches
+  system memory. This is the readback that Phase 3d measured as the difference between
+  roughly 550 fps and 95.
+- ✅ Transport: space, J/K/L shuttle, arrow-key frame stepping, home/end, a scrubber, and
+  a drop-frame-aware timecode readout.
+- ✅ Playback against the audio clock, with audio on its own thread ([ADR-006](adr/0006-audio-is-the-clock.md)).
+- ✅ `presentToImage`, which is both what a thumbnail wants and what makes the
+  presentation path testable without a window.
+
+Two things the compositor needed for this, both worth noting because they are not
+obvious from the offscreen case:
+
+- **A frame it does not own.** A widget has already opened a GPU frame by the time it
+  asks for a picture, so `beginFrameOn` records into the caller's command buffer rather
+  than opening a second one.
+- **A device it does not own.** Textures cannot cross `QRhi` instances, so the compositor
+  adopts the widget's device instead of creating its own.
+
+**The preview rendered vertically flipped**, and the self-test that counted lit pixels
+reported 96.8% either way. It was caught by comparing a captured frame against a
+reference extracted through the byte-exact `zaro-frame` path — the timecode burn-in had
+moved from the top to the bottom. The cause is that the composited texture is written
+with row 0 as the top of the picture while the present quad maps texture V=0 to the
+bottom of clip space, which flips on Y-down backends (Metal, Vulkan, D3D) and not on Y-up
+ones (OpenGL). There is now a headless test that renders a deliberately asymmetric frame
+and checks which end it comes out at, verified to fail when the correction is removed.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

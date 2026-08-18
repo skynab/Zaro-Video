@@ -40,6 +40,19 @@ Status GpuRenderGraph::composite(const model::Sequence& sequence, const time::Ra
     return compositor_->endFrameOnGpu();
 }
 
+Status GpuRenderGraph::compositeOn(::QRhiCommandBuffer* commandBuffer,
+                                   const model::Sequence& sequence, const time::RationalTime& at) {
+    if (Status begun =
+            compositor_->beginFrameOn(commandBuffer, sequence.width(), sequence.height());
+        !begun) {
+        return begun;
+    }
+    if (Status drawn = drawClips(sequence, at); !drawn) {
+        return drawn;
+    }
+    return compositor_->endFrameOnGpu();
+}
+
 Status GpuRenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,
                                      render::RgbaImage& out) {
     if (Status begun = compositor_->beginFrame(sequence.width(), sequence.height()); !begun) {

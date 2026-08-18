@@ -8,8 +8,9 @@ locked in.
 
 ## Status
 
-**Phase 3d — GPU compositing.** A project can be edited, saved, composited,
-rendered to a file, and played back in sync. On a 1080p59.94 timeline the GPU
+**Phase 4a — preview window.** A project can be edited, saved, composited,
+rendered to a file, and watched — there is a program monitor now, with
+transport, scrubbing and timecode, compositing straight to the screen. On a 1080p59.94 timeline the GPU
 path holds the playhead to zero frames of offset with no audio underruns,
 presenting about 47 of the 59.94 frames per second against the CPU path's 7 —
 the remaining gap is the readback, which a preview window will not do. Still
@@ -24,7 +25,8 @@ headless: there is no window yet.
 | 3b | Playback engine, audio clock, JKL | **done** |
 | 3c | GPU compositor on QRhi, golden-tested | **done** |
 | 3d | YUV texture path, GPU colour conversion | **done** |
-| 4 | Preview window, app shell, timeline UI | next |
+| 4a | Preview window, transport, scrubbing | **done** |
+| 4b | Project bin, timeline panel, effects | next |
 
 ## Building
 
@@ -75,6 +77,7 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   render/   colour pipeline, compositor, render graph, mixer, cache
   playback/ scheduler, transport (JKL), audio ring buffer
   io/       versioned JSON project files
+app/        the Qt shell: program monitor, transport
 platform/
   ffmpeg/   the only place libav* headers are included
   qrhi/     GPU compositor and its shaders

@@ -26,6 +26,11 @@ public:
     /// Composite a frame and leave it on the GPU. What a preview wants.
     [[nodiscard]] Status composite(const model::Sequence& sequence, const time::RationalTime& at);
 
+    /// Composite inside a frame someone else opened, leaving the result on the
+    /// GPU. What a preview widget wants: it is already mid-frame when it asks.
+    [[nodiscard]] Status compositeOn(::QRhiCommandBuffer* commandBuffer,
+                                     const model::Sequence& sequence, const time::RationalTime& at);
+
     /// Composite a frame and bring it back. What an export wants.
     [[nodiscard]] Status compositeInto(const model::Sequence& sequence,
                                        const time::RationalTime& at, render::RgbaImage& out);
