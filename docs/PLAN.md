@@ -189,18 +189,52 @@ frame-to-frame difference. The ladder fixture now steps four code values per fra
 comfortably outside lossy-codec noise, so a one-frame error cannot hide inside the
 tolerance.
 
-### Phase 2 — Model + edit engine (headless)
+### Phase 2 — Model + edit engine (headless) ✅ **complete**
 *Goal: the whole editing brain, with zero pixels.*
 
-- `Project / Sequence / Track / Clip / MediaRef`, ids stable across save/load.
-- Command stack: do/undo/redo, merging, History descriptions.
-- Edit operations, each with tests: overwrite, insert (+ripple), razor, lift, extract,
-  ripple delete, trim head/tail, ripple trim, roll, slip, slide, three/four-point edit,
-  snapping, linked A/V selection, track targeting, sync locks.
-- Serialization: versioned JSON, forward-compatible unknown-field preservation.
+- ✅ `Project / Sequence / Track / Clip / MediaRef`, ids stable across save/load and
+  phantom-typed so a `ClipId` cannot be passed where a `TrackId` belongs.
+- ✅ Command stack: do/undo/redo, merging, bounded depth, History descriptions.
+  Undo restores a snapshot rather than computing an inverse — see
+  [ADR-004](adr/0004-snapshot-undo.md).
+- ✅ Edit operations, each with tests: overwrite, insert (+ripple, incl. all-track sync),
+  razor, lift, extract, ripple delete, trim, ripple trim, roll, slip, slide, move
+  (including across tracks), add/remove track. Snapping is a pure function over the
+  sequence, with a duration threshold rather than a pixel one, so it stays independent of
+  zoom.
+- ✅ Serialization: versioned JSON, with unknown fields preserved through a load/save
+  cycle and matched by id rather than array position.
+- ⏸️ **Deferred: three- and four-point editing, linked A/V selection, sync locks.** All
+  three are defined by interactions that do not exist yet — a source monitor with in/out
+  points, a selection model, a track-header control. Building them now would mean
+  inventing the semantics twice. They move to Phase 4 alongside the UI that gives them
+  meaning.
 
 **Done when:** a headless test constructs a 20-edit sequence, undoes every step back to
 empty, redoes to the end, saves, reloads, and asserts byte-identical model state.
+
+**Result:** 113 tests green across `debug`, `release` and `asan`. The exit-criterion test
+asserts the state after *every one* of the 20 edits, walks undo back through all 20
+recorded states to an empty timeline, redoes forward through the same states, and
+round-trips through JSON. A fuzzer throws 6,000 randomly-parameterised operations at the
+model across 40 seeds, checking after each one that no clips overlap, no duration is
+negative, no clip reads past the end of its source, and no id is duplicated — and that a
+*refused* edit left the model completely untouched.
+
+Three bugs, all found by tests rather than by reading the code:
+
+1. **A clip was invisible on its own first frame.** `Track::clipAt` used `lower_bound`,
+   which stops *at* a clip starting exactly on the query time; stepping back from there
+   lands on the previous clip. The compositor would have asked for a frame at a cut and
+   been told there was nothing there.
+2. **Ripple trim corrupted the track when shortening.** It shifted the following clips
+   before replacing the trimmed one, so the track passed through a state where two clips
+   overlapped. Whichever order is chosen, one direction breaks — so the fix was to
+   rebuild the track in a single pass and have no intermediate state at all.
+3. **Media duration was silently lost on load**, because it was written as a rational
+   string and read back as a `{frames, rate}` object. Every trim bound disappeared the
+   moment a project was reopened. Caught by asserting that re-saving a loaded project
+   produces byte-identical output — a much sharper check than comparing models.
 
 ### Phase 3 — Compositor + playback
 *Goal: the hard part. Frames on screen, audio in sync, scrubbing that feels alive.*
@@ -357,30 +391,31 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-Phases 0 and 1 are done. Phase 2 — the project model and edit engine — starts here, and
-it is entirely headless: no pixels, no FFmpeg, just the data model and the operations
-that mutate it.
+Phases 0, 1 and 2 are done: exact time, media that decodes frame-exactly, and a model
+that can be edited and saved. Phase 3 joins them, and it is the part with the schedule
+risk.
 
-1. `Project / Sequence / Track / Clip / MediaRef` with ids stable across save and load.
-   A `Clip` references a `MediaRef` and a source `TimeRange`; it never owns media.
-2. The command stack before any edit operation is written. If undo is retrofitted, some
-   operation will always have escaped it.
-3. Edit operations one at a time, each with tests: overwrite and insert first, since
-   ripple behaviour is where the model's invariants get decided.
-4. Serialisation with a version field and unknown-field preservation, so a project saved
-   by a later build does not lose data when opened by an earlier one.
-5. The edit-engine fuzzer from §5 as soon as there are three operations to fuzz — random
-   command sequences asserting no overlapping clips, no negative durations, and exact
-   restoration on undo.
+1. **Decide the colour working space first**, as ADR-005. Every node in the render graph
+   depends on it, and §4 already flags it as cheap now and brutal to retrofit. Phase 1
+   established that frames leave the decoder fully tagged; this decides what to convert
+   those tags *into*.
+2. **The frame cache, with a hard budget and an eviction policy.** 4K RGBA float is
+   ~32 MB a frame. This constrains the whole design and should be settled before the
+   graph is written around it, not after.
+3. `RenderGraph::composite(t)` over `Track::clipAt` — which already answers "what is
+   playing here" in a binary search, and is the reason the model stores clips sparsely.
+   Pure and deterministic, so playback, export and the render cache are one code path.
+4. The transform node: position, scale, rotation, anchor, opacity, plus track blending.
+   Over-invest here; it is the foundation of every motion feature in §7.4.
+5. The playback clock and the sync harness together. The harness is not a follow-up to
+   the playback engine, it is how the playback engine gets built — `sync_click_flash.mov`
+   exists for exactly this and has been sitting in `testdata/` since Phase 1.
 
 Carried forward as known work:
 
-- Thumbnail and waveform generation with a content-hashed disk cache (deferred from
-  Phase 1 to the head of Phase 4).
-- Colour pipeline and working space, as ADR-004. Phase 1 established that every frame
-  leaves the decoder fully tagged; what to *convert* those tags into needs the compositor
-  to exist first.
-- The frame-cache budget and eviction policy — 4K RGBA float is ~32 MB a frame, and this
-  constrains the Phase 3 design more than anything else.
-- Revisit `DecodeMode::Auto` when the compositor can consume a GPU texture
-  ([ADR-003](adr/0003-hardware-decode-readback.md)).
+- Thumbnail and waveform generation with a content-hashed disk cache (Phase 1 → head of
+  Phase 4).
+- Three/four-point editing, linked A/V selection, sync locks (Phase 2 → Phase 4, with the
+  UI that defines them).
+- Revisit `DecodeMode::Auto` once the compositor can consume a GPU texture directly
+  ([ADR-003](adr/0003-hardware-decode-readback.md)). This is the phase that triggers it.

@@ -8,25 +8,26 @@ locked in.
 
 ## Status
 
-**Phase 1 — media I/O.** Files can be probed and decoded frame-exactly, with
-random access that holds up on long-GOP and variable-frame-rate footage. There is
-no project model, no compositor, and no window yet.
+**Phase 2 — model and edit engine.** Media decodes frame-exactly, and a project
+of sequences, tracks and clips can be edited, undone, saved and reloaded. All of
+it is headless: there is no compositor and no window yet.
 
 | Phase | | |
 |---|---|---|
 | 0 | Foundations, exact time arithmetic | **done** |
 | 1 | Media I/O: probe, decode, hwaccel, seek | **done** |
-| 2 | Project model and edit engine, headless | next |
-| 3 | GPU compositor and realtime playback | |
+| 2 | Project model and edit engine, headless | **done** |
+| 3 | GPU compositor and realtime playback | next |
 | 4 | Application shell, timeline UI, export | |
 
 ## Building
 
 Requires CMake 3.24+, Ninja, a C++20 compiler, and FFmpeg 5.0+ development
-libraries. Catch2 is found via `find_package` or fetched automatically.
+libraries. Catch2 and nlohmann/json are found via `find_package` or fetched
+automatically.
 
 ```
-brew install ffmpeg ninja pkg-config     # macOS
+brew install ffmpeg ninja pkg-config nlohmann-json   # macOS
 ./testdata/generate.sh                   # media fixtures for the tests
 cmake --preset debug
 cmake --build --preset debug
@@ -55,6 +56,9 @@ FFmpeg's own decoder, byte for byte, in each file's native pixel format.
 core/       no GUI dependency, no FFmpeg, headless-testable
   time/     Rational, RationalTime, TimeRange, Timecode
   media/    frame and buffer types, decoder interfaces
+  model/    Project, Sequence, Track, Clip, MediaRef
+  edit/     commands, undo stack, edit operations, snapping
+  io/       versioned JSON project files
 platform/
   ffmpeg/   the only place libav* headers are included
 tools/      zaro-probe, zaro-frame

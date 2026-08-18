@@ -22,6 +22,12 @@ add_executable(zaro_core_tests
     time/test_rational_time.cpp
     time/test_time_range.cpp
     time/test_timecode.cpp
+    model/test_track.cpp
+    edit/test_command_stack.cpp
+    edit/test_operations.cpp
+    edit/test_snapping.cpp
+    edit/test_fuzz.cpp
+    io/test_project_io.cpp
 )
 
 target_link_libraries(zaro_core_tests
@@ -30,5 +36,12 @@ target_link_libraries(zaro_core_tests
         zaro::warnings
         Catch2::Catch2WithMain
 )
+
+# ModelFixtures.h lives alongside the tests rather than in the library.
+target_include_directories(zaro_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Somewhere for the serialization tests to write a file.
+target_compile_definitions(zaro_core_tests PRIVATE
+    ZARO_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
 catch_discover_tests(zaro_core_tests)

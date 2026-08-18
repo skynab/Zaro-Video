@@ -29,15 +29,15 @@ jobs:
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
 
-      - name: Install FFmpeg (macOS)
+      - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg pkg-config
+        run: brew install ffmpeg pkg-config nlohmann-json
 
-      - name: Install FFmpeg (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config ffmpeg \
+          sudo apt-get install -y pkg-config ffmpeg nlohmann-json3-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev
 
