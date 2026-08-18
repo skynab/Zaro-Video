@@ -20,6 +20,7 @@
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
+#include "zaro/platform/qrhi/GpuRenderGraph.h"
 #include "zaro/platform/sdl/AudioSink.h"
 
 namespace {
@@ -32,6 +33,7 @@ void printUsage() {
     std::puts("  --speed <r>       playback speed, e.g. 1, 2, 1/2 (default 1)");
     std::puts("  --no-audio        run the clock without opening a device");
     std::puts("  --queue <n>       frames of render lookahead (default 8)");
+    std::puts("  --cpu             composite on the CPU instead of the GPU");
 }
 
 }  // namespace
@@ -48,6 +50,7 @@ int main(int argc, char** argv) {
     zaro::time::Rational speed = zaro::time::Rational::fromInt(1);
     bool useAudio = true;
     std::size_t queueDepth = 8;
+    bool forceCpu = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -61,6 +64,8 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--no-audio") {
             useAudio = false;
+        } else if (arg == "--cpu") {
+            forceCpu = true;
         } else if (arg == "--queue" && i + 1 < argc) {
             queueDepth = static_cast<std::size_t>(std::atoll(argv[++i]));
         } else {
@@ -94,6 +99,23 @@ int main(int argc, char** argv) {
     }
     zaro::render::RenderGraph video{**sourceOpened};
     zaro::render::AudioGraph audio{**sourceOpened};
+
+    // The GPU path uploads the decoder's planes and converts on the way
+    // through; the CPU path converts into an 8MB float buffer first. At 1080p
+    // that is 314 fps against 37, which is the difference between playing and
+    // not. See docs/adr/0007.
+    std::unique_ptr<zaro::platform::qrhi::GpuCompositor> compositor;
+    std::unique_ptr<zaro::platform::qrhi::GpuRenderGraph> gpuVideo;
+    if (!forceCpu) {
+        if (auto created = zaro::platform::qrhi::GpuCompositor::create()) {
+            compositor = std::move(*created);
+            gpuVideo =
+                std::make_unique<zaro::platform::qrhi::GpuRenderGraph>(*compositor, **sourceOpened);
+        } else {
+            std::fprintf(stderr, "zaro-play: no GPU (%s); compositing on the CPU\n",
+                         created.error().message().c_str());
+        }
+    }
 
     std::unique_ptr<zaro::platform::sdl::AudioSink> sink;
     if (useAudio) {
@@ -154,11 +176,22 @@ int main(int argc, char** argv) {
         }
     };
 
+    // One place that renders a frame, whichever path is in use. The GPU path
+    // still reads back here because the scheduler's queue holds CPU images;
+    // removing that readback needs a GPU-resident frame in the queue, which is
+    // what a preview window will want and is the next step.
+    const auto renderOne = [&](const zaro::time::RationalTime& at) -> bool {
+        if (gpuVideo) {
+            return gpuVideo->compositeInto(*sequence, at, frame).ok();
+        }
+        return video.compositeInto(*sequence, at, frame).ok();
+    };
+
     // Prime the ring, and render the first frames, before anything starts
     // consuming. Playback should begin already in its stride.
     fillAudio(0);
     while (const auto target = scheduler.nextRenderTarget()) {
-        if (!video.compositeInto(*sequence, *target, frame)) {
+        if (!renderOne(*target)) {
             break;
         }
         scheduler.submit(*target, frame.clone());
@@ -205,7 +238,7 @@ int main(int argc, char** argv) {
 
         // Render ahead, then show whatever is due.
         while (const auto target = scheduler.nextRenderTarget()) {
-            if (!video.compositeInto(*sequence, *target, frame)) {
+            if (!renderOne(*target)) {
                 break;
             }
             scheduler.submit(*target, frame.clone());
@@ -248,7 +281,8 @@ int main(int argc, char** argv) {
 
     const auto& stats = scheduler.stats();
     std::printf("\n%s\n", projectPath.c_str());
-    std::printf("  played %.2fs of wall clock at %s\n", wall, rate.toString().c_str());
+    std::printf("  played %.2fs of wall clock at %s, compositing on the %s\n", wall,
+                rate.toString().c_str(), gpuVideo ? compositor->backendName().c_str() : "CPU");
     std::printf("  presented %lld, dropped %lld, repeated %lld, starved %lld\n",
                 static_cast<long long>(stats.presented), static_cast<long long>(stats.dropped),
                 static_cast<long long>(stats.repeated), static_cast<long long>(stats.starved));

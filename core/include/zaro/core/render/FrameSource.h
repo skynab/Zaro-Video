@@ -2,6 +2,7 @@
 
 #include "zaro/core/Error.h"
 #include "zaro/core/media/AudioBuffer.h"
+#include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/render/RgbaImage.h"
 #include "zaro/core/time/RationalTime.h"
@@ -33,6 +34,29 @@ public:
 
 protected:
     FrameSource() = default;
+};
+
+/// Where the GPU compositor gets frames from.
+///
+/// Separate from FrameSource because it hands back the decoder's own frame
+/// rather than one converted to the working space. That conversion is the
+/// expensive part on the CPU and free on the GPU, so the two paths want
+/// different things and pretending otherwise would mean converting for the one
+/// consumer that does not need it.
+class SourceFrameProvider {
+public:
+    virtual ~SourceFrameProvider() = default;
+
+    SourceFrameProvider(const SourceFrameProvider&) = delete;
+    SourceFrameProvider& operator=(const SourceFrameProvider&) = delete;
+
+    /// The decoded frame for `media` at `sourceTime`, in its native pixel
+    /// format. Valid until the next call on this provider.
+    [[nodiscard]] virtual Result<const media::VideoFrame*> sourceFrameFor(
+        model::MediaRefId media, const time::RationalTime& sourceTime) = 0;
+
+protected:
+    SourceFrameProvider() = default;
 };
 
 /// Where the mixer gets samples from.

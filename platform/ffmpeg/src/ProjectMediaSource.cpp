@@ -15,6 +15,9 @@ struct ProjectMediaSource::State {
     struct VideoEntry {
         std::unique_ptr<media::VideoDecoder> decoder;
     };
+
+    /// The frame handed out by sourceFrameFor, kept alive until the next call.
+    media::VideoFrame lastSourceFrame;
     struct AudioEntry {
         std::unique_ptr<media::AudioDecoder> decoder;
         media::AudioBuffer pending;     ///< Decoded but not yet handed out.
@@ -82,6 +85,32 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
                      "the frame is larger than the entire cache budget; raise it"};
     }
     return stored;
+}
+
+Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
+    model::MediaRefId media, const time::RationalTime& sourceTime) {
+    const auto path = state_->paths.find(media.value());
+    if (path == state_->paths.end()) {
+        return Error{ErrorCode::NotFound, "this project has no media with that id"};
+    }
+
+    auto& entry = state_->video[media.value()];
+    if (!entry.decoder) {
+        auto opened = openVideoDecoder(path->second);
+        if (!opened) {
+            return opened.error();
+        }
+        entry.decoder = std::move(*opened);
+    }
+
+    auto decoded = entry.decoder->frameAtTime(sourceTime);
+    if (!decoded) {
+        return decoded.error();
+    }
+    // No working-space cache here: the GPU converts on upload, so the frame the
+    // caller wants is the one the decoder just produced.
+    state_->lastSourceFrame = std::move(*decoded);
+    return &state_->lastSourceFrame;
 }
 
 Status ProjectMediaSource::read(model::MediaRefId media, const time::RationalTime& sourceStart,

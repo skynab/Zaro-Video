@@ -53,21 +53,49 @@ reads or writes another 8 MB. **The pipeline is memory-bandwidth bound on
 float RGBA frames**, not compute bound, and no amount of optimising individual
 loops changes that.
 
+## The YUV path, and what it changed
+
+Acting on the above: the decoder's planes are uploaded as they are, and the
+colour conversion happens on the GPU. Measured at 1080p, converting and
+compositing together:
+
+| Path | Throughput |
+|---|---|
+| CPU: convert to working space, then composite | ~40 fps |
+| GPU: planes up, result stays on the GPU | **520–590 fps** |
+| GPU: planes up, result read back to the CPU | 93 fps |
+
+In real playback of a 1080p59.94 timeline, that is the difference between 80
+frames presented with picture lagging the clock by three, and 469 presented with
+an offset of zero.
+
+**The conversion needs its own pass, and this was not obvious.** The first
+version folded it into the sampler — one pass, convert per fragment. It matched
+the reference exactly at 1:1 and diverged as soon as a clip was scaled, by more
+than chroma subsampling could explain. The cause is that a bilinear filter
+applied to encoded Y'CbCr interpolates in gamma space: the midpoint of two
+encoded values is not the encoding of the midpoint. That is precisely the error
+[ADR-005](0005-working-colour-space.md) rejects for blending, reappearing in the
+sampler. Converting into a linear-light surface first, and transforming from
+that, costs one extra GPU pass and no bus traffic — and makes the two paths
+agree.
+
+Chroma is sampled with nearest filtering rather than linear, to match what the
+CPU reference does. Proper chroma siting is a real improvement and should change
+both paths together rather than letting them drift apart.
+
 ## Consequences
 
-- The GPU compositor is proven equivalent to the reference and is not yet worth
-  switching to. It is not enabled by default.
-- **The next step is architectural, and the measurements name it precisely:**
-  upload the decoded *YUV planes* rather than converted float RGBA — 3 MB rather
-  than 8 MB at 1080p, and less again for the chroma planes — and do the colour
-  conversion in the same shader pass as the transform. That removes the 103 fps
-  stage entirely, shrinks the upload by more than half, and for preview removes
-  the readback altogether, because the texture goes straight to the screen.
-- Only then does the `DecodeMode::Auto` revisit in ADR-003 make sense: hardware
-  decode becomes worthwhile when its output can stay on the GPU, which requires
-  the compositor to accept a texture, which requires the above.
-- The CPU path stays. It is the reference the GPU is checked against, and it is
-  what a headless render node without a GPU will use.
+- The GPU path is the default in `zaro-play`, with `--cpu` to force the
+  reference. The CPU path stays: it is the oracle the GPU is checked against,
+  and it is what a headless render node without a GPU will use.
+- **Preview still reads back**, because the playback scheduler's queue holds CPU
+  images. Removing that needs a GPU-resident frame in the queue, which is what a
+  preview window wants anyway. The 550-versus-95 fps figures are the size of
+  that remaining prize.
+- **Now** the `DecodeMode::Auto` revisit in ADR-003 makes sense: hardware decode
+  becomes worthwhile when its output can stay on the GPU, and the compositor now
+  accepts planes rather than converted pixels.
 
 ## Verification
 

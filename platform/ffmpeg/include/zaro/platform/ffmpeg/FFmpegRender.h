@@ -16,7 +16,9 @@ namespace zaro::platform::ffmpeg {
 /// source in order and reopening per frame would dominate the cost. Frames are
 /// cached in the working space rather than as decoded Y'CbCr, so a frame
 /// revisited during scrubbing skips both the decode and the colour conversion.
-class ProjectMediaSource final : public render::FrameSource, public render::AudioSource {
+class ProjectMediaSource final : public render::FrameSource,
+                                 public render::SourceFrameProvider,
+                                 public render::AudioSource {
 public:
     static Result<std::unique_ptr<ProjectMediaSource>> open(
         const model::Project& project,
@@ -25,6 +27,9 @@ public:
     ~ProjectMediaSource() override;
 
     [[nodiscard]] Result<const render::RgbaImage*> imageFor(
+        model::MediaRefId media, const time::RationalTime& sourceTime) override;
+
+    [[nodiscard]] Result<const media::VideoFrame*> sourceFrameFor(
         model::MediaRefId media, const time::RationalTime& sourceTime) override;
 
     [[nodiscard]] Status read(model::MediaRefId media, const time::RationalTime& sourceStart,

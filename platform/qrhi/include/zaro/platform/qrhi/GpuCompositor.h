@@ -4,6 +4,7 @@
 #include <string>
 
 #include "zaro/core/Error.h"
+#include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/render/RgbaImage.h"
 
@@ -38,6 +39,17 @@ public:
     [[nodiscard]] Status draw(const render::RgbaImage& source, const model::Transform& transform,
                               model::BlendMode blend = model::BlendMode::Normal);
 
+    /// Composite a decoded frame directly, converting Y'CbCr to the working
+    /// space in the same shader pass.
+    ///
+    /// This is the path that makes the GPU worth using. The planes go up as the
+    /// decoder produced them -- about 3 MB rather than 8 MB at 1080p -- and the
+    /// colour conversion costs nothing extra, because the fragment shader is
+    /// already sampling. See docs/adr/0007.
+    [[nodiscard]] Status drawSource(const media::VideoFrame& source,
+                                    const model::Transform& transform,
+                                    model::BlendMode blend = model::BlendMode::Normal);
+
     /// Finish, and bring the result back to the CPU.
     ///
     /// The readback is here so the result can be compared and encoded. In a
@@ -45,8 +57,19 @@ public:
     /// straight to the screen.
     [[nodiscard]] Status endFrame(render::RgbaImage& out);
 
+    /// Finish without reading back — what a preview does, where the result
+    /// stays on the GPU. Exposed so the cost of the readback can be measured
+    /// separately from the cost of the work.
+    [[nodiscard]] Status endFrameOnGpu();
+
 private:
     GpuCompositor();
+
+    /// Replay the frame's recorded draws inside a single render pass.
+    void submitPass();
+
+    /// Build the compositing pipeline for a blend mode, once.
+    [[nodiscard]] Status ensureCompositePipeline(std::size_t blendIndex);
 
     struct State;
     std::unique_ptr<State> state_;

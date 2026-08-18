@@ -8,11 +8,12 @@ locked in.
 
 ## Status
 
-**Phase 3c — GPU compositor.** A project can be edited, saved, composited,
-rendered to a file, and played back in sync against a real audio device. The
-compositor now has a QRhi implementation, verified against the CPU reference —
-though not yet faster than it, for reasons the measurements make precise. Still
-headless: there is no window.
+**Phase 3d — GPU compositing.** A project can be edited, saved, composited,
+rendered to a file, and played back in sync. On a 1080p59.94 timeline the GPU
+path holds the playhead to zero frames of offset with no audio underruns,
+presenting about 47 of the 59.94 frames per second against the CPU path's 7 —
+the remaining gap is the readback, which a preview window will not do. Still
+headless: there is no window yet.
 
 | Phase | | |
 |---|---|---|
@@ -22,8 +23,8 @@ headless: there is no window.
 | 3a | Render graph, audio mixer, export | **done** |
 | 3b | Playback engine, audio clock, JKL | **done** |
 | 3c | GPU compositor on QRhi, golden-tested | **done** |
-| 3d | YUV texture path, GPU-resident frames | next |
-| 4 | Application shell, timeline UI | |
+| 3d | YUV texture path, GPU colour conversion | **done** |
+| 4 | Preview window, app shell, timeline UI | next |
 
 ## Building
 
@@ -52,7 +53,7 @@ zaro-frame <file> <index> <out.png>      extract one frame, exactly
 zaro-frame <file> --benchmark 150        decode throughput
 zaro-cut out.zaro a.mov b.mov            build a project from media
 zaro-render project.zaro out.mov         render it, headless
-zaro-play project.zaro --seconds 10       play it, and report sync
+zaro-play project.zaro --seconds 10       play it on the GPU, and report sync
 ```
 
 Two verification scripts back the claims the tests cannot make on their own:

@@ -2,7 +2,10 @@ find_package(Qt6 REQUIRED COMPONENTS Gui GuiPrivate ShaderTools)
 
 qt_standard_project_setup()
 
-add_library(zaro_platform_qrhi src/GpuCompositor.cpp)
+add_library(zaro_platform_qrhi
+    src/GpuCompositor.cpp
+    src/GpuRenderGraph.cpp
+)
 add_library(zaro::platform_qrhi ALIAS zaro_platform_qrhi)
 
 target_include_directories(zaro_platform_qrhi
@@ -30,7 +33,9 @@ qt_add_shaders(zaro_platform_qrhi "zaro_shaders"
     FILES
         shaders/composite.vert
         shaders/composite.frag
+        shaders/composite_yuv.frag
     OUTPUTS
         composite.vert.qsb
         composite.frag.qsb
+        composite_yuv.frag.qsb
 )
