@@ -1,0 +1,14 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "zaro-video",
+    "version": "0.1.0",
+    "description": "A non-linear video editor",
+    "dependencies": [
+        "catch2"
+    ],
+    "$comment": [
+        "Kept in sync from day one so Windows and Linux stay a build configuration",
+        "rather than a port. ffmpeg and qtbase join this list in Phase 1 and Phase 4;",
+        "on macOS they currently resolve through Homebrew via find_package."
+    ]
+}

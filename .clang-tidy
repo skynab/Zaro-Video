@@ -1,0 +1,37 @@
+# Kept deliberately narrow. A wall of warnings on a young codebase gets
+# suppressed wholesale; a short list gets fixed.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-identifier-naming,
+  readability-const-return-type,
+  readability-redundant-*,
+  cppcoreguidelines-narrowing-conversions,
+  cppcoreguidelines-pro-type-member-init,
+  -modernize-use-trailing-return-type,
+  -bugprone-easily-swappable-parameters
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/(core|ui-core|app|platform)/.*'
+
+CheckOptions:
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: '_'
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalConstantPrefix
+    value: 'k'
+  - key: readability-identifier-naming.MacroDefinitionPrefix
+    value: 'ZARO_'
