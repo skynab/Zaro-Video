@@ -147,19 +147,47 @@ implementation of the same SMPTE rules — and matches on all 2,589,408 labels i
 24-hour day at 29.97, plus full sweeps at 59.94 DF, 29.97 NDF, 25 and 23.976. See
 [ADR-001](adr/0001-rational-time.md).
 
-### Phase 1 — Media I/O
+### Phase 1 — Media I/O ✅ **complete**
 *Goal: get correct frames and samples out of real files, fast.*
 
-- `MediaProbe`: streams, duration, rate, colour tags, rotation/display matrix, channel layout.
-- `Decoder`: libavformat/libavcodec, VideoToolbox hwaccel with software fallback,
-  accurate seek (keyframe seek + decode-forward to exact PTS).
-- `VideoFrame` (GPU texture handle *or* CPU planes, always colour-tagged), `AudioBuffer`.
-- Background thumbnail + waveform generation, cached to disk keyed by content hash.
-- Audio: decode + `swresample` to a canonical float32 planar working format.
+- ✅ `MediaProbe`: streams, duration, rate, colour tags, rotation/display matrix, channel
+  layout, start timecode.
+- ✅ `Decoder`: libavformat/libavcodec, VideoToolbox hwaccel with software fallback,
+  frame-exact seek. Random access goes through a **conform index** — a packet scan that
+  learns every frame's exact timestamp — because containers misreport frame counts and
+  VFR footage has no arithmetic relationship between index and time.
+- ✅ `VideoFrame` (CPU planes, always colour-tagged, move-only), `AudioBuffer`
+  (planar float32).
+- ✅ Audio: decode + `swresample` to a canonical float32 planar working format.
+- ⏸️ **Deferred: thumbnail and waveform generation with a content-hashed disk cache.**
+  Nothing consumes them until the bin and timeline exist, and doing the cache properly
+  — content hashing, eviction, invalidation, background scheduling — is its own chunk of
+  work that belongs next to its consumer. Moved to the head of Phase 4.
 
 **Done when:** `zaro-frame movie.mov 1234 out.png` is frame-exact against
 `ffmpeg -vf select` for H.264, HEVC, ProRes, and a VFR phone clip; and a 4K ProRes file
 decodes above realtime through VideoToolbox.
+
+**Result:** 65 tests green across `debug`, `release` and `asan`.
+`scripts/verify-frame-exact.sh` compares raw decoded planes against FFmpeg's own decoder
+in each file's native pixel format: **46 frames byte-identical** across ProRes 10-bit,
+H.264, HEVC, VFR, 29.97 drop-frame, and a mixed A/V clip. 4K ProRes decodes at **7.5x
+realtime**.
+
+Two bugs worth recording, both found by the fixtures rather than by reading the code:
+
+1. **Seeking landed one frame late in long-GOP codecs.** MP4 and MOV index keyframes by
+   *decode* timestamp, but a stream with B-frames presents out of decode order, so the
+   keyframe indexed before a target can present *after* it — and decoding forward from
+   there never reaches the requested frame. Fixed with a doubling seek backoff.
+2. **Asking for the same frame twice returned its successor**, because already-consumed
+   frames cannot be reached by decoding forward and the position check used `<` where it
+   needed `<=`.
+
+The first was initially masked by a test whose tolerance was wider than the fixture's
+frame-to-frame difference. The ladder fixture now steps four code values per frame,
+comfortably outside lossy-codec noise, so a one-frame error cannot hide inside the
+tolerance.
 
 ### Phase 2 — Model + edit engine (headless)
 *Goal: the whole editing brain, with zero pixels.*
@@ -329,16 +357,30 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-Phase 0 is done. Phase 1 starts here:
+Phases 0 and 1 are done. Phase 2 — the project model and edit engine — starts here, and
+it is entirely headless: no pixels, no FFmpeg, just the data model and the operations
+that mutate it.
 
-1. Generate `testdata/` clips with FFmpeg: a timecode-burn-in clip, a click+flash sync
-   clip, and one VFR phone sample. These become the fixtures every later phase asserts
-   against, so they are worth building before the code that reads them.
-2. `MediaProbe` over libavformat — streams, duration, rate, colour tags, rotation matrix.
-   Wire `Rational` straight to `AVRational`; they are the same idea and must not diverge.
-3. `zaro-probe`, then `zaro-frame` with VideoToolbox decode and a software fallback,
-   validated frame-exact against `ffmpeg -vf select`.
-4. Write ADR-003 (colour pipeline and working space) once Phase 1 has shown what the
-   decoder actually hands back. Writing it before that would be speculation.
-5. Decide the frame-cache budget and eviction policy — 4K RGBA float is ~32 MB a frame,
-   and this constrains the Phase 3 design more than anything else.
+1. `Project / Sequence / Track / Clip / MediaRef` with ids stable across save and load.
+   A `Clip` references a `MediaRef` and a source `TimeRange`; it never owns media.
+2. The command stack before any edit operation is written. If undo is retrofitted, some
+   operation will always have escaped it.
+3. Edit operations one at a time, each with tests: overwrite and insert first, since
+   ripple behaviour is where the model's invariants get decided.
+4. Serialisation with a version field and unknown-field preservation, so a project saved
+   by a later build does not lose data when opened by an earlier one.
+5. The edit-engine fuzzer from §5 as soon as there are three operations to fuzz — random
+   command sequences asserting no overlapping clips, no negative durations, and exact
+   restoration on undo.
+
+Carried forward as known work:
+
+- Thumbnail and waveform generation with a content-hashed disk cache (deferred from
+  Phase 1 to the head of Phase 4).
+- Colour pipeline and working space, as ADR-004. Phase 1 established that every frame
+  leaves the decoder fully tagged; what to *convert* those tags into needs the compositor
+  to exist first.
+- The frame-cache budget and eviction policy — 4K RGBA float is ~32 MB a frame, and this
+  constrains the Phase 3 design more than anything else.
+- Revisit `DecodeMode::Auto` when the compositor can consume a GPU texture
+  ([ADR-003](adr/0003-hardware-decode-readback.md)).

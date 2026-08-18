@@ -29,6 +29,26 @@ jobs:
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
 
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config ffmpeg \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev
+
+      # Fixtures are generated rather than committed. Without them the media
+      # tests skip rather than fail, so a generator failure would hide silently
+      # -- hence the explicit check that they actually appeared.
+      - name: Generate media fixtures
+        run: |
+          ./testdata/generate.sh
+          test -f testdata/media/ladder_prores.mov
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
 
@@ -38,11 +58,15 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+      - name: Verify frame exactness against FFmpeg
+        run: ZARO_FRAME=build/${{ matrix.preset }}/bin/zaro-frame ./scripts/verify-frame-exact.sh
+
   format:
     name: clang-format
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
       # Pinned exactly: clang-format's output changes between major versions,
       # and a CI job that disagrees with everyone's editor gets ignored.
       - name: Install clang-format
@@ -50,7 +74,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          for dir in core ui-core platform app; do
+          for dir in core ui-core platform app tools; do
             [ -d "$dir" ] || continue
             find "$dir" \( -name '*.cpp' -o -name '*.h' \) -print0 \
               | xargs -0 --no-run-if-empty clang-format --dry-run --Werror

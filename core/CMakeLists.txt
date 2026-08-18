@@ -1,5 +1,10 @@
 add_library(zaro_core
     src/Check.cpp
+    src/Error.cpp
+    src/media/AudioBuffer.cpp
+    src/media/ColorInfo.cpp
+    src/media/PixelFormat.cpp
+    src/media/VideoFrame.cpp
     src/time/Rational.cpp
     src/time/RationalTime.cpp
     src/time/TimeRange.cpp
@@ -23,5 +28,9 @@ set_target_properties(zaro_core PROPERTIES
 
 # core/ deliberately links nothing from Qt or FFmpeg. Everything here must stay
 # runnable headless so the edit engine can be tested, scripted and rendered
-# without a window server. Media and GPU code belongs in platform/ behind an
-# interface, not in this target.
+# without a window server.
+#
+# core/media therefore holds only interfaces and value types -- VideoFrame,
+# AudioBuffer, MediaInfo, the decoder interfaces. The libav* implementation of
+# those interfaces lives in platform/ffmpeg and is the only place in the
+# codebase that includes an FFmpeg header.
