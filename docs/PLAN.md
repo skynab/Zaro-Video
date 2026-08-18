@@ -147,32 +147,94 @@ implementation of the same SMPTE rules — and matches on all 2,589,408 labels i
 24-hour day at 29.97, plus full sweeps at 59.94 DF, 29.97 NDF, 25 and 23.976. See
 [ADR-001](adr/0001-rational-time.md).
 
-### Phase 1 — Media I/O
+### Phase 1 — Media I/O ✅ **complete**
 *Goal: get correct frames and samples out of real files, fast.*
 
-- `MediaProbe`: streams, duration, rate, colour tags, rotation/display matrix, channel layout.
-- `Decoder`: libavformat/libavcodec, VideoToolbox hwaccel with software fallback,
-  accurate seek (keyframe seek + decode-forward to exact PTS).
-- `VideoFrame` (GPU texture handle *or* CPU planes, always colour-tagged), `AudioBuffer`.
-- Background thumbnail + waveform generation, cached to disk keyed by content hash.
-- Audio: decode + `swresample` to a canonical float32 planar working format.
+- ✅ `MediaProbe`: streams, duration, rate, colour tags, rotation/display matrix, channel
+  layout, start timecode.
+- ✅ `Decoder`: libavformat/libavcodec, VideoToolbox hwaccel with software fallback,
+  frame-exact seek. Random access goes through a **conform index** — a packet scan that
+  learns every frame's exact timestamp — because containers misreport frame counts and
+  VFR footage has no arithmetic relationship between index and time.
+- ✅ `VideoFrame` (CPU planes, always colour-tagged, move-only), `AudioBuffer`
+  (planar float32).
+- ✅ Audio: decode + `swresample` to a canonical float32 planar working format.
+- ⏸️ **Deferred: thumbnail and waveform generation with a content-hashed disk cache.**
+  Nothing consumes them until the bin and timeline exist, and doing the cache properly
+  — content hashing, eviction, invalidation, background scheduling — is its own chunk of
+  work that belongs next to its consumer. Moved to the head of Phase 4.
 
 **Done when:** `zaro-frame movie.mov 1234 out.png` is frame-exact against
 `ffmpeg -vf select` for H.264, HEVC, ProRes, and a VFR phone clip; and a 4K ProRes file
 decodes above realtime through VideoToolbox.
 
-### Phase 2 — Model + edit engine (headless)
+**Result:** 65 tests green across `debug`, `release` and `asan`.
+`scripts/verify-frame-exact.sh` compares raw decoded planes against FFmpeg's own decoder
+in each file's native pixel format: **46 frames byte-identical** across ProRes 10-bit,
+H.264, HEVC, VFR, 29.97 drop-frame, and a mixed A/V clip. 4K ProRes decodes at **7.5x
+realtime**.
+
+Two bugs worth recording, both found by the fixtures rather than by reading the code:
+
+1. **Seeking landed one frame late in long-GOP codecs.** MP4 and MOV index keyframes by
+   *decode* timestamp, but a stream with B-frames presents out of decode order, so the
+   keyframe indexed before a target can present *after* it — and decoding forward from
+   there never reaches the requested frame. Fixed with a doubling seek backoff.
+2. **Asking for the same frame twice returned its successor**, because already-consumed
+   frames cannot be reached by decoding forward and the position check used `<` where it
+   needed `<=`.
+
+The first was initially masked by a test whose tolerance was wider than the fixture's
+frame-to-frame difference. The ladder fixture now steps four code values per frame,
+comfortably outside lossy-codec noise, so a one-frame error cannot hide inside the
+tolerance.
+
+### Phase 2 — Model + edit engine (headless) ✅ **complete**
 *Goal: the whole editing brain, with zero pixels.*
 
-- `Project / Sequence / Track / Clip / MediaRef`, ids stable across save/load.
-- Command stack: do/undo/redo, merging, History descriptions.
-- Edit operations, each with tests: overwrite, insert (+ripple), razor, lift, extract,
-  ripple delete, trim head/tail, ripple trim, roll, slip, slide, three/four-point edit,
-  snapping, linked A/V selection, track targeting, sync locks.
-- Serialization: versioned JSON, forward-compatible unknown-field preservation.
+- ✅ `Project / Sequence / Track / Clip / MediaRef`, ids stable across save/load and
+  phantom-typed so a `ClipId` cannot be passed where a `TrackId` belongs.
+- ✅ Command stack: do/undo/redo, merging, bounded depth, History descriptions.
+  Undo restores a snapshot rather than computing an inverse — see
+  [ADR-004](adr/0004-snapshot-undo.md).
+- ✅ Edit operations, each with tests: overwrite, insert (+ripple, incl. all-track sync),
+  razor, lift, extract, ripple delete, trim, ripple trim, roll, slip, slide, move
+  (including across tracks), add/remove track. Snapping is a pure function over the
+  sequence, with a duration threshold rather than a pixel one, so it stays independent of
+  zoom.
+- ✅ Serialization: versioned JSON, with unknown fields preserved through a load/save
+  cycle and matched by id rather than array position.
+- ⏸️ **Deferred: three- and four-point editing, linked A/V selection, sync locks.** All
+  three are defined by interactions that do not exist yet — a source monitor with in/out
+  points, a selection model, a track-header control. Building them now would mean
+  inventing the semantics twice. They move to Phase 4 alongside the UI that gives them
+  meaning.
 
 **Done when:** a headless test constructs a 20-edit sequence, undoes every step back to
 empty, redoes to the end, saves, reloads, and asserts byte-identical model state.
+
+**Result:** 113 tests green across `debug`, `release` and `asan`. The exit-criterion test
+asserts the state after *every one* of the 20 edits, walks undo back through all 20
+recorded states to an empty timeline, redoes forward through the same states, and
+round-trips through JSON. A fuzzer throws 6,000 randomly-parameterised operations at the
+model across 40 seeds, checking after each one that no clips overlap, no duration is
+negative, no clip reads past the end of its source, and no id is duplicated — and that a
+*refused* edit left the model completely untouched.
+
+Three bugs, all found by tests rather than by reading the code:
+
+1. **A clip was invisible on its own first frame.** `Track::clipAt` used `lower_bound`,
+   which stops *at* a clip starting exactly on the query time; stepping back from there
+   lands on the previous clip. The compositor would have asked for a frame at a cut and
+   been told there was nothing there.
+2. **Ripple trim corrupted the track when shortening.** It shifted the following clips
+   before replacing the trimmed one, so the track passed through a state where two clips
+   overlapped. Whichever order is chosen, one direction breaks — so the fix was to
+   rebuild the track in a single pass and have no intermediate state at all.
+3. **Media duration was silently lost on load**, because it was written as a rational
+   string and read back as a `{frames, rate}` object. Every trim bound disappeared the
+   moment a project was reopened. Caught by asserting that re-saving a loaded project
+   produces byte-identical output — a much sharper check than comparing models.
 
 ### Phase 3 — Compositor + playback
 *Goal: the hard part. Frames on screen, audio in sync, scrubbing that feels alive.*
@@ -329,16 +391,31 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-Phase 0 is done. Phase 1 starts here:
+Phases 0, 1 and 2 are done: exact time, media that decodes frame-exactly, and a model
+that can be edited and saved. Phase 3 joins them, and it is the part with the schedule
+risk.
 
-1. Generate `testdata/` clips with FFmpeg: a timecode-burn-in clip, a click+flash sync
-   clip, and one VFR phone sample. These become the fixtures every later phase asserts
-   against, so they are worth building before the code that reads them.
-2. `MediaProbe` over libavformat — streams, duration, rate, colour tags, rotation matrix.
-   Wire `Rational` straight to `AVRational`; they are the same idea and must not diverge.
-3. `zaro-probe`, then `zaro-frame` with VideoToolbox decode and a software fallback,
-   validated frame-exact against `ffmpeg -vf select`.
-4. Write ADR-003 (colour pipeline and working space) once Phase 1 has shown what the
-   decoder actually hands back. Writing it before that would be speculation.
-5. Decide the frame-cache budget and eviction policy — 4K RGBA float is ~32 MB a frame,
-   and this constrains the Phase 3 design more than anything else.
+1. **Decide the colour working space first**, as ADR-005. Every node in the render graph
+   depends on it, and §4 already flags it as cheap now and brutal to retrofit. Phase 1
+   established that frames leave the decoder fully tagged; this decides what to convert
+   those tags *into*.
+2. **The frame cache, with a hard budget and an eviction policy.** 4K RGBA float is
+   ~32 MB a frame. This constrains the whole design and should be settled before the
+   graph is written around it, not after.
+3. `RenderGraph::composite(t)` over `Track::clipAt` — which already answers "what is
+   playing here" in a binary search, and is the reason the model stores clips sparsely.
+   Pure and deterministic, so playback, export and the render cache are one code path.
+4. The transform node: position, scale, rotation, anchor, opacity, plus track blending.
+   Over-invest here; it is the foundation of every motion feature in §7.4.
+5. The playback clock and the sync harness together. The harness is not a follow-up to
+   the playback engine, it is how the playback engine gets built — `sync_click_flash.mov`
+   exists for exactly this and has been sitting in `testdata/` since Phase 1.
+
+Carried forward as known work:
+
+- Thumbnail and waveform generation with a content-hashed disk cache (Phase 1 → head of
+  Phase 4).
+- Three/four-point editing, linked A/V selection, sync locks (Phase 2 → Phase 4, with the
+  UI that defines them).
+- Revisit `DecodeMode::Auto` once the compositor can consume a GPU texture directly
+  ([ADR-003](adr/0003-hardware-decode-readback.md)). This is the phase that triggers it.

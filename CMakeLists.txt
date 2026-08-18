@@ -23,11 +23,14 @@ option(ZARO_SANITIZE          "Enable ASan+UBSan (Debug only)"  OFF)
 include(CompilerWarnings)
 
 add_subdirectory(core)
+add_subdirectory(platform)
+add_subdirectory(tools)
 
 if(ZARO_BUILD_TESTS)
     include(CTest)
     enable_testing()
     add_subdirectory(core/tests)
+    add_subdirectory(platform/tests)
 endif()
 
 message(STATUS "")

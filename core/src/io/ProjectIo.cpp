@@ -1,0 +1,432 @@
+#include "zaro/core/io/ProjectIo.h"
+
+#include <fstream>
+#include <sstream>
+
+#include <nlohmann/json.hpp>
+
+#include "zaro/core/time/Timecode.h"
+
+namespace zaro::io {
+
+using json = nlohmann::json;
+
+/// Just the original document. Everything the writer does not re-emit gets
+/// merged back from here.
+class UnknownFields {
+public:
+    explicit UnknownFields(json document) : document_{std::move(document)} {}
+    [[nodiscard]] const json& document() const noexcept { return document_; }
+
+private:
+    json document_;
+};
+
+namespace {
+
+// --- Time encoding ----------------------------------------------------------
+// Rationals are written as "30000/1001" rather than a decimal, because the
+// whole point of the type is that 29.97 is not a decimal. A project file that
+// says 29.97 has already lost the information.
+
+json encode(const time::Rational& value) {
+    return value.toString();
+}
+
+Result<time::Rational> decodeRational(const json& node, const char* what) {
+    if (!node.is_string()) {
+        return Error{ErrorCode::InvalidData,
+                     std::string{what} + " should be a string like \"30000/1001\""};
+    }
+    const auto parsed = time::Rational::parse(node.get<std::string>());
+    if (!parsed) {
+        return Error{ErrorCode::InvalidData, std::string{what} + ": cannot read \"" +
+                                                 node.get<std::string>() + "\" as a rate"};
+    }
+    return *parsed;
+}
+
+json encode(const time::RationalTime& value) {
+    return json{{"frames", value.frames()}, {"rate", encode(value.rate())}};
+}
+
+Result<time::RationalTime> decodeTime(const json& node, const char* what) {
+    if (!node.is_object() || !node.contains("frames") || !node.contains("rate")) {
+        return Error{ErrorCode::InvalidData, std::string{what} + " needs \"frames\" and \"rate\""};
+    }
+    auto rate = decodeRational(node.at("rate"), what);
+    if (!rate) {
+        return rate.error();
+    }
+    return time::RationalTime{node.at("frames").get<std::int64_t>(), *rate};
+}
+
+json encode(const time::TimeRange& value) {
+    return json{{"start", encode(value.start())}, {"duration", encode(value.duration())}};
+}
+
+Result<time::TimeRange> decodeRange(const json& node, const char* what) {
+    if (!node.is_object()) {
+        return Error{ErrorCode::InvalidData, std::string{what} + " should be an object"};
+    }
+    auto start = decodeTime(node.at("start"), what);
+    if (!start) {
+        return start.error();
+    }
+    auto duration = decodeTime(node.at("duration"), what);
+    if (!duration) {
+        return duration.error();
+    }
+    if (duration->frames() < 0) {
+        return Error{ErrorCode::InvalidData, std::string{what} + " has a negative duration"};
+    }
+    return time::TimeRange{*start, *duration};
+}
+
+// --- Model encoding ---------------------------------------------------------
+
+json encode(const model::Clip& clip) {
+    return json{{"id", clip.id.value()},
+                {"source", clip.source.value()},
+                {"name", clip.name},
+                {"enabled", clip.enabled},
+                {"sourceRange", encode(clip.sourceRange)},
+                {"timelineRange", encode(clip.timelineRange)}};
+}
+
+json encode(const model::Track& track) {
+    json clips = json::array();
+    for (const model::Clip& clip : track.clips()) {
+        clips.push_back(encode(clip));
+    }
+    return json{{"id", track.id().value()},   {"kind", model::toString(track.kind())},
+                {"name", track.name()},       {"muted", track.isMuted()},
+                {"locked", track.isLocked()}, {"clips", std::move(clips)}};
+}
+
+json encode(const model::Sequence& sequence) {
+    json videoTracks = json::array();
+    for (const model::Track& track : sequence.videoTracks()) {
+        videoTracks.push_back(encode(track));
+    }
+    json audioTracks = json::array();
+    for (const model::Track& track : sequence.audioTracks()) {
+        audioTracks.push_back(encode(track));
+    }
+    return json{{"id", sequence.id().value()},
+                {"name", sequence.name()},
+                {"frameRate", encode(sequence.frameRate())},
+                {"audioSampleRate", encode(sequence.audioSampleRate())},
+                {"width", sequence.width()},
+                {"height", sequence.height()},
+                {"startTime", encode(sequence.startTime())},
+                {"videoTracks", std::move(videoTracks)},
+                {"audioTracks", std::move(audioTracks)}};
+}
+
+json encode(const model::MediaRef& ref) {
+    // MediaInfo is a probe cache, not project data, so only the parts the model
+    // actually reasons about are written: duration bounds trims, and the size
+    // and rate let a bin show something before any file has been reopened.
+    json cached{{"duration", encode(ref.info.duration)}};
+    if (const media::VideoStreamInfo* video = ref.info.primaryVideo()) {
+        cached["width"] = video->width;
+        cached["height"] = video->height;
+        cached["frameRate"] = encode(video->frameRate);
+    }
+    return json{{"id", ref.id.value()},
+                {"path", ref.path},
+                {"contentHash", ref.contentHash},
+                {"name", ref.name},
+                {"cachedInfo", std::move(cached)}};
+}
+
+// --- Decoding ---------------------------------------------------------------
+
+Result<model::Clip> decodeClip(const json& node) {
+    model::Clip clip;
+    clip.id = model::ClipId{node.value("id", std::uint64_t{0})};
+    clip.source = model::MediaRefId{node.value("source", std::uint64_t{0})};
+    clip.name = node.value("name", std::string{});
+    clip.enabled = node.value("enabled", true);
+
+    if (!clip.id.isValid()) {
+        return Error{ErrorCode::InvalidData, "a clip has no id"};
+    }
+    auto sourceRange = decodeRange(node.at("sourceRange"), "clip sourceRange");
+    if (!sourceRange) {
+        return sourceRange.error();
+    }
+    auto timelineRange = decodeRange(node.at("timelineRange"), "clip timelineRange");
+    if (!timelineRange) {
+        return timelineRange.error();
+    }
+    clip.sourceRange = *sourceRange;
+    clip.timelineRange = *timelineRange;
+    return clip;
+}
+
+Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
+    const auto id = model::TrackId{node.value("id", std::uint64_t{0})};
+    if (!id.isValid()) {
+        return Error{ErrorCode::InvalidData, "a track has no id"};
+    }
+    model::Track track{id, kind, node.value("name", std::string{})};
+    track.setMuted(node.value("muted", false));
+    track.setLocked(node.value("locked", false));
+
+    std::vector<model::Clip> clips;
+    for (const json& clipNode : node.value("clips", json::array())) {
+        auto clip = decodeClip(clipNode);
+        if (!clip) {
+            return clip.error();
+        }
+        clips.push_back(std::move(*clip));
+    }
+    // setClips enforces the sorted, non-overlapping invariant, so a corrupt or
+    // hand-edited file is caught here rather than halfway through an edit.
+    track.setClips(std::move(clips));
+    return track;
+}
+
+Result<model::Sequence> decodeSequence(const json& node) {
+    const auto id = model::SequenceId{node.value("id", std::uint64_t{0})};
+    if (!id.isValid()) {
+        return Error{ErrorCode::InvalidData, "a sequence has no id"};
+    }
+    auto frameRate = decodeRational(node.at("frameRate"), "sequence frameRate");
+    if (!frameRate) {
+        return frameRate.error();
+    }
+    model::Sequence sequence{id, node.value("name", std::string{}), *frameRate};
+
+    if (node.contains("audioSampleRate")) {
+        auto rate = decodeRational(node.at("audioSampleRate"), "sequence audioSampleRate");
+        if (!rate) {
+            return rate.error();
+        }
+        sequence.setAudioSampleRate(*rate);
+    }
+    sequence.setSize(node.value("width", 1920), node.value("height", 1080));
+    if (node.contains("startTime")) {
+        auto start = decodeTime(node.at("startTime"), "sequence startTime");
+        if (!start) {
+            return start.error();
+        }
+        sequence.setStartTime(*start);
+    }
+
+    const auto loadTracks = [&](const char* key, model::TrackKind kind) -> Status {
+        for (const json& trackNode : node.value(key, json::array())) {
+            auto track = decodeTrack(trackNode, kind);
+            if (!track) {
+                return track.error();
+            }
+            sequence.tracksMutable(kind).push_back(std::move(*track));
+        }
+        return {};
+    };
+    if (Status status = loadTracks("videoTracks", model::TrackKind::Video); !status) {
+        return status.error();
+    }
+    if (Status status = loadTracks("audioTracks", model::TrackKind::Audio); !status) {
+        return status.error();
+    }
+    return sequence;
+}
+
+Result<model::MediaRef> decodeMedia(const json& node) {
+    model::MediaRef ref;
+    ref.id = model::MediaRefId{node.value("id", std::uint64_t{0})};
+    if (!ref.id.isValid()) {
+        return Error{ErrorCode::InvalidData, "a media reference has no id"};
+    }
+    ref.path = node.value("path", std::string{});
+    ref.contentHash = node.value("contentHash", std::string{});
+    ref.name = node.value("name", std::string{});
+
+    if (node.contains("cachedInfo")) {
+        const json& cached = node.at("cachedInfo");
+        ref.info.path = ref.path;
+        if (cached.contains("duration")) {
+            // Written by encode(Rational) as "400/1", so it has to be read back
+            // the same way. Reading it as a {frames, rate} object silently
+            // failed, and a media duration of zero means every trim bound
+            // disappears the moment a project is reopened.
+            auto duration = decodeRational(cached.at("duration"), "media duration");
+            if (!duration) {
+                return duration.error();
+            }
+            ref.info.duration = *duration;
+        }
+        if (cached.contains("width") && cached.contains("frameRate")) {
+            media::VideoStreamInfo video;
+            video.width = cached.value("width", 0);
+            video.height = cached.value("height", 0);
+            if (auto rate = decodeRational(cached.at("frameRate"), "media frameRate")) {
+                video.frameRate = *rate;
+                video.averageFrameRate = *rate;
+            }
+            video.duration = ref.info.duration;
+            ref.info.videoStreams.push_back(std::move(video));
+        }
+    }
+    return ref;
+}
+
+// --- Unknown-field preservation ---------------------------------------------
+
+/// Copy anything in `original` that `out` does not have.
+///
+/// Arrays of objects are matched by "id" rather than by position, because a
+/// clip that moved from index 3 to index 5 is still the same clip and should
+/// keep whatever the newer build attached to it.
+void mergePreserved(json& out, const json& original) {
+    if (out.is_object() && original.is_object()) {
+        for (const auto& [key, value] : original.items()) {
+            if (!out.contains(key)) {
+                out[key] = value;
+            } else {
+                mergePreserved(out[key], value);
+            }
+        }
+        return;
+    }
+    if (out.is_array() && original.is_array()) {
+        for (json& element : out) {
+            if (!element.is_object() || !element.contains("id")) {
+                continue;
+            }
+            const auto& id = element.at("id");
+            for (const json& originalElement : original) {
+                if (originalElement.is_object() && originalElement.contains("id") &&
+                    originalElement.at("id") == id) {
+                    mergePreserved(element, originalElement);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+std::uint64_t highestId(const model::Project& project) {
+    std::uint64_t highest = 0;
+    const auto bump = [&highest](std::uint64_t value) { highest = std::max(highest, value); };
+    for (const model::MediaRef& ref : project.media()) {
+        bump(ref.id.value());
+    }
+    for (const model::Sequence& sequence : project.sequences()) {
+        bump(sequence.id().value());
+        for (const auto* list : {&sequence.videoTracks(), &sequence.audioTracks()}) {
+            for (const model::Track& track : *list) {
+                bump(track.id().value());
+                for (const model::Clip& clip : track.clips()) {
+                    bump(clip.id.value());
+                }
+            }
+        }
+    }
+    return highest;
+}
+
+}  // namespace
+
+Result<std::string> saveProjectToString(const model::Project& project,
+                                        const std::shared_ptr<const UnknownFields>& unknown) {
+    json media = json::array();
+    for (const model::MediaRef& ref : project.media()) {
+        media.push_back(encode(ref));
+    }
+    json sequences = json::array();
+    for (const model::Sequence& sequence : project.sequences()) {
+        sequences.push_back(encode(sequence));
+    }
+
+    json document{{"zaro", {{"schemaVersion", kProjectSchemaVersion}}},
+                  {"activeSequence", project.activeSequence().value()},
+                  {"media", std::move(media)},
+                  {"sequences", std::move(sequences)}};
+
+    if (unknown != nullptr) {
+        mergePreserved(document, unknown->document());
+    }
+    return document.dump(2) + "\n";
+}
+
+Status saveProject(const model::Project& project, const std::string& path,
+                   const std::shared_ptr<const UnknownFields>& unknown) {
+    auto text = saveProjectToString(project, unknown);
+    if (!text) {
+        return text.error();
+    }
+    std::ofstream file{path, std::ios::binary | std::ios::trunc};
+    if (!file) {
+        return Error{ErrorCode::Io, "cannot open " + path + " for writing"};
+    }
+    file << *text;
+    if (!file) {
+        return Error{ErrorCode::Io, "failed while writing " + path};
+    }
+    return {};
+}
+
+Result<LoadedProject> loadProjectFromString(const std::string& text) {
+    json document = json::parse(text, nullptr, false);
+    if (document.is_discarded()) {
+        return Error{ErrorCode::InvalidData, "this is not valid JSON"};
+    }
+    if (!document.is_object() || !document.contains("zaro")) {
+        return Error{ErrorCode::InvalidData, "this is not a Zaro project file"};
+    }
+
+    const int version = document.at("zaro").value("schemaVersion", 0);
+    if (version > kProjectSchemaVersion) {
+        // Load anyway. Unknown fields are preserved, so the worst case is that
+        // parts of the project are invisible in this build rather than lost.
+        // Refusing outright would be safer only if saving destroyed them.
+    }
+    if (version < 1) {
+        return Error{ErrorCode::InvalidData, "this project file has no usable schema version"};
+    }
+
+    LoadedProject loaded;
+    std::vector<model::MediaRef> media;
+    for (const json& node : document.value("media", json::array())) {
+        auto ref = decodeMedia(node);
+        if (!ref) {
+            return ref.error();
+        }
+        media.push_back(std::move(*ref));
+    }
+    std::vector<model::Sequence> sequences;
+    for (const json& node : document.value("sequences", json::array())) {
+        auto sequence = decodeSequence(node);
+        if (!sequence) {
+            return sequence.error();
+        }
+        sequences.push_back(std::move(*sequence));
+    }
+
+    loaded.project.setMedia(std::move(media));
+    loaded.project.setSequences(std::move(sequences));
+    loaded.project.setActiveSequence(
+        model::SequenceId{document.value("activeSequence", std::uint64_t{0})});
+
+    // Restart the id counter past everything in the file, so ids issued from
+    // here on cannot collide with something already pointed at.
+    loaded.project.ids().observe(highestId(loaded.project));
+    loaded.unknown = std::make_shared<const UnknownFields>(std::move(document));
+    return loaded;
+}
+
+Result<LoadedProject> loadProject(const std::string& path) {
+    std::ifstream file{path, std::ios::binary};
+    if (!file) {
+        return Error{ErrorCode::NotFound, "cannot open " + path};
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return loadProjectFromString(buffer.str());
+}
+
+}  // namespace zaro::io
