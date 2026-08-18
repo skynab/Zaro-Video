@@ -1,0 +1,38 @@
+#pragma once
+
+#include "zaro/core/model/Sequence.h"
+#include "zaro/core/render/Compositing.h"
+#include "zaro/core/render/FrameSource.h"
+
+namespace zaro::render {
+
+/// Resolves a sequence to a picture at an instant.
+///
+/// `composite` is pure: the same sequence and the same time always produce the
+/// same frame. That is what lets playback be "call this on a clock", export be
+/// "call this as fast as possible", and the render cache be memoisation --
+/// one code path serving three purposes rather than three that have to be kept
+/// agreeing with each other.
+class RenderGraph {
+public:
+    explicit RenderGraph(FrameSource& source) : source_{&source} {}
+
+    /// Render into an existing buffer, reallocating only if the size changed.
+    /// The per-frame path in a render loop, where allocating 8 MB a frame would
+    /// be the dominant cost.
+    [[nodiscard]] Status compositeInto(const model::Sequence& sequence,
+                                       const time::RationalTime& at, RgbaImage& out);
+
+    [[nodiscard]] Result<RgbaImage> composite(const model::Sequence& sequence,
+                                              const time::RationalTime& at);
+
+    /// How many clips contributed to the last composite. Diagnostics, and the
+    /// basis of a "this frame is expensive" indicator later.
+    [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
+
+private:
+    FrameSource* source_;
+    std::int32_t lastClipCount_{0};
+};
+
+}  // namespace zaro::render

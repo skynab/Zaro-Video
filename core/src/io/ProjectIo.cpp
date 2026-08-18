@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/time/Timecode.h"
 
 namespace zaro::io {
@@ -85,13 +86,66 @@ Result<time::TimeRange> decodeRange(const json& node, const char* what) {
 
 // --- Model encoding ---------------------------------------------------------
 
+json encode(const model::Transform& transform) {
+    // Only what differs from the default is written. A timeline of a thousand
+    // untouched clips should not carry a thousand identity matrices, and
+    // omitting defaults means adding a parameter later does not rewrite every
+    // existing file.
+    const model::Transform identity;
+    json out = json::object();
+    const auto put = [&out](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            out[key] = value;
+        }
+    };
+    put("positionX", transform.positionX, identity.positionX);
+    put("positionY", transform.positionY, identity.positionY);
+    put("scaleX", transform.scaleX, identity.scaleX);
+    put("scaleY", transform.scaleY, identity.scaleY);
+    put("rotationDegrees", transform.rotationDegrees, identity.rotationDegrees);
+    put("anchorX", transform.anchorX, identity.anchorX);
+    put("anchorY", transform.anchorY, identity.anchorY);
+    put("opacity", transform.opacity, identity.opacity);
+    return out;
+}
+
+model::Transform decodeTransform(const json& node) {
+    model::Transform out;
+    if (!node.is_object()) {
+        return out;
+    }
+    out.positionX = node.value("positionX", out.positionX);
+    out.positionY = node.value("positionY", out.positionY);
+    out.scaleX = node.value("scaleX", out.scaleX);
+    out.scaleY = node.value("scaleY", out.scaleY);
+    out.rotationDegrees = node.value("rotationDegrees", out.rotationDegrees);
+    out.anchorX = node.value("anchorX", out.anchorX);
+    out.anchorY = node.value("anchorY", out.anchorY);
+    out.opacity = node.value("opacity", out.opacity);
+    return out;
+}
+
 json encode(const model::Clip& clip) {
-    return json{{"id", clip.id.value()},
-                {"source", clip.source.value()},
-                {"name", clip.name},
-                {"enabled", clip.enabled},
-                {"sourceRange", encode(clip.sourceRange)},
-                {"timelineRange", encode(clip.timelineRange)}};
+    json out{{"id", clip.id.value()},
+             {"source", clip.source.value()},
+             {"name", clip.name},
+             {"enabled", clip.enabled},
+             {"sourceRange", encode(clip.sourceRange)},
+             {"timelineRange", encode(clip.timelineRange)}};
+
+    if (json transform = encode(clip.transform); !transform.empty()) {
+        out["transform"] = std::move(transform);
+    }
+    if (clip.blend != model::BlendMode::Normal) {
+        out["blend"] = model::toString(clip.blend);
+    }
+    if (clip.gainDb != 0.0) {
+        out["gainDb"] = clip.gainDb;
+    }
+    if (clip.pan != 0.0) {
+        out["pan"] = clip.pan;
+    }
+    return out;
 }
 
 json encode(const model::Track& track) {
@@ -163,6 +217,15 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     clip.sourceRange = *sourceRange;
     clip.timelineRange = *timelineRange;
+
+    if (node.contains("transform")) {
+        clip.transform = decodeTransform(node.at("transform"));
+    }
+    if (node.contains("blend")) {
+        clip.blend = model::blendModeFromString(node.at("blend").get<std::string>().c_str());
+    }
+    clip.gainDb = node.value("gainDb", 0.0);
+    clip.pan = node.value("pan", 0.0);
     return clip;
 }
 
@@ -174,6 +237,8 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     model::Track track{id, kind, node.value("name", std::string{})};
     track.setMuted(node.value("muted", false));
     track.setLocked(node.value("locked", false));
+    track.setGainDb(node.value("gainDb", 0.0));
+    track.setPan(node.value("pan", 0.0));
 
     std::vector<model::Clip> clips;
     for (const json& clipNode : node.value("clips", json::array())) {

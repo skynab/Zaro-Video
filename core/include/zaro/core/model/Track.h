@@ -40,6 +40,12 @@ public:
     [[nodiscard]] bool isLocked() const noexcept { return locked_; }
     void setLocked(bool value) noexcept { locked_ = value; }
 
+    /// Track gain in decibels and pan from -1 to +1, applied after clip gain.
+    [[nodiscard]] double gainDb() const noexcept { return gainDb_; }
+    void setGainDb(double value) noexcept { gainDb_ = value; }
+    [[nodiscard]] double pan() const noexcept { return pan_; }
+    void setPan(double value) noexcept { pan_ = value; }
+
     [[nodiscard]] const std::vector<Clip>& clips() const noexcept { return clips_; }
     [[nodiscard]] bool isEmpty() const noexcept { return clips_.empty(); }
 
@@ -97,6 +103,8 @@ private:
     std::vector<Clip> clips_;
     bool muted_{false};
     bool locked_{false};
+    double gainDb_{0.0};
+    double pan_{0.0};
 };
 
 }  // namespace zaro::model

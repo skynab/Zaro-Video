@@ -8,17 +8,18 @@ locked in.
 
 ## Status
 
-**Phase 2 — model and edit engine.** Media decodes frame-exactly, and a project
-of sequences, tracks and clips can be edited, undone, saved and reloaded. All of
-it is headless: there is no compositor and no window yet.
+**Phase 3a — compositor and export.** A project of sequences, tracks and clips
+can be edited, saved, composited and rendered to a file, in sync. All of it is
+headless: there is no realtime playback and no window yet.
 
 | Phase | | |
 |---|---|---|
 | 0 | Foundations, exact time arithmetic | **done** |
 | 1 | Media I/O: probe, decode, hwaccel, seek | **done** |
 | 2 | Project model and edit engine, headless | **done** |
-| 3 | GPU compositor and realtime playback | next |
-| 4 | Application shell, timeline UI, export | |
+| 3a | Render graph, audio mixer, export | **done** |
+| 3b | Realtime playback, GPU compositor | next |
+| 4 | Application shell, timeline UI | |
 
 ## Building
 
@@ -45,10 +46,17 @@ Without them the media tests skip rather than fail.
 zaro-probe <file>                        what we believe about a file
 zaro-frame <file> <index> <out.png>      extract one frame, exactly
 zaro-frame <file> --benchmark 150        decode throughput
+zaro-cut out.zaro a.mov b.mov            build a project from media
+zaro-render project.zaro out.mov         render it, headless
 ```
 
-`scripts/verify-frame-exact.sh` compares `zaro-frame`'s raw output against
-FFmpeg's own decoder, byte for byte, in each file's native pixel format.
+Two verification scripts back the claims the tests cannot make on their own:
+
+- `scripts/verify-frame-exact.sh` compares `zaro-frame`'s raw output against
+  FFmpeg's own decoder, byte for byte, in each file's native pixel format.
+- `scripts/verify-av-sync.sh` renders the flash-and-click fixture, then pulls
+  picture and sound back out of the *output file* independently and reports the
+  offset between them in samples.
 
 ## Layout
 
@@ -58,10 +66,11 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   media/    frame and buffer types, decoder interfaces
   model/    Project, Sequence, Track, Clip, MediaRef
   edit/     commands, undo stack, edit operations, snapping
+  render/   colour pipeline, compositor, render graph, mixer, cache
   io/       versioned JSON project files
 platform/
   ffmpeg/   the only place libav* headers are included
-tools/      zaro-probe, zaro-frame
+tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render
 testdata/   fixture generator
 cmake/      warning policy, find modules
 docs/       plan and architecture decision records

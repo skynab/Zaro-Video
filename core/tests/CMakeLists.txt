@@ -28,6 +28,11 @@ add_executable(zaro_core_tests
     edit/test_snapping.cpp
     edit/test_fuzz.cpp
     io/test_project_io.cpp
+    render/test_color_pipeline.cpp
+    render/test_frame_cache.cpp
+    render/test_compositing.cpp
+    render/test_render_graph.cpp
+    render/test_audio_graph.cpp
 )
 
 target_link_libraries(zaro_core_tests
@@ -38,7 +43,9 @@ target_link_libraries(zaro_core_tests
 )
 
 # ModelFixtures.h lives alongside the tests rather than in the library.
-target_include_directories(zaro_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(zaro_core_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/render)
 
 # Somewhere for the serialization tests to write a file.
 target_compile_definitions(zaro_core_tests PRIVATE

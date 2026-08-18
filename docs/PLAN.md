@@ -239,19 +239,55 @@ Three bugs, all found by tests rather than by reading the code:
 ### Phase 3 — Compositor + playback
 *Goal: the hard part. Frames on screen, audio in sync, scrubbing that feels alive.*
 
-- QRhi device, offscreen render target, texture pool.
-- Clip transform node: position / scale / rotation / anchor point / opacity, plus track
-  blending top-down. This one node is also the foundation of all motion later.
-- `RenderGraph::composite(t)` — resolve active clips per track, pull frames, blend.
-- Audio graph: per-clip gain → per-track gain/pan → master, sample-accurate mixing.
+Split in two, because the deterministic half is verifiable headlessly and the realtime
+half is not. `composite(t)` being pure is what makes the split clean: export is that
+function called as fast as possible, playback is the same function on a clock.
+
+#### Phase 3a — the render graph and export ✅ **complete**
+
+- ✅ Colour working space decided and implemented: scene-linear, Rec.709 primaries,
+  float RGBA, premultiplied alpha ([ADR-005](adr/0005-working-colour-space.md)).
+- ✅ Clip transform node: position / scale / rotation / anchor / opacity, blend modes,
+  and track blending bottom-up. Inverse-mapped and bilinear-sampled, so the shader port
+  produces the same picture.
+- ✅ `RenderGraph::composite(t)` — pure and deterministic given a `FrameSource`.
+- ✅ Audio graph: per-clip gain and pan → per-track gain and pan → mix, sample-accurate.
+- ✅ Frame cache: strict LRU with a budget **in bytes**, because a working-space frame is
+  8 MB at 1080p and 33 MB at 4K — a cache sized in entries is one that works until
+  someone opens UHD footage.
+- ✅ `zaro-render`: headless project → mov/mp4, and `zaro-cut` to build a project from
+  media so the path can be exercised without a UI.
+- ⏸️ **Not done: the QRhi shader path.** The CPU implementation here is deliberately
+  first, because it is the oracle a GPU renderer's golden-frame tests compare against.
+  A GPU renderer with no independent reference is one nobody can prove anything about.
+
+#### Phase 3b — realtime playback (next)
+
 - **Playback engine:** audio clock as master, video frame queue with PTS, present on
   vsync, drop-frame policy under load, preroll on seek, JKL shuttle, scrub with
   frame-request coalescing.
-- `zaro-render`: headless project → mp4/mov via libavcodec + VideoToolbox, with a real
-  A/V muxing path (correct timestamps, no drift over 30 minutes).
+- QRhi device, offscreen render target, texture pool; the transform node as a shader.
 
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
+
+**Result so far:** 164 tests green across `debug`, `release` and `asan`. The export half
+of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
+the flash-and-click fixture, then extracts picture and sound from the *output file*
+independently and compares them — **0 samples of drift over 250 frames, with all 10
+flash/click pairs aligned to within 1 sample (0.02 ms)**.
+
+Audio is addressed by an exact rational relationship to the frame number rather than by
+adding a per-frame duration to a running total. At 29.97 there are 1601.6 samples per
+frame; accumulating that as a rounded integer drifts by a sample every few frames and by
+a visible lip-sync error over an hour.
+
+One bug worth recording, found by that harness and invisible to every other check:
+**every export was one frame short.** `prores_ks` does not set packet durations, so the
+muxer inferred each packet's duration from the gap to the next — and the final packet has
+no next. It landed in the file with a duration of zero: present in the sample index, so
+the container reported the right frame count, but outside the stream's declared duration
+and undecodable. The file looked complete and decoded one frame short.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*
@@ -391,25 +427,21 @@ sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **O
 
 ## 8. Immediate next steps
 
-Phases 0, 1 and 2 are done: exact time, media that decodes frame-exactly, and a model
-that can be edited and saved. Phase 3 joins them, and it is the part with the schedule
-risk.
+Phase 3a is done: a project renders to a file, deterministically and in sync. Phase 3b is
+the realtime half, and it is where the schedule risk in §4 actually lives.
 
-1. **Decide the colour working space first**, as ADR-005. Every node in the render graph
-   depends on it, and §4 already flags it as cheap now and brutal to retrofit. Phase 1
-   established that frames leave the decoder fully tagged; this decides what to convert
-   those tags *into*.
-2. **The frame cache, with a hard budget and an eviction policy.** 4K RGBA float is
-   ~32 MB a frame. This constrains the whole design and should be settled before the
-   graph is written around it, not after.
-3. `RenderGraph::composite(t)` over `Track::clipAt` — which already answers "what is
-   playing here" in a binary search, and is the reason the model stores clips sparsely.
-   Pure and deterministic, so playback, export and the render cache are one code path.
-4. The transform node: position, scale, rotation, anchor, opacity, plus track blending.
-   Over-invest here; it is the foundation of every motion feature in §7.4.
-5. The playback clock and the sync harness together. The harness is not a follow-up to
-   the playback engine, it is how the playback engine gets built — `sync_click_flash.mov`
-   exists for exactly this and has been sitting in `testdata/` since Phase 1.
+1. **The playback clock, against the sync harness that already exists.** The harness was
+   built for export but measures the property playback needs; wire it to the playback
+   path before writing the threading, not after it feels wrong.
+2. **Decoder threads with bounded frame queues**, and a drop policy that is decided and
+   written down rather than emergent. Dropping is not a failure mode, it is a feature —
+   what matters is that it drops picture and never audio.
+3. **Audio output device** via Qt Multimedia or SDL2, both already available here. The
+   audio clock is the master; video is presented against it.
+4. **QRhi backend for the transform node**, with golden-frame tests comparing it against
+   the CPU reference from 3a. This is also the point that triggers the `DecodeMode::Auto`
+   revisit in [ADR-003](adr/0003-hardware-decode-readback.md), because the readback that
+   made hardware decode slower disappears once the compositor takes a texture.
 
 Carried forward as known work:
 
@@ -417,5 +449,7 @@ Carried forward as known work:
   Phase 4).
 - Three/four-point editing, linked A/V selection, sync locks (Phase 2 → Phase 4, with the
   UI that defines them).
-- Revisit `DecodeMode::Auto` once the compositor can consume a GPU texture directly
-  ([ADR-003](adr/0003-hardware-decode-readback.md)). This is the phase that triggers it.
+- HDR: PQ and HLG are recognised and rejected with a clear error rather than mistreated
+  as Rec.709. Tone mapping is §7.3 work.
+- A display-referred working space option, for editors who expect gamma-space dissolves
+  to match legacy tools ([ADR-005](adr/0005-working-colour-space.md)).

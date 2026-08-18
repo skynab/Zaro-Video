@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/time/TimeRange.h"
 
@@ -30,6 +31,17 @@ struct Clip {
 
     std::string name;
     bool enabled{true};
+
+    /// How the compositor places this clip. Ignored for audio clips.
+    Transform transform;
+    BlendMode blend{BlendMode::Normal};
+
+    /// Clip gain in decibels, and pan from -1 (left) to +1 (right). Ignored for
+    /// video clips. Decibels rather than a linear factor because that is the
+    /// unit the value is edited and displayed in, and converting at the edges
+    /// keeps rounding out of the stored value.
+    double gainDb{0.0};
+    double pan{0.0};
 
     [[nodiscard]] const time::RationalTime& start() const { return timelineRange.start(); }
     [[nodiscard]] time::RationalTime endExclusive() const { return timelineRange.endExclusive(); }

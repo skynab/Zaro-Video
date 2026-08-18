@@ -17,7 +17,14 @@ add_library(zaro_core
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
     src/io/ProjectIo.cpp
+    src/render/AudioGraph.cpp
+    src/render/ColorPipeline.cpp
+    src/render/FrameCache.cpp
+    src/render/Compositing.cpp
+    src/render/RenderGraph.cpp
+    src/render/RgbaImage.cpp
     src/model/Clip.cpp
+    src/model/ClipEffects.cpp
     src/model/Project.cpp
     src/model/Sequence.cpp
     src/model/Track.cpp

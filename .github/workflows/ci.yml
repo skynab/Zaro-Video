@@ -61,6 +61,12 @@ jobs:
       - name: Verify frame exactness against FFmpeg
         run: ZARO_FRAME=build/${{ matrix.preset }}/bin/zaro-frame ./scripts/verify-frame-exact.sh
 
+      - name: Verify audio/video sync in a rendered file
+        run: |
+          ZARO_CUT=build/${{ matrix.preset }}/bin/zaro-cut \
+          ZARO_RENDER=build/${{ matrix.preset }}/bin/zaro-render \
+          ./scripts/verify-av-sync.sh
+
   format:
     name: clang-format
     runs-on: ubuntu-24.04

@@ -6,6 +6,8 @@ add_library(zaro_platform_ffmpeg
     ffmpeg/src/VideoDecoder.cpp
     ffmpeg/src/AudioDecoder.cpp
     ffmpeg/src/ImageIo.cpp
+    ffmpeg/src/ProjectMediaSource.cpp
+    ffmpeg/src/Encoder.cpp
 )
 add_library(zaro::platform_ffmpeg ALIAS zaro_platform_ffmpeg)
 
