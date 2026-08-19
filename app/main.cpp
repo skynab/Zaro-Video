@@ -48,6 +48,7 @@
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 #include "zaro/platform/sdl/AudioSink.h"
 
+#include "CurveEditor.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
 #include "ProgramMonitor.h"
@@ -1114,6 +1115,112 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // The curve editor, driven with the mouse. The curve engine is tested
+        // headlessly and the two render paths are compared against each other;
+        // what neither of those can see is whether dragging in this widget
+        // reaches any of it.
+        {
+            auto* editor = window.effects()->findChild<app::CurveEditor*>();
+            if (editor == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no curve editor\n");
+                return 1;
+            }
+            window.effects()->setSelection(videoTrack.id(), original.id);
+            QApplication::processEvents();
+
+            const auto clipNow = [&]() {
+                return window.project()
+                    .findSequence(sequence.id())
+                    ->videoTracks()
+                    .front()
+                    .find(original.id);
+            };
+            if (!clipNow()->curves.isIdentity()) {
+                std::fprintf(stderr, "  FAIL: the clip starts with a curve on it\n");
+                return 1;
+            }
+
+            // Grab the black point at the bottom-left and lift it. That is the
+            // change this fixture can actually show: it is flashes on black, so
+            // a midtone adjustment moves almost nothing, while lifting black
+            // moves nearly every pixel.
+            const QRect plot = editor->plotArea();
+            const QPointF middle(plot.left(), plot.bottom());
+            const QPointF lifted(middle.x(), middle.y() - (plot.height() * 0.4));
+            {
+                QMouseEvent press(QEvent::MouseButtonPress, middle, middle, Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(editor, &press);
+                QMouseEvent move(QEvent::MouseMove, lifted, lifted, Qt::NoButton, Qt::LeftButton,
+                                 Qt::NoModifier);
+                QCoreApplication::sendEvent(editor, &move);
+                QMouseEvent release(QEvent::MouseButtonRelease, lifted, lifted, Qt::LeftButton,
+                                    Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(editor, &release);
+            }
+            QApplication::processEvents();
+
+            const zaro::model::ToneCurve& master = clipNow()->curves.master;
+            std::printf("  curve editor: %zu points, black lifted to %.3f\n", master.size(),
+                        master.valueAt(0.0));
+            if (master.size() < 2) {
+                std::fprintf(stderr,
+                             "  FAIL: the curve editor did not give the curve its endpoints\n");
+                return 1;
+            }
+            if (!(master.valueAt(0.0) > 0.2)) {
+                std::fprintf(stderr,
+                             "  FAIL: dragging upward did not lift the curve; the widget's y "
+                             "axis is inverted or it is not reaching the model\n");
+                return 1;
+            }
+            if (master.points().front().x != 0.0) {
+                std::fprintf(stderr,
+                             "  FAIL: the black point moved sideways; the endpoints are supposed "
+                             "to be pinned in x\n");
+                return 1;
+            }
+
+            // And it has to reach the picture, not only the model. Measured on
+            // a *dark* frame: this fixture is flashes on black, its lit frames
+            // are saturated white, and lifting the black point cannot change
+            // white at all. On a black frame the same lift moves every pixel.
+            std::int64_t darkFrame = 0;
+            double darkness = 1e9;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkness) {
+                    darkness = gray;
+                    darkFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
+            for (int i = 0; i < 3; ++i) {
+                window.monitor()->update();
+                QApplication::processEvents();
+            }
+            const double withCurve = meanGray(window.monitor()->grabFramebuffer());
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            for (int i = 0; i < 3; ++i) {
+                window.monitor()->update();
+                QApplication::processEvents();
+            }
+            const double withoutCurve = meanGray(window.monitor()->grabFramebuffer());
+            std::printf("  curve on the GPU: %.1f with, %.1f without\n", withCurve, withoutCurve);
+            if (!(withCurve > withoutCurve + 1.0)) {
+                std::fprintf(stderr,
+                             "  FAIL: the curve does not reach the preview; it would show on "
+                             "export and not on screen\n");
+                return 1;
+            }
+            window.effects()->refresh();
         }
 
         // Keyframing, driven through the panel and the timeline rather than by

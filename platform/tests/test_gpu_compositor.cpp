@@ -1024,3 +1024,60 @@ TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][c
         }
     }
 }
+
+TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]") {
+    // drawSource is a different code path from draw: the planes are converted
+    // in one pass and composited in another, and only the second one carries
+    // the grade. A curve that works through draw and not through drawSource
+    // would be invisible in preview for every real clip, since every real clip
+    // arrives as YUV.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    const media::VideoFrame frame = yuvPattern(
+        64, 64, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
+
+    model::ToneCurves curves;
+    curves.master.set({0.0, 0.25});
+    curves.master.set({0.5, 0.7});
+    curves.master.set({1.0, 1.0});
+    const render::CurveTable table{curves, media::TransferFunction::BT709};
+    REQUIRE_FALSE(table.isIdentity());
+
+    RgbaImage plain;
+    REQUIRE(compositor->beginFrame(64, 64).ok());
+    REQUIRE(compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal)
+                .ok());
+    REQUIRE(compositor->endFrame(plain).ok());
+
+    RgbaImage curved;
+    REQUIRE(compositor->beginFrame(64, 64).ok());
+    REQUIRE(
+        compositor
+            ->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal, &table)
+            .ok());
+    REQUIRE(compositor->endFrame(curved).ok());
+
+    // The curve lifts black a long way, so every pixel should have moved.
+    double moved = 0.0;
+    for (std::int32_t y = 0; y < 64; ++y) {
+        for (std::int32_t x = 0; x < 64; ++x) {
+            moved += static_cast<double>(std::fabs(curved.at(x, y).r - plain.at(x, y).r));
+        }
+    }
+    INFO("total change across the frame: " << moved);
+    CHECK(moved > 10.0);
+
+    // And it agrees with the CPU doing the same thing to the same frame.
+    RgbaImage converted;
+    REQUIRE(render::toLinear(frame, converted).ok());
+    RgbaImage cpuOut{64, 64};
+    const render::GradeConstants neutral;
+    render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal, &neutral, &table);
+
+    const Difference difference = compare(cpuOut, curved, 1);
+    INFO("worst " << difference.worst << ", mean " << difference.mean);
+    CHECK(difference.worst < 0.02F);
+}

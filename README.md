@@ -43,7 +43,8 @@ headless: there is no window yet.
 | 5c | Scopes: waveform, parade, histogram, vectorscope | **done** |
 | 5d | Primary correction: balance, exposure, contrast, saturation | **done** |
 | 5e | Tone curves: monotonic splines, baked LUT, both paths | **done** |
-| 5f | Curve editor UI, then HSL secondaries and LUTs | next |
+| 5f | Curve editor: draggable points, per-channel | **done** |
+| 5g | HSL secondaries, LUTs, audio mixer, graphics | next |
 
 ## Building
 

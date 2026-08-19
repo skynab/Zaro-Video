@@ -28,6 +28,16 @@ QDoubleSpinBox* makeSpin(double minimum, double maximum, double step, int decima
     // Keyboard focus only on click, so scrolling the panel does not silently
     // change whatever value happens to be under the pointer.
     spin->setFocusPolicy(Qt::StrongFocus);
+
+    // Wide enough for the largest value it can hold, with its suffix. A field
+    // that shrinks with the panel eventually cuts the unit off, and "0.00 E"
+    // reads as a different number rather than as a shorter label -- which has
+    // now happened twice, once to " stops" and once to " EV".
+    QString widest = QString::number(minimum, 'f', decimals) + suffix;
+    if (QString::number(maximum, 'f', decimals).size() > widest.size()) {
+        widest = QString::number(maximum, 'f', decimals) + suffix;
+    }
+    spin->setMinimumWidth(spin->fontMetrics().horizontalAdvance(widest) + 34);
     return spin;
 }
 
@@ -89,6 +99,12 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     addRow(colourForm, "Exposure", model::Param::Exposure, exposure_);
     addRow(colourForm, "Contrast", model::Param::Contrast, contrast_);
     addRow(colourForm, "Saturation", model::Param::Saturation, saturation_);
+    curves_ = new CurveEditor(this);
+    colourForm->addRow(curves_);
+    connect(curves_, &CurveEditor::curvesChanged, this,
+            [this](const model::ToneCurves& changed, bool committed) {
+                pushCurves(changed, committed);
+            });
     colorGroup_ = colour;
 
     auto* audio = new QGroupBox("Audio", this);
@@ -193,6 +209,7 @@ void EffectControls::applyToWidgets() {
         anchorY_->setValue(identity.anchorY);
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
+        curves_->setCurves(model::ToneCurves{});
         const model::ColorCorrection neutral;
         temperature_->setValue(neutral.temperature);
         tint_->setValue(neutral.tint);
@@ -239,6 +256,7 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
+    curves_->setCurves(clip->curves);
     const model::ColorCorrection color = clip->colorAt(position_);
     temperature_->setValue(color.temperature);
     tint_->setValue(color.tint);
@@ -478,6 +496,22 @@ void EffectControls::pushTransform() {
         return;
     }
     commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::pushCurves(const model::ToneCurves& curves, bool committed) {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    auto built = edit::makeSetToneCurves(*project_, {sequenceId_, track_}, clip_, curves);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    if (committed) {
+        // A drag is one undo step; the next gesture is a new one.
+        commands_->breakMerge();
+    }
     emit edited();
 }
 

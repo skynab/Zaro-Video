@@ -61,9 +61,9 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             // same as on the CPU path.
             continue;
         }
-        if (Status drawn =
-                compositor_->drawSource(**frame, clip->transformAt(at),
-                                        render::gradeConstantsFor(clip->colorAt(at)), clip->blend);
+        if (Status drawn = compositor_->drawSource(
+                **frame, clip->transformAt(at), render::gradeConstantsFor(clip->colorAt(at)),
+                clip->blend, &curves_.tableFor(clip->id.value(), clip->curves, transfer_));
             !drawn) {
             continue;
         }

@@ -7,6 +7,8 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
 
+#include "CurveEditor.h"
+
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -80,6 +82,7 @@ private:
     void pushTransform();
     void pushAudio();
     void pushColor();
+    void pushCurves(const model::ToneCurves& curves, bool committed);
     void applyToWidgets();
     void setEditingEnabled(bool enabled);
 
@@ -115,6 +118,7 @@ private:
     QCheckBox* enabled_{nullptr};
     QWidget* videoGroup_{nullptr};
     QWidget* colorGroup_{nullptr};
+    CurveEditor* curves_{nullptr};
     QWidget* audioGroup_{nullptr};
 };
 

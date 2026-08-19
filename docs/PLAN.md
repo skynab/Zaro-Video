@@ -863,6 +863,59 @@ building half of one is worse than none, so it is its own phase.
 
 ---
 
+#### Phase 5f — the curve editor ✅
+
+A square plot with the identity diagonal for reference, a channel chooser, and
+direct editing: click to add a point, drag to shape it, alt-click to remove —
+the same modifier as a keyframe on the timeline, and for the same reason there
+is no separate selection to delete from.
+
+**The widget holds no model state it has not been told.** It emits a whole
+`ToneCurves` on every change and is given the new value back through the normal
+refresh. A panel that kept its own version of the curve would drift from the
+command stack the first time an undo happened behind it.
+
+**A drag is one undo step.** `curvesChanged` carries whether the gesture has
+ended, so the panel coalesces the drag and then breaks the merge.
+
+**The outermost points are pinned in x.** Black is where the curve starts and
+white is where it ends; moving them inward leaves the ends of the range
+undefined, and the held value out there is not what anyone means by dragging the
+black point. Interior points are clamped between their neighbours, since two
+points at one x is a vertical segment and crossing one would reorder the curve
+under the pointer.
+
+**The plot is square regardless of the panel's shape.** The diagonal is the
+reference for "this curve does nothing", and it is only at 45 degrees when the
+axes share a scale.
+
+**The curve is drawn by sampling the same evaluator the render path bakes**, one
+sample per pixel, so what is drawn is what will happen rather than a
+smooth-looking sketch of it.
+
+**Three failed measurements before the test was right.** The self-test asserts
+that a curve reaches the *preview*, and it reported failure twice while the code
+was correct: the fixture is flashes on black, so a midtone lift moves almost
+nothing, and its lit frames are saturated white, where lifting the black point
+cannot change anything at all. Measured on a dark frame the same edit reads 17.8
+against 0.0. The lesson is about the fixture rather than the feature — a test
+that picks its own measurement point has to pick one where the change it is
+looking for is possible.
+
+It did find one real bug on the way: the GPU graph passed the curve table at one
+of its three draw call sites, because clang-format had reflowed the other two
+past the patterns used to edit them. The clip path — the one every ordinary
+frame takes — was the one left out.
+
+Also fixed: value fields now keep the width their contents need. "0.00 EV" had
+been cut to "0.00 E", which is the third time a control has shipped with its
+text cut in half, and a truncated unit reads as a different number rather than
+as a shorter label.
+
+Next: HSL secondaries, LUT (.cube) support, and shot matching.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

@@ -165,6 +165,11 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+/// Tone curves: master and per-channel.
+[[nodiscard]] Result<CommandPtr> makeSetToneCurves(model::Project& project,
+                                                   const EditTarget& target, model::ClipId clip,
+                                                   const model::ToneCurves& curves);
+
 /// Primary colour correction: white balance, exposure, contrast, saturation.
 [[nodiscard]] Result<CommandPtr> makeSetColorCorrection(model::Project& project,
                                                         const EditTarget& target,

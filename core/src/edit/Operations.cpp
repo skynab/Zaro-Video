@@ -1372,6 +1372,22 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeSetToneCurves(Project& project, const EditTarget& target, ClipId clipId,
+                                     const model::ToneCurves& curves) {
+    for (const model::ToneCurve* curve :
+         {&curves.master, &curves.red, &curves.green, &curves.blue}) {
+        for (const model::CurvePoint& point : curve->points()) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+                return Error{ErrorCode::InvalidData, "a curve point has to be real numbers"};
+            }
+        }
+    }
+    // One merge key for all four curves: dragging a point is one gesture even
+    // though it rewrites the whole set.
+    return modifyClip(project, target, clipId, "Adjust curves", "curves:" + idText(clipId),
+                      [curves](Clip& clip) { clip.curves = curves; });
+}
+
 Result<CommandPtr> makeSetColorCorrection(Project& project, const EditTarget& target, ClipId clipId,
                                           const model::ColorCorrection& color) {
     for (const double value :
