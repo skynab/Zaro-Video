@@ -247,6 +247,69 @@ std::vector<TimelineLayout::Hit> TimelineLayout::hitTestRect(const model::Sequen
     return hits;
 }
 
+std::int32_t TimelineLayout::keyframeLaneHeight() const noexcept {
+    // A fixed fraction of the track, floored so it does not vanish on a short
+    // track and capped so it does not eat a tall one.
+    return std::clamp(metrics_.audioTrackHeight / 4, 6, 14);
+}
+
+std::vector<time::RationalTime> TimelineLayout::keyframeTimes(const model::Clip& clip) {
+    std::vector<time::RationalTime> times;
+    for (const auto& [param, curve] : clip.animation) {
+        for (const model::Keyframe& key : curve.keyframes()) {
+            times.push_back(key.time);
+        }
+    }
+    // Parameters keyed together land on the same instant, and that instant is
+    // one diamond.
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end()), times.end());
+    return times;
+}
+
+std::optional<TimelineLayout::KeyframeHit> TimelineLayout::hitTestKeyframe(
+    const model::Sequence& sequence, std::int32_t x, std::int32_t y) const {
+    if (isInHeaders(x) || isInRuler(x, y)) {
+        return std::nullopt;
+    }
+    const auto row = rowAt(sequence, y);
+    if (!row) {
+        return std::nullopt;
+    }
+    const std::int32_t laneTop = row->top + row->height - keyframeLaneHeight();
+    if (y < laneTop) {
+        return std::nullopt;
+    }
+    const model::Track* track = sequence.findTrack(row->track);
+    if (track == nullptr) {
+        return std::nullopt;
+    }
+
+    // Half a diamond either side, so a keyframe can be grabbed by aiming at it
+    // rather than at the single pixel it sits on.
+    const std::int32_t reach = keyframeLaneHeight();
+    for (const model::Clip& clip : track->clips()) {
+        if (clip.animation.empty()) {
+            continue;
+        }
+        std::optional<KeyframeHit> best;
+        std::int32_t bestDistance = reach + 1;
+        for (const time::RationalTime& at : keyframeTimes(clip)) {
+            const auto centre =
+                static_cast<std::int32_t>(std::llround(xForTime(clip.timelineTimeOf(at))));
+            const std::int32_t distance = std::abs(centre - x);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = KeyframeHit{track->id(), clip.id, at};
+            }
+        }
+        if (best) {
+            return best;
+        }
+    }
+    return std::nullopt;
+}
+
 time::RationalTime TimelineLayout::rulerStep(const time::Rational& frameRate) const {
     const double frameSeconds = frameRate.isPositive() ? 1.0 / frameRate.toDouble() : 1.0 / 25.0;
 

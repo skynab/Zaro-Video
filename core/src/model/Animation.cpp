@@ -193,6 +193,13 @@ double Curve::valueAtSeconds(double seconds) const {
     return evaluateSegment(from, to, (seconds - fromSeconds) / span);
 }
 
+std::span<const Param> allParams() noexcept {
+    static constexpr Param kAll[] = {
+        Param::PositionX,       Param::PositionY, Param::ScaleX,  Param::ScaleY, Param::Opacity,
+        Param::RotationDegrees, Param::AnchorX,   Param::AnchorY, Param::GainDb, Param::Pan};
+    return kAll;
+}
+
 const char* toString(Param param) noexcept {
     switch (param) {
         case Param::PositionX:
@@ -223,10 +230,7 @@ bool paramFromString(const char* name, Param& out) noexcept {
     if (name == nullptr) {
         return false;
     }
-    constexpr Param kAll[] = {
-        Param::PositionX, Param::PositionY, Param::ScaleX,  Param::ScaleY, Param::RotationDegrees,
-        Param::AnchorX,   Param::AnchorY,   Param::Opacity, Param::GainDb, Param::Pan};
-    for (Param candidate : kAll) {
+    for (Param candidate : allParams()) {
         if (std::strcmp(name, toString(candidate)) == 0) {
             out = candidate;
             return true;

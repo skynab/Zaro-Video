@@ -121,6 +121,34 @@ public:
                                                std::int32_t y0, std::int32_t x1,
                                                std::int32_t y1) const;
 
+    // --- Keyframes ----------------------------------------------------------
+
+    /// The lane along the bottom of a clip where keyframes are drawn.
+    ///
+    /// Along the bottom rather than across the middle: the middle is where the
+    /// clip's name and its waveform go, and a diamond on top of a waveform is
+    /// unreadable in both directions.
+    [[nodiscard]] std::int32_t keyframeLaneHeight() const noexcept;
+
+    struct KeyframeHit {
+        model::TrackId track;
+        model::ClipId clip;
+        /// In the clip's source time, which is where the model keeps it.
+        time::RationalTime time;
+    };
+
+    /// The keyframe under a point, if the point is in a clip's keyframe lane.
+    ///
+    /// One hit per *instant*, not per parameter: eight parameters keyed
+    /// together are drawn as one diamond, because they are one decision and
+    /// because eight stacked diamonds in a lane six pixels tall are one
+    /// diamond that cannot be aimed at.
+    [[nodiscard]] std::optional<KeyframeHit> hitTestKeyframe(const model::Sequence& sequence,
+                                                             std::int32_t x, std::int32_t y) const;
+
+    /// Every instant at which this clip has a keyframe, in source time, sorted.
+    [[nodiscard]] static std::vector<time::RationalTime> keyframeTimes(const model::Clip& clip);
+
     /// Whether a point is in the ruler, where dragging scrubs the playhead.
     [[nodiscard]] bool isInRuler(std::int32_t x, std::int32_t y) const;
     /// Whether a point is over the track headers.

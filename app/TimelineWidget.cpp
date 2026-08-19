@@ -25,6 +25,9 @@ const QColor kAudioClip{58, 122, 96};
 const QColor kSelectedOutline{255, 196, 92};
 const QColor kBand{140, 180, 235};
 const QColor kPlayhead{236, 92, 82};
+const QColor kKeyframe{226, 226, 236};
+const QColor kKeyframeHeld{255, 196, 92};
+const QColor kKeyframeOutline{20, 20, 24};
 const QColor kText{224, 224, 230};
 const QColor kDimText{150, 150, 160};
 const QColor kWaveform{188, 236, 210};
@@ -362,7 +365,74 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             painter.drawText(body.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
                              QString::fromStdString(clip->name));
         }
+
+        paintKeyframes(painter, *clip, body);
     }
+}
+
+void TimelineWidget::dragKeyframeTo(int x) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || project_ == nullptr || commands_ == nullptr ||
+        !keyframeDrag_.clip.isValid()) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(keyframeDrag_.track);
+    const model::Clip* clip = track != nullptr ? track->find(keyframeDrag_.clip) : nullptr;
+    if (clip == nullptr) {
+        return;
+    }
+
+    // Clamped to the clip. A keyframe outside the clip's own range is
+    // unreachable: nothing samples the curve there, so it could never be
+    // grabbed again or seen to do anything.
+    time::RationalTime when = layout_.timeForX(x, seq->frameRate());
+    const time::RationalTime lastFrame =
+        clip->endExclusive() - time::RationalTime{1, clip->start().rate()};
+    when = std::clamp(when, clip->start(), lastFrame);
+
+    const time::RationalTime target = clip->sourceTimeAt(when);
+    if (target == keyframeDrag_.time) {
+        return;
+    }
+    auto built = edit::makeMoveKeyframesAt(*project_, {sequenceId_, keyframeDrag_.track},
+                                           keyframeDrag_.clip, keyframeDrag_.time, target);
+    if (!built) {
+        return;  // something is already there; leave it where it was
+    }
+    commands_->execute(*project_, std::move(*built));
+    // The drag now follows the keyframe to its new time, or the next move would
+    // look for it where it no longer is.
+    keyframeDrag_.time = target;
+    emit edited();
+    update();
+}
+
+void TimelineWidget::paintKeyframes(QPainter& painter, const model::Clip& clip,
+                                    const QRectF& body) {
+    if (clip.animation.empty()) {
+        return;
+    }
+    const double lane = layout_.keyframeLaneHeight();
+    const double centreY = body.bottom() - (lane / 2.0);
+    const double half = (lane / 2.0) - 1.0;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    for (const time::RationalTime& at : ui::TimelineLayout::keyframeTimes(clip)) {
+        const double x = layout_.xForTime(clip.timelineTimeOf(at));
+        if (x < body.left() - half || x > body.right() + half) {
+            continue;
+        }
+        const bool held = keyframeDrag_.clip == clip.id && keyframeDrag_.time == at;
+        // A diamond, the shape every editor uses for a keyframe, filled when it
+        // is the one being dragged so the pointer is not the only clue.
+        const QPointF points[4] = {
+            {x, centreY - half}, {x + half, centreY}, {x, centreY + half}, {x - half, centreY}};
+        painter.setPen(QPen(kKeyframeOutline, 1));
+        painter.setBrush(held ? kKeyframeHeld : kKeyframe);
+        painter.drawPolygon(points, 4);
+    }
+    painter.restore();
 }
 
 void TimelineWidget::setWaveform(model::MediaRefId media,
@@ -517,6 +587,33 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     }
 
     pressAt_ = QPoint(x, y);
+
+    // Keyframes are tested first. They live inside a clip, so testing the clip
+    // first would mean every keyframe press started a clip drag instead.
+    if (const auto key = layout_.hitTestKeyframe(*seq, x, y)) {
+        // Alt deletes it. There is no keyframe *selection* — a selection model
+        // exists for clips and building a second one just so Delete has
+        // something to act on is the half-built trap multi-selection was
+        // deferred to avoid. A modifier on the thing itself needs no state.
+        if (event->modifiers().testFlag(Qt::AltModifier)) {
+            if (commands_ != nullptr) {
+                auto built = edit::makeRemoveKeyframesAt(*project_, {sequenceId_, key->track},
+                                                         key->clip, key->time);
+                if (built) {
+                    commands_->execute(*project_, std::move(*built));
+                    commands_->breakMerge();
+                    emit edited();
+                }
+            }
+            update();
+            return;
+        }
+        keyframeDrag_ = KeyframeDrag{key->track, key->clip, key->time};
+        drag_ = Drag::Keyframe;
+        update();
+        return;
+    }
+
     const auto hit = layout_.hitTest(*seq, x, y);
 
     if (!hit) {
@@ -622,6 +719,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
 
+    if (drag_ == Drag::Keyframe) {
+        dragKeyframeTo(x);
+        return;
+    }
     if (drag_ == Drag::MaybeBand) {
         // A few pixels of slack, so a click with an unsteady hand is still a
         // click.
@@ -725,6 +826,16 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         // Never became a drag, so it was a click: put the playhead there.
         drag_ = Drag::None;
         scrubTo(static_cast<int>(event->position().x()));
+        return;
+    }
+    if (drag_ == Drag::Keyframe) {
+        drag_ = Drag::None;
+        keyframeDrag_ = {};
+        if (commands_ != nullptr) {
+            // One drag is one undo step; the next one is a new gesture.
+            commands_->breakMerge();
+        }
+        update();
         return;
     }
     if (drag_ == Drag::Band && seq != nullptr) {

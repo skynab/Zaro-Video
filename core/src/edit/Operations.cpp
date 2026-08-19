@@ -1119,6 +1119,252 @@ Result<CommandPtr> makeSetTransform(Project& project, const EditTarget& target, 
                       [transform](Clip& clip) { clip.transform = transform; });
 }
 
+namespace {
+
+/// A merge key naming one keyframe.
+///
+/// The time is part of it: dragging a value at one moment should coalesce into
+/// a single undo step, but setting a value at a second moment is a new
+/// keyframe and a separate decision. A key that stopped at the parameter would
+/// swallow the first keyframe into the second.
+/// The clip, or why not. Refuses a locked track, the same as every other
+/// operation: a keyframe is an edit.
+Result<const Clip*> lookupClip(Project& project, const EditTarget& target, ClipId id) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    return requireClip(*located->track, id);
+}
+
+std::string keyframeKey(ClipId clip, model::Param param, const time::RationalTime& at) {
+    return "keyframe:" + idText(clip) + ":" + model::toString(param) + ":" +
+           std::to_string(at.frames()) + "@" + at.rate().toString();
+}
+
+}  // namespace
+
+Result<CommandPtr> makeSetKeyframe(Project& project, const EditTarget& target, ClipId clipId,
+                                   model::Param param, const time::RationalTime& sourceTime,
+                                   double value, model::Interpolation interpolation) {
+    if (!std::isfinite(value)) {
+        return Error{ErrorCode::InvalidData, "a keyframe value has to be a real number"};
+    }
+    return modifyClip(
+        project, target, clipId, std::string{"Set "} + model::toString(param) + " keyframe",
+        keyframeKey(clipId, param, sourceTime),
+        [param, sourceTime, value, interpolation](Clip& clip) {
+            model::Keyframe key;
+            key.time = sourceTime;
+            key.value = value;
+            key.interpolation = interpolation;
+            // Replacing an existing keyframe keeps its handles:
+            // dragging a value should not silently flatten a
+            // curve the user shaped.
+            if (const model::Keyframe* existing = clip.animation.curve(param).at(sourceTime)) {
+                key.interpolation = existing->interpolation;
+                key.out = existing->out;
+                key.in = existing->in;
+            }
+            clip.animation.curve(param).set(key);
+        });
+}
+
+Result<CommandPtr> makeRemoveKeyframe(Project& project, const EditTarget& target, ClipId clipId,
+                                      model::Param param, const time::RationalTime& sourceTime) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip* existing = *found;
+    const model::Curve* curve = existing->animation.find(param);
+    if (curve == nullptr || curve->at(sourceTime) == nullptr) {
+        return Error{ErrorCode::NotFound, "there is no keyframe there"};
+    }
+    return modifyClip(project, target, clipId,
+                      std::string{"Delete "} + model::toString(param) + " keyframe",
+                      // No merge key: deleting two keyframes is two decisions.
+                      {}, [param, sourceTime](Clip& clip) {
+                          clip.animation.curve(param).removeAt(sourceTime);
+                          // A parameter with no keyframes left is not animated,
+                          // and an empty curve left behind would say it still
+                          // is. The static value takes over, which is the value
+                          // the last keyframe was holding everywhere.
+                          clip.animation.pruneEmpty();
+                      });
+}
+
+Result<CommandPtr> makeMoveKeyframe(Project& project, const EditTarget& target, ClipId clipId,
+                                    model::Param param, const time::RationalTime& from,
+                                    const time::RationalTime& to) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip* existing = *found;
+    const model::Curve* curve = existing->animation.find(param);
+    if (curve == nullptr || curve->at(from) == nullptr) {
+        return Error{ErrorCode::NotFound, "there is no keyframe there"};
+    }
+    // Landing on another keyframe would silently destroy it. Refusing leaves
+    // the dragged keyframe where it was, which is recoverable; overwriting is
+    // not obviously undoable to someone who did not see what was underneath.
+    if (from != to && curve->at(to) != nullptr) {
+        return Error{ErrorCode::InvalidData, "another keyframe is already there"};
+    }
+    return modifyClip(project, target, clipId,
+                      std::string{"Move "} + model::toString(param) + " keyframe",
+                      keyframeKey(clipId, param, from), [param, from, to](Clip& clip) {
+                          model::Curve& curve = clip.animation.curve(param);
+                          const model::Keyframe* found = curve.at(from);
+                          if (found == nullptr) {
+                              return;
+                          }
+                          model::Keyframe moved = *found;
+                          moved.time = to;
+                          curve.removeAt(from);
+                          curve.set(moved);
+                      });
+}
+
+Result<CommandPtr> makeSetKeyframeInterpolation(Project& project, const EditTarget& target,
+                                                ClipId clipId, model::Param param,
+                                                const time::RationalTime& sourceTime,
+                                                model::Interpolation interpolation) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip* existing = *found;
+    const model::Curve* curve = existing->animation.find(param);
+    if (curve == nullptr || curve->at(sourceTime) == nullptr) {
+        return Error{ErrorCode::NotFound, "there is no keyframe there"};
+    }
+    return modifyClip(project, target, clipId,
+                      std::string{"Set keyframe to "} + model::toString(interpolation), {},
+                      [param, sourceTime, interpolation](Clip& clip) {
+                          model::Curve& curve = clip.animation.curve(param);
+                          const model::Keyframe* found = curve.at(sourceTime);
+                          if (found == nullptr) {
+                              return;
+                          }
+                          model::Keyframe changed = *found;
+                          changed.interpolation = interpolation;
+                          curve.set(changed);
+                      });
+}
+
+Result<CommandPtr> makeMoveKeyframesAt(Project& project, const EditTarget& target, ClipId clipId,
+                                       const RationalTime& from, const RationalTime& to) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip* existing = *found;
+
+    bool any = false;
+    for (const auto& [param, curve] : existing->animation) {
+        if (curve.at(from) == nullptr) {
+            continue;
+        }
+        any = true;
+        // Refused wholesale rather than per parameter: moving some of a set of
+        // keyframes and silently leaving the rest is worse than moving none.
+        if (from != to && curve.at(to) != nullptr) {
+            return Error{ErrorCode::InvalidData, "another keyframe is already there"};
+        }
+    }
+    if (!any) {
+        return Error{ErrorCode::NotFound, "there are no keyframes there"};
+    }
+
+    return modifyClip(project, target, clipId, "Move keyframes",
+                      "keyframes:" + idText(clipId) + ":" + std::to_string(from.frames()),
+                      [from, to](Clip& clip) {
+                          for (model::Param param : model::allParams()) {
+                              model::Curve* curve = clip.animation.find(param) != nullptr
+                                                        ? &clip.animation.curve(param)
+                                                        : nullptr;
+                              if (curve == nullptr) {
+                                  continue;
+                              }
+                              const model::Keyframe* at = curve->at(from);
+                              if (at == nullptr) {
+                                  continue;
+                              }
+                              model::Keyframe moved = *at;
+                              moved.time = to;
+                              curve->removeAt(from);
+                              curve->set(moved);
+                          }
+                      });
+}
+
+Result<CommandPtr> makeRemoveKeyframesAt(Project& project, const EditTarget& target, ClipId clipId,
+                                         const RationalTime& sourceTime) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    bool any = false;
+    for (const auto& [param, curve] : (*found)->animation) {
+        any = any || curve.at(sourceTime) != nullptr;
+    }
+    if (!any) {
+        return Error{ErrorCode::NotFound, "there are no keyframes there"};
+    }
+
+    return modifyClip(project, target, clipId, "Delete keyframes", {}, [sourceTime](Clip& clip) {
+        for (model::Param param : model::allParams()) {
+            if (clip.animation.find(param) != nullptr) {
+                clip.animation.curve(param).removeAt(sourceTime);
+            }
+        }
+        clip.animation.pruneEmpty();
+    });
+}
+
+Result<CommandPtr> makeSetParameterAnimated(Project& project, const EditTarget& target,
+                                            ClipId clipId, model::Param param, bool animated,
+                                            const time::RationalTime& timelineTime) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip* existing = *found;
+    const model::Curve* curve = existing->animation.find(param);
+    const bool alreadyAnimated = curve != nullptr && !curve->empty();
+    if (alreadyAnimated == animated) {
+        return Error{ErrorCode::InvalidData, "that parameter is already in that state"};
+    }
+
+    if (animated) {
+        // The value it already had, at the moment the stopwatch was pressed, so
+        // switching animation on never moves anything.
+        const double held = existing->parameterValue(param);
+        const time::RationalTime sourceTime = existing->sourceTimeAt(timelineTime);
+        return modifyClip(project, target, clipId, std::string{"Animate "} + model::toString(param),
+                          {}, [param, sourceTime, held](Clip& clip) {
+                              model::Keyframe key;
+                              key.time = sourceTime;
+                              key.value = held;
+                              clip.animation.curve(param).set(key);
+                          });
+    }
+
+    // Keep what is on screen now. Reverting to the static value underneath
+    // would make the picture jump at the instant animation was switched off,
+    // and that value is usually the default rather than anything the user
+    // chose.
+    const double showing = existing->parameterAt(param, timelineTime);
+    return modifyClip(project, target, clipId,
+                      std::string{"Stop animating "} + model::toString(param), {},
+                      [param, showing](Clip& clip) {
+                          clip.animation.erase(param);
+                          clip.setParameterValue(param, showing);
+                      });
+}
+
 Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, ClipId clipId,
                                     model::BlendMode blend) {
     return modifyClip(project, target, clipId,

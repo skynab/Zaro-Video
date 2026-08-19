@@ -670,6 +670,73 @@ Still to do before keyframing is usable from the UI: the Effect Controls panel
 needs stopwatch toggles and a keyframe lane, and the timeline needs to draw and
 drag keyframes. The engine, the serialization and both render paths are done.
 
+#### Phase 5b — keyframing from the UI ✅
+
+A stopwatch and a diamond next to every animatable parameter, keyframes drawn
+in a lane along the bottom of the clip, and dragging to retime them.
+
+**Turning the stopwatch on drops a keyframe holding the value the parameter
+already had**, so switching animation on never moves anything. Turning it off
+keeps the value showing *at that moment* as the new static value — reverting to
+the value underneath would make the picture jump at the instant the user
+switched animation off, and that value is usually the default rather than
+anything they chose.
+
+**While a parameter is animated, typing a value writes a keyframe at the
+playhead.** Writing the static value instead would appear to do nothing, since
+the curve wins everywhere. The panel also stops baking widget values into the
+static fields of animated parameters: the widget is showing the *animated* value,
+and storing it would silently change what the picture reverts to.
+
+**The panel shows values at the playhead**, so moving the playhead re-reads
+every row. An animated parameter has no single value to display.
+
+**One diamond per instant, not per parameter.** Eight parameters keyed together
+are one decision, and eight stacked diamonds in a lane six pixels tall are one
+diamond nobody can aim at. Dragging that diamond moves all of them, in one
+command, or undo would take eight presses to put back what one drag moved.
+
+**Keyframes are hit-tested before clips.** They live inside a clip, so testing
+the clip first means every keyframe press starts a clip drag instead.
+
+**Alt-click deletes a keyframe.** There is no keyframe *selection* — clips have
+one, and building a second selection model just so Delete has something to act
+on is the half-built trap multi-selection was deferred to avoid. A modifier on
+the thing itself needs no state.
+
+**A keyframe will not be dragged on top of another**, and a set will not be
+moved if any of it would collide. Landing on a keyframe destroys it, and someone
+who cannot see what was underneath cannot know to undo. Drags are also clamped
+to the clip: nothing samples a curve outside the clip's own range, so a keyframe
+out there could never be grabbed again or seen to do anything.
+
+**Drag deltas follow the keyframe.** Each mouse-move retimes from where the
+keyframe *is*, not from where the drag started, and the drag's own record of it
+is updated — otherwise the second move looks for it where it no longer is.
+
+**Two visual checks became assertions rather than screenshots I looked at once.**
+The diamonds are counted inside the lane and required to cover pixels there
+where nothing was before; the first version counted the whole widget and found
+2230 matching pixels before any keyframe existed, because clip names and ruler
+text are drawn in nearly the same near-white. And the panel's labels were
+clipped again — "Position X" reading as "Position" next to another row reading
+"Position", "Rotation" as "Rotatior" — the third time a control has shipped with
+its name cut in half, now fixed by giving each label the width it asks for.
+
+The self-test drives all of it through real widgets and events: the stopwatch,
+a typed value at a second playhead position, a drag of the resulting diamond,
+an alt-click deletion, and the stopwatch off again. It caught a vacuous
+assertion while being written — the surviving keyframe held the same value as
+the static one, so "turning animation off kept what was on screen" could not
+fail. It deletes the other keyframe now, and checks the two values differ before
+trusting the comparison.
+
+Still to do: bezier handles are in the model and honoured by evaluation, but
+there is no curve editor to shape them, and no right-click menu to switch a
+keyframe between hold, linear and bezier from the timeline.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

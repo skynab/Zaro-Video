@@ -165,6 +165,63 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+// --- Keyframes --------------------------------------------------------------
+//
+// Keyframe times are in the clip's source time, the same as the model stores
+// them (ADR-008). The panel and the timeline both work in sequence time and
+// convert at the edge, because a keyframe's position on screen is a question
+// about where the clip currently sits and its identity is not.
+
+/// Add a keyframe, or replace the one already at that time.
+[[nodiscard]] Result<CommandPtr> makeSetKeyframe(
+    model::Project& project, const EditTarget& target, model::ClipId clip, model::Param param,
+    const time::RationalTime& sourceTime, double value,
+    model::Interpolation interpolation = model::Interpolation::Linear);
+
+[[nodiscard]] Result<CommandPtr> makeRemoveKeyframe(model::Project& project,
+                                                    const EditTarget& target, model::ClipId clip,
+                                                    model::Param param,
+                                                    const time::RationalTime& sourceTime);
+
+/// Move a keyframe in time, keeping its value and shape.
+[[nodiscard]] Result<CommandPtr> makeMoveKeyframe(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip, model::Param param,
+                                                  const time::RationalTime& from,
+                                                  const time::RationalTime& to);
+
+[[nodiscard]] Result<CommandPtr> makeSetKeyframeInterpolation(
+    model::Project& project, const EditTarget& target, model::ClipId clip, model::Param param,
+    const time::RationalTime& sourceTime, model::Interpolation interpolation);
+
+/// Move every keyframe at one instant, across all parameters.
+///
+/// The timeline draws one diamond per instant rather than one per parameter:
+/// several parameters keyed together are one decision, and drawing them stacked
+/// would put eight identical diamonds in a lane four pixels tall. Dragging that
+/// diamond has to move all of them, and as one command, or undo would take
+/// eight presses to put back what one drag moved.
+[[nodiscard]] Result<CommandPtr> makeMoveKeyframesAt(model::Project& project,
+                                                     const EditTarget& target, model::ClipId clip,
+                                                     const time::RationalTime& from,
+                                                     const time::RationalTime& to);
+
+[[nodiscard]] Result<CommandPtr> makeRemoveKeyframesAt(model::Project& project,
+                                                       const EditTarget& target, model::ClipId clip,
+                                                       const time::RationalTime& sourceTime);
+
+/// The stopwatch: start or stop animating one parameter.
+///
+/// Starting drops a keyframe at `timelineTime` holding the value the parameter
+/// already had, so turning animation on never changes the picture. Stopping
+/// keeps the value the parameter has *at that moment* as the new static value,
+/// rather than reverting to whatever it was before it was animated — which
+/// would make the picture jump at the instant the user turned animation off.
+[[nodiscard]] Result<CommandPtr> makeSetParameterAnimated(model::Project& project,
+                                                          const EditTarget& target,
+                                                          model::ClipId clip, model::Param param,
+                                                          bool animated,
+                                                          const time::RationalTime& timelineTime);
+
 /// Clip gain in decibels and pan from -1 to +1.
 [[nodiscard]] Result<CommandPtr> makeSetClipAudio(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, double gainDb, double pan);

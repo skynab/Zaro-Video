@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <span>
 #include <vector>
 
 #include "zaro/core/time/RationalTime.h"
@@ -135,6 +136,11 @@ enum class Param : std::uint8_t {
     GainDb,
     Pan,
 };
+
+/// Every parameter, once. Anything that has to visit them all uses this, so
+/// adding a parameter is one edit rather than a hunt for hand-written lists
+/// that each have to be found and updated.
+[[nodiscard]] std::span<const Param> allParams() noexcept;
 
 [[nodiscard]] const char* toString(Param param) noexcept;
 /// The parameter of that name, or nothing if it is not one. Unknown names come

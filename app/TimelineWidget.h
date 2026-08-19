@@ -74,6 +74,8 @@ private:
     void paintRuler(QPainter& painter);
     void paintTracks(QPainter& painter);
     void paintClips(QPainter& painter, const ui::TimelineLayout::Row& row);
+    void paintKeyframes(QPainter& painter, const model::Clip& clip, const QRectF& body);
+    void dragKeyframeTo(int x);
     void paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body);
     void paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintMarkers(QPainter& painter);
@@ -118,7 +120,19 @@ private:
     void announceSelection();
     void removeSelection(bool ripple);
 
-    enum class Drag { None, Scrub, MoveClip, TrimIn, TrimOut, Band, MaybeBand };
+    enum class Drag { None, Scrub, MoveClip, TrimIn, TrimOut, Band, MaybeBand, Keyframe };
+
+    /// The keyframe being dragged, or an invalid clip id when none is.
+    ///
+    /// Held by (clip, time) rather than by pointer: an edit rebuilds the
+    /// clips -- undo restores a whole snapshot -- and a pointer into them would
+    /// be dangling by the second mouse-move of a drag.
+    struct KeyframeDrag {
+        model::TrackId track;
+        model::ClipId clip;
+        time::RationalTime time;
+    };
+    KeyframeDrag keyframeDrag_;
     Drag drag_{Drag::None};
     /// Where in the clip the drag started, so it does not jump to the pointer.
     time::RationalTime grabOffset_{};

@@ -12,6 +12,7 @@
 // currently on is both simpler and lower latency.
 
 #include <QApplication>
+#include <QDoubleSpinBox>
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -24,6 +25,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <atomic>
@@ -145,6 +147,8 @@ public:
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
+        connect(effects_, &app::EffectControls::keyframesChanged, this,
+                [this] { timeline_->update(); });
         connect(effects_, &app::EffectControls::edited, this, [this] {
             // A parameter change alters the picture at the current playhead.
             monitor_->update();
@@ -193,6 +197,7 @@ public:
     [[nodiscard]] app::ProgramMonitor* monitor() const { return monitor_; }
     [[nodiscard]] app::TimelineWidget* timeline() const { return timeline_; }
     [[nodiscard]] app::SourceMonitor* sourceMonitor() const { return source_; }
+    [[nodiscard]] app::EffectControls* effects() const { return effects_; }
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
     [[nodiscard]] model::Project& project() { return project_; }
 
@@ -232,6 +237,9 @@ public:
         position_ = time::RationalTime{clamped, sequence_->frameRate()};
         monitor_->setPosition(position_);
         timeline_->setPlayhead(position_);
+        // The panel shows values at the playhead and writes keyframes there, so
+        // it has to know where the playhead is.
+        effects_->setPosition(position_);
         refresh();
     }
 
@@ -899,6 +907,192 @@ int main(int argc, char** argv) {
                              "  FAIL: the GPU compositor is not reading keyframes; preview and "
                              "export would disagree\n");
                 return 1;
+            }
+        }
+
+        // Keyframing, driven through the panel and the timeline rather than by
+        // calling the operations: the stopwatch, a value typed at a second
+        // playhead position, and then dragging the diamond that appears.
+        {
+            auto* stopwatch = window.effects()->findChild<QToolButton*>("stopwatch:opacity");
+            auto* keyButton = window.effects()->findChild<QToolButton*>("keyframe:opacity");
+            if (stopwatch == nullptr || keyButton == nullptr) {
+                std::fprintf(stderr, "  FAIL: the opacity stopwatch is missing\n");
+                return 1;
+            }
+
+            window.effects()->setSelection(videoTrack.id(), original.id);
+            window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+            QApplication::processEvents();
+
+            // The diamonds are the only sign in the timeline that a clip is
+            // animated, and a painting bug there is invisible to every other
+            // check. Counted inside the keyframe lane only: the clip names and
+            // the ruler are drawn in almost the same near-white, and counting
+            // the whole widget measures the text rather than the keyframes.
+            const auto lanePixels = [&] {
+                const QImage shot = timeline->grab().toImage();
+                const auto row = timeline->rowFor(videoTrack.id());
+                if (!row) {
+                    return std::int64_t{-1};
+                }
+                const auto dpr = static_cast<int>(shot.devicePixelRatio());
+                const int lane = timeline->layout().keyframeLaneHeight();
+                const int top = (row->top + row->height - lane) * dpr;
+                const int bottom = std::min((row->top + row->height) * dpr, shot.height());
+                std::int64_t found = 0;
+                for (int y = std::max(0, top); y < bottom; ++y) {
+                    for (int x = 0; x < shot.width(); ++x) {
+                        const QColor pixel = shot.pixelColor(x, y);
+                        if (std::abs(pixel.red() - 226) <= 6 &&
+                            std::abs(pixel.green() - 226) <= 6 &&
+                            std::abs(pixel.blue() - 236) <= 6) {
+                            ++found;
+                        }
+                    }
+                }
+                return found;
+            };
+            const std::int64_t bareLane = lanePixels();
+
+            if (!stopwatch->isEnabled() || stopwatch->isChecked()) {
+                std::fprintf(stderr, "  FAIL: the stopwatch is not offering to animate\n");
+                return 1;
+            }
+            stopwatch->click();
+            QApplication::processEvents();
+
+            const auto clipNow = [&]() {
+                return window.project()
+                    .findSequence(sequence.id())
+                    ->videoTracks()
+                    .front()
+                    .find(original.id);
+            };
+            const zaro::model::Curve* curve =
+                clipNow()->animation.find(zaro::model::Param::Opacity);
+            if (curve == nullptr || curve->size() != 1) {
+                std::fprintf(stderr, "  FAIL: the stopwatch did not drop a keyframe\n");
+                return 1;
+            }
+            if (!keyButton->isChecked()) {
+                std::fprintf(stderr,
+                             "  FAIL: the panel does not show a keyframe at the playhead\n");
+                return 1;
+            }
+
+            // A second keyframe, made by typing a value at another position.
+            window.setPosition(zaro::time::RationalTime{40, sequence.frameRate()});
+            QApplication::processEvents();
+            if (keyButton->isChecked()) {
+                std::fprintf(stderr, "  FAIL: the panel claims a keyframe where there is none\n");
+                return 1;
+            }
+            auto* opacitySpin = window.effects()
+                                    ->findChild<QToolButton*>("keyframe:opacity")
+                                    ->parentWidget()
+                                    ->findChild<QDoubleSpinBox*>();
+            opacitySpin->setValue(0.2);
+            QApplication::processEvents();
+
+            curve = clipNow()->animation.find(zaro::model::Param::Opacity);
+            if (curve == nullptr || curve->size() != 2) {
+                std::fprintf(stderr,
+                             "  FAIL: typing a value while animated did not add a keyframe\n");
+                return 1;
+            }
+            std::printf("  stopwatch and a typed value made %zu keyframes\n", curve->size());
+
+            const std::int64_t drawn = lanePixels();
+            std::printf("  keyframe diamonds cover %lld pixels in the lane (%lld before)\n",
+                        static_cast<long long>(drawn), static_cast<long long>(bareLane));
+            if (bareLane != 0) {
+                std::fprintf(stderr,
+                             "  FAIL: something else is painting in the lane, so this check "
+                             "proves nothing\n");
+                return 1;
+            }
+            if (drawn < 20) {
+                std::fprintf(stderr, "  FAIL: the keyframes are not drawn on the timeline\n");
+                return 1;
+            }
+            if (drawn < 20) {
+                std::fprintf(stderr, "  FAIL: the keyframes are not drawn on the timeline\n");
+                return 1;
+            }
+
+            // Drag the second diamond earlier, through the timeline.
+            const auto keyRow = timeline->rowFor(videoTrack.id());
+            const int laneY = keyRow->top + keyRow->height - 3;
+            const int fromX = static_cast<int>(
+                timeline->layout().xForTime(zaro::time::RationalTime{40, sequence.frameRate()}));
+            const int toX = static_cast<int>(
+                timeline->layout().xForTime(zaro::time::RationalTime{30, sequence.frameRate()}));
+            dragOnTimeline(timeline, fromX, toX, laneY);
+            QApplication::processEvents();
+
+            curve = clipNow()->animation.find(zaro::model::Param::Opacity);
+            // Where the pointer actually was, not where it was aimed: a frame
+            // is wider than a pixel is precise, and asking for frame 30 by
+            // pixel can legitimately land on 29.
+            const zaro::time::RationalTime moved =
+                clipNow()->sourceTimeAt(timeline->layout().timeForX(toX, sequence.frameRate()));
+            if (curve == nullptr || curve->size() != 2 || curve->at(moved) == nullptr) {
+                std::fprintf(stderr, "  FAIL: the keyframe did not follow the drag\n");
+                return 1;
+            }
+            std::printf("  dragged a keyframe to source frame %lld, value %.2f\n",
+                        static_cast<long long>(moved.frames()), curve->at(moved)->value);
+
+            // Alt-click deletes one. The *first* keyframe, not the one just
+            // dragged: it holds the same value as the static opacity, so
+            // deleting it is what leaves the two different and makes the
+            // stopwatch-off check below able to fail.
+            {
+                const int firstX = static_cast<int>(timeline->layout().xForTime(
+                    zaro::time::RationalTime{10, sequence.frameRate()}));
+                const QPointF where(firstX, laneY);
+                QMouseEvent press(QEvent::MouseButtonPress, where, where, Qt::LeftButton,
+                                  Qt::LeftButton, Qt::AltModifier);
+                QCoreApplication::sendEvent(timeline, &press);
+                QMouseEvent release(QEvent::MouseButtonRelease, where, where, Qt::LeftButton,
+                                    Qt::NoButton, Qt::AltModifier);
+                QCoreApplication::sendEvent(timeline, &release);
+            }
+            QApplication::processEvents();
+            curve = clipNow()->animation.find(zaro::model::Param::Opacity);
+            if (curve == nullptr || curve->size() != 1) {
+                std::fprintf(stderr, "  FAIL: alt-click did not delete the keyframe\n");
+                return 1;
+            }
+
+            // And the stopwatch off again, keeping what was on screen.
+            window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+            QApplication::processEvents();
+            const double showing =
+                clipNow()->transformAt(zaro::time::RationalTime{10, sequence.frameRate()}).opacity;
+            stopwatch->click();
+            QApplication::processEvents();
+            if (!clipNow()->animation.empty()) {
+                std::fprintf(stderr, "  FAIL: the stopwatch did not stop animating\n");
+                return 1;
+            }
+            if (std::fabs(showing - 1.0) < 1e-6) {
+                std::fprintf(stderr,
+                             "  FAIL: the animated value equals the static one, so this check "
+                             "cannot tell them apart\n");
+                return 1;
+            }
+            if (std::fabs(clipNow()->transform.opacity - showing) > 1e-6) {
+                std::fprintf(stderr,
+                             "  FAIL: turning animation off changed the picture (%.3f -> %.3f)\n",
+                             showing, clipNow()->transform.opacity);
+                return 1;
+            }
+            std::printf("  stopwatch off kept opacity at %.2f\n", clipNow()->transform.opacity);
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
             }
         }
 

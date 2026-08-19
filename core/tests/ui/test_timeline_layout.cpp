@@ -339,3 +339,63 @@ TEST_CASE("A rubber band selects what it touches", "[ui][timeline][hit]") {
         CHECK(layout.hitTestRect(f.sequence(), 0, v1Y - 10, 100, v1Y + 10).empty());
     }
 }
+
+TEST_CASE("keyframes are hit in the lane along the bottom of a clip", "[hit][keyframes]") {
+    testing::Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+
+    model::Clip* clip = f.track(f.v1).find(placed.id);
+    REQUIRE(clip != nullptr);
+    const auto keyAt = [&](std::int64_t timelineFrame, model::Param param, double value) {
+        model::Keyframe key;
+        key.time = clip->sourceTimeAt(f.at(timelineFrame));
+        key.value = value;
+        clip->animation.curve(param).set(key);
+        return key.time;
+    };
+    const auto first = keyAt(110, model::Param::Opacity, 0.0);
+    keyAt(110, model::Param::ScaleX, 2.0);  // two parameters, one instant
+    const auto second = keyAt(130, model::Param::Opacity, 1.0);
+
+    const TimelineLayout layout = makeLayout();
+
+    // Two parameters keyed together are one diamond, not two.
+    const auto times = TimelineLayout::keyframeTimes(*clip);
+    REQUIRE(times.size() == 2);
+    CHECK(times[0] == first);
+    CHECK(times[1] == second);
+
+    const auto rows = layout.rows(f.sequence());
+    REQUIRE_FALSE(rows.empty());
+    const auto row = rows.front();
+    const auto x = static_cast<std::int32_t>(layout.xForTime(f.at(110)));
+    const std::int32_t laneY = row.top + row.height - 2;
+
+    const auto hit = layout.hitTestKeyframe(f.sequence(), x, laneY);
+    REQUIRE(hit.has_value());
+    CHECK(hit->clip == placed.id);
+    CHECK(hit->time == first);
+
+    // The middle of the clip is where its name and waveform live, so nothing is
+    // grabbed there.
+    CHECK_FALSE(layout.hitTestKeyframe(f.sequence(), x, row.top + (row.height / 2)).has_value());
+    // And a point in the lane far from any keyframe is not a near miss.
+    const auto empty = static_cast<std::int32_t>(layout.xForTime(f.at(122)));
+    CHECK_FALSE(layout.hitTestKeyframe(f.sequence(), empty, laneY).has_value());
+    // Aiming near one still catches it: a keyframe grabbable only on its exact
+    // pixel is a keyframe nobody can drag.
+    CHECK(layout.hitTestKeyframe(f.sequence(), x + 3, laneY).has_value());
+}
+
+TEST_CASE("a clip with no animation has nothing in its keyframe lane", "[hit][keyframes]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(100, 50, 500))));
+
+    const TimelineLayout layout = makeLayout();
+    const auto row = layout.rows(f.sequence()).front();
+    const auto x = static_cast<std::int32_t>(layout.xForTime(f.at(110)));
+    CHECK_FALSE(layout.hitTestKeyframe(f.sequence(), x, row.top + row.height - 2).has_value());
+    // Nor do the headers or the ruler, which are not part of any clip.
+    CHECK_FALSE(layout.hitTestKeyframe(f.sequence(), 10, row.top + row.height - 2).has_value());
+}

@@ -1,5 +1,6 @@
 #include <limits>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/core/edit/Operations.h"
@@ -8,6 +9,7 @@
 #include "ModelFixtures.h"
 
 using namespace zaro;
+using Catch::Approx;
 using edit::Edge;
 using zaro::testing::Fixture;
 
@@ -976,8 +978,7 @@ TEST_CASE("Several clips move as one", "[edit][multiselect]") {
         // Reversed: moving one at a time, the first would overwrite the second
         // on its way past.
         REQUIRE(g.run(edit::makeMoveClips(g.project, g.sequenceId,
-                                          {{g.v1, other[1].id}, {g.v1, other[0].id}},
-                                          g.at(25))));
+                                          {{g.v1, other[1].id}, {g.v1, other[0].id}}, g.at(25))));
         CHECK(g.layout(g.v1) == "25-75@500 75-125@600");
     }
 
@@ -1025,8 +1026,7 @@ TEST_CASE("Several clips are removed as one", "[edit][multiselect]") {
     }
 }
 
-TEST_CASE("A multi-clip edit carries linked partners with it",
-          "[edit][multiselect][link]") {
+TEST_CASE("A multi-clip edit carries linked partners with it", "[edit][multiselect][link]") {
     testing::Fixture f;
     const LinkedPair first = linkPair(f, 0, 50);
     const LinkedPair second = linkPair(f, 50, 50);
@@ -1038,8 +1038,8 @@ TEST_CASE("A multi-clip edit carries linked partners with it",
     CHECK(f.layout(f.a1) == "200-250@500 250-300@500");
 
     SECTION("and removing them takes the sound too") {
-        REQUIRE(f.run(edit::makeRemoveClips(f.project, f.sequenceId,
-                                            {{f.v1, first.video}}, false)));
+        REQUIRE(
+            f.run(edit::makeRemoveClips(f.project, f.sequenceId, {{f.v1, first.video}}, false)));
         CHECK(f.layout(f.v1) == "250-300@500");
         CHECK(f.layout(f.a1) == "250-300@500");
     }
@@ -1055,8 +1055,167 @@ TEST_CASE("A multi-clip edit refuses a locked track", "[edit][multiselect]") {
 
     // Refused outright rather than moving half the selection: the user pointed
     // at a set, and half of it arriving somewhere else is worse than nothing.
-    CHECK_FALSE(f.run(edit::makeMoveClips(f.project, f.sequenceId,
-                                          {{f.v1, a}, {f.v2, b}}, f.at(100))));
+    CHECK_FALSE(
+        f.run(edit::makeMoveClips(f.project, f.sequenceId, {{f.v1, a}, {f.v2, b}}, f.at(100))));
     CHECK(f.layout(f.v1) == "0-50@500");
     CHECK(f.layout(f.v2) == "0-50@600");
+}
+
+TEST_CASE("The stopwatch starts animation without changing the picture", "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    placed.transform.opacity = 0.4;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+
+    REQUIRE(f.run(edit::makeSetParameterAnimated(f.project, f.on(f.v1), placed.id,
+                                                 model::Param::Opacity, true, f.at(120))));
+
+    const model::Clip* clip = f.track(f.v1).find(placed.id);
+    REQUIRE(clip != nullptr);
+    const model::Curve* curve = clip->animation.find(model::Param::Opacity);
+    REQUIRE(curve != nullptr);
+    // One keyframe, holding what the parameter already showed. Anything else
+    // would move the picture at the moment the stopwatch was pressed.
+    REQUIRE(curve->size() == 1);
+    CHECK(curve->keyframes().front().value == Approx(0.4));
+    CHECK(clip->transformAt(f.at(120)).opacity == Approx(0.4));
+    CHECK(clip->transformAt(f.at(101)).opacity == Approx(0.4));
+
+    // The keyframe lands at the playhead, in source time.
+    CHECK(curve->keyframes().front().time == clip->sourceTimeAt(f.at(120)));
+}
+
+TEST_CASE("Stopping animation keeps the value that was on screen", "[edit][keyframes]") {
+    // Reverting to the static value underneath would make the picture jump at
+    // the instant animation was switched off, and that value is usually the
+    // default rather than anything anyone chose.
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    placed.transform.opacity = 1.0;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+
+    const auto source = [&](std::int64_t timelineFrame) {
+        return f.track(f.v1).find(placed.id)->sourceTimeAt(f.at(timelineFrame));
+    };
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        source(100), 0.0)));
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        source(120), 1.0)));
+    const double showing = f.track(f.v1).find(placed.id)->transformAt(f.at(110)).opacity;
+    CHECK(showing == Approx(0.5));
+
+    REQUIRE(f.run(edit::makeSetParameterAnimated(f.project, f.on(f.v1), placed.id,
+                                                 model::Param::Opacity, false, f.at(110))));
+
+    const model::Clip* clip = f.track(f.v1).find(placed.id);
+    CHECK(clip->animation.find(model::Param::Opacity) == nullptr);
+    CHECK(clip->transform.opacity == Approx(showing));
+    // And now it is that value everywhere, because nothing is animated.
+    CHECK(clip->transformAt(f.at(100)).opacity == Approx(showing));
+    CHECK(clip->transformAt(f.at(140)).opacity == Approx(showing));
+}
+
+TEST_CASE("Setting a keyframe twice at one time replaces it and keeps its shape",
+          "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+    const auto source = f.track(f.v1).find(placed.id)->sourceTimeAt(f.at(110));
+
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::ScaleX,
+                                        source, 2.0, model::Interpolation::Bezier)));
+    REQUIRE(f.run(edit::makeSetKeyframeInterpolation(f.project, f.on(f.v1), placed.id,
+                                                     model::Param::ScaleX, source,
+                                                     model::Interpolation::Hold)));
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::ScaleX,
+                                        source, 3.0)));
+
+    const model::Curve* curve = f.track(f.v1).find(placed.id)->animation.find(model::Param::ScaleX);
+    REQUIRE(curve != nullptr);
+    REQUIRE(curve->size() == 1);
+    CHECK(curve->keyframes().front().value == Approx(3.0));
+    // Dragging a value must not silently flatten a curve someone shaped.
+    CHECK(curve->keyframes().front().interpolation == model::Interpolation::Hold);
+}
+
+TEST_CASE("Removing the last keyframe stops the parameter being animated", "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+    const auto source = f.track(f.v1).find(placed.id)->sourceTimeAt(f.at(110));
+
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        source, 0.25)));
+    REQUIRE(f.run(
+        edit::makeRemoveKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity, source)));
+
+    // Not an empty curve left behind saying the parameter is still animated.
+    CHECK(f.track(f.v1).find(placed.id)->animation.empty());
+    CHECK_FALSE(
+        edit::makeRemoveKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity, source));
+}
+
+TEST_CASE("A keyframe will not be dragged on top of another", "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+    const model::Clip* clip = f.track(f.v1).find(placed.id);
+    const auto first = clip->sourceTimeAt(f.at(105));
+    const auto second = clip->sourceTimeAt(f.at(115));
+
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        first, 0.0)));
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        second, 1.0)));
+
+    // Landing on another keyframe would destroy it, and someone who cannot see
+    // what was underneath cannot know to undo.
+    CHECK_FALSE(edit::makeMoveKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                       first, second));
+
+    const auto third = clip->sourceTimeAt(f.at(112));
+    REQUIRE(f.run(edit::makeMoveKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                         first, third)));
+    const model::Curve* curve =
+        f.track(f.v1).find(placed.id)->animation.find(model::Param::Opacity);
+    REQUIRE(curve->size() == 2);
+    CHECK(curve->at(third) != nullptr);
+    CHECK(curve->at(first) == nullptr);
+    // Value carried across, and the curve is still sorted.
+    CHECK(curve->at(third)->value == Approx(0.0));
+    CHECK(curve->keyframes().front().time == third);
+}
+
+TEST_CASE("Keyframe edits are refused on a locked track", "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+    const auto source = f.track(f.v1).find(placed.id)->sourceTimeAt(f.at(110));
+    f.track(f.v1).setLocked(true);
+
+    CHECK_FALSE(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                      source, 0.5));
+    CHECK_FALSE(edit::makeSetParameterAnimated(f.project, f.on(f.v1), placed.id,
+                                               model::Param::Opacity, true, f.at(110)));
+}
+
+TEST_CASE("Dragging one value coalesces, but two keyframes are two steps", "[edit][keyframes]") {
+    Fixture f;
+    model::Clip placed = f.clip(100, 50, 500);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), placed)));
+    const model::Clip* clip = f.track(f.v1).find(placed.id);
+    const auto first = clip->sourceTimeAt(f.at(105));
+    const auto second = clip->sourceTimeAt(f.at(115));
+
+    const std::size_t before = f.stack.depth();
+    for (int i = 1; i <= 10; ++i) {
+        REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                            first, i / 10.0)));
+    }
+    CHECK(f.stack.depth() == before + 1);
+
+    REQUIRE(f.run(edit::makeSetKeyframe(f.project, f.on(f.v1), placed.id, model::Param::Opacity,
+                                        second, 0.5)));
+    // A second keyframe is a separate decision, not more of the same gesture.
+    CHECK(f.stack.depth() == before + 2);
 }

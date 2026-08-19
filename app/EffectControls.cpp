@@ -5,7 +5,9 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "zaro/core/edit/Operations.h"
@@ -55,21 +57,23 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
 
     auto* motion = new QGroupBox("Motion", this);
     auto* motionForm = new QFormLayout(motion);
-    motionForm->addRow("Position X", positionX_);
-    motionForm->addRow("Position Y", positionY_);
-    motionForm->addRow("Scale X", scaleX_);
-    motionForm->addRow("Scale Y", scaleY_);
-    motionForm->addRow("Rotation", rotation_);
-    motionForm->addRow("Anchor X", anchorX_);
-    motionForm->addRow("Anchor Y", anchorY_);
-    motionForm->addRow("Opacity", opacity_);
+    addRow(motionForm, "Position X", model::Param::PositionX, positionX_);
+    addRow(motionForm, "Position Y", model::Param::PositionY, positionY_);
+    addRow(motionForm, "Scale X", model::Param::ScaleX, scaleX_);
+    addRow(motionForm, "Scale Y", model::Param::ScaleY, scaleY_);
+    addRow(motionForm, "Rotation", model::Param::RotationDegrees, rotation_);
+    addRow(motionForm, "Anchor X", model::Param::AnchorX, anchorX_);
+    addRow(motionForm, "Anchor Y", model::Param::AnchorY, anchorY_);
+    addRow(motionForm, "Opacity", model::Param::Opacity, opacity_);
+    // Blend has no stopwatch: it is a mode rather than a quantity, and there is
+    // no meaningful value halfway between Multiply and Screen.
     motionForm->addRow("Blend", blend_);
     videoGroup_ = motion;
 
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
-    audioForm->addRow("Gain", gain_);
-    audioForm->addRow("Pan", pan_);
+    addRow(audioForm, "Gain", model::Param::GainDb, gain_);
+    addRow(audioForm, "Pan", model::Param::Pan, pan_);
     audioGroup_ = audio;
 
     auto* layout = new QVBoxLayout(this);
@@ -79,12 +83,10 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(audio);
     layout->addStretch(1);
 
-    for (QDoubleSpinBox* spin :
-         {positionX_, positionY_, scaleX_, scaleY_, rotation_, anchorX_, anchorY_, opacity_}) {
-        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushTransform(); });
-    }
-    for (QDoubleSpinBox* spin : {gain_, pan_}) {
-        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushAudio(); });
+    for (const Row& row : rows_) {
+        const model::Param param = row.param;
+        connect(row.spin, &QDoubleSpinBox::valueChanged, this,
+                [this, param](double value) { pushParameter(param, value); });
     }
     connect(blend_, &QComboBox::currentIndexChanged, this, [this] {
         if (updating_ || commands_ == nullptr || !clip_.isValid()) {
@@ -172,6 +174,7 @@ void EffectControls::applyToWidgets() {
         pan_->setValue(0.0);
         enabled_->setChecked(false);
         updating_ = false;
+        applyKeyframeButtons();
         return;
     }
 
@@ -193,7 +196,10 @@ void EffectControls::applyToWidgets() {
     // Guarded, so writing the model's values into the widgets does not read as
     // the user changing them and bounce straight back.
     updating_ = true;
-    const model::Transform& transform = clip->transform;
+    // The values *at the playhead*, not the static ones: an animated parameter
+    // has a different value at every frame, and showing the static one would
+    // disagree with the picture on screen.
+    const model::Transform transform = clip->transformAt(position_);
     positionX_->setValue(transform.positionX);
     positionY_->setValue(transform.positionY);
     scaleX_->setValue(transform.scaleX);
@@ -203,25 +209,222 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
-    gain_->setValue(clip->gainDb);
-    pan_->setValue(clip->pan);
+    gain_->setValue(clip->gainDbAt(position_));
+    pan_->setValue(clip->panAt(position_));
     enabled_->setChecked(clip->enabled);
     updating_ = false;
+    applyKeyframeButtons();
+}
+
+void EffectControls::addRow(QFormLayout* form, const QString& label, model::Param param,
+                            QDoubleSpinBox* spin) {
+    // A diamond for the stopwatch and a diamond for the keyframe: the same
+    // symbol every editor uses, and the difference between them is that one
+    // says "this parameter animates" and the other says "it has a value here".
+    auto* stopwatch = new QToolButton(this);
+    stopwatch->setText(QString::fromUtf8("\u23F1"));
+    stopwatch->setCheckable(true);
+    stopwatch->setToolTip("Animate this parameter");
+    stopwatch->setAutoRaise(true);
+    // Named so the widget can be found by what it controls rather than by its
+    // position in the layout, which is what a self-test driving the real panel
+    // needs and what stylesheets want anyway.
+    stopwatch->setObjectName(QString{"stopwatch:"} + model::toString(param));
+
+    auto* keyframe = new QToolButton(this);
+    keyframe->setText(QString::fromUtf8("\u25C6"));
+    keyframe->setCheckable(true);
+    keyframe->setToolTip("Keyframe at the playhead");
+    keyframe->setAutoRaise(true);
+    keyframe->setObjectName(QString{"keyframe:"} + model::toString(param));
+
+    // Square and compact, so two buttons per row do not push the value out of
+    // the panel.
+    const int side = stopwatch->fontMetrics().height() + 8;
+    for (QToolButton* button : {stopwatch, keyframe}) {
+        button->setFixedSize(side, side);
+    }
+
+    auto* line = new QWidget(this);
+    auto* row = new QHBoxLayout(line);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(4);
+    row->addWidget(stopwatch);
+    row->addWidget(keyframe);
+    row->addWidget(spin, 1);
+
+    // The label keeps the width it needs. A form column is free to shrink to
+    // whatever is left over, and "Position X" reading as "Position" next to
+    // another row reading "Position" is worse than a narrow value field --
+    // twice now a control has shipped with its name cut in half.
+    auto* text = new QLabel(label, this);
+    text->setMinimumWidth(text->sizeHint().width());
+    form->addRow(text, line);
+
+    connect(stopwatch, &QToolButton::clicked, this,
+            [this, param](bool on) { toggleAnimated(param, on); });
+    connect(keyframe, &QToolButton::clicked, this, [this, param] { toggleKeyframe(param); });
+
+    rows_.push_back(Row{param, spin, stopwatch, keyframe});
+}
+
+void EffectControls::setPosition(const time::RationalTime& position) {
+    position_ = position;
+    // An animated parameter shows a different value at every frame, so moving
+    // the playhead changes what the panel should say.
+    applyToWidgets();
+}
+
+std::optional<time::RationalTime> EffectControls::keyframeTime() const {
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr || position_.rate().isZero()) {
+        return std::nullopt;
+    }
+    if (!clip->timelineRange.contains(position_.rescaledTo(clip->start().rate()))) {
+        return std::nullopt;
+    }
+    return clip->sourceTimeAt(position_);
+}
+
+void EffectControls::toggleAnimated(model::Param param, bool on) {
+    const auto when = keyframeTime();
+    if (updating_ || commands_ == nullptr || !clip_.isValid() || !when.has_value()) {
+        applyToWidgets();  // put the button back where the model says it is
+        return;
+    }
+    auto built = edit::makeSetParameterAnimated(*project_, {sequenceId_, track_}, clip_, param, on,
+                                                position_);
+    if (!built) {
+        applyToWidgets();
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    applyToWidgets();
+    emit keyframesChanged();
+    emit edited();
+}
+
+void EffectControls::toggleKeyframe(model::Param param) {
+    const auto when = keyframeTime();
+    if (updating_ || commands_ == nullptr || !clip_.isValid() || !when.has_value()) {
+        applyToWidgets();
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    const model::Curve* curve = clip != nullptr ? clip->animation.find(param) : nullptr;
+    const bool exists = curve != nullptr && curve->at(*when) != nullptr;
+
+    auto built =
+        exists ? edit::makeRemoveKeyframe(*project_, {sequenceId_, track_}, clip_, param, *when)
+               : edit::makeSetKeyframe(*project_, {sequenceId_, track_}, clip_, param, *when,
+                                       clip->parameterAt(param, position_));
+    if (!built) {
+        applyToWidgets();
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    applyToWidgets();
+    emit keyframesChanged();
+    emit edited();
+}
+
+void EffectControls::pushParameter(model::Param param, double value) {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    const model::Curve* curve = clip->animation.find(param);
+    if (curve == nullptr || curve->empty()) {
+        // Not animated: the old path, writing the static value.
+        if (param == model::Param::GainDb || param == model::Param::Pan) {
+            pushAudio();
+        } else {
+            pushTransform();
+        }
+        return;
+    }
+
+    // Animated, so a value typed at the playhead is a keyframe there. Editing
+    // the static value instead would appear to do nothing, since the curve wins
+    // everywhere.
+    const auto when = keyframeTime();
+    if (!when.has_value()) {
+        return;  // the playhead is not over this clip; there is nowhere to put it
+    }
+    auto built =
+        edit::makeSetKeyframe(*project_, {sequenceId_, track_}, clip_, param, *when, value);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    applyKeyframeButtons();
+    emit keyframesChanged();
+    emit edited();
+}
+
+void EffectControls::applyKeyframeButtons() {
+    const model::Clip* clip = selectedClip();
+    const auto when = keyframeTime();
+    for (const Row& row : rows_) {
+        const model::Curve* curve = clip != nullptr ? clip->animation.find(row.param) : nullptr;
+        const bool animated = curve != nullptr && !curve->empty();
+        QSignalBlocker blockStopwatch{row.stopwatch};
+        QSignalBlocker blockKeyframe{row.keyframe};
+        row.stopwatch->setChecked(animated);
+        // Only meaningful once the parameter animates, and only where the
+        // playhead is actually over the clip.
+        row.keyframe->setEnabled(animated && when.has_value());
+        row.keyframe->setChecked(animated && when.has_value() && curve->at(*when) != nullptr);
+        row.stopwatch->setEnabled(when.has_value());
+    }
 }
 
 void EffectControls::pushTransform() {
     if (updating_ || commands_ == nullptr || !clip_.isValid()) {
         return;
     }
-    model::Transform transform;
-    transform.positionX = positionX_->value();
-    transform.positionY = positionY_->value();
-    transform.scaleX = scaleX_->value();
-    transform.scaleY = scaleY_->value();
-    transform.rotationDegrees = rotation_->value();
-    transform.anchorX = anchorX_->value();
-    transform.anchorY = anchorY_->value();
-    transform.opacity = opacity_->value();
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    // Start from what the clip already says, so a parameter that is animated
+    // keeps the static value it had. The widget is showing that parameter's
+    // *animated* value, and baking it into the static field would silently
+    // change what the picture reverts to when animation is switched off.
+    model::Transform transform = clip->transform;
+    const auto isAnimated = [clip](model::Param param) {
+        const model::Curve* curve = clip->animation.find(param);
+        return curve != nullptr && !curve->empty();
+    };
+    if (!isAnimated(model::Param::PositionX)) {
+        transform.positionX = positionX_->value();
+    }
+    if (!isAnimated(model::Param::PositionY)) {
+        transform.positionY = positionY_->value();
+    }
+    if (!isAnimated(model::Param::ScaleX)) {
+        transform.scaleX = scaleX_->value();
+    }
+    if (!isAnimated(model::Param::ScaleY)) {
+        transform.scaleY = scaleY_->value();
+    }
+    if (!isAnimated(model::Param::RotationDegrees)) {
+        transform.rotationDegrees = rotation_->value();
+    }
+    if (!isAnimated(model::Param::AnchorX)) {
+        transform.anchorX = anchorX_->value();
+    }
+    if (!isAnimated(model::Param::AnchorY)) {
+        transform.anchorY = anchorY_->value();
+    }
+    if (!isAnimated(model::Param::Opacity)) {
+        transform.opacity = opacity_->value();
+    }
 
     auto built = edit::makeSetTransform(*project_, {sequenceId_, track_}, clip_, transform);
     if (!built) {
@@ -235,8 +438,17 @@ void EffectControls::pushAudio() {
     if (updating_ || commands_ == nullptr || !clip_.isValid()) {
         return;
     }
-    auto built = edit::makeSetClipAudio(*project_, {sequenceId_, track_}, clip_, gain_->value(),
-                                        pan_->value());
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    const auto staticOr = [clip](model::Param param, QDoubleSpinBox* spin) {
+        const model::Curve* curve = clip->animation.find(param);
+        return curve != nullptr && !curve->empty() ? clip->parameterValue(param) : spin->value();
+    };
+    auto built = edit::makeSetClipAudio(*project_, {sequenceId_, track_}, clip_,
+                                        staticOr(model::Param::GainDb, gain_),
+                                        staticOr(model::Param::Pan, pan_));
     if (!built) {
         return;
     }

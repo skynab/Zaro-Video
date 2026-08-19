@@ -64,6 +64,15 @@ struct Clip {
     /// a speed or time-remap curve replaces later.
     [[nodiscard]] time::RationalTime sourceTimeAt(const time::RationalTime& timelineTime) const;
 
+    /// Where a source time sits on the timeline: the inverse of `sourceTimeAt`.
+    ///
+    /// Keyframes are stored in source time and drawn on the timeline, so this
+    /// is the mapping the UI needs. It is the inverse rather than a second
+    /// stored position, because a stored position would have to be maintained
+    /// through every trim, and the first one missed would put a keyframe
+    /// somewhere its curve does not agree with.
+    [[nodiscard]] time::RationalTime timelineTimeOf(const time::RationalTime& sourceTime) const;
+
     /// The same mapping as `sourceTimeAt`, in seconds and unquantised.
     ///
     /// Animation is sampled at the sequence's rate, which need not be the
@@ -76,6 +85,18 @@ struct Clip {
     /// static transform untouched when nothing is animated, which is the case
     /// for almost every clip.
     [[nodiscard]] Transform transformAt(const time::RationalTime& timelineTime) const;
+
+    /// The static value of one parameter, by name rather than by field.
+    ///
+    /// The keyframe operations and the parameter panel both need to treat
+    /// parameters uniformly — the alternative is a ten-way switch repeated in
+    /// every one of them, which is where a parameter gets forgotten.
+    [[nodiscard]] double parameterValue(Param param) const;
+    void setParameterValue(Param param, double value);
+
+    /// The value to use at a moment: the curve if there is one, the static
+    /// value if not.
+    [[nodiscard]] double parameterAt(Param param, const time::RationalTime& timelineTime) const;
 
     [[nodiscard]] double gainDbAt(const time::RationalTime& timelineTime) const;
     [[nodiscard]] double panAt(const time::RationalTime& timelineTime) const;

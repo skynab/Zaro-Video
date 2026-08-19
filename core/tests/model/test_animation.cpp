@@ -242,3 +242,34 @@ TEST_CASE("pruning drops curves that have no keyframes left", "[animation]") {
     animation.pruneEmpty();
     CHECK(animation.empty());
 }
+
+TEST_CASE("source and timeline time are inverses of each other", "[animation]") {
+    // Keyframes are stored in source time and drawn on the timeline, so the two
+    // mappings have to agree. If they drift, a keyframe is drawn somewhere its
+    // own curve does not agree with.
+    model::Clip clip;
+    clip.sourceRange = time::TimeRange{at(500), at(50)};
+    clip.timelineRange = time::TimeRange{at(100), at(50)};
+
+    for (std::int64_t frame = 100; frame < 150; ++frame) {
+        const auto source = clip.sourceTimeAt(at(frame));
+        CHECK(clip.timelineTimeOf(source) == at(frame));
+    }
+
+    // And at a speed change, where the two ranges differ in length.
+    clip.sourceRange = time::TimeRange{at(500), at(100)};
+    clip.timelineRange = time::TimeRange{at(100), at(50)};
+    for (std::int64_t frame = 100; frame < 150; ++frame) {
+        const auto source = clip.sourceTimeAt(at(frame));
+        CHECK(clip.timelineTimeOf(source) == at(frame));
+    }
+
+    // Across a rate difference, where a frame boundary in one is not a frame
+    // boundary in the other, the round trip has to stay within a frame.
+    clip.sourceRange = time::TimeRange{at(500, k24), at(48, k24)};
+    clip.timelineRange = time::TimeRange{at(100, k60), at(120, k60)};
+    for (std::int64_t frame = 100; frame < 220; ++frame) {
+        const auto back = clip.timelineTimeOf(clip.sourceTimeAt(at(frame, k60)));
+        CHECK(std::llabs(back.frames() - frame) <= 1);
+    }
+}

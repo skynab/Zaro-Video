@@ -39,7 +39,8 @@ headless: there is no window yet.
 | 4i | Markers, workspaces | **done** |
 | 4j | Multi-selection: shift-click, rubber band, set moves | **done** |
 | 5a | Keyframing engine: curves, automation, both render paths | **done** |
-| 5b | Keyframe UI, then colour, audio mixer, graphics | next |
+| 5b | Stopwatches, keyframe lane, keyframe dragging | **done** |
+| 5c | Lumetri-style colour, audio mixer, graphics | next |
 
 ## Building
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QWidget>
+#include <optional>
+#include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
@@ -8,6 +10,8 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
+class QToolButton;
 class QLabel;
 
 namespace zaro::app {
@@ -34,6 +38,13 @@ public:
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
 
+    /// Where the playhead is.
+    ///
+    /// An animated parameter has no single value, so the panel shows the value
+    /// at this moment and writes keyframes here. Without it the panel would
+    /// have to invent a time, and every keyframe would land in the same place.
+    void setPosition(const time::RationalTime& position);
+
     /// Re-read the model, after an undo or an edit made elsewhere.
     void refresh();
 
@@ -41,8 +52,31 @@ signals:
     /// A parameter changed, so anything showing the picture needs repainting.
     void edited();
 
+    /// Keyframes were added, removed or moved, so the timeline's keyframe lane
+    /// needs redrawing even though no picture changed.
+    void keyframesChanged();
+
 private:
+    /// One animatable parameter: its spin box, its stopwatch, and the button
+    /// that adds or removes a keyframe at the playhead.
+    struct Row {
+        model::Param param{};
+        QDoubleSpinBox* spin{nullptr};
+        QToolButton* stopwatch{nullptr};
+        QToolButton* keyframe{nullptr};
+    };
+
     [[nodiscard]] const model::Clip* selectedClip() const;
+    /// The playhead in the selected clip's source time, or nothing if the
+    /// playhead is not over the clip. A keyframe outside the clip's own range
+    /// is unreachable and undeletable from the panel, so the buttons that would
+    /// create one are disabled there instead.
+    [[nodiscard]] std::optional<time::RationalTime> keyframeTime() const;
+    void addRow(QFormLayout* form, const QString& label, model::Param param, QDoubleSpinBox* spin);
+    void pushParameter(model::Param param, double value);
+    void toggleAnimated(model::Param param, bool on);
+    void toggleKeyframe(model::Param param);
+    void applyKeyframeButtons();
     void pushTransform();
     void pushAudio();
     void applyToWidgets();
@@ -53,6 +87,8 @@ private:
     edit::CommandStack* commands_{nullptr};
     model::TrackId track_;
     model::ClipId clip_;
+    time::RationalTime position_;
+    std::vector<Row> rows_;
 
     /// True while the panel is writing values into its own widgets, so their
     /// change signals do not bounce straight back into the model.
