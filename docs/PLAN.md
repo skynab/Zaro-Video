@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 230 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 237 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -457,6 +457,31 @@ One UI bug worth recording: with nothing selected, the disabled panel showed **S
 and Opacity 0.000**. Those are meaningful values — a clip scaled to nothing — so a panel
 displaying them reads as a broken clip rather than as no selection. The empty state now
 shows the identity transform.
+
+#### Phase 4e — transitions ✅ **complete**
+
+The plan's Phase 4 asks for "cross-dissolve transition + the transform effect wired end to
+end". The transform half landed in 4d; this is the other.
+
+- ✅ A `Transition` type on the track, spanning a range that **straddles** the cut. The
+  clips stay adjacent and never overlap, so every invariant the track already enforces
+  still holds and removing a transition needs no decision about where the clips should go.
+- ✅ During the span, the outgoing clip is read *past* its out point and the incoming one
+  *before* its in point, reaching into the handles either side. `sourceTimeAt` already
+  extrapolates linearly, which is exactly the mapping wanted.
+- ✅ A dissolve is refused where there are no handles, rather than silently shortened or
+  filled with black — and refused where there is a gap rather than a cut.
+- ✅ Both render graphs, CPU and GPU, with a golden test asserting they agree across a
+  dissolve. They are separate traversals, and a preview that disagrees with the export is
+  the worst kind of disagreement because it is only found after delivery.
+- ✅ Serialization, Cmd+D to add one at the playhead, and the diagonal every editor draws.
+
+One latent bug surfaced while adding this: **track `gainDb` and `pan` were never
+serialized.** The decoder read them, the encoder never wrote them, and no test had set a
+track gain and round-tripped it — so a mix would silently flatten on save. The same shape
+as the audio-stream-info gap found in 4c, and worth noting as a pattern: an encoder and a
+decoder written at different moments drift, and only a round-trip test with the field
+actually set will catch it.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

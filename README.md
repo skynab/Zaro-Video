@@ -8,8 +8,8 @@ locked in.
 
 ## Status
 
-**Phase 4d — effect controls.** A project can be edited, saved, composited,
-rendered to a file, watched, cut and adjusted — a program monitor, a timeline
+**Phase 4e — transitions.** A project can be edited, saved, composited,
+rendered to a file, watched, cut, dissolved and adjusted — a program monitor, a timeline
 with transport, scrubbing, drag, trim, razor and undo, audio waveforms backed by
 a content-hashed disk cache, and an Effect Controls panel for motion, opacity,
 blend mode and audio gain. On a 1080p59.94 timeline the GPU
@@ -31,7 +31,8 @@ headless: there is no window yet.
 | 4b | Timeline panel: paint, scrub, drag, razor | **done** |
 | 4c | Trim by dragging, waveforms, disk cache | **done** |
 | 4d | Effect controls: motion, opacity, blend | **done** |
-| 4e | Project bin, transitions, export dialog | next |
+| 4e | Cross dissolves, in both render paths | **done** |
+| 4f | Project bin, export dialog, keymap | next |
 
 ## Building
 

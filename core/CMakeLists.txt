@@ -31,6 +31,7 @@ add_library(zaro_core
     src/model/Project.cpp
     src/model/Sequence.cpp
     src/model/Track.cpp
+    src/model/Transition.cpp
     src/media/AudioBuffer.cpp
     src/media/ColorInfo.cpp
     src/media/PixelFormat.cpp

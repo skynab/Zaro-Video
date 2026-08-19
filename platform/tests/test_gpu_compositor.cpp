@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -9,10 +10,15 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Compositing.h"
+#include "zaro/core/render/RenderGraph.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
+#include "zaro/platform/qrhi/GpuRenderGraph.h"
+
+#include "ModelFixtures.h"
 
 using namespace zaro;
 using Catch::Approx;
@@ -682,5 +688,112 @@ TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
         // Picture occupies the middle 60 rows: 70..130. Its own top third is
         // white, so sample just inside that.
         CHECK(presented.at(32, 78).r > 0.5F);
+    }
+}
+
+namespace {
+
+/// A SourceFrameProvider yielding flat Y'CbCr frames, so the GPU and CPU paths
+/// can be run over the same sequence and compared.
+class SolidSourceProvider final : public zaro::render::SourceFrameProvider {
+public:
+    void define(zaro::model::MediaRefId media, std::uint8_t luma) { lumas_[media.value()] = luma; }
+
+    zaro::Result<const zaro::media::VideoFrame*> sourceFrameFor(
+        zaro::model::MediaRefId media, const zaro::time::RationalTime& sourceTime) override {
+        requests.push_back(sourceTime);
+        const auto found = lumas_.find(media.value());
+        if (found == lumas_.end()) {
+            return zaro::Error{zaro::ErrorCode::NotFound, "no such media"};
+        }
+        current_ = zaro::media::VideoFrame::allocate(16, 16, zaro::media::PixelFormat::YUV420P);
+        current_.setColor(zaro::media::ColorInfo{
+            zaro::media::ColorPrimaries::BT709, zaro::media::TransferFunction::BT709,
+            zaro::media::ColorMatrix::BT709, zaro::media::ColorRange::Limited});
+        for (std::size_t plane = 0; plane < current_.planeCount(); ++plane) {
+            const auto index = static_cast<std::int32_t>(plane);
+            const auto rows =
+                static_cast<std::size_t>(zaro::media::planeHeight(current_.format(), 16, index));
+            const auto bytes =
+                static_cast<std::size_t>(zaro::media::rowBytes(current_.format(), 16, index));
+            for (std::size_t row = 0; row < rows; ++row) {
+                std::fill_n(
+                    current_.plane(plane) + row * static_cast<std::size_t>(current_.stride(plane)),
+                    bytes, plane == 0 ? found->second : std::uint8_t{128});
+            }
+        }
+        return &current_;
+    }
+
+    std::vector<zaro::time::RationalTime> requests;
+
+private:
+    std::map<std::uint64_t, std::uint8_t> lumas_;
+    zaro::media::VideoFrame current_;
+};
+
+}  // namespace
+
+TEST_CASE("The GPU and CPU render graphs agree across a dissolve", "[gpu][golden][transition]") {
+    // The two traversals are written separately, so nothing but a test keeps
+    // them in step -- and a preview that disagrees with the export is the worst
+    // kind of disagreement, because it is only discovered after delivery.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    zaro::testing::Fixture f;
+    f.sequence().setSize(16, 16);
+    REQUIRE(
+        f.run(zaro::edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500, f.longMedia))));
+    REQUIRE(
+        f.run(zaro::edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 20, f.shortMedia))));
+    REQUIRE(f.run(zaro::edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+
+    SolidSourceProvider gpuProvider;
+    gpuProvider.define(f.longMedia, 60);
+    gpuProvider.define(f.shortMedia, 200);
+    zaro::platform::qrhi::GpuRenderGraph gpuGraph{*compositor, gpuProvider};
+
+    // The CPU graph takes images already in the working space, so feed it the
+    // same frames converted the same way.
+    class Adapter final : public zaro::render::FrameSource {
+    public:
+        explicit Adapter(SolidSourceProvider& provider) : provider_{&provider} {}
+        zaro::Result<const RgbaImage*> imageFor(zaro::model::MediaRefId media,
+                                                const zaro::time::RationalTime& at) override {
+            auto frame = provider_->sourceFrameFor(media, at);
+            if (!frame) {
+                return frame.error();
+            }
+            if (const auto status = zaro::render::toLinear(**frame, current_); !status) {
+                return status.error();
+            }
+            return &current_;
+        }
+
+    private:
+        SolidSourceProvider* provider_;
+        RgbaImage current_;
+    };
+    SolidSourceProvider cpuProvider;
+    cpuProvider.define(f.longMedia, 60);
+    cpuProvider.define(f.shortMedia, 200);
+    Adapter adapter{cpuProvider};
+    zaro::render::RenderGraph cpuGraph{adapter};
+
+    for (const std::int64_t frame : {40, 45, 48, 50, 52, 54, 60}) {
+        const auto at = f.at(frame);
+
+        RgbaImage onGpu;
+        REQUIRE(gpuGraph.compositeInto(f.sequence(), at, onGpu).ok());
+        RgbaImage onCpu;
+        REQUIRE(cpuGraph.compositeInto(f.sequence(), at, onCpu).ok());
+
+        const Difference difference = compare(onCpu, onGpu, 1);
+        INFO("frame " << frame << ": worst " << difference.worst << ", mean " << difference.mean);
+        CHECK(difference.mean < 0.02F);
+        CHECK(difference.worst < 0.05F);
     }
 }

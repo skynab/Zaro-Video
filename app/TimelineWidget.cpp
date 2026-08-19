@@ -27,6 +27,7 @@ const QColor kPlayhead{236, 92, 82};
 const QColor kText{224, 224, 230};
 const QColor kDimText{150, 150, 160};
 const QColor kWaveform{188, 236, 210};
+const QColor kTransition{212, 196, 244};
 
 }  // namespace
 
@@ -185,6 +186,8 @@ void TimelineWidget::paintTracks(QPainter& painter) {
         painter.fillRect(lane, kTrackBackground);
         paintClips(painter, row);
 
+        paintTransitions(painter, row);
+
         const QRect header(0, row.top, metrics.headerWidth, row.height);
         painter.fillRect(header, kHeaderBackground);
         painter.setPen(kGridLine);
@@ -316,6 +319,34 @@ void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, c
         }
         painter.drawLine(QPointF(x, midY - static_cast<double>(maximum) * halfHeight),
                          QPointF(x, midY - static_cast<double>(minimum) * halfHeight));
+    }
+}
+
+void TimelineWidget::paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row) {
+    const model::Sequence& seq = *sequence();
+    const model::Track* track = seq.findTrack(row.track);
+    if (track == nullptr) {
+        return;
+    }
+    const auto& metrics = layout_.metrics();
+
+    for (const model::Transition& transition : track->transitions()) {
+        const double startX = layout_.xForTime(transition.range.start());
+        const double endX = layout_.xForTime(transition.range.endExclusive());
+        QRectF box(startX, row.top + 2.0, std::max(2.0, endX - startX), row.height - 4.0);
+        if (box.right() < metrics.headerWidth) {
+            continue;
+        }
+        if (box.left() < metrics.headerWidth) {
+            box.setLeft(metrics.headerWidth);
+        }
+
+        painter.fillRect(box,
+                         QColor(kTransition.red(), kTransition.green(), kTransition.blue(), 90));
+        painter.setPen(kTransition);
+        painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
+        // A diagonal, the shape every editor draws for a dissolve.
+        painter.drawLine(box.bottomLeft(), box.topRight());
     }
 }
 
@@ -585,6 +616,28 @@ void TimelineWidget::razorAtPlayhead() {
     update();
 }
 
+void TimelineWidget::addDissolveAtPlayhead() {
+    if (project_ == nullptr || commands_ == nullptr || !selectedTrack_.isValid()) {
+        return;
+    }
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    // A second, which is what most editors default to and what a dissolve
+    // usually wants to be before anyone adjusts it.
+    const auto duration = time::RationalTime::fromSeconds(time::Rational{1, 1}, seq->frameRate());
+    auto built =
+        edit::makeAddCrossDissolve(*project_, {sequenceId_, selectedTrack_}, playhead_, duration);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+}
+
 void TimelineWidget::removeSelected(bool ripple) {
     if (project_ == nullptr || commands_ == nullptr || !selected_.isValid()) {
         return;
@@ -621,6 +674,13 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
         case Qt::Key_S:
             snapEnabled_ = !snapEnabled_;
             return;
+        case Qt::Key_D:
+            if (event->modifiers().testFlag(Qt::ControlModifier) ||
+                event->modifiers().testFlag(Qt::MetaModifier)) {
+                addDissolveAtPlayhead();
+                return;
+            }
+            break;
         case Qt::Key_Z:
             if (event->modifiers().testFlag(Qt::ControlModifier) ||
                 event->modifiers().testFlag(Qt::MetaModifier)) {

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include "zaro/core/model/ClipEffects.h"
+#include "zaro/core/model/Transition.h"
 #include "zaro/core/time/Timecode.h"
 
 namespace zaro::io {
@@ -148,14 +149,57 @@ json encode(const model::Clip& clip) {
     return out;
 }
 
+json encode(const model::Transition& transition) {
+    return json{{"id", transition.id.value()},
+                {"from", transition.from.value()},
+                {"to", transition.to.value()},
+                {"kind", model::toString(transition.kind)},
+                {"range", encode(transition.range)}};
+}
+
+Result<model::Transition> decodeTransition(const json& node) {
+    model::Transition transition;
+    transition.id = model::TransitionId{node.value("id", std::uint64_t{0})};
+    transition.from = model::ClipId{node.value("from", std::uint64_t{0})};
+    transition.to = model::ClipId{node.value("to", std::uint64_t{0})};
+    if (!transition.id.isValid() || !transition.from.isValid() || !transition.to.isValid()) {
+        return Error{ErrorCode::InvalidData, "a transition is missing an id"};
+    }
+    if (node.contains("kind")) {
+        transition.kind =
+            model::transitionKindFromString(node.at("kind").get<std::string>().c_str());
+    }
+    auto range = decodeRange(node.at("range"), "transition range");
+    if (!range) {
+        return range.error();
+    }
+    transition.range = *range;
+    return transition;
+}
+
 json encode(const model::Track& track) {
     json clips = json::array();
     for (const model::Clip& clip : track.clips()) {
         clips.push_back(encode(clip));
     }
-    return json{{"id", track.id().value()},   {"kind", model::toString(track.kind())},
-                {"name", track.name()},       {"muted", track.isMuted()},
-                {"locked", track.isLocked()}, {"clips", std::move(clips)}};
+    json transitions = json::array();
+    for (const model::Transition& transition : track.transitions()) {
+        transitions.push_back(encode(transition));
+    }
+
+    json out{{"id", track.id().value()},   {"kind", model::toString(track.kind())},
+             {"name", track.name()},       {"muted", track.isMuted()},
+             {"locked", track.isLocked()}, {"clips", std::move(clips)}};
+    if (!transitions.empty()) {
+        out["transitions"] = std::move(transitions);
+    }
+    if (track.gainDb() != 0.0) {
+        out["gainDb"] = track.gainDb();
+    }
+    if (track.pan() != 0.0) {
+        out["pan"] = track.pan();
+    }
+    return out;
 }
 
 json encode(const model::Sequence& sequence) {
@@ -255,6 +299,16 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     // setClips enforces the sorted, non-overlapping invariant, so a corrupt or
     // hand-edited file is caught here rather than halfway through an edit.
     track.setClips(std::move(clips));
+
+    std::vector<model::Transition> transitions;
+    for (const json& transitionNode : node.value("transitions", json::array())) {
+        auto transition = decodeTransition(transitionNode);
+        if (!transition) {
+            return transition.error();
+        }
+        transitions.push_back(std::move(*transition));
+    }
+    track.setTransitions(std::move(transitions));
     return track;
 }
 

@@ -482,3 +482,127 @@ TEST_CASE("Property edits survive a round trip through the project file",
     CHECK(audioClip->gainDb == -3.5);
     CHECK(audioClip->pan == 0.25);
 }
+
+TEST_CASE("Cross dissolves need a cut and handles either side", "[edit][transition]") {
+    Fixture f;
+    // Both clips start well inside their media, so there is material to reach
+    // into on both sides of the cut.
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+
+    SECTION("added across the cut, centred on it") {
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+        REQUIRE(f.track(f.v1).transitions().size() == 1);
+
+        const model::Transition& transition = f.track(f.v1).transitions().front();
+        CHECK(transition.range.start() == f.at(45));
+        CHECK(transition.range.duration() == f.at(10));
+        CHECK(transition.from == f.track(f.v1).clips()[0].id);
+        CHECK(transition.to == f.track(f.v1).clips()[1].id);
+
+        SECTION("and the clips are untouched: a transition is not an overlap") {
+            CHECK(f.layout(f.v1) == "0-50@500 50-100@600");
+        }
+
+        SECTION("and it can be removed") {
+            REQUIRE(f.run(edit::makeRemoveTransition(f.project, f.on(f.v1), transition.id)));
+            CHECK(f.track(f.v1).transitions().empty());
+        }
+
+        SECTION("and undo takes it away") {
+            REQUIRE(f.stack.undo(f.project));
+            CHECK(f.track(f.v1).transitions().empty());
+        }
+    }
+
+    SECTION("a point near the cut still finds it") {
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(47), f.at(8))));
+        CHECK(f.track(f.v1).transitions().front().range.start() == f.at(46));
+    }
+
+    SECTION("adding a second across the same cut replaces the first") {
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(20))));
+        REQUIRE(f.track(f.v1).transitions().size() == 1);
+        CHECK(f.track(f.v1).transitions().front().range.duration() == f.at(20));
+    }
+
+    SECTION("one that would start before the sequence is refused") {
+        // Centred on frame 50, a 300-frame dissolve would begin at -100.
+        CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(300))));
+        CHECK(f.lastError.find("before the sequence") != std::string::npos);
+    }
+
+    SECTION("zero duration is refused") {
+        CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(0))));
+    }
+}
+
+TEST_CASE("A dissolve longer than the clips it joins is refused", "[edit][transition]") {
+    // Placed far enough along that the span does not run off the front of the
+    // sequence, so it is the clip length that binds rather than frame zero.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(200, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(250, 50, 600))));
+
+    CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(250), f.at(120))));
+    CHECK(f.lastError.find("longer than the clips") != std::string::npos);
+
+    // Something that fits is still accepted.
+    CHECK(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(250), f.at(40))));
+}
+
+TEST_CASE("A dissolve is refused where there are no handles", "[edit][transition]") {
+    // The outgoing clip runs to the very last frame of its media, so there is
+    // nothing to show past the cut. Silently shortening the dissolve or filling
+    // with black would both be worse than saying so.
+    Fixture f;
+    model::Clip first = f.clip(0, Fixture::kShortMediaFrames, 0, f.shortMedia);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), first)));
+    REQUIRE(f.run(
+        edit::makeOverwrite(f.project, f.on(f.v1), f.clip(Fixture::kShortMediaFrames, 50, 600))));
+
+    CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1),
+                                                 f.at(Fixture::kShortMediaFrames), f.at(10))));
+    CHECK(f.lastError.find("no handles") != std::string::npos);
+}
+
+TEST_CASE("A gap is not a cut", "[edit][transition]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(80, 50, 600))));
+    CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(65), f.at(10))));
+    CHECK(f.lastError.find("no cut here") != std::string::npos);
+}
+
+TEST_CASE("Transitions and track gain survive a round trip", "[edit][transition][io]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(12))));
+
+    // Track gain and pan were silently dropped on save: the decoder read them,
+    // the encoder never wrote them, and no test had ever set them.
+    f.track(f.a1).setGainDb(-4.5);
+    f.track(f.a1).setPan(0.75);
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    CHECK(loaded->project == f.project);
+
+    const model::Sequence* sequence = loaded->project.findSequence(f.sequenceId);
+    REQUIRE(sequence != nullptr);
+
+    const model::Track* video = sequence->findTrack(f.v1);
+    REQUIRE(video != nullptr);
+    REQUIRE(video->transitions().size() == 1);
+    CHECK(video->transitions().front().range.start() == f.at(44));
+    CHECK(video->transitions().front().kind == model::TransitionKind::CrossDissolve);
+
+    const model::Track* audio = sequence->findTrack(f.a1);
+    REQUIRE(audio != nullptr);
+    CHECK(audio->gainDb() == -4.5);
+    CHECK(audio->pan() == 0.75);
+}

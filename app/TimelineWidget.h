@@ -72,6 +72,7 @@ private:
     void paintTracks(QPainter& painter);
     void paintClips(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body);
+    void paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintPlayhead(QPainter& painter);
 
     /// Keep the playhead on screen, paging when it leaves.
@@ -88,6 +89,7 @@ private:
                                                model::ClipId ignoring) const;
 
     void razorAtPlayhead();
+    void addDissolveAtPlayhead();
     void removeSelected(bool ripple);
 
     model::Project* project_{nullptr};

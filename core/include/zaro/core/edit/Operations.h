@@ -131,6 +131,24 @@ enum class Edge { In, Out };
                                                     const EditTarget& target, model::ClipId clip,
                                                     bool enabled);
 
+// --- Transitions ------------------------------------------------------------
+
+/// Add a cross dissolve across the cut nearest `at`.
+///
+/// The span straddles the cut, so both clips need material beyond it -- the
+/// outgoing clip has to be readable past its out point and the incoming one
+/// before its in point. A clip already using the whole of its source has no
+/// such handles, and the dissolve is refused rather than silently shortened or
+/// filled with black.
+[[nodiscard]] Result<CommandPtr> makeAddCrossDissolve(model::Project& project,
+                                                      const EditTarget& target,
+                                                      const time::RationalTime& at,
+                                                      const time::RationalTime& duration);
+
+[[nodiscard]] Result<CommandPtr> makeRemoveTransition(model::Project& project,
+                                                      const EditTarget& target,
+                                                      model::TransitionId transition);
+
 // --- Structure --------------------------------------------------------------
 
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,

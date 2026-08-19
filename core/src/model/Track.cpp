@@ -35,6 +35,28 @@ const Clip* Track::clipAt(const time::RationalTime& t) const {
     return candidate.timelineRange.contains(t) ? &candidate : nullptr;
 }
 
+const Transition* Track::transitionAt(const time::RationalTime& t) const {
+    for (const Transition& transition : transitions_) {
+        if (transition.range.contains(t)) {
+            return &transition;
+        }
+    }
+    return nullptr;
+}
+
+const Transition* Track::findTransition(TransitionId id) const {
+    for (const Transition& transition : transitions_) {
+        if (transition.id == id) {
+            return &transition;
+        }
+    }
+    return nullptr;
+}
+
+void Track::setTransitions(std::vector<Transition> transitions) {
+    transitions_ = std::move(transitions);
+}
+
 std::optional<std::size_t> Track::indexOf(ClipId id) const {
     for (std::size_t i = 0; i < clips_.size(); ++i) {
         if (clips_[i].id == id) {

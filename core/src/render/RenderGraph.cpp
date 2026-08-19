@@ -22,6 +22,42 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
         if (track.isMuted()) {
             continue;
         }
+        // A transition shows both of its clips at once. The clips themselves
+        // never overlap on the timeline, so this is the only place two clips
+        // from one track contribute to the same frame.
+        if (const model::Transition* transition = track.transitionAt(at)) {
+            const model::Clip* outgoing = track.find(transition->from);
+            const model::Clip* incoming = track.find(transition->to);
+            if (outgoing != nullptr && incoming != nullptr) {
+                const auto progress = transition->progressAt(at);
+
+                // The outgoing clip is read past its out point and the incoming
+                // one before its in point, both reaching into the handles
+                // either side of the cut. sourceTimeAt extrapolates linearly,
+                // which is exactly the mapping wanted here.
+                if (outgoing->enabled) {
+                    if (auto image =
+                            source_->imageFor(outgoing->source, outgoing->sourceTimeAt(at))) {
+                        drawTransformed(**image, out, outgoing->transform, outgoing->blend);
+                        ++lastClipCount_;
+                    }
+                }
+                if (incoming->enabled) {
+                    if (auto image =
+                            source_->imageFor(incoming->source, incoming->sourceTimeAt(at))) {
+                        // Drawn over the outgoing clip at the dissolve's
+                        // progress: with premultiplied `over` and an opaque
+                        // source that gives out*(1-p) + in*p.
+                        model::Transform fading = incoming->transform;
+                        fading.opacity *= progress;
+                        drawTransformed(**image, out, fading, incoming->blend);
+                        ++lastClipCount_;
+                    }
+                }
+                continue;
+            }
+        }
+
         const model::Clip* clip = track.clipAt(at);
         if (clip == nullptr || !clip->enabled) {
             continue;

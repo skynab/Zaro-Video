@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "zaro/core/model/Clip.h"
+#include "zaro/core/model/Transition.h"
 
 namespace zaro::model {
 
@@ -47,6 +48,15 @@ public:
     void setPan(double value) noexcept { pan_ = value; }
 
     [[nodiscard]] const std::vector<Clip>& clips() const noexcept { return clips_; }
+    [[nodiscard]] const std::vector<Transition>& transitions() const noexcept {
+        return transitions_;
+    }
+
+    /// The transition covering `t`, if any.
+    [[nodiscard]] const Transition* transitionAt(const time::RationalTime& t) const;
+    [[nodiscard]] const Transition* findTransition(TransitionId id) const;
+
+    void setTransitions(std::vector<Transition> transitions);
     [[nodiscard]] bool isEmpty() const noexcept { return clips_.empty(); }
 
     /// The clip playing at `t`, or nullptr in a gap. Binary search.
@@ -101,6 +111,7 @@ private:
     TrackKind kind_{TrackKind::Video};
     std::string name_;
     std::vector<Clip> clips_;
+    std::vector<Transition> transitions_;
     bool muted_{false};
     bool locked_{false};
     double gainDb_{0.0};

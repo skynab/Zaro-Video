@@ -19,6 +19,8 @@ target_link_libraries(zaro_media_tests
 
 # Tests locate the generated fixtures through this, so they can run from any
 # working directory -- including from ctest, which does not promise one.
+target_include_directories(zaro_media_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/tests)
+
 target_compile_definitions(zaro_media_tests PRIVATE
     ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media"
 )

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -828,6 +829,125 @@ Result<CommandPtr> makeSetClipEnabled(Project& project, const EditTarget& target
                       // No merge key: this is a toggle, and two of them in a row
                       // are two decisions rather than one gesture.
                       {}, [enabled](Clip& clip) { clip.enabled = enabled; });
+}
+
+// --- Transitions ------------------------------------------------------------
+
+Result<CommandPtr> makeAddCrossDissolve(Project& project, const EditTarget& target,
+                                        const time::RationalTime& at,
+                                        const time::RationalTime& duration) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    const Sequence& sequence = *located->sequence;
+    const Track& track = *located->track;
+
+    const time::RationalTime when = atRate(at, sequence.frameRate());
+    const time::RationalTime span = atRate(duration, sequence.frameRate());
+    if (span.frames() <= 0) {
+        return Error{ErrorCode::InvalidData, "a transition needs a positive duration"};
+    }
+
+    // Find the cut nearest the requested point: the boundary between two clips
+    // that meet. A dissolve needs something on both sides of it.
+    const std::vector<Clip>& clips = track.clips();
+    const Clip* outgoing = nullptr;
+    const Clip* incoming = nullptr;
+    std::int64_t bestDistance = std::numeric_limits<std::int64_t>::max();
+
+    for (std::size_t i = 0; i + 1 < clips.size(); ++i) {
+        if (clips[i].endExclusive() != clips[i + 1].start()) {
+            continue;  // a gap, not a cut
+        }
+        const std::int64_t distance =
+            std::abs((clips[i].endExclusive() - when).rescaledTo(sequence.frameRate()).frames());
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            outgoing = &clips[i];
+            incoming = &clips[i + 1];
+        }
+    }
+    if (outgoing == nullptr) {
+        return Error{ErrorCode::NotFound, "there is no cut here to dissolve across"};
+    }
+
+    const time::RationalTime cut = outgoing->endExclusive();
+    const time::RationalTime half{span.frames() / 2, sequence.frameRate()};
+    const time::RationalTime start = cut - half;
+    const time::TimeRange range{start, span};
+
+    if (start.frames() < 0) {
+        return Error{ErrorCode::InvalidData, "the dissolve would start before the sequence"};
+    }
+    // The span cannot reach past either clip: a dissolve longer than the
+    // material either side of it has nothing to show at the ends.
+    if (start < outgoing->start() || range.endExclusive() > incoming->endExclusive()) {
+        return Error{ErrorCode::InvalidData, "the dissolve is longer than the clips it joins"};
+    }
+
+    // Both clips are read beyond the cut during the dissolve, so both need
+    // handles there.
+    Clip extendedOut = *outgoing;
+    extendedOut.sourceRange = time::TimeRange::fromStartEnd(
+        outgoing->sourceRange.start(), outgoing->sourceTimeAt(range.endExclusive()));
+    if (Status fits = checkSourceFits(project, extendedOut); !fits) {
+        return Error{fits.error().code(),
+                     "the outgoing clip has no handles past the cut: " + fits.error().message()};
+    }
+
+    Clip extendedIn = *incoming;
+    extendedIn.sourceRange = time::TimeRange::fromStartEnd(incoming->sourceTimeAt(range.start()),
+                                                           incoming->sourceRange.endExclusive());
+    if (Status fits = checkSourceFits(project, extendedIn); !fits) {
+        return Error{fits.error().code(),
+                     "the incoming clip has no handles before the cut: " + fits.error().message()};
+    }
+
+    model::Transition transition;
+    transition.id = project.ids().next<model::TransitionTag>();
+    transition.from = outgoing->id;
+    transition.to = incoming->id;
+    transition.range = range;
+    transition.kind = model::TransitionKind::CrossDissolve;
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, "Add cross dissolve", {},
+                       [transition, trackId](Sequence& seq) {
+                           Track* t = seq.findTrack(trackId);
+                           ZARO_CHECK(t != nullptr, "track vanished between build and apply");
+                           std::vector<model::Transition> rebuilt = t->transitions();
+                           // One transition per cut: adding another across the
+                           // same cut replaces it rather than stacking.
+                           std::erase_if(rebuilt, [&transition](const model::Transition& other) {
+                               return other.from == transition.from && other.to == transition.to;
+                           });
+                           rebuilt.push_back(transition);
+                           t->setTransitions(std::move(rebuilt));
+                       });
+}
+
+Result<CommandPtr> makeRemoveTransition(Project& project, const EditTarget& target,
+                                        model::TransitionId transitionId) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    if (located->track->findTransition(transitionId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such transition on this track"};
+    }
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, "Remove transition", {},
+                       [transitionId, trackId](Sequence& seq) {
+                           Track* t = seq.findTrack(trackId);
+                           ZARO_CHECK(t != nullptr, "track vanished between build and apply");
+                           std::vector<model::Transition> rebuilt = t->transitions();
+                           std::erase_if(rebuilt, [transitionId](const model::Transition& other) {
+                               return other.id == transitionId;
+                           });
+                           t->setTransitions(std::move(rebuilt));
+                       });
 }
 
 // --- Structure --------------------------------------------------------------
