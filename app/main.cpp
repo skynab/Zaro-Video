@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
+#include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
@@ -41,6 +42,7 @@
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 #include "zaro/platform/sdl/AudioSink.h"
 
+#include "EffectControls.h"
 #include "ProgramMonitor.h"
 #include "TimelineWidget.h"
 
@@ -75,11 +77,28 @@ public:
         transportRow->addWidget(timecode_);
 
         timeline_ = new app::TimelineWidget(this);
+        effects_ = new app::EffectControls(this);
+        effects_->setMinimumWidth(250);
+        effects_->setMaximumWidth(330);
+
+        // Monitor and parameters side by side, transport under them, timeline
+        // across the bottom.
+        auto* topRow = new QHBoxLayout;
+        topRow->addWidget(monitor_, 1);
+        topRow->addWidget(effects_);
 
         auto* layout = new QVBoxLayout(this);
-        layout->addWidget(monitor_, 3);
+        layout->addLayout(topRow, 3);
         layout->addLayout(transportRow);
         layout->addWidget(timeline_, 2);
+
+        connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
+                &app::EffectControls::setSelection);
+        connect(effects_, &app::EffectControls::edited, this, [this] {
+            // A parameter change alters the picture at the current playhead.
+            monitor_->update();
+            timeline_->update();
+        });
 
         // The two panels drive each other: scrubbing the timeline moves the
         // picture, and playback moves the playhead.
@@ -89,6 +108,9 @@ public:
                     setPosition(position);
                 });
         connect(timeline_, &app::TimelineWidget::edited, this, [this] {
+            // Undo can change a clip's parameters as well as its position, so
+            // the panel has to re-read rather than trust what it last wrote.
+            effects_->refresh();
             // An edit can change the duration, and can change what is under the
             // playhead, so both the scrubber and the picture need refreshing.
             scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
@@ -140,6 +162,7 @@ public:
         media_ = std::move(*opened);
         monitor_->setSource(sequence_, media_.get());
         timeline_->setProject(&project_, sequence_->id(), &commands_);
+        effects_->setProject(&project_, sequence_->id(), &commands_);
         startWaveforms();
         scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
         refresh();
@@ -387,6 +410,7 @@ private:
 
     app::ProgramMonitor* monitor_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
+    app::EffectControls* effects_{nullptr};
     edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};
@@ -541,6 +565,50 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "  FAIL: the drag left %zu undo steps; it should coalesce to one\n",
                          depthBefore);
+            return 1;
+        }
+
+        // A parameter change has to reach the picture, not just the model.
+        // Rendering the same frame at full and at low opacity should differ;
+        // if they do not, the compositor is not seeing what the panel wrote.
+        window.setPosition(
+            zaro::time::RationalTime{sequence.duration().frames() / 2, sequence.frameRate()});
+        QApplication::processEvents();
+        const QImage before = window.monitor()->grabFramebuffer();
+
+        zaro::model::Transform faded;
+        faded.opacity = 0.15;
+        auto dim = zaro::edit::makeSetTransform(window.project(), {sequence.id(), videoTrack.id()},
+                                                original.id, faded);
+        if (!dim) {
+            std::fprintf(stderr, "  FAIL: %s\n", dim.error().toString().c_str());
+            return 1;
+        }
+        window.commands().execute(window.project(), std::move(*dim));
+        window.monitor()->update();
+        QApplication::processEvents();
+        const QImage after = window.monitor()->grabFramebuffer();
+
+        const auto meanGray = [](const QImage& image) {
+            if (image.isNull()) {
+                return 0.0;
+            }
+            double total = 0.0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    total += qGray(image.pixel(x, y));
+                }
+            }
+            return total / (image.width() * image.height());
+        };
+        const double brightBefore = meanGray(before);
+        const double brightAfter = meanGray(after);
+        std::printf("  opacity 1.0 -> 0.15 changed mean brightness %.1f -> %.1f\n", brightBefore,
+                    brightAfter);
+        if (!(brightAfter < brightBefore * 0.6)) {
+            std::fprintf(stderr,
+                         "  FAIL: lowering opacity did not darken the picture; the panel and "
+                         "the compositor are not connected\n");
             return 1;
         }
 

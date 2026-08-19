@@ -8,6 +8,8 @@ add_executable(zaro-preview
     ProgramMonitor.h
     TimelineWidget.cpp
     TimelineWidget.h
+    EffectControls.cpp
+    EffectControls.h
 )
 
 target_link_libraries(zaro-preview

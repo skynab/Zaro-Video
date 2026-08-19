@@ -54,6 +54,8 @@ signals:
     void playheadMoved(const zaro::time::RationalTime& position);
     /// The model changed, so anything showing it needs to repaint.
     void edited();
+    /// What is selected now. An invalid clip id means nothing is.
+    void selectionChanged(zaro::model::TrackId track, zaro::model::ClipId clip);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

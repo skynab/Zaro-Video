@@ -1,6 +1,7 @@
 #include "zaro/core/edit/Operations.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -762,6 +763,71 @@ Result<CommandPtr> makeSlide(Project& project, const EditTarget& target, ClipId 
                            track->insert(newMiddle);
                            track->insert(newAfter);
                        });
+}
+
+// --- Clip properties --------------------------------------------------------
+
+namespace {
+
+/// Shared shape of every property change: find the clip, refuse if the track is
+/// locked, and rewrite one field in place. None of these can move a clip, so
+/// none of them need to check for collisions.
+Result<CommandPtr> modifyClip(Project& project, const EditTarget& target, ClipId clipId,
+                              std::string description, std::string mergeKey,
+                              std::function<void(Clip&)> change) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    if (auto found = requireClip(*located->track, clipId); !found) {
+        return found.error();
+    }
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, std::move(description), std::move(mergeKey),
+                       [clipId, trackId, change = std::move(change)](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+                           Clip* clip = track->find(clipId);
+                           ZARO_CHECK(clip != nullptr, "clip vanished between build and apply");
+                           change(*clip);
+                       });
+}
+
+}  // namespace
+
+Result<CommandPtr> makeSetTransform(Project& project, const EditTarget& target, ClipId clipId,
+                                    const model::Transform& transform) {
+    return modifyClip(project, target, clipId, "Adjust motion", "transform:" + idText(clipId),
+                      [transform](Clip& clip) { clip.transform = transform; });
+}
+
+Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, ClipId clipId,
+                                    model::BlendMode blend) {
+    return modifyClip(project, target, clipId,
+                      std::string{"Set blend mode to "} + model::toString(blend),
+                      "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
+}
+
+Result<CommandPtr> makeSetClipAudio(Project& project, const EditTarget& target, ClipId clipId,
+                                    double gainDb, double pan) {
+    if (!std::isfinite(gainDb) || !std::isfinite(pan)) {
+        return Error{ErrorCode::InvalidData, "gain and pan have to be real numbers"};
+    }
+    const double clampedPan = std::clamp(pan, -1.0, 1.0);
+    return modifyClip(project, target, clipId, "Adjust audio", "audio:" + idText(clipId),
+                      [gainDb, clampedPan](Clip& clip) {
+                          clip.gainDb = gainDb;
+                          clip.pan = clampedPan;
+                      });
+}
+
+Result<CommandPtr> makeSetClipEnabled(Project& project, const EditTarget& target, ClipId clipId,
+                                      bool enabled) {
+    return modifyClip(project, target, clipId, enabled ? "Enable clip" : "Disable clip",
+                      // No merge key: this is a toggle, and two of them in a row
+                      // are two decisions rather than one gesture.
+                      {}, [enabled](Clip& clip) { clip.enabled = enabled; });
 }
 
 // --- Structure --------------------------------------------------------------

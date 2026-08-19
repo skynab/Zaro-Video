@@ -4,6 +4,7 @@
 
 #include "zaro/core/Error.h"
 #include "zaro/core/edit/Command.h"
+#include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Project.h"
 
 namespace zaro::edit {
@@ -100,6 +101,35 @@ enum class Edge { In, Out };
 /// content is untouched; the clips either side gain and lose duration.
 [[nodiscard]] Result<CommandPtr> makeSlide(model::Project& project, const EditTarget& target,
                                            model::ClipId clip, const time::RationalTime& delta);
+
+// --- Clip properties --------------------------------------------------------
+//
+// These change what a clip looks or sounds like rather than where it sits, so
+// none of them can move a clip or collide with a neighbour. They exist as
+// commands anyway, because the command stack is the only write path into the
+// model -- an "obviously safe" mutation that bypassed it would be the one
+// operation undo did not cover.
+//
+// Each carries a merge key, so dragging a slider is one undo step rather than
+// one per pixel.
+
+/// Position, scale, rotation, anchor and opacity.
+[[nodiscard]] Result<CommandPtr> makeSetTransform(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip,
+                                                  const model::Transform& transform);
+
+[[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip, model::BlendMode blend);
+
+/// Clip gain in decibels and pan from -1 to +1.
+[[nodiscard]] Result<CommandPtr> makeSetClipAudio(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip, double gainDb, double pan);
+
+/// Whether the clip contributes at all. Disabled clips stay on the timeline and
+/// keep their place; they simply stop being composited or mixed.
+[[nodiscard]] Result<CommandPtr> makeSetClipEnabled(model::Project& project,
+                                                    const EditTarget& target, model::ClipId clip,
+                                                    bool enabled);
 
 // --- Structure --------------------------------------------------------------
 

@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 225 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 230 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -430,6 +430,33 @@ Two bugs found along the way, neither in the new code:
 
 I also twice reported a clean build from a stale binary, because the error grep matched
 `error:` and missed `AutoMoc error`. Broadened.
+
+#### Phase 4d — effect controls ✅ **complete**
+
+The transform and opacity parameters have existed in the model and the compositor since
+Phase 3a and were unreachable from the UI. They are now editable.
+
+- ✅ Four new edit operations — `makeSetTransform`, `makeSetBlendMode`, `makeSetClipAudio`,
+  `makeSetClipEnabled`. They cannot move a clip or collide with a neighbour, but they are
+  commands anyway, because the command stack is the only write path into the model: an
+  "obviously safe" mutation that bypassed it would be the one operation undo did not
+  cover.
+- ✅ Merge keys, so dragging a value is one undo step rather than one per pixel — while
+  toggling *enabled* deliberately does **not** merge, because two toggles are two
+  decisions rather than one gesture.
+- ✅ An Effect Controls panel driven *from* the model rather than holding its own copy: it
+  re-reads after every edit and after undo. A panel that trusted its own widgets would
+  drift the first time something changed the clip from elsewhere.
+
+Verified end to end rather than by inspection: the self-test renders a frame, lowers
+opacity to 0.15 through the same command path the panel uses, renders again, and requires
+the picture to have darkened. Mean brightness goes 107.0 → 15.5. If the panel and the
+compositor were not connected, that check fails.
+
+One UI bug worth recording: with nothing selected, the disabled panel showed **Scale 0.000
+and Opacity 0.000**. Those are meaningful values — a clip scaled to nothing — so a panel
+displaying them reads as a broken clip rather than as no selection. The empty state now
+shows the identity transform.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

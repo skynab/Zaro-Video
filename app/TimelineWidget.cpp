@@ -391,6 +391,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     if (!hit) {
         selected_ = {};
         selectedTrack_ = {};
+        emit selectionChanged(selectedTrack_, selected_);
         // Clicking empty timeline still moves the playhead: it is the most
         // common thing to want there.
         drag_ = Drag::Scrub;
@@ -400,6 +401,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
 
     selected_ = hit->clip;
     selectedTrack_ = hit->track;
+    emit selectionChanged(selectedTrack_, selected_);
     // Alt turns a trim into a ripple trim, closing the gap it would leave
     // instead of opening one.
     beginDrag(*hit, x, event->modifiers().testFlag(Qt::AltModifier));
