@@ -4,6 +4,7 @@
 
 #include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
+#include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/time/TimeRange.h"
 
@@ -52,6 +53,10 @@ struct Clip {
     double gainDb{0.0};
     double pan{0.0};
 
+    /// Primary colour correction, applied in the linear working space before
+    /// the clip is placed in the frame.
+    ColorCorrection color;
+
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;
 
@@ -85,6 +90,9 @@ struct Clip {
     /// static transform untouched when nothing is animated, which is the case
     /// for almost every clip.
     [[nodiscard]] Transform transformAt(const time::RationalTime& timelineTime) const;
+
+    /// The correction at a moment, curves applied.
+    [[nodiscard]] ColorCorrection colorAt(const time::RationalTime& timelineTime) const;
 
     /// The static value of one parameter, by name rather than by field.
     ///

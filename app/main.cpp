@@ -1031,6 +1031,91 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Colour correction, through the panel and out to the picture. The
+        // grade is separate code on the CPU and the GPU, and the unit tests
+        // compare those two directly -- what they cannot see is whether the
+        // panel is wired to either of them.
+        {
+            auto* exposure = window.effects()
+                                 ->findChild<QToolButton*>("keyframe:exposure")
+                                 ->parentWidget()
+                                 ->findChild<QDoubleSpinBox*>();
+            auto* saturation = window.effects()
+                                   ->findChild<QToolButton*>("keyframe:saturation")
+                                   ->parentWidget()
+                                   ->findChild<QDoubleSpinBox*>();
+            if (exposure == nullptr || saturation == nullptr) {
+                std::fprintf(stderr, "  FAIL: the colour controls are missing\n");
+                return 1;
+            }
+            window.effects()->setSelection(videoTrack.id(), original.id);
+
+            // A frame that is lit to begin with: exposure on black is black.
+            std::int64_t litFrame = 0;
+            double litness = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray > litness) {
+                    litness = gray;
+                    litFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
+            QApplication::processEvents();
+
+            const double litBefore = meanGray(window.monitor()->grabFramebuffer());
+            exposure->setValue(-2.0);
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double darker = meanGray(window.monitor()->grabFramebuffer());
+
+            exposure->setValue(0.0);
+            saturation->setValue(0.0);
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const QImage grey = window.monitor()->grabFramebuffer();
+            std::int64_t coloured = 0;
+            std::int64_t looked = 0;
+            for (int gy = 0; gy < grey.height(); gy += 3) {
+                for (int gx = 0; gx < grey.width(); gx += 3) {
+                    const QColor sample = grey.pixelColor(gx, gy);
+                    ++looked;
+                    if (std::abs(sample.red() - sample.green()) > 4 ||
+                        std::abs(sample.green() - sample.blue()) > 4) {
+                        ++coloured;
+                    }
+                }
+            }
+            std::printf(
+                "  colour: two stops down %.1f -> %.1f, monochrome leaves %lld of %lld "
+                "pixels coloured\n",
+                litBefore, darker, static_cast<long long>(coloured),
+                static_cast<long long>(looked));
+
+            if (!(darker < litBefore * 0.6)) {
+                std::fprintf(stderr,
+                             "  FAIL: two stops of exposure did not darken the picture; the "
+                             "panel and the compositor are not connected\n");
+                return 1;
+            }
+            if (coloured > looked / 100) {
+                std::fprintf(stderr, "  FAIL: zero saturation left colour in the picture\n");
+                return 1;
+            }
+
+            saturation->setValue(100.0);
+            QApplication::processEvents();
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Keyframing, driven through the panel and the timeline rather than by
         // calling the operations: the stopwatch, a value typed at a second
         // playhead position, and then dragging the diamond that appears.

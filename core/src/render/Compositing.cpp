@@ -43,9 +43,27 @@ Rgba scaled(const Rgba& pixel, float factor) {
     return Rgba{pixel.r * factor, pixel.g * factor, pixel.b * factor, pixel.a * factor};
 }
 
+/// Grade a premultiplied pixel: divide alpha out, correct, multiply back.
+///
+/// Grading the premultiplied values directly would make the correction depend
+/// on how transparent the pixel is, so a clip would grade differently in the
+/// middle of a dissolve than either side of it.
+Rgba graded(const Rgba& pixel, const GradeConstants& grade) {
+    if (pixel.a <= 0.0001F) {
+        return pixel;
+    }
+    const float inverse = 1.0F / pixel.a;
+    float r = pixel.r * inverse;
+    float g = pixel.g * inverse;
+    float b = pixel.b * inverse;
+    gradePixel(grade, r, g, b);
+    return Rgba{r * pixel.a, g * pixel.a, b * pixel.a, pixel.a};
+}
+
 }  // namespace
 
-void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend) {
+void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend,
+              const GradeConstants* grade) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
@@ -63,19 +81,21 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
         for (std::int32_t x = 0; x < width; ++x) {
             // Opacity scales a premultiplied pixel uniformly, colour and
             // coverage together; that is what keeps a fade linear.
-            out[x] = blendPixel(alpha == 1.0F ? in[x] : scaled(in[x], alpha), out[x], blend);
+            const Rgba corrected = grade != nullptr ? graded(in[x], *grade) : in[x];
+            out[x] =
+                blendPixel(alpha == 1.0F ? corrected : scaled(corrected, alpha), out[x], blend);
         }
     }
 }
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Transform& transform,
-                     BlendMode blend) {
+                     BlendMode blend, const GradeConstants* grade) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
     if (transform.isIdentity() && source.width() == destination.width() &&
         source.height() == destination.height()) {
-        drawOver(source, destination, 1.0, blend);
+        drawOver(source, destination, 1.0, blend, grade);
         return;
     }
 
@@ -115,10 +135,13 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
             const double sourceX = unrotatedX * inverseScaleX + transform.anchorX + sourceCentreX;
             const double sourceY = unrotatedY * inverseScaleY + transform.anchorY + sourceCentreY;
 
-            const Rgba sample = source.sampleBilinear(static_cast<float>(sourceX - 0.5),
-                                                      static_cast<float>(sourceY - 0.5));
+            Rgba sample = source.sampleBilinear(static_cast<float>(sourceX - 0.5),
+                                                static_cast<float>(sourceY - 0.5));
             if (sample.a <= 0.0F && sample.r == 0.0F && sample.g == 0.0F && sample.b == 0.0F) {
                 continue;
+            }
+            if (grade != nullptr) {
+                sample = graded(sample, *grade);
             }
             out[x] = blendPixel(opacity == 1.0F ? sample : scaled(sample, opacity), out[x], blend);
         }

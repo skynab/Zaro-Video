@@ -1,5 +1,7 @@
 #include "zaro/core/render/RenderGraph.h"
 
+#include "zaro/core/render/Grade.h"
+
 namespace zaro::render {
 
 Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,
@@ -50,7 +52,9 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                         // source that gives out*(1-p) + in*p.
                         model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
-                        drawTransformed(**image, out, fading, incoming->blend);
+                        const GradeConstants grade = gradeConstantsFor(incoming->colorAt(at));
+                        drawTransformed(**image, out, fading, incoming->blend,
+                                        grade.isIdentity() ? nullptr : &grade);
                         ++lastClipCount_;
                     }
                 }
@@ -70,7 +74,9 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             // render is a stalled edit.
             continue;
         }
-        drawTransformed(**image, out, clip->transformAt(at), clip->blend);
+        const GradeConstants grade = gradeConstantsFor(clip->colorAt(at));
+        drawTransformed(**image, out, clip->transformAt(at), clip->blend,
+                        grade.isIdentity() ? nullptr : &grade);
         ++lastClipCount_;
     }
     return {};

@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/model/ColorCorrection.h"
 
 namespace zaro::app {
 namespace {
@@ -51,6 +52,17 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         blend_->addItem(QString::fromUtf8(model::toString(mode)), static_cast<int>(mode));
     }
 
+    // The units a panel shows, not the ones the arithmetic wants: stops for
+    // exposure, -100..100 for the rest, 100 for neutral saturation.
+    temperature_ = makeSpin(-100.0, 100.0, 1.0, 1);
+    tint_ = makeSpin(-100.0, 100.0, 1.0, 1);
+    // "EV" rather than "stops": the same unit, and it fits in the field. A
+    // suffix that gets cut off reads as a different number, not as a shorter
+    // label.
+    exposure_ = makeSpin(-6.0, 6.0, 0.1, 2, " EV");
+    contrast_ = makeSpin(-100.0, 100.0, 1.0, 1);
+    saturation_ = makeSpin(0.0, 200.0, 1.0, 1);
+
     gain_ = makeSpin(-96.0, 24.0, 0.5, 2, " dB");
     pan_ = makeSpin(-1.0, 1.0, 0.05, 3);
     enabled_ = new QCheckBox("Enabled", this);
@@ -70,6 +82,15 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     motionForm->addRow("Blend", blend_);
     videoGroup_ = motion;
 
+    auto* colour = new QGroupBox("Colour", this);
+    auto* colourForm = new QFormLayout(colour);
+    addRow(colourForm, "Temperature", model::Param::Temperature, temperature_);
+    addRow(colourForm, "Tint", model::Param::Tint, tint_);
+    addRow(colourForm, "Exposure", model::Param::Exposure, exposure_);
+    addRow(colourForm, "Contrast", model::Param::Contrast, contrast_);
+    addRow(colourForm, "Saturation", model::Param::Saturation, saturation_);
+    colorGroup_ = colour;
+
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
     addRow(audioForm, "Gain", model::Param::GainDb, gain_);
@@ -80,6 +101,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(title_);
     layout->addWidget(enabled_);
     layout->addWidget(motion);
+    layout->addWidget(colour);
     layout->addWidget(audio);
     layout->addStretch(1);
 
@@ -143,6 +165,7 @@ const model::Clip* EffectControls::selectedClip() const {
 void EffectControls::setEditingEnabled(bool enabled) {
     enabled_->setEnabled(enabled);
     videoGroup_->setEnabled(enabled);
+    colorGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
 }
 
@@ -170,6 +193,12 @@ void EffectControls::applyToWidgets() {
         anchorY_->setValue(identity.anchorY);
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
+        const model::ColorCorrection neutral;
+        temperature_->setValue(neutral.temperature);
+        tint_->setValue(neutral.tint);
+        exposure_->setValue(neutral.exposure);
+        contrast_->setValue(neutral.contrast);
+        saturation_->setValue(neutral.saturation);
         gain_->setValue(0.0);
         pan_->setValue(0.0);
         enabled_->setChecked(false);
@@ -187,6 +216,7 @@ void EffectControls::applyToWidgets() {
     // Motion applies to picture, gain and pan to sound. Showing both for every
     // clip would offer controls that do nothing.
     videoGroup_->setVisible(isVideo);
+    colorGroup_->setVisible(isVideo);
     audioGroup_->setVisible(!isVideo);
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
@@ -209,6 +239,12 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
+    const model::ColorCorrection color = clip->colorAt(position_);
+    temperature_->setValue(color.temperature);
+    tint_->setValue(color.tint);
+    exposure_->setValue(color.exposure);
+    contrast_->setValue(color.contrast);
+    saturation_->setValue(color.saturation);
     gain_->setValue(clip->gainDbAt(position_));
     pan_->setValue(clip->panAt(position_));
     enabled_->setChecked(clip->enabled);
@@ -341,10 +377,21 @@ void EffectControls::pushParameter(model::Param param, double value) {
     const model::Curve* curve = clip->animation.find(param);
     if (curve == nullptr || curve->empty()) {
         // Not animated: the old path, writing the static value.
-        if (param == model::Param::GainDb || param == model::Param::Pan) {
-            pushAudio();
-        } else {
-            pushTransform();
+        switch (param) {
+            case model::Param::GainDb:
+            case model::Param::Pan:
+                pushAudio();
+                return;
+            case model::Param::Temperature:
+            case model::Param::Tint:
+            case model::Param::Exposure:
+            case model::Param::Contrast:
+            case model::Param::Saturation:
+                pushColor();
+                return;
+            default:
+                pushTransform();
+                return;
         }
         return;
     }
@@ -427,6 +474,35 @@ void EffectControls::pushTransform() {
     }
 
     auto built = edit::makeSetTransform(*project_, {sequenceId_, track_}, clip_, transform);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::pushColor() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    // The same rule as the transform: an animated parameter keeps its static
+    // value, because the widget is showing the animated one.
+    const auto staticOr = [clip](model::Param param, QDoubleSpinBox* spin) {
+        const model::Curve* curve = clip->animation.find(param);
+        return curve != nullptr && !curve->empty() ? clip->parameterValue(param) : spin->value();
+    };
+    model::ColorCorrection color;
+    color.temperature = staticOr(model::Param::Temperature, temperature_);
+    color.tint = staticOr(model::Param::Tint, tint_);
+    color.exposure = staticOr(model::Param::Exposure, exposure_);
+    color.contrast = staticOr(model::Param::Contrast, contrast_);
+    color.saturation = staticOr(model::Param::Saturation, saturation_);
+
+    auto built = edit::makeSetColorCorrection(*project_, {sequenceId_, track_}, clip_, color);
     if (!built) {
         return;
     }

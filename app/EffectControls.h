@@ -79,6 +79,7 @@ private:
     void applyKeyframeButtons();
     void pushTransform();
     void pushAudio();
+    void pushColor();
     void applyToWidgets();
     void setEditingEnabled(bool enabled);
 
@@ -106,8 +107,14 @@ private:
     QComboBox* blend_{nullptr};
     QDoubleSpinBox* gain_{nullptr};
     QDoubleSpinBox* pan_{nullptr};
+    QDoubleSpinBox* temperature_{nullptr};
+    QDoubleSpinBox* tint_{nullptr};
+    QDoubleSpinBox* exposure_{nullptr};
+    QDoubleSpinBox* contrast_{nullptr};
+    QDoubleSpinBox* saturation_{nullptr};
     QCheckBox* enabled_{nullptr};
     QWidget* videoGroup_{nullptr};
+    QWidget* colorGroup_{nullptr};
     QWidget* audioGroup_{nullptr};
 };
 

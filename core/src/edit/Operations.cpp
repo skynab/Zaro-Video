@@ -1372,6 +1372,18 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeSetColorCorrection(Project& project, const EditTarget& target, ClipId clipId,
+                                          const model::ColorCorrection& color) {
+    for (const double value :
+         {color.temperature, color.tint, color.exposure, color.contrast, color.saturation}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a colour correction has to be real numbers"};
+        }
+    }
+    return modifyClip(project, target, clipId, "Adjust colour", "color:" + idText(clipId),
+                      [color](Clip& clip) { clip.color = color; });
+}
+
 Result<CommandPtr> makeSetClipAudio(Project& project, const EditTarget& target, ClipId clipId,
                                     double gainDb, double pan) {
     if (!std::isfinite(gainDb) || !std::isfinite(pan)) {

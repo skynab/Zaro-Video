@@ -476,7 +476,8 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
 
         // Under test: hand the planes to the GPU and let the shader do both.
         REQUIRE(compositor->beginFrame(64, 64).ok());
-        const auto drawn = compositor->drawSource(frame, Transform{}, BlendMode::Normal);
+        const auto drawn =
+            compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal);
         REQUIRE(drawn.ok());
         RgbaImage gpuOut;
         REQUIRE(compositor->endFrame(gpuOut).ok());
@@ -515,7 +516,9 @@ TEST_CASE("The GPU YUV path honours transforms", "[gpu][golden][yuv]") {
         render::drawTransformed(converted, cpuOut, transform, BlendMode::Normal);
 
         REQUIRE(compositor->beginFrame(96, 96).ok());
-        REQUIRE(compositor->drawSource(frame, transform, BlendMode::Normal).ok());
+        REQUIRE(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
+                .ok());
         RgbaImage gpuOut;
         REQUIRE(compositor->endFrame(gpuOut).ok());
         return compare(cpuOut, gpuOut, 2);
@@ -567,7 +570,8 @@ TEST_CASE("The GPU YUV path refuses what it cannot handle", "[gpu][yuv]") {
     pq.transfer = media::TransferFunction::PQ;
     hdr.setColor(pq);
 
-    const auto status = compositor->drawSource(hdr, Transform{}, BlendMode::Normal);
+    const auto status =
+        compositor->drawSource(hdr, Transform{}, render::GradeConstants{}, BlendMode::Normal);
     REQUIRE_FALSE(status.ok());
     CHECK(status.error().code() == ErrorCode::Unsupported);
 
@@ -613,7 +617,9 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     const auto previewStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
         REQUIRE(compositor->beginFrame(kWidth, kHeight).ok());
-        REQUIRE(compositor->drawSource(frame, transform, BlendMode::Normal).ok());
+        REQUIRE(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
+                .ok());
         REQUIRE(compositor->endFrameOnGpu().ok());
     }
     const double previewSeconds =
@@ -624,7 +630,9 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     const auto readbackStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
         REQUIRE(compositor->beginFrame(kWidth, kHeight).ok());
-        REQUIRE(compositor->drawSource(frame, transform, BlendMode::Normal).ok());
+        REQUIRE(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
+                .ok());
         REQUIRE(compositor->endFrame(gpuOut).ok());
     }
     const double readbackSeconds =
@@ -796,4 +804,112 @@ TEST_CASE("The GPU and CPU render graphs agree across a dissolve", "[gpu][golden
         CHECK(difference.mean < 0.02F);
         CHECK(difference.worst < 0.05F);
     }
+}
+
+TEST_CASE("The GPU grade agrees with the CPU reference", "[gpu][golden][grade]") {
+    // The two implementations of the grade are separate code, and a correction
+    // honoured on export but not in preview -- or applied slightly differently
+    // -- is invisible until someone compares a delivered file against what they
+    // approved. So the shader is checked against render::gradePixel directly.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::ColorCorrection correction;
+    };
+    const auto make = [](double temperature, double tint, double exposure, double contrast,
+                         double saturation) {
+        model::ColorCorrection out;
+        out.temperature = temperature;
+        out.tint = tint;
+        out.exposure = exposure;
+        out.contrast = contrast;
+        out.saturation = saturation;
+        return out;
+    };
+    const Case cases[] = {
+        {"neutral", make(0, 0, 0, 0, 100)},
+        {"warm", make(60, 0, 0, 0, 100)},
+        {"cool and green", make(-45, -30, 0, 0, 100)},
+        {"one stop up", make(0, 0, 1.0, 0, 100)},
+        {"two stops down", make(0, 0, -2.0, 0, 100)},
+        {"contrast up", make(0, 0, 0, 60, 100)},
+        {"contrast down", make(0, 0, 0, -60, 100)},
+        {"monochrome", make(0, 0, 0, 0, 0)},
+        {"oversaturated", make(0, 0, 0, 0, 175)},
+        {"everything at once", make(35, -20, 0.75, 40, 130)},
+    };
+
+    // A spread of colours and brightnesses, including values above 1 -- the
+    // working space is scene-linear and a highlight is allowed to exceed white.
+    RgbaImage source{32, 32};
+    for (std::int32_t y = 0; y < 32; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 32; ++x) {
+            const float u = static_cast<float>(x) / 31.0F;
+            const float v = static_cast<float>(y) / 31.0F;
+            row[x] = Rgba{u * 1.4F, v, (1.0F - u) * 0.8F, 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const auto grade = render::gradeConstantsFor(testCase.correction);
+
+        RgbaImage cpuOut{32, 32};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                grade.isIdentity() ? nullptr : &grade);
+
+        REQUIRE(compositor->beginFrame(32, 32).ok());
+        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.01F);
+        CHECK(difference.mean < 0.002F);
+    }
+}
+
+TEST_CASE("A grade on the GPU survives a fade without changing", "[gpu][golden][grade]") {
+    // Premultiplied values: the shader has to divide alpha out before grading
+    // and multiply it back after, or a clip would grade differently in the
+    // middle of a dissolve than either side of it.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    model::ColorCorrection correction;
+    correction.exposure = 0.5;
+    correction.contrast = 35.0;
+    correction.saturation = 140.0;
+    const auto grade = render::gradeConstantsFor(correction);
+
+    RgbaImage source{16, 16};
+    source.fill(Rgba{0.4F, 0.25F, 0.1F, 1.0F});
+
+    Transform fading;
+    fading.opacity = 0.35;
+
+    REQUIRE(compositor->beginFrame(16, 16).ok());
+    REQUIRE(compositor->draw(source, fading, BlendMode::Normal, grade).ok());
+    RgbaImage faded;
+    REQUIRE(compositor->endFrame(faded).ok());
+
+    REQUIRE(compositor->beginFrame(16, 16).ok());
+    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+    RgbaImage full;
+    REQUIRE(compositor->endFrame(full).ok());
+
+    const Rgba& partial = faded.at(8, 8);
+    const Rgba& opaque = full.at(8, 8);
+    REQUIRE(partial.a > 0.3F);
+    CHECK(partial.r / partial.a == Catch::Approx(opaque.r).margin(0.005));
+    CHECK(partial.g / partial.a == Catch::Approx(opaque.g).margin(0.005));
+    CHECK(partial.b / partial.a == Catch::Approx(opaque.b).margin(0.005));
 }

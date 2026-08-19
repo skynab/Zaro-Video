@@ -90,6 +90,16 @@ double Clip::parameterValue(Param param) const {
             return gainDb;
         case Param::Pan:
             return pan;
+        case Param::Temperature:
+            return color.temperature;
+        case Param::Tint:
+            return color.tint;
+        case Param::Exposure:
+            return color.exposure;
+        case Param::Contrast:
+            return color.contrast;
+        case Param::Saturation:
+            return color.saturation;
     }
     return 0.0;
 }
@@ -126,6 +136,21 @@ void Clip::setParameterValue(Param param, double value) {
         case Param::Pan:
             pan = value;
             return;
+        case Param::Temperature:
+            color.temperature = value;
+            return;
+        case Param::Tint:
+            color.tint = value;
+            return;
+        case Param::Exposure:
+            color.exposure = value;
+            return;
+        case Param::Contrast:
+            color.contrast = value;
+            return;
+        case Param::Saturation:
+            color.saturation = value;
+            return;
     }
 }
 
@@ -135,6 +160,22 @@ double Clip::parameterAt(Param param, const time::RationalTime& timelineTime) co
         return parameterValue(param);
     }
     return curve->valueAtSeconds(sourceSecondsAt(timelineTime));
+}
+
+ColorCorrection Clip::colorAt(const time::RationalTime& timelineTime) const {
+    if (animation.empty()) {
+        return color;
+    }
+    const double seconds = sourceSecondsAt(timelineTime);
+    ColorCorrection graded = color;
+    graded.temperature =
+        Curve::valueOr(animation.find(Param::Temperature), seconds, color.temperature);
+    graded.tint = Curve::valueOr(animation.find(Param::Tint), seconds, color.tint);
+    graded.exposure = Curve::valueOr(animation.find(Param::Exposure), seconds, color.exposure);
+    graded.contrast = Curve::valueOr(animation.find(Param::Contrast), seconds, color.contrast);
+    graded.saturation =
+        Curve::valueOr(animation.find(Param::Saturation), seconds, color.saturation);
+    return graded;
 }
 
 double Clip::gainDbAt(const time::RationalTime& timelineTime) const {

@@ -9,7 +9,37 @@ layout(binding = 1) uniform sampler2D source;
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
     vec4 params;  // x: opacity
+    // Primary colour correction, precomputed on the CPU so this shader does
+    // not re-derive what a temperature of -20 means. Two implementations of
+    // that question are two answers, and preview would disagree with export by
+    // an amount too small to notice and too large to accept.
+    vec4 balance;  // rgb: white balance gains, w: exposure multiplier
+    vec4 grade;    // x: contrast exponent, y: saturation
 } ubuf;
+
+const float kMiddleGrey = 0.18;
+const vec3 kLumaWeights = vec3(0.2126, 0.7152, 0.0722);
+
+// Must agree with render::gradePixel. It is checked against it.
+vec3 applyGrade(vec3 colour)
+{
+    colour *= ubuf.balance.rgb * ubuf.balance.w;
+
+    if (ubuf.grade.x != 1.0) {
+        // Non-positive light has no fractional power, and one NaN spreads
+        // through everything it is averaged with. Left where it is, as on the
+        // CPU.
+        vec3 lifted = max(colour, vec3(0.0));
+        vec3 curved = kMiddleGrey * pow(lifted / kMiddleGrey, vec3(ubuf.grade.x));
+        colour = mix(colour, curved, step(vec3(1e-8), colour));
+    }
+
+    if (ubuf.grade.y != 1.0) {
+        float grey = dot(colour, kLumaWeights);
+        colour = vec3(grey) + (colour - vec3(grey)) * ubuf.grade.y;
+    }
+    return colour;
+}
 
 void main()
 {
@@ -21,7 +51,16 @@ void main()
         return;
     }
 
+    vec4 sampled = texture(source, texCoord);
+
+    // Graded un-premultiplied: a correction must not depend on how faded the
+    // clip is, or a grade would change through a dissolve.
+    if (sampled.a > 0.0001) {
+        vec3 straight = sampled.rgb / sampled.a;
+        sampled.rgb = applyGrade(straight) * sampled.a;
+    }
+
     // Values are premultiplied, so opacity scales colour and coverage together
     // and a fade stays linear.
-    fragColor = texture(source, texCoord) * ubuf.params.x;
+    fragColor = sampled * ubuf.params.x;
 }

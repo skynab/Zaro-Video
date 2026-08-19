@@ -165,6 +165,12 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+/// Primary colour correction: white balance, exposure, contrast, saturation.
+[[nodiscard]] Result<CommandPtr> makeSetColorCorrection(model::Project& project,
+                                                        const EditTarget& target,
+                                                        model::ClipId clip,
+                                                        const model::ColorCorrection& color);
+
 // --- Keyframes --------------------------------------------------------------
 //
 // Keyframe times are in the clip's source time, the same as the model stores

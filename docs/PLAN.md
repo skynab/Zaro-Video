@@ -776,6 +776,48 @@ which now have something to be judged against.
 
 ---
 
+#### Phase 5d — primary colour correction ✅
+
+White balance, exposure, contrast and saturation, on both render paths, keyframable
+through the engine from 5a, and measurable with the scopes from 5c.
+
+**Applied in scene-linear light** — [ADR-011](adr/0011-grading-in-linear-light.md).
+Exposure is then a multiply: one stop is exactly a factor of two at every
+brightness, and the self-test measures 125.8 → 31.6 through the real panel and
+the real compositor, which is that factor twice.
+
+**Contrast pivots at 0.18, not 0.5.** Half is the middle of an encoded signal;
+in linear light it is nearly two stops above middle grey, and pivoting there
+would darken every picture that had contrast added to it. White balance is
+normalised by its own luma for the same reason — otherwise the temperature
+slider is also an exposure slider. The two ends of the contrast control are
+inverses, so it can be returned to neutral by eye, and a test takes a value
+through both and requires it back where it started.
+
+**Non-positive values are left alone.** A fractional power of a negative number
+is not a number, and one NaN spreads through every pixel it is averaged with.
+Scene-linear values do go negative through a wide-gamut conversion.
+
+**The constants are computed once, on the CPU.** The shader receives gains and
+exponents and never re-derives what a temperature of −20 means: two
+implementations of that question are two answers.
+
+**The two paths are checked against each other directly.** Ten corrections over
+a 32×32 spread of colours — including values above 1, since a scene-linear
+highlight may exceed white — must agree to within the transfer table's
+interpolation error. Verified to fail by more than two code values when the
+shader's pivot is changed to 0.5 while the CPU keeps 0.18. A second test grades
+through a fade and requires the result to be independent of the opacity.
+
+**The five colour parameters joined the animation vocabulary**, so a grade can
+be keyframed with the same stopwatches as everything else. Adding them to the
+`Param` enum turned every place that has to handle all parameters into a
+compile error until it was updated — which is what the exhaustive switch is for.
+
+Next in the colour chain: curves, HSL secondaries, LUTs and shot matching.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

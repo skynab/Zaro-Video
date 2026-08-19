@@ -297,6 +297,11 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.blend = model::BlendMode::Multiply;
         clip.gainDb = -11.5;
         clip.pan = 0.6;
+        clip.color.temperature = -22.5;
+        clip.color.tint = 13.25;
+        clip.color.exposure = 1.75;
+        clip.color.contrast = -37.5;
+        clip.color.saturation = 143.75;
         // One curve of each interpolation, with handles that are not the
         // default ease, so a lost handle or a mode collapsing to linear shows
         // up here rather than as a fade with the wrong shape.
@@ -410,6 +415,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->gainDb == -11.5);
     CHECK(loadedClip->pan == 0.6);
     CHECK(loadedClip->animation == first.animation);
+    CHECK(loadedClip->color == first.color);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

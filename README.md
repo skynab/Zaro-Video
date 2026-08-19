@@ -41,7 +41,8 @@ headless: there is no window yet.
 | 5a | Keyframing engine: curves, automation, both render paths | **done** |
 | 5b | Stopwatches, keyframe lane, keyframe dragging | **done** |
 | 5c | Scopes: waveform, parade, histogram, vectorscope | **done** |
-| 5d | Primary colour correction, curves, LUTs | next |
+| 5d | Primary correction: balance, exposure, contrast, saturation | **done** |
+| 5e | Curves, HSL secondaries, LUTs, audio mixer, graphics | next |
 
 ## Building
 

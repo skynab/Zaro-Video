@@ -1,5 +1,7 @@
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 
+#include "zaro/core/render/Grade.h"
+
 namespace zaro::platform::qrhi {
 
 Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::RationalTime& at) {
@@ -23,8 +25,10 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 if (outgoing->enabled) {
                     if (auto frame = provider_->sourceFrameFor(outgoing->source,
                                                                outgoing->sourceTimeAt(at))) {
-                        if (compositor_->drawSource(**frame, outgoing->transformAt(at),
-                                                    outgoing->blend)) {
+                        if (compositor_->drawSource(
+                                **frame, outgoing->transformAt(at),
+                                render::gradeConstantsFor(outgoing->colorAt(at)),
+                                outgoing->blend)) {
                             ++lastClipCount_;
                         }
                     }
@@ -34,7 +38,9 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                                                                incoming->sourceTimeAt(at))) {
                         model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
-                        if (compositor_->drawSource(**frame, fading, incoming->blend)) {
+                        if (compositor_->drawSource(
+                                **frame, fading, render::gradeConstantsFor(incoming->colorAt(at)),
+                                incoming->blend)) {
                             ++lastClipCount_;
                         }
                     }
@@ -54,7 +60,9 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             // same as on the CPU path.
             continue;
         }
-        if (Status drawn = compositor_->drawSource(**frame, clip->transformAt(at), clip->blend);
+        if (Status drawn =
+                compositor_->drawSource(**frame, clip->transformAt(at),
+                                        render::gradeConstantsFor(clip->colorAt(at)), clip->blend);
             !drawn) {
             continue;
         }

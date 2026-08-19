@@ -194,9 +194,11 @@ double Curve::valueAtSeconds(double seconds) const {
 }
 
 std::span<const Param> allParams() noexcept {
-    static constexpr Param kAll[] = {
-        Param::PositionX,       Param::PositionY, Param::ScaleX,  Param::ScaleY, Param::Opacity,
-        Param::RotationDegrees, Param::AnchorX,   Param::AnchorY, Param::GainDb, Param::Pan};
+    static constexpr Param kAll[] = {Param::PositionX, Param::PositionY,   Param::ScaleX,
+                                     Param::ScaleY,    Param::Opacity,     Param::RotationDegrees,
+                                     Param::AnchorX,   Param::AnchorY,     Param::GainDb,
+                                     Param::Pan,       Param::Temperature, Param::Tint,
+                                     Param::Exposure,  Param::Contrast,    Param::Saturation};
     return kAll;
 }
 
@@ -222,6 +224,16 @@ const char* toString(Param param) noexcept {
             return "gainDb";
         case Param::Pan:
             return "pan";
+        case Param::Temperature:
+            return "temperature";
+        case Param::Tint:
+            return "tint";
+        case Param::Exposure:
+            return "exposure";
+        case Param::Contrast:
+            return "contrast";
+        case Param::Saturation:
+            return "saturation";
     }
     return "";
 }

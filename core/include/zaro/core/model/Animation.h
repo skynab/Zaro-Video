@@ -135,6 +135,11 @@ enum class Param : std::uint8_t {
     Opacity,
     GainDb,
     Pan,
+    Temperature,
+    Tint,
+    Exposure,
+    Contrast,
+    Saturation,
 };
 
 /// Every parameter, once. Anything that has to visit them all uses this, so

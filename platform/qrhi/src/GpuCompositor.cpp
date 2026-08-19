@@ -22,7 +22,22 @@ constexpr std::array<float, 12> kQuad{
 };
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
-constexpr int kUniformBytes = 64 + 16;
+// mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade.
+constexpr int kUniformBytes = 64 + 16 + 16 + 16;
+
+/// Write a grade into the composite shader's uniform block.
+///
+/// Every path that binds that shader goes through this, so a new call site
+/// cannot leave the grade fields as zeros -- which would be a black,
+/// fully-desaturated picture rather than an obviously missing feature.
+void writeGrade(std::array<float, 28>& uniformData, const render::GradeConstants& grade) {
+    uniformData[20] = grade.balance.r;
+    uniformData[21] = grade.balance.g;
+    uniformData[22] = grade.balance.b;
+    uniformData[23] = grade.exposure;
+    uniformData[24] = grade.contrast;
+    uniformData[25] = grade.saturation;
+}
 /// The YUV shader adds two more vec4s of colour parameters.
 constexpr int kYuvUniformBytes = 64 + 16 * 3;
 
@@ -366,7 +381,7 @@ Status GpuCompositor::ensureCompositePipeline(std::size_t blendIndex) {
 }
 
 Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transform& transform,
-                           BlendMode blend) {
+                           BlendMode blend, const render::GradeConstants& grade) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -437,12 +452,13 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
     batch->uploadTexture(texture.get(), description);
 
-    std::array<float, 20> uniformData{};
+    std::array<float, 28> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
+    writeGrade(uniformData, grade);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -610,7 +626,7 @@ YuvParameters parametersFor(const media::VideoFrame& source) {
 }  // namespace
 
 Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::Transform& transform,
-                                 BlendMode blend) {
+                                 const render::GradeConstants& grade, BlendMode blend) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -849,12 +865,13 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 20> uniformData{};
+    std::array<float, 28> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
+    writeGrade(uniformData, grade);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -957,12 +974,15 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     matrix.scale(scaleX, scaleY * flip);
 
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
-    std::array<float, 20> uniformData{};
+    std::array<float, 28> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = 1.0F;  // opacity
+    // The present pass shows what was already composited. Grading here would
+    // apply every clip's correction a second time, to the whole frame.
+    writeGrade(uniformData, render::GradeConstants{});
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

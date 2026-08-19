@@ -6,6 +6,7 @@
 #include "zaro/core/Error.h"
 #include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/model/ClipEffects.h"
+#include "zaro/core/render/Grade.h"
 #include "zaro/core/render/RgbaImage.h"
 
 // Forward declared rather than included: QRhi is private Qt API, and pulling it
@@ -57,7 +58,8 @@ public:
 
     /// Composite one source image under a transform.
     [[nodiscard]] Status draw(const render::RgbaImage& source, const model::Transform& transform,
-                              model::BlendMode blend = model::BlendMode::Normal);
+                              model::BlendMode blend = model::BlendMode::Normal,
+                              const render::GradeConstants& grade = {});
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -68,6 +70,7 @@ public:
     /// already sampling. See docs/adr/0007.
     [[nodiscard]] Status drawSource(const media::VideoFrame& source,
                                     const model::Transform& transform,
+                                    const render::GradeConstants& grade,
                                     model::BlendMode blend = model::BlendMode::Normal);
 
     /// Finish, and bring the result back to the CPU.

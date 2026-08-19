@@ -24,6 +24,7 @@ add_library(zaro_core
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp
     src/render/Compositing.cpp
+    src/render/Grade.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp
     src/render/RgbaImage.cpp

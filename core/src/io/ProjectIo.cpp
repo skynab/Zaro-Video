@@ -126,6 +126,38 @@ model::Transform decodeTransform(const json& node) {
     return out;
 }
 
+json encode(const model::ColorCorrection& color) {
+    // Only what differs from neutral, the same as the transform: a project of a
+    // thousand ungraded clips should not carry a thousand copies of "no
+    // correction".
+    const model::ColorCorrection neutral;
+    json out = json::object();
+    const auto put = [&out](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            out[key] = value;
+        }
+    };
+    put("temperature", color.temperature, neutral.temperature);
+    put("tint", color.tint, neutral.tint);
+    put("exposure", color.exposure, neutral.exposure);
+    put("contrast", color.contrast, neutral.contrast);
+    put("saturation", color.saturation, neutral.saturation);
+    return out;
+}
+
+model::ColorCorrection decodeColor(const json& node) {
+    model::ColorCorrection out;
+    if (!node.is_object()) {
+        return out;
+    }
+    out.temperature = node.value("temperature", out.temperature);
+    out.tint = node.value("tint", out.tint);
+    out.exposure = node.value("exposure", out.exposure);
+    out.contrast = node.value("contrast", out.contrast);
+    out.saturation = node.value("saturation", out.saturation);
+    return out;
+}
+
 json encode(const model::ClipAnimation& animation) {
     // Curves keyed by parameter name rather than an array of {param, curve}
     // pairs: a parameter can only be animated once, and a map says so in the
@@ -228,6 +260,9 @@ json encode(const model::Clip& clip) {
     }
     if (clip.pan != 0.0) {
         out["pan"] = clip.pan;
+    }
+    if (json color = encode(clip.color); !color.empty()) {
+        out["color"] = std::move(color);
     }
     if (json animation = encode(clip.animation); !animation.empty()) {
         out["animation"] = std::move(animation);
@@ -400,6 +435,9 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     clip.gainDb = node.value("gainDb", 0.0);
     clip.pan = node.value("pan", 0.0);
+    if (node.contains("color")) {
+        clip.color = decodeColor(node.at("color"));
+    }
     if (node.contains("animation")) {
         auto animation = decodeAnimation(node.at("animation"));
         if (!animation) {
