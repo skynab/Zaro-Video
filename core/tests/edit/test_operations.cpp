@@ -712,3 +712,144 @@ TEST_CASE("A marked range converts between source and sequence rates", "[edit][t
     CHECK(clip.sourceRange.start().rate() == sourceRate);
     CHECK(clip.sourceRange.start().frames() == 48);
 }
+
+namespace {
+
+/// A linked picture-and-sound pair, the arrangement everything below is about.
+struct LinkedPair {
+    model::ClipId video;
+    model::ClipId audio;
+};
+
+LinkedPair linkPair(testing::Fixture& f, std::int64_t start, std::int64_t length) {
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(start, length, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(start, length, 500))));
+    const model::ClipId video = f.track(f.v1).clipAt(f.at(start))->id;
+    const model::ClipId audio = f.track(f.a1).clipAt(f.at(start))->id;
+    REQUIRE(f.run(edit::makeLinkClips(f.project, f.sequenceId, {{f.v1, video}, {f.a1, audio}})));
+    return {video, audio};
+}
+
+}  // namespace
+
+TEST_CASE("Linked clips move together", "[edit][link]") {
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+
+    REQUIRE(f.run(edit::makeMove(f.project, f.on(f.v1), pair.video, f.v1, f.at(200))));
+    CHECK(f.layout(f.v1) == "200-250@500");
+    // Sound follows picture rather than joining it: it moves by the same
+    // amount and stays on its own track.
+    CHECK(f.layout(f.a1) == "200-250@500");
+
+    SECTION("and one undo puts both back") {
+        REQUIRE(f.stack.undo(f.project));
+        CHECK(f.layout(f.v1) == "0-50@500");
+        CHECK(f.layout(f.a1) == "0-50@500");
+    }
+}
+
+TEST_CASE("Linked clips are removed together", "[edit][link]") {
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+
+    SECTION("lift") {
+        REQUIRE(f.run(edit::makeLift(f.project, f.on(f.v1), pair.video)));
+        CHECK(f.track(f.v1).isEmpty());
+        CHECK(f.track(f.a1).isEmpty());
+    }
+
+    SECTION("extract") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+        REQUIRE(f.run(edit::makeExtract(f.project, f.on(f.v1), pair.video)));
+        CHECK(f.layout(f.v1) == "0-50@600");
+        CHECK(f.track(f.a1).isEmpty());
+    }
+}
+
+TEST_CASE("Linked clips trim together", "[edit][link]") {
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+
+    REQUIRE(f.run(edit::makeTrim(f.project, f.on(f.v1), pair.video, edit::Edge::Out, f.at(-10))));
+    CHECK(f.layout(f.v1) == "0-40@500");
+    CHECK(f.layout(f.a1) == "0-40@500");
+}
+
+TEST_CASE("Unlinking leaves the clips standing alone", "[edit][link]") {
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+    REQUIRE(f.run(edit::makeUnlinkClips(f.project, f.on(f.v1), pair.video)));
+
+    REQUIRE(f.run(edit::makeMove(f.project, f.on(f.v1), pair.video, f.v1, f.at(200))));
+    CHECK(f.layout(f.v1) == "200-250@500");
+    CHECK(f.layout(f.a1) == "0-50@500");  // stayed put
+
+    SECTION("and unlinking something unlinked is refused") {
+        CHECK_FALSE(f.run(edit::makeUnlinkClips(f.project, f.on(f.v1), pair.video)));
+    }
+}
+
+TEST_CASE("Linking needs at least two clips", "[edit][link]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const model::ClipId id = f.track(f.v1).clips()[0].id;
+    CHECK_FALSE(f.run(edit::makeLinkClips(f.project, f.sequenceId, {{f.v1, id}})));
+}
+
+TEST_CASE("A locked track keeps its clips where they are, even when linked", "[edit][link]") {
+    // Refusing the whole edit instead would let one locked track block editing
+    // everywhere it happens to be linked.
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+    f.track(f.a1).setLocked(true);
+
+    REQUIRE(f.run(edit::makeMove(f.project, f.on(f.v1), pair.video, f.v1, f.at(200))));
+    CHECK(f.layout(f.v1) == "200-250@500");
+    CHECK(f.layout(f.a1) == "0-50@500");
+}
+
+TEST_CASE("A track with sync lock off does not follow a ripple", "[edit][synclock]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 200, 700))));
+
+    SECTION("with sync lock on, everything shifts") {
+        REQUIRE(f.run(edit::makeRippleDelete(f.project, f.on(f.v1), f.range(0, 50), true)));
+        CHECK(f.layout(f.v1) == "0-50@600");
+        CHECK(f.layout(f.a1) == "0-150@750");
+    }
+
+    SECTION("with it off, the music bed stays where it is") {
+        f.track(f.a1).setSyncLocked(false);
+        REQUIRE(f.run(edit::makeRippleDelete(f.project, f.on(f.v1), f.range(0, 50), true)));
+        CHECK(f.layout(f.v1) == "0-50@600");
+        // Untouched: the range was not cleared from it and it did not shift.
+        CHECK(f.layout(f.a1) == "0-200@700");
+    }
+}
+
+TEST_CASE("Links and sync locks survive a round trip", "[edit][link][io]") {
+    testing::Fixture f;
+    const LinkedPair pair = linkPair(f, 0, 50);
+    f.track(f.a1).setSyncLocked(false);
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    CHECK(loaded->project == f.project);
+
+    const model::Sequence* sequence = loaded->project.findSequence(f.sequenceId);
+    REQUIRE(sequence != nullptr);
+    const model::Clip* video = sequence->findTrack(f.v1)->find(pair.video);
+    const model::Clip* audio = sequence->findTrack(f.a1)->find(pair.audio);
+    REQUIRE(video != nullptr);
+    REQUIRE(audio != nullptr);
+
+    CHECK(video->link.isValid());
+    CHECK(video->link == audio->link);
+    CHECK_FALSE(sequence->findTrack(f.a1)->isSyncLocked());
+    CHECK(sequence->findTrack(f.v1)->isSyncLocked());
+}

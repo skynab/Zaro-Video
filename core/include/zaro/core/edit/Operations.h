@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "zaro/core/Error.h"
 #include "zaro/core/edit/Command.h"
@@ -151,6 +152,25 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetClipEnabled(model::Project& project,
                                                     const EditTarget& target, model::ClipId clip,
                                                     bool enabled);
+
+// --- Linking ----------------------------------------------------------------
+
+/// Which clip, on which track.
+struct ClipRef {
+    model::TrackId track;
+    model::ClipId clip;
+};
+
+/// Join clips into a link group, so they move, trim and are removed together.
+///
+/// Picture and its sound arrive together and should stay together: dragging one
+/// and leaving the other is how a cut goes out of sync without anyone noticing.
+[[nodiscard]] Result<CommandPtr> makeLinkClips(model::Project& project, model::SequenceId sequence,
+                                               const std::vector<ClipRef>& clips);
+
+/// Break a link group, leaving every clip in it standing alone.
+[[nodiscard]] Result<CommandPtr> makeUnlinkClips(model::Project& project, const EditTarget& target,
+                                                 model::ClipId clip);
 
 // --- Transitions ------------------------------------------------------------
 

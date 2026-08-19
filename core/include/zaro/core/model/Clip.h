@@ -32,6 +32,14 @@ struct Clip {
     std::string name;
     bool enabled{true};
 
+    /// Which link group this clip belongs to, if any.
+    ///
+    /// Picture and its sound arrive together and should move together: dragging
+    /// one and leaving the other behind is how a cut goes out of sync without
+    /// anyone noticing. Clips sharing a link are moved, trimmed and removed as
+    /// one; an invalid id means the clip stands alone.
+    LinkId link;
+
     /// How the compositor places this clip. Ignored for audio clips.
     Transform transform;
     BlendMode blend{BlendMode::Normal};

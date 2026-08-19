@@ -8,9 +8,9 @@ locked in.
 
 ## Status
 
-**Phase 4g — source monitor.** Media can be imported, marked up in a source
-monitor, cut into a timeline three-point, dissolved, adjusted, watched and
-exported — a program monitor, a timeline
+**Phase 4h — linked A/V.** Media can be imported, marked up in a source
+monitor, cut into a timeline three-point with picture and sound linked,
+dissolved, adjusted, watched and exported — a program monitor, a timeline
 with transport, scrubbing, drag, trim, razor and undo, audio waveforms backed by
 a content-hashed disk cache, and an Effect Controls panel for motion, opacity,
 blend mode and audio gain. On a 1080p59.94 timeline the GPU
@@ -35,7 +35,8 @@ headless: there is no window yet.
 | 4e | Cross dissolves, in both render paths | **done** |
 | 4f | Project bin, import, export dialog | **done** |
 | 4g | Source monitor, three-point editing | **done** |
-| 4h | Workspaces, linked A/V, sync locks | next |
+| 4h | Linked A/V, sync locks | **done** |
+| 4i | Workspaces, markers, multi-selection | next |
 
 ## Building
 

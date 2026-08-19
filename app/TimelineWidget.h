@@ -100,6 +100,8 @@ private:
     time::RationalTime playhead_{};
     model::ClipId selected_;
     model::TrackId selectedTrack_;
+    /// The selected clip's link group, so its partners can be outlined too.
+    model::LinkId selectedLink_;
 
     enum class Drag { None, Scrub, MoveClip, TrimIn, TrimOut };
     Drag drag_{Drag::None};

@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 245 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 253 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -526,6 +526,37 @@ defined by interactions that did not exist yet. Those interactions exist now.
 Verified end to end through the widgets rather than by calling the operation: the
 self-test loads media into the source monitor, steps, marks in and out, and places the
 result — 49 source frames marked, 49 frames placed at the playhead.
+
+#### Phase 4h — linked A/V and sync locks ✅ **complete**
+
+The last two deferrals from Phase 2. Both were held back on the grounds that they are
+defined by interactions that did not exist; both now have a selection model and track
+headers to hang on.
+
+- ✅ **Link groups.** A `LinkId` on the clip: clips sharing one are moved, trimmed and
+  removed together. Picture and its sound arrive together and should stay together —
+  dragging one and leaving the other is how a cut goes out of sync without anyone
+  noticing. `zaro-cut` now links the pairs it creates, and the timeline outlines the whole
+  group when one of them is selected.
+- ✅ **Sync locks**, distinct from track locks. A locked track refuses all editing; a track
+  with sync lock off can still be edited directly but stays put when something else
+  ripples, which is how a music bed is kept from sliding every time picture is trimmed.
+
+Two decisions worth recording, both about what to do when part of an edit cannot happen:
+
+- **A locked track keeps its clips where they are, even when they are linked to something
+  that moves.** Refusing the whole edit instead would let one locked track block editing
+  everywhere it happened to be linked. The same applies to a linked clip whose trim would
+  run out of source: it is left alone rather than blocking the clip actually being
+  dragged.
+- **Sync lock governs whether a track takes part at all, not merely whether it shifts.**
+  The first version cleared the range from every track and then skipped the shift for
+  unlocked ones, which left them half-edited — material removed and the gap left open.
+  Doing all of it or none of it is the only coherent choice, and a test now says so.
+
+Every operation is link-aware unconditionally, so an unlinked clip behaves exactly as it
+did before links existed. The forty-five pre-existing edit tests passing unchanged is what
+made that claim checkable rather than hopeful.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

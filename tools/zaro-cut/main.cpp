@@ -159,6 +159,15 @@ int main(int argc, char** argv) {
                 zaro::edit::makeOverwrite(project, {sequenceId, audioTrack}, audioClip);
             if (audioBuilt) {
                 stack.execute(project, std::move(*audioBuilt));
+
+                // Picture and sound from one file arrive together and should
+                // stay together, so they go on as a link group rather than as
+                // two clips that happen to line up.
+                auto linked = zaro::edit::makeLinkClips(
+                    project, sequenceId, {{videoTrack, clip.id}, {audioTrack, audioClip.id}});
+                if (linked) {
+                    stack.execute(project, std::move(*linked));
+                }
             }
         }
 

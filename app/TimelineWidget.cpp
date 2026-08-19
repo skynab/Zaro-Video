@@ -208,6 +208,11 @@ void TimelineWidget::paintTracks(QPainter& painter) {
         if (track->isLocked()) {
             flags << "L";
         }
+        if (!track->isSyncLocked()) {
+            // Shown only when off, because on is the default and marking every
+            // track would say nothing.
+            flags << "∦";
+        }
         if (!flags.isEmpty()) {
             painter.setPen(kSelectedOutline);
             painter.drawText(header.adjusted(0, 0, -10, 0), Qt::AlignVCenter | Qt::AlignRight,
@@ -247,8 +252,15 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
         const QColor base = row.kind == model::TrackKind::Video ? kVideoClip : kAudioClip;
         painter.fillRect(body, clip->enabled ? base : base.darker(180));
 
-        if (clip->id == selected_) {
-            painter.setPen(QPen(kSelectedOutline, 2));
+        // The whole link group is outlined, not just the clip clicked on:
+        // an edit is going to move all of them, so all of them should look
+        // selected.
+        const bool isSelected = clip->id == selected_;
+        const bool isLinkedToSelection =
+            !isSelected && clip->link.isValid() && clip->link == selectedLink_;
+
+        if (isSelected || isLinkedToSelection) {
+            painter.setPen(QPen(kSelectedOutline, isSelected ? 2 : 1));
             painter.drawRect(body.adjusted(1, 1, -1, -1));
         } else {
             painter.setPen(base.lighter(135));
@@ -422,6 +434,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     if (!hit) {
         selected_ = {};
         selectedTrack_ = {};
+        selectedLink_ = {};
         emit selectionChanged(selectedTrack_, selected_);
         // Clicking empty timeline still moves the playhead: it is the most
         // common thing to want there.
@@ -432,6 +445,12 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
 
     selected_ = hit->clip;
     selectedTrack_ = hit->track;
+    selectedLink_ = {};
+    if (const model::Track* track = seq->findTrack(selectedTrack_)) {
+        if (const model::Clip* clip = track->find(selected_)) {
+            selectedLink_ = clip->link;
+        }
+    }
     emit selectionChanged(selectedTrack_, selected_);
     // Alt turns a trim into a ripple trim, closing the gap it would leave
     // instead of opening one.

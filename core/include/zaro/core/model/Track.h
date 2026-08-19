@@ -41,6 +41,15 @@ public:
     [[nodiscard]] bool isLocked() const noexcept { return locked_; }
     void setLocked(bool value) noexcept { locked_ = value; }
 
+    /// Whether this track follows ripple edits made on other tracks.
+    ///
+    /// Distinct from being locked. A locked track refuses all editing; a track
+    /// with sync lock off can still be edited directly but stays put when
+    /// something else ripples -- which is how a music bed or a lower third is
+    /// kept from sliding every time the picture is trimmed.
+    [[nodiscard]] bool isSyncLocked() const noexcept { return syncLocked_; }
+    void setSyncLocked(bool value) noexcept { syncLocked_ = value; }
+
     /// Track gain in decibels and pan from -1 to +1, applied after clip gain.
     [[nodiscard]] double gainDb() const noexcept { return gainDb_; }
     void setGainDb(double value) noexcept { gainDb_ = value; }
@@ -114,6 +123,9 @@ private:
     std::vector<Transition> transitions_;
     bool muted_{false};
     bool locked_{false};
+    /// On by default: tracks following a ripple is the behaviour that keeps a
+    /// cut in sync, and it should have to be turned off deliberately.
+    bool syncLocked_{true};
     double gainDb_{0.0};
     double pan_{0.0};
 };

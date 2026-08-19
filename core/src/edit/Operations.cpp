@@ -180,7 +180,12 @@ void rippleFrom(Sequence& sequence, Track& track, const RationalTime& from,
     }
     for (const model::TrackKind kind : {model::TrackKind::Video, model::TrackKind::Audio}) {
         for (Track& other : sequence.tracksMutable(kind)) {
-            if (!other.isLocked()) {
+            // The edited track always moves. Everything else moves only if it
+            // is sync locked -- that is exactly what the control is for, and it
+            // is how a music bed is kept from sliding every time picture is
+            // trimmed.
+            const bool follows = other.id() == track.id() || other.isSyncLocked();
+            if (!other.isLocked() && follows) {
                 other.shiftFrom(from, delta);
             }
         }
@@ -189,6 +194,44 @@ void rippleFrom(Sequence& sequence, Track& track, const RationalTime& from,
 
 RationalTime atRate(const RationalTime& t, const time::Rational& rate) {
     return t.rescaledTo(rate);
+}
+
+/// Every clip sharing a link with `clip`, including it, across all tracks.
+///
+/// An unlinked clip yields just itself, so operations can treat linked and
+/// unlinked the same way and the unlinked case behaves exactly as it did before
+/// links existed.
+std::vector<std::pair<TrackId, ClipId>> linkedGroup(Sequence& sequence, TrackId trackId,
+                                                    ClipId clipId) {
+    std::vector<std::pair<TrackId, ClipId>> group;
+
+    const Track* origin = sequence.findTrack(trackId);
+    const Clip* clip = origin != nullptr ? origin->find(clipId) : nullptr;
+    if (clip == nullptr) {
+        return group;
+    }
+    if (!clip->link.isValid()) {
+        group.emplace_back(trackId, clipId);
+        return group;
+    }
+
+    const model::LinkId link = clip->link;
+    for (const model::TrackKind kind : {model::TrackKind::Video, model::TrackKind::Audio}) {
+        for (Track& track : sequence.tracksMutable(kind)) {
+            // A locked track keeps its clips where they are, even when
+            // something they are linked to moves. Refusing the whole edit
+            // instead would make one locked track block editing everywhere.
+            if (track.isLocked() && track.id() != trackId) {
+                continue;
+            }
+            for (const Clip& candidate : track.clips()) {
+                if (candidate.link == link) {
+                    group.emplace_back(track.id(), candidate.id);
+                }
+            }
+        }
+    }
+    return group;
 }
 
 /// Replace a clip and shift everything after it in one rebuild.
@@ -227,7 +270,7 @@ Status checkRippleFits(Sequence& sequence, const Track& edited, const RationalTi
                        const RationalTime& delta) {
     for (const model::TrackKind kind : {model::TrackKind::Video, model::TrackKind::Audio}) {
         for (const Track& other : sequence.tracksMutable(kind)) {
-            if (other.isLocked() || other.id() == edited.id()) {
+            if (other.isLocked() || !other.isSyncLocked() || other.id() == edited.id()) {
                 continue;
             }
             if (!other.canShiftFrom(from, delta)) {
@@ -319,7 +362,10 @@ Result<CommandPtr> makeInsert(Project& project, const EditTarget& target, Clip c
                 for (const model::TrackKind kind :
                      {model::TrackKind::Video, model::TrackKind::Audio}) {
                     for (Track& other : sequence.tracksMutable(kind)) {
-                        if (!other.isLocked()) {
+                        // Only tracks that will shift get split; splitting one
+                        // that then stays put would leave a cut for no reason.
+                        const bool follows = other.id() == trackId || other.isSyncLocked();
+                        if (!other.isLocked() && follows) {
                             splitStraddling(other);
                         }
                     }
@@ -359,12 +405,41 @@ Result<CommandPtr> makeMove(Project& project, const EditTarget& target, ClipId c
     model::IdGenerator& ids = project.ids();
     const TrackId fromTrack = target.track;
 
+    const RationalTime shift = start - (*found)->start();
+
     return makeCommand(target.sequence, "Move clip", "move:" + idText(clipId),
-                       [moved, clipId, fromTrack, toTrack, &ids](Sequence& sequence) {
+                       [moved, clipId, fromTrack, toTrack, shift, &ids](Sequence& sequence) {
                            Track* source = sequence.findTrack(fromTrack);
                            Track* destination = sequence.findTrack(toTrack);
                            ZARO_CHECK(source != nullptr && destination != nullptr,
                                       "track vanished between build and apply");
+
+                           // Anything linked to this clip moves by the same amount and stays
+                           // on its own track: sound follows picture rather than joining it.
+                           for (const auto& [otherTrackId, otherClipId] :
+                                linkedGroup(sequence, fromTrack, clipId)) {
+                               if (otherClipId == clipId) {
+                                   continue;
+                               }
+                               Track* other = sequence.findTrack(otherTrackId);
+                               if (other == nullptr) {
+                                   continue;
+                               }
+                               const Clip* existing = other->find(otherClipId);
+                               if (existing == nullptr) {
+                                   continue;
+                               }
+                               Clip shifted = *existing;
+                               shifted.timelineRange =
+                                   TimeRange{existing->start() + shift, existing->duration()};
+                               if (shifted.start().frames() < 0) {
+                                   continue;
+                               }
+                               other->remove(otherClipId);
+                               clearRange(*other, shifted.timelineRange, ids);
+                               other->insert(shifted);
+                           }
+
                            source->remove(clipId);
                            clearRange(*destination, moved.timelineRange, ids);
                            destination->insert(moved);
@@ -471,9 +546,15 @@ Result<CommandPtr> makeLift(Project& project, const EditTarget& target, ClipId c
     }
     const TrackId trackId = target.track;
     return makeCommand(target.sequence, "Lift", {}, [clipId, trackId](Sequence& sequence) {
-        Track* track = sequence.findTrack(trackId);
-        ZARO_CHECK(track != nullptr, "track vanished between build and apply");
-        track->remove(clipId);
+        // The whole link group, so lifting picture does not leave its sound
+        // stranded on the timeline.
+        for (const auto& [otherTrack, otherClip] : linkedGroup(sequence, trackId, clipId)) {
+            if (Track* track = sequence.findTrack(otherTrack)) {
+                if (track->find(otherClip) != nullptr) {
+                    track->remove(otherClip);
+                }
+            }
+        }
     });
 }
 
@@ -486,16 +567,25 @@ Result<CommandPtr> makeExtract(Project& project, const EditTarget& target, ClipI
     if (!found) {
         return found.error();
     }
-    const TimeRange range = (*found)->timelineRange;
+    // Each clip's own range is read inside the command, since a link group's
+    // clips need not span identical ranges.
     const TrackId trackId = target.track;
 
-    return makeCommand(target.sequence, "Extract", {},
-                       [clipId, range, trackId](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
-                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
-                           track->remove(clipId);
-                           track->shiftFrom(range.endExclusive(), -range.duration());
-                       });
+    return makeCommand(target.sequence, "Extract", {}, [clipId, trackId](Sequence& sequence) {
+        for (const auto& [otherTrack, otherClip] : linkedGroup(sequence, trackId, clipId)) {
+            Track* track = sequence.findTrack(otherTrack);
+            if (track == nullptr || track->find(otherClip) == nullptr) {
+                continue;
+            }
+            const TimeRange gap = track->find(otherClip)->timelineRange;
+            track->remove(otherClip);
+            // Each track closes its own gap, which is the right thing when
+            // the linked clips do not span identical ranges.
+            if (track->canShiftFrom(gap.endExclusive(), -gap.duration())) {
+                track->shiftFrom(gap.endExclusive(), -gap.duration());
+            }
+        }
+    });
 }
 
 Result<CommandPtr> makeRippleDelete(Project& project, const EditTarget& target,
@@ -516,26 +606,33 @@ Result<CommandPtr> makeRippleDelete(Project& project, const EditTarget& target,
     model::IdGenerator& ids = project.ids();
     const TrackId trackId = target.track;
 
-    return makeCommand(target.sequence, "Ripple delete", {},
-                       [span, trackId, rippleAllTracks, &ids](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
-                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+    return makeCommand(
+        target.sequence, "Ripple delete", {},
+        [span, trackId, rippleAllTracks, &ids](Sequence& sequence) {
+            Track* track = sequence.findTrack(trackId);
+            ZARO_CHECK(track != nullptr, "track vanished between build and apply");
 
-                           if (rippleAllTracks) {
-                               for (const model::TrackKind kind :
-                                    {model::TrackKind::Video, model::TrackKind::Audio}) {
-                                   for (Track& other : sequence.tracksMutable(kind)) {
-                                       if (!other.isLocked()) {
-                                           clearRange(other, span, ids);
-                                       }
-                                   }
-                               }
-                           } else {
-                               clearRange(*track, span, ids);
-                           }
-                           rippleFrom(sequence, *track, span.endExclusive(), -span.duration(),
-                                      rippleAllTracks);
-                       });
+            if (rippleAllTracks) {
+                for (const model::TrackKind kind :
+                     {model::TrackKind::Video, model::TrackKind::Audio}) {
+                    for (Track& other : sequence.tracksMutable(kind)) {
+                        // Sync lock decides whether a track
+                        // takes part at all. Clearing one that
+                        // then does not shift would leave it
+                        // half-edited -- material gone and the
+                        // gap left open -- which is worse than
+                        // doing all of it or none.
+                        const bool follows = other.id() == trackId || other.isSyncLocked();
+                        if (!other.isLocked() && follows) {
+                            clearRange(other, span, ids);
+                        }
+                    }
+                }
+            } else {
+                clearRange(*track, span, ids);
+            }
+            rippleFrom(sequence, *track, span.endExclusive(), -span.duration(), rippleAllTracks);
+        });
 }
 
 // --- Trimming ---------------------------------------------------------------
@@ -593,13 +690,44 @@ Result<CommandPtr> makeTrim(Project& project, const EditTarget& target, ClipId c
     }
 
     const TrackId trackId = target.track;
-    return makeCommand(target.sequence, edge == Edge::In ? "Trim in" : "Trim out",
-                       "trim:" + idText(clipId) + (edge == Edge::In ? ":in" : ":out"),
-                       [result = plan->result, clipId, trackId](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
-                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
-                           track->replace(clipId, result);
-                       });
+    const RationalTime step = atRate(delta, located->sequence->frameRate());
+
+    return makeCommand(
+        target.sequence, edge == Edge::In ? "Trim in" : "Trim out",
+        "trim:" + idText(clipId) + (edge == Edge::In ? ":in" : ":out"),
+        [result = plan->result, clipId, trackId, edge, step](Sequence& sequence) {
+            Track* track = sequence.findTrack(trackId);
+            ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+
+            // Linked clips take the same trim. One that cannot -- because it
+            // would run out of source or into a neighbour -- is left alone
+            // rather than blocking the edit on the clip actually being dragged.
+            for (const auto& [otherTrack, otherClip] : linkedGroup(sequence, trackId, clipId)) {
+                if (otherClip == clipId) {
+                    continue;
+                }
+                Track* other = sequence.findTrack(otherTrack);
+                if (other == nullptr) {
+                    continue;
+                }
+                const Clip* existing = other->find(otherClip);
+                if (existing == nullptr) {
+                    continue;
+                }
+                const Clip trimmed = edge == Edge::In
+                                         ? trimmedIn(*existing, existing->start() + step)
+                                         : trimmedOut(*existing, existing->endExclusive() + step);
+                if (trimmed.duration().frames() <= 0 || trimmed.start().frames() < 0) {
+                    continue;
+                }
+                if (!other->isRangeFree(trimmed.timelineRange, otherClip)) {
+                    continue;
+                }
+                other->replace(otherClip, trimmed);
+            }
+
+            track->replace(clipId, result);
+        });
 }
 
 Result<CommandPtr> makeRippleTrim(Project& project, const EditTarget& target, ClipId clipId,
@@ -876,6 +1004,70 @@ Result<CommandPtr> makeSetClipEnabled(Project& project, const EditTarget& target
                       // No merge key: this is a toggle, and two of them in a row
                       // are two decisions rather than one gesture.
                       {}, [enabled](Clip& clip) { clip.enabled = enabled; });
+}
+
+// --- Linking ----------------------------------------------------------------
+
+Result<CommandPtr> makeLinkClips(Project& project, model::SequenceId sequenceId,
+                                 const std::vector<ClipRef>& clips) {
+    Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (clips.size() < 2) {
+        return Error{ErrorCode::InvalidData, "linking needs at least two clips"};
+    }
+    for (const ClipRef& ref : clips) {
+        const Track* track = sequence->findTrack(ref.track);
+        if (track == nullptr || track->find(ref.clip) == nullptr) {
+            return Error{ErrorCode::NotFound, "one of those clips is not there"};
+        }
+    }
+
+    const model::LinkId link = project.ids().next<model::LinkTag>();
+    return makeCommand(sequenceId, "Link clips", {}, [clips, link](Sequence& seq) {
+        for (const ClipRef& ref : clips) {
+            Track* track = seq.findTrack(ref.track);
+            if (track == nullptr) {
+                continue;
+            }
+            if (Clip* clip = track->find(ref.clip)) {
+                clip->link = link;
+            }
+        }
+    });
+}
+
+Result<CommandPtr> makeUnlinkClips(Project& project, const EditTarget& target, ClipId clipId) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    auto found = requireClip(*located->track, clipId);
+    if (!found) {
+        return found.error();
+    }
+    if (!(*found)->link.isValid()) {
+        return Error{ErrorCode::InvalidData, "that clip is not linked to anything"};
+    }
+
+    const model::LinkId link = (*found)->link;
+    return makeCommand(target.sequence, "Unlink clips", {}, [link](Sequence& seq) {
+        // Clears the whole group rather than just the clip asked about:
+        // unlinking one half of a pair and leaving the other pointing at a
+        // group of one would be a state nothing else expects.
+        for (const model::TrackKind kind : {model::TrackKind::Video, model::TrackKind::Audio}) {
+            for (Track& track : seq.tracksMutable(kind)) {
+                std::vector<Clip> rebuilt = track.clips();
+                for (Clip& clip : rebuilt) {
+                    if (clip.link == link) {
+                        clip.link = {};
+                    }
+                }
+                track.setClips(std::move(rebuilt));
+            }
+        }
+    });
 }
 
 // --- Transitions ------------------------------------------------------------

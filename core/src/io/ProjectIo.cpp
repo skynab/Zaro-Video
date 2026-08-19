@@ -146,6 +146,9 @@ json encode(const model::Clip& clip) {
     if (clip.pan != 0.0) {
         out["pan"] = clip.pan;
     }
+    if (clip.link.isValid()) {
+        out["link"] = clip.link.value();
+    }
     return out;
 }
 
@@ -198,6 +201,10 @@ json encode(const model::Track& track) {
     }
     if (track.pan() != 0.0) {
         out["pan"] = track.pan();
+    }
+    if (!track.isSyncLocked()) {
+        // Only written when off, since on is the default and the common case.
+        out["syncLocked"] = false;
     }
     return out;
 }
@@ -274,6 +281,7 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     clip.gainDb = node.value("gainDb", 0.0);
     clip.pan = node.value("pan", 0.0);
+    clip.link = model::LinkId{node.value("link", std::uint64_t{0})};
     return clip;
 }
 
@@ -287,6 +295,7 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     track.setLocked(node.value("locked", false));
     track.setGainDb(node.value("gainDb", 0.0));
     track.setPan(node.value("pan", 0.0));
+    track.setSyncLocked(node.value("syncLocked", true));
 
     std::vector<model::Clip> clips;
     for (const json& clipNode : node.value("clips", json::array())) {
