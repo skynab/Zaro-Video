@@ -737,6 +737,45 @@ keyframe between hold, linear and bezier from the timeline.
 
 ---
 
+#### Phase 5c — scopes ✅
+
+Waveform, RGB parade, histogram and vectorscope, computed headlessly in
+`core/render/Scopes` and drawn by a panel beside the parameters.
+
+§6 puts colour management before scopes and scopes before correction, and the
+order is the point: a grade cannot be judged by eye alone, so the instrument
+comes before the tools it measures.
+
+**Scopes measure the display signal, not the working space** —
+[ADR-010](adr/0010-scopes-measure-the-display-signal.md). In linear light middle
+grey reads 18 instead of 46, and every reference a colourist has is defined on
+the encoded signal. Pixels are un-premultiplied first, or a dissolve would read
+as a change in exposure.
+
+**Measured on demand, never during playback.** Measuring composites a frame on
+the CPU; doing it per frame would reintroduce exactly the readback the GPU path
+exists to avoid. It measures through `RenderGraph`, so the scope reports what
+will be delivered.
+
+**The measurement is counts, not a picture**, so resizing or switching
+instruments costs nothing, and all four come from one pass — the expensive part
+is the transfer encode.
+
+**A real bug, found by the test rather than by looking.** The panel drew nothing
+at all for a fully lit frame: level 255 mapped one pixel above the plot area and
+was clipped, because the span between the first and last row is one less than
+the number of rows. A black frame looked perfect either way. The test asserts
+*where* the trace sits rather than how much of it there is — bright at the top,
+black at the bottom — and is verified to fail when the drawing is flipped. That
+is the assertion worth having: the measurement is in signal order and the screen
+is upside down relative to it, and getting that backwards yields an instrument
+that looks plausible and reports the opposite of the truth.
+
+Next in the colour chain: primary correction, curves, HSL secondaries and LUTs,
+which now have something to be judged against.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

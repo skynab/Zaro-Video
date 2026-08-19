@@ -41,6 +41,8 @@
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
+#include "zaro/core/render/RenderGraph.h"
+#include "zaro/core/render/Scopes.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
@@ -50,6 +52,7 @@
 #include "ExportDialog.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
+#include "ScopesPanel.h"
 #include "SourceMonitor.h"
 #include "TimelineWidget.h"
 
@@ -85,6 +88,7 @@ public:
 
         timeline_ = new app::TimelineWidget(this);
         effects_ = new app::EffectControls(this);
+        scopes_ = new app::ScopesPanel(this);
         effects_->setMinimumWidth(250);
         effects_->setMaximumWidth(330);
 
@@ -116,7 +120,14 @@ public:
         topSplitter_->addWidget(bin_);
         topSplitter_->addWidget(source_);
         topSplitter_->addWidget(programColumn);
-        topSplitter_->addWidget(effects_);
+        // Scopes share the parameter column: they are read while grading, and
+        // grading is done with the parameters in reach.
+        auto* rightColumn = new QSplitter(Qt::Vertical, this);
+        rightColumn->addWidget(effects_);
+        rightColumn->addWidget(scopes_);
+        rightColumn->setStretchFactor(0, 2);
+        rightColumn->setStretchFactor(1, 1);
+        topSplitter_->addWidget(rightColumn);
         topSplitter_->setStretchFactor(1, 1);
         topSplitter_->setStretchFactor(2, 2);
 
@@ -147,12 +158,14 @@ public:
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
+        connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { measureScopes(); });
         connect(effects_, &app::EffectControls::keyframesChanged, this,
                 [this] { timeline_->update(); });
         connect(effects_, &app::EffectControls::edited, this, [this] {
             // A parameter change alters the picture at the current playhead.
             monitor_->update();
             timeline_->update();
+            measureScopes();
         });
 
         // The two panels drive each other: scrubbing the timeline moves the
@@ -198,6 +211,7 @@ public:
     [[nodiscard]] app::TimelineWidget* timeline() const { return timeline_; }
     [[nodiscard]] app::SourceMonitor* sourceMonitor() const { return source_; }
     [[nodiscard]] app::EffectControls* effects() const { return effects_; }
+    [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
     [[nodiscard]] model::Project& project() { return project_; }
 
@@ -240,6 +254,7 @@ public:
         // The panel shows values at the playhead and writes keyframes there, so
         // it has to know where the playhead is.
         effects_->setPosition(position_);
+        measureScopes();
         refresh();
     }
 
@@ -582,6 +597,40 @@ private:
         setPosition(position);
     }
 
+    /// Measure the frame at the playhead, if anyone is looking at the scopes.
+    ///
+    /// Not during playback, and not when the panel is hidden. Measuring means
+    /// compositing a frame on the CPU, and doing that on every frame of
+    /// playback would spend more time on the instrument than on the picture --
+    /// the readback the GPU path exists to avoid, reintroduced through the
+    /// back door.
+    ///
+    /// It composites through render::RenderGraph rather than reading back the
+    /// preview, so the scope measures what will be delivered. That is the
+    /// number a grade is judged against, and it does not make playback pay for
+    /// a readback it otherwise does not need.
+    void measureScopes() {
+        if (scopes_ == nullptr || media_ == nullptr || sequence_ == nullptr) {
+            return;
+        }
+        if (playing_ || !scopes_->wantsMeasurement()) {
+            return;
+        }
+        render::RenderGraph graph{*media_};
+        auto frame = graph.composite(*sequence_, position_);
+        if (!frame) {
+            scopes_->clear();
+            return;
+        }
+        render::ScopeOptions options;
+        options.waveformColumns = std::max(64, scopes_->width());
+        // Every second row. The shape of a waveform does not change for being
+        // measured at half the vertical resolution, and this is running
+        // between scrubs.
+        options.rowStride = 2;
+        scopes_->setScopes(render::measure(*frame, options));
+    }
+
     void refresh() {
         if (sequence_ == nullptr) {
             return;
@@ -604,6 +653,7 @@ private:
     app::ProgramMonitor* monitor_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
     app::EffectControls* effects_{nullptr};
+    app::ScopesPanel* scopes_{nullptr};
     app::ProjectBin* bin_{nullptr};
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
@@ -906,6 +956,77 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,
                              "  FAIL: the GPU compositor is not reading keyframes; preview and "
                              "export would disagree\n");
+                return 1;
+            }
+        }
+
+        // The scopes, end to end: a measurement has to reach the panel and be
+        // drawn there, and it has to be drawn the right way up. Where the trace
+        // sits is the assertion, not how many pixels it covers -- the
+        // measurement is in signal order, where 0 is black, and the screen is
+        // upside down relative to it. Getting that backwards produces a scope
+        // that looks entirely plausible and reports the opposite of the truth.
+        {
+            // Returns the mean row of the trace, as a fraction of the plot
+            // area: 0 is the top of the scope and 1 the bottom.
+            const auto traceHeight = [&]() -> double {
+                const QImage shot = window.scopes()->grab().toImage();
+                const auto dpr = static_cast<int>(shot.devicePixelRatio());
+                const QRect plot = window.scopes()->plotArea();
+                const int top = plot.top() * dpr;
+                const int bottom = std::min((plot.bottom() + 1) * dpr, shot.height());
+                double weighted = 0.0;
+                std::int64_t lit = 0;
+                for (int y = top; y < bottom; ++y) {
+                    for (int x = plot.left() * dpr;
+                         x < std::min((plot.right() + 1) * dpr, shot.width()); ++x) {
+                        if (qGray(shot.pixel(x, y)) > 110) {
+                            weighted += y - top;
+                            ++lit;
+                        }
+                    }
+                }
+                return lit == 0 ? -1.0
+                                : weighted / static_cast<double>(lit) / std::max(1, bottom - top);
+            };
+
+            // This fixture is black except on its flash frames, so it offers a
+            // bright frame and a dark one without any setup.
+            double brightest = 0.0;
+            double darkest = 0.0;
+            double atBrightest = -1.0;
+            double atDarkest = -1.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double picture = meanGray(window.monitor()->grabFramebuffer());
+                const double where = traceHeight();
+                if (where < 0.0) {
+                    std::fprintf(stderr, "  FAIL: the scope drew no trace at all\n");
+                    return 1;
+                }
+                if (atBrightest < 0.0 || picture > brightest) {
+                    brightest = picture;
+                    atBrightest = where;
+                }
+                if (atDarkest < 0.0 || picture < darkest) {
+                    darkest = picture;
+                    atDarkest = where;
+                }
+            }
+            std::printf(
+                "  scope trace sits at %.2f of the plot on the brightest frame, %.2f on "
+                "the darkest\n",
+                atBrightest, atDarkest);
+            if (!(atBrightest < atDarkest)) {
+                std::fprintf(stderr,
+                             "  FAIL: the scope puts a bright picture no higher than a dark one, "
+                             "so it is drawn upside down or not measuring the picture\n");
+                return 1;
+            }
+            if (atDarkest < 0.8) {
+                std::fprintf(stderr,
+                             "  FAIL: a black frame should read at the bottom of the scope\n");
                 return 1;
             }
         }

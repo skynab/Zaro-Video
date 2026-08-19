@@ -9,7 +9,9 @@ add_executable(zaro-preview
     TimelineWidget.cpp
     TimelineWidget.h
     EffectControls.cpp
+    ScopesPanel.cpp
     EffectControls.h
+    ScopesPanel.h
     ExportDialog.cpp
     ExportDialog.h
     ProjectBin.cpp
