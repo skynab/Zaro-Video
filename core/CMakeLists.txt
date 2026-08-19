@@ -16,6 +16,7 @@ add_library(zaro_core
     src/edit/CommandStack.cpp
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
+    src/io/CubeLut.cpp
     src/io/ProjectIo.cpp
     src/playback/AudioRingBuffer.cpp
     src/playback/PlaybackScheduler.cpp
@@ -26,6 +27,7 @@ add_library(zaro_core
     src/render/Compositing.cpp
     src/render/CurveTable.cpp
     src/render/Grade.cpp
+    src/render/LutTable.cpp
     src/render/Qualifier.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp

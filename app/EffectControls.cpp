@@ -3,10 +3,12 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -107,6 +109,46 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
                 pushCurves(changed, committed);
             });
     colorGroup_ = colour;
+
+    // A look LUT. Shown inside the colour group, between the primary and the
+    // curves, which is where it is applied.
+    lutName_ = new QLabel("No LUT", this);
+    lutName_->setObjectName("lut-name");
+    lutLoad_ = new QPushButton("Load LUT...", this);
+    lutClear_ = new QPushButton("Clear", this);
+    lutAmount_ = makeSpin(0.0, 1.0, 0.05, 3);
+    lutAmount_->setObjectName("lut-amount");
+
+    auto* lutRow = new QWidget(this);
+    auto* lutLayout = new QHBoxLayout(lutRow);
+    lutLayout->setContentsMargins(0, 0, 0, 0);
+    lutLayout->addWidget(lutLoad_);
+    lutLayout->addWidget(lutClear_);
+    colourForm->addRow(lutRow);
+    colourForm->addRow(lutName_);
+    colourForm->addRow("LUT amount", lutAmount_);
+
+    connect(lutLoad_, &QPushButton::clicked, this, [this] {
+        const QString chosen = QFileDialog::getOpenFileName(this, "Open a .cube LUT", {},
+                                                            "Cube LUTs (*.cube);;All files (*)");
+        if (chosen.isEmpty()) {
+            return;
+        }
+        model::LutRef lut;
+        lut.path = chosen.toStdString();
+        lut.amount = lutAmount_->value();
+        pushLut(lut);
+    });
+    connect(lutClear_, &QPushButton::clicked, this, [this] { pushLut(model::LutRef{}); });
+    connect(lutAmount_, &QDoubleSpinBox::valueChanged, this, [this](double amount) {
+        const model::Clip* clip = selectedClip();
+        if (updating_ || clip == nullptr || clip->lut.path.empty()) {
+            return;
+        }
+        model::LutRef lut = clip->lut;
+        lut.amount = amount;
+        pushLut(lut);
+    });
 
     // The secondary. Its correction is deliberately a subset of the primary's:
     // temperature, exposure and saturation are what a keyed correction is
@@ -282,6 +324,8 @@ void EffectControls::applyToWidgets() {
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
         curves_->setCurves(model::ToneCurves{});
+        lutName_->setText("No LUT");
+        lutAmount_->setValue(1.0);
         const model::Secondary blank;
         qualifierOn_->setChecked(false);
         showMask_->setChecked(false);
@@ -343,6 +387,15 @@ void EffectControls::applyToWidgets() {
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
     curves_->setCurves(clip->curves);
+    // The file name, not the path: the path is usually longer than the panel
+    // and its useful end is the last part anyway.
+    const QString path = QString::fromStdString(clip->lut.path);
+    lutName_->setText(path.isEmpty() ? "No LUT" : path.section('/', -1));
+    lutName_->setToolTip(path);
+    lutAmount_->setValue(clip->lut.amount);
+    lutAmount_->setEnabled(!path.isEmpty());
+    lutClear_->setEnabled(!path.isEmpty());
+
     const model::Secondary& keyed = clip->secondary;
     qualifierOn_->setChecked(keyed.qualifier.enabled);
     showMask_->setChecked(keyed.showMask);
@@ -638,6 +691,20 @@ model::Secondary EffectControls::secondaryFromWidgets() const {
     out.correction.exposure = keyExposure_->value();
     out.correction.saturation = keySaturation_->value();
     return out;
+}
+
+void EffectControls::pushLut(const model::LutRef& lut) {
+    if (commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    auto built = edit::makeSetLut(*project_, {sequenceId_, track_}, clip_, lut);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    applyToWidgets();
+    emit edited();
 }
 
 void EffectControls::pushSecondary() {

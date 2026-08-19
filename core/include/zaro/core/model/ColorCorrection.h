@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <string>
 
 namespace zaro::model {
 
@@ -33,6 +34,24 @@ struct ColorCorrection {
     }
 
     friend bool operator==(const ColorCorrection&, const ColorCorrection&) = default;
+};
+
+/// A look LUT, by path.
+///
+/// The path rather than the contents: a .cube is a few hundred kilobytes of
+/// text, and a project file that inlined one per clip would be unopenable in a
+/// text editor and unmergeable in version control. The cost is that a project
+/// can be moved away from its LUTs, which is the same bargain the media
+/// references already make.
+struct LutRef {
+    std::string path;
+    /// How much of the look to apply, 0 to 1. Every grading tool has this
+    /// because a look at full strength is rarely the one anybody ships.
+    double amount{1.0};
+
+    [[nodiscard]] bool isSet() const noexcept { return !path.empty() && amount > 0.0; }
+
+    friend bool operator==(const LutRef&, const LutRef&) = default;
 };
 
 }  // namespace zaro::model

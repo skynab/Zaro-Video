@@ -59,6 +59,11 @@ struct Clip {
     /// the clip is placed in the frame.
     ColorCorrection color;
 
+    /// A look LUT, applied after the primary correction and before the curves:
+    /// a LUT is a look put on a balanced picture, and the curves are the
+    /// adjustment made on top of the look.
+    LutRef lut;
+
     /// Tone curves, applied after the primary correction. Curves are defined in
     /// the display-encoded domain; the baking into linear happens in
     /// render::CurveTable.

@@ -46,7 +46,8 @@ headless: there is no window yet.
 | 5f | Curve editor: draggable points, per-channel | **done** |
 | 5g | HSL secondaries: qualifier, mask view, both paths | **done** |
 | 5h | Qualifier UI: hue band, windows, mask toggle | **done** |
-| 5i | LUTs (.cube), audio mixer, graphics | next |
+| 5i | Look LUTs: .cube reader, baked cube, both paths | **done** |
+| 5j | Audio track mixer, Essential Graphics | next |
 
 ## Building
 

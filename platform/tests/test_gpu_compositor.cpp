@@ -4,6 +4,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1219,5 +1220,82 @@ TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][seco
                            << difference.worstY << ", mean " << difference.mean);
         CHECK(difference.worst < 0.02F);
         CHECK(difference.mean < 0.002F);
+    }
+}
+
+TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]") {
+    // The cube is baked once on the CPU and sampled by both, so what this test
+    // is really checking is the parts that differ: the 3D texture upload, the
+    // hardware's trilinear filtering against the CPU's, and the un-warp that
+    // turns a stored index back into light.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    const auto cubeText = [](int size, int mode) {
+        std::ostringstream out;
+        out << "LUT_3D_SIZE " << size << "\n";
+        for (int b = 0; b < size; ++b) {
+            for (int g = 0; g < size; ++g) {
+                for (int r = 0; r < size; ++r) {
+                    const double rr = static_cast<double>(r) / (size - 1);
+                    const double gg = static_cast<double>(g) / (size - 1);
+                    const double bb = static_cast<double>(b) / (size - 1);
+                    if (mode == 0) {  // identity
+                        out << rr << " " << gg << " " << bb << "\n";
+                    } else if (mode == 1) {  // a warm, contrasty look
+                        out << std::min(1.0, rr * 1.15) << " " << (gg * gg) << " " << (bb * 0.8)
+                            << "\n";
+                    } else {  // channel swap, which no symmetric look would catch
+                        out << bb << " " << gg << " " << rr << "\n";
+                    }
+                }
+            }
+        }
+        return out.str();
+    };
+
+    RgbaImage source{32, 32};
+    for (std::int32_t y = 0; y < 32; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 32; ++x) {
+            const float u = static_cast<float>(x) / 31.0F;
+            const float v = static_cast<float>(y) / 31.0F;
+            row[x] = Rgba{u * 1.2F, v, (1.0F - u) * 0.7F, 1.0F};
+        }
+    }
+
+    struct Case {
+        const char* name;
+        int mode;
+        float amount;
+    };
+    for (const Case& testCase :
+         {Case{"identity", 0, 1.0F}, Case{"warm look", 1, 1.0F}, Case{"warm look at half", 1, 0.5F},
+          Case{"channel swap", 2, 1.0F}}) {
+        const auto cube = io::CubeLut::parse(cubeText(17, testCase.mode));
+        REQUIRE(cube);
+        const render::LutTable table{*cube, media::TransferFunction::BT709};
+        REQUIRE(table.isValid());
+        const render::GradeConstants neutral;
+
+        RgbaImage cpuOut{32, 32};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
+                                nullptr, &table, testCase.amount);
+
+        REQUIRE(compositor->beginFrame(32, 32).ok());
+        REQUIRE(compositor
+                    ->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, nullptr,
+                           &table, testCase.amount)
+                    .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.004F);
     }
 }

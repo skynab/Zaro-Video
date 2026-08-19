@@ -1118,6 +1118,80 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // A look LUT, loaded from a real file through the model the panel
+        // writes to. The parser and the baked cube are tested headlessly and
+        // the two render paths are compared; what is left is whether a LUT set
+        // on a clip reaches the picture at all.
+        {
+            const auto clipNow = [&]() {
+                return window.project()
+                    .findSequence(sequence.id())
+                    ->videoTracks()
+                    .front()
+                    .find(original.id);
+            };
+            // A dark frame: this look lifts black by 0.15, which a black frame
+            // shows and a white one cannot.
+            std::int64_t darkFrame = 0;
+            double darkness = 1e9;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkness) {
+                    darkness = gray;
+                    darkFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double plainDark = meanGray(window.monitor()->grabFramebuffer());
+
+            zaro::model::LutRef look;
+            look.path =
+                "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
+                "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/warm.cube";
+            auto built = zaro::edit::makeSetLut(window.project(), {sequence.id(), videoTrack.id()},
+                                                original.id, look);
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double lifted = meanGray(window.monitor()->grabFramebuffer());
+
+            // And dialled back to nothing, which has to return the picture.
+            zaro::model::LutRef none = clipNow()->lut;
+            none.amount = 0.0;
+            auto cleared = zaro::edit::makeSetLut(
+                window.project(), {sequence.id(), videoTrack.id()}, original.id, none);
+            window.commands().execute(window.project(), std::move(*cleared));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double off = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  look LUT: %.1f before, %.1f applied, %.1f at zero amount\n", plainDark,
+                        lifted, off);
+            // The fixture lifts black to a bright grey, so this is not a
+            // marginal difference: it is most of the way to white.
+            if (!(lifted > plainDark + 100.0)) {
+                std::fprintf(stderr, "  FAIL: the look LUT did not reach the picture\n");
+                return 1;
+            }
+            if (std::fabs(off - plainDark) > 1.0) {
+                std::fprintf(stderr, "  FAIL: an amount of zero still changed the picture\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // The secondary, through its panel. The qualifier is tested headlessly
         // and compared against the shader; what neither of those can see is
         // whether these controls are connected to any of it.

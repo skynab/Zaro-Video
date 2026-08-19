@@ -16,9 +16,12 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at));
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
-    const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive();
+    const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
+    const bool active =
+        !grade.isIdentity() || !table.isIdentity() || secondary.isActive() || lut != nullptr;
     drawTransformed(image, out, transform, clip.blend, active ? &grade : nullptr,
-                    active ? &table : nullptr, active ? &secondary : nullptr);
+                    active ? &table : nullptr, active ? &secondary : nullptr, lut,
+                    static_cast<float>(clip.lut.amount));
 }
 
 Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,

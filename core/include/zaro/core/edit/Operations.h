@@ -165,6 +165,10 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+/// The look LUT: which file, and how much of it.
+[[nodiscard]] Result<CommandPtr> makeSetLut(model::Project& project, const EditTarget& target,
+                                            model::ClipId clip, const model::LutRef& lut);
+
 /// The secondary: its qualifier, its correction, and the mask view.
 [[nodiscard]] Result<CommandPtr> makeSetSecondary(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip,

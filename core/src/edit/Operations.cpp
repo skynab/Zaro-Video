@@ -1372,6 +1372,15 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId clipId,
+                              const model::LutRef& lut) {
+    if (!std::isfinite(lut.amount)) {
+        return Error{ErrorCode::InvalidData, "the LUT amount has to be a real number"};
+    }
+    return modifyClip(project, target, clipId, lut.path.empty() ? "Clear LUT" : "Set LUT",
+                      "lut:" + idText(clipId), [lut](Clip& clip) { clip.lut = lut; });
+}
+
 Result<CommandPtr> makeSetSecondary(Project& project, const EditTarget& target, ClipId clipId,
                                     const model::Secondary& secondary) {
     const model::HslQualifier& window = secondary.qualifier;

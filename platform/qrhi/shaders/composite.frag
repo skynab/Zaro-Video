@@ -12,6 +12,12 @@ layout(binding = 1) uniform sampler2D source;
 // drift apart. See ADR-012.
 layout(binding = 2) uniform sampler2D curveTable;
 
+// A look LUT, baked on the CPU into a linear-in, linear-out cube on the same
+// warped axis the curve table uses. The shader knows nothing about the .cube
+// format, the LUT's domain, or transfer functions -- it samples what
+// render::LutTable already worked out. See ADR-012.
+layout(binding = 3) uniform sampler3D lutTable;
+
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
     vec4 params;  // x: opacity
@@ -27,6 +33,7 @@ layout(std140, binding = 0) uniform Block {
     vec4 hueWindow;   // x: centre, y: inner, z: outer
     vec4 satWindow;   // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
     vec4 lumaWindow;  // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
+    vec4 look;        // x: amount, y: axis maximum, z: active, w: cube size
 } ubuf;
 
 const float kMiddleGrey = 0.18;
@@ -113,6 +120,25 @@ vec3 applyGrade(vec3 colour)
     if (ubuf.grade.y != 1.0) {
         float grey = dot(colour, kLumaWeights);
         colour = vec3(grey) + (colour - vec3(grey)) * ubuf.grade.y;
+    }
+
+    if (ubuf.look.z != 0.0) {
+        // The same index as the curve table, scaled into the cube's own axis
+        // and clamped to it -- above the LUT's domain the answer is its edge.
+        vec3 lifted = max(colour, vec3(0.0));
+        vec3 index = clamp(sqrt(lifted / (vec3(1.0) + lifted)) / max(ubuf.look.y, 1e-4), 0.0, 1.0);
+        // Texel centres. A sampler reads the middle of a texel, so a coordinate
+        // of 0 lands half a texel outside the first entry and the whole cube is
+        // read shifted -- which looks like a slightly wrong look rather than a
+        // sampling mistake.
+        float cubeSize = max(ubuf.look.w, 1.0);
+        vec3 coord = ((index * (cubeSize - 1.0)) + 0.5) / cubeSize;
+        vec3 warped = texture(lutTable, coord).rgb;
+        // Un-warp: the cube stores indices, not light, so that an identity LUT
+        // interpolates exactly.
+        vec3 squared = warped * warped;
+        vec3 looked = squared / max(vec3(1.0) - squared, vec3(1e-6));
+        colour = mix(colour, looked, ubuf.look.x);
     }
 
     if (ubuf.grade.z != 0.0) {

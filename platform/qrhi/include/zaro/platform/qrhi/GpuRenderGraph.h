@@ -49,6 +49,7 @@ private:
                   const model::Transform& transform, const time::RationalTime& at);
 
     render::CurveTableCache curves_;
+    render::LutCache luts_;
 
     media::TransferFunction transfer_{media::TransferFunction::BT709};
 

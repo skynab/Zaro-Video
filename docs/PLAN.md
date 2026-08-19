@@ -1016,6 +1016,47 @@ Next: LUT (.cube) support, then the audio track mixer and Essential Graphics.
 
 ---
 
+#### Phase 5i — look LUTs ✅
+
+A .cube reader, a baked cube on both render paths, a file picker and an amount
+control. Applied after the primary correction and before the curves: a LUT is a
+look put on a balanced picture, and the curves are the adjustment made on top of
+the look.
+
+**Baked, not re-implemented** — the same decision as the curves, extended in
+[ADR-012](adr/0012-curves-baked-into-a-shared-table.md). The shader holds no
+.cube parser, no domain handling and no transfer function.
+
+**Three things had to be got right for an identity LUT to do nothing**, and each
+was found by the test that says so:
+
+- *The stored values are warped like the axes are.* Storing linear values makes
+  interpolation under-shoot on a convex axis.
+- *The cube covers exactly the LUT's domain.* Spread further it interpolates
+  across the clamp at white and dims the picture by about a percent — measured,
+  before the axis was cut off at the domain.
+- *The shader samples texel centres.* Reading from coordinate 0 lands half a
+  texel outside the first entry and shifts the whole cube, which looks like a
+  slightly wrong look rather than a sampling mistake. That one was found by the
+  parity test, at a mean error of 0.034 across four cases.
+
+**The parser refuses a file rather than half-reading it**: data before the size,
+too few entries, too many, a size of one, an inverted domain. Each of those
+would otherwise produce a LUT that looks plausible and grades wrongly, which is
+worse than not loading. The red index moves fastest, per the format — getting
+that backwards swaps red and blue in every look, so a deliberately asymmetric
+fixture is what tells the two apart.
+
+**A missing LUT is a clip that grades without it**, not a render that fails, and
+the failure is remembered so a broken path is not re-opened every frame.
+
+The LUT is stored by path rather than inline: a .cube is hundreds of kilobytes
+of text, and a project that embedded one per clip would be unopenable in a text
+editor. The cost is that a project can be moved away from its LUTs, which is the
+same bargain the media references already make.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

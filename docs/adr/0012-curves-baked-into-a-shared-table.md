@@ -72,6 +72,34 @@ own resolution. An ungraded clip has to come out bit-identical — the frame-exa
 harness depends on it — so the shader takes a flag and skips the lookup, and the
 CPU never builds a table at all.
 
+## The same decision covers look LUTs
+
+A .cube LUT is baked the same way, into a 32³ linear-in, linear-out cube on the
+same warped axis. The shader holds no .cube parser, no domain handling and no
+transfer function; it samples what `render::LutTable` worked out, un-warps, and
+blends by the amount.
+
+Two details the 1D case did not raise:
+
+**The stored values are warped too.** Storing linear values makes an identity
+LUT fail to round trip — the axis is convex in linear light, so interpolating
+between grid points under-shoots. Storing the grid coordinate instead means an
+identity LUT holds exactly the coordinate at every point, and linear
+interpolation of that is exact.
+
+**The cube covers exactly the LUT's domain.** Spread over all of [0, ∞) it would
+spend grid points on light the LUT clamps anyway, and would interpolate across
+the clamp: the sample either side of white mixes a real value with a clamped one
+and pulls white itself below 1. An identity LUT dimmed the picture by about a
+percent until the axis was cut off at the domain. Above the domain the answer is
+the cube's edge, which is what the LUT says about light it was not built for.
+
+**The shader samples texel centres.** A coordinate of 0 lands half a texel
+outside the first entry, so the whole cube reads shifted — which looks like a
+slightly wrong look rather than a sampling mistake. The size travels with the
+cube in a uniform rather than being written out in the shader, so the two cannot
+disagree about how big it is.
+
 ## Tables are cached against the curves themselves
 
 Building one is three thousand spline evaluations and as many `pow`s: nothing

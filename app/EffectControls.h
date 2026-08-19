@@ -14,6 +14,7 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
+class QPushButton;
 class QToolButton;
 class QLabel;
 
@@ -85,6 +86,7 @@ private:
     void pushColor();
     void pushCurves(const model::ToneCurves& curves, bool committed);
     void pushSecondary();
+    void pushLut(const model::LutRef& lut);
     /// The secondary as the widgets currently describe it.
     [[nodiscard]] model::Secondary secondaryFromWidgets() const;
     void applyToWidgets();
@@ -124,6 +126,10 @@ private:
     QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
     QWidget* secondaryGroup_{nullptr};
+    QPushButton* lutLoad_{nullptr};
+    QPushButton* lutClear_{nullptr};
+    QLabel* lutName_{nullptr};
+    QDoubleSpinBox* lutAmount_{nullptr};
     QCheckBox* qualifierOn_{nullptr};
     QCheckBox* showMask_{nullptr};
     HueBand* hueBand_{nullptr};

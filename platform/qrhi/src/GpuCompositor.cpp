@@ -23,13 +23,56 @@ constexpr std::array<float, 12> kQuad{
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16);
+constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16;
 
 /// Write a grade into the composite shader's uniform block.
 ///
 /// Every path that binds that shader goes through this, so a new call site
 /// cannot leave the grade fields as zeros -- which would be a black,
 /// fully-desaturated picture rather than an obviously missing feature.
+/// Upload a baked look cube as a 3D RGBA32F texture.
+///
+/// Sampled with hardware trilinear filtering, which is the same interpolation
+/// render::LutTable does on the CPU -- so the two agree without either of them
+/// knowing anything about the other's arithmetic.
+std::unique_ptr<QRhiTexture> makeLutTexture(QRhi& rhi, QRhiResourceUpdateBatch& batch,
+                                            const render::LutTable& lut) {
+    constexpr int kSize = render::LutTable::kSize;
+    auto texture = std::unique_ptr<QRhiTexture>(rhi.newTexture(
+        QRhiTexture::RGBA32F, kSize, kSize, kSize, 1, QRhiTexture::UsedAsTransferSource));
+    if (texture == nullptr || !texture->create()) {
+        return nullptr;
+    }
+
+    // Padded to four components: three-component float textures are not
+    // universally sampleable, and this is uploaded once per look rather than
+    // per frame.
+    std::vector<float> padded(static_cast<std::size_t>(kSize) * kSize * kSize * 4, 1.0F);
+    const float* entries = lut.data();
+    for (std::size_t i = 0; i < static_cast<std::size_t>(kSize) * kSize * kSize; ++i) {
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            padded[(i * 4) + channel] = entries[(i * 3) + channel];
+        }
+    }
+
+    // One upload entry per z slice: a 3D texture is uploaded a layer at a time.
+    QRhiTextureUploadDescription description;
+    std::vector<QRhiTextureUploadEntry> slices;
+    std::vector<QImage> keepAlive;
+    keepAlive.reserve(static_cast<std::size_t>(kSize));
+    slices.reserve(static_cast<std::size_t>(kSize));
+    for (int z = 0; z < kSize; ++z) {
+        const float* start = padded.data() + (static_cast<std::size_t>(z) * kSize * kSize * 4);
+        QImage slice(reinterpret_cast<const uchar*>(start), kSize, kSize,
+                     kSize * 4 * static_cast<int>(sizeof(float)), QImage::Format_RGBA32FPx4);
+        keepAlive.push_back(slice.copy());
+        slices.emplace_back(z, 0, QRhiTextureSubresourceUploadDescription(keepAlive.back()));
+    }
+    description.setEntries(slices.cbegin(), slices.cend());
+    batch.uploadTexture(texture.get(), description);
+    return texture;
+}
+
 /// Upload a baked curve table as a 1024x1 RGBA32F texture.
 ///
 /// RGBA rather than RGB: three-component float textures are not universally
@@ -61,7 +104,7 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
     return texture;
 }
 
-void writeGrade(std::array<float, 48>& uniformData, const render::GradeConstants& grade,
+void writeGrade(std::array<float, 52>& uniformData, const render::GradeConstants& grade,
                 bool curved, const render::SecondaryConstants* secondary) {
     uniformData[20] = grade.balance.r;
     uniformData[21] = grade.balance.g;
@@ -102,6 +145,16 @@ void writeGrade(std::array<float, 48>& uniformData, const render::GradeConstants
     uniformData[45] = window.lumaOuterLow;
     uniformData[46] = window.lumaInnerHigh;
     uniformData[47] = window.lumaOuterHigh;
+}
+
+void writeLook(std::array<float, 52>& uniformData, const render::LutTable* lut, float amount) {
+    const bool looked = lut != nullptr && lut->isValid() && amount > 0.0F;
+    uniformData[48] = looked ? amount : 0.0F;
+    uniformData[49] = looked ? lut->axisMax() : 1.0F;
+    uniformData[50] = looked ? 1.0F : 0.0F;
+    // The size travels with the cube rather than being written out in the
+    // shader, so the two cannot disagree about how big it is.
+    uniformData[51] = static_cast<float>(render::LutTable::kSize);
 }
 /// The YUV shader adds two more vec4s of colour parameters.
 constexpr int kYuvUniformBytes = 64 + 16 * 3;
@@ -175,6 +228,7 @@ struct GpuCompositor::State {
     /// Bound wherever a curve table is not in use. The binding has to exist
     /// because the pipeline layout says it does; the shader never reads it.
     std::unique_ptr<QRhiTexture> noCurve;
+    std::unique_ptr<QRhiTexture> noLut;
 
     /// A linear-light staging surface for one source in one frame.
     ///
@@ -309,6 +363,12 @@ Status buildDeviceResources(GpuCompositor::State& state) {
         return Error{ErrorCode::Internal, "cannot allocate the placeholder curve texture"};
     }
 
+    state.noLut.reset(
+        state.rhi->newTexture(QRhiTexture::RGBA32F, 1, 1, 1, 1, QRhiTexture::UsedAsTransferSource));
+    if (state.noLut == nullptr || !state.noLut->create()) {
+        return Error{ErrorCode::Internal, "cannot allocate the placeholder look texture"};
+    }
+
     state.chromaSampler.reset(state.rhi->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest,
                                                     QRhiSampler::None, QRhiSampler::ClampToEdge,
                                                     QRhiSampler::ClampToEdge));
@@ -430,6 +490,8 @@ Status GpuCompositor::ensureCompositePipeline(std::size_t blendIndex) {
                                                   nullptr, nullptr),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
                                                   nullptr, nullptr),
+        QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
+                                                  nullptr, nullptr),
     });
     if (!layout->create()) {
         return Error{ErrorCode::Internal, "cannot create a resource binding layout"};
@@ -459,7 +521,8 @@ Status GpuCompositor::ensureCompositePipeline(std::size_t blendIndex) {
 Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transform& transform,
                            BlendMode blend, const render::GradeConstants& grade,
                            const render::CurveTable* curves,
-                           const render::SecondaryConstants* secondary) {
+                           const render::SecondaryConstants* secondary, const render::LutTable* lut,
+                           float lutAmount) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -518,11 +581,19 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     batch->uploadTexture(texture.get(), description);
 
     const bool curved = curves != nullptr && !curves->isIdentity();
+    const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
+    std::unique_ptr<QRhiTexture> lutTexture;
     std::unique_ptr<QRhiTexture> curveTexture;
     if (curved) {
         curveTexture = makeCurveTexture(*state.rhi, *batch, *curves);
         if (curveTexture == nullptr) {
             return Error{ErrorCode::Internal, "cannot allocate a curve texture"};
+        }
+    }
+    if (looked) {
+        lutTexture = makeLutTexture(*state.rhi, *batch, *lut);
+        if (lutTexture == nullptr) {
+            return Error{ErrorCode::Internal, "cannot allocate a look texture"};
         }
     }
 
@@ -537,18 +608,22 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
                                                   curved ? curveTexture.get() : state.noCurve.get(),
                                                   state.sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
+                                                  looked ? lutTexture.get() : state.noLut.get(),
+                                                  state.sampler.get()),
     });
     if (!bindings->create()) {
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 48> uniformData{};
+    std::array<float, 52> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
     writeGrade(uniformData, grade, curved, secondary);
+    writeLook(uniformData, lut, lutAmount);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -560,6 +635,9 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     state.sourceTextures.push_back(std::move(texture));
     if (curveTexture != nullptr) {
         state.sourceTextures.push_back(std::move(curveTexture));
+    }
+    if (lutTexture != nullptr) {
+        state.sourceTextures.push_back(std::move(lutTexture));
     }
     state.uniformBuffers.push_back(std::move(uniforms));
     state.bindings.push_back(std::move(bindings));
@@ -723,7 +801,8 @@ YuvParameters parametersFor(const media::VideoFrame& source) {
 Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::Transform& transform,
                                  const render::GradeConstants& grade, BlendMode blend,
                                  const render::CurveTable* curves,
-                                 const render::SecondaryConstants* secondary) {
+                                 const render::SecondaryConstants* secondary,
+                                 const render::LutTable* lut, float lutAmount) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -950,6 +1029,8 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot allocate a uniform buffer"};
     }
     const bool curved = curves != nullptr && !curves->isIdentity();
+    const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
+    std::unique_ptr<QRhiTexture> lutTexture;
     std::unique_ptr<QRhiTexture> curveTexture;
     if (curved) {
         QRhiResourceUpdateBatch* curveBatch = state.rhi->nextResourceUpdateBatch();
@@ -958,6 +1039,14 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
             return Error{ErrorCode::Internal, "cannot allocate a curve texture"};
         }
         state.commandBuffer->resourceUpdate(curveBatch);
+    }
+    if (looked) {
+        QRhiResourceUpdateBatch* lutBatch = state.rhi->nextResourceUpdateBatch();
+        lutTexture = makeLutTexture(*state.rhi, *lutBatch, *lut);
+        if (lutTexture == nullptr) {
+            return Error{ErrorCode::Internal, "cannot allocate a look texture"};
+        }
+        state.commandBuffer->resourceUpdate(lutBatch);
     }
 
     auto bindings =
@@ -971,18 +1060,22 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
                                                   curved ? curveTexture.get() : state.noCurve.get(),
                                                   state.sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
+                                                  looked ? lutTexture.get() : state.noLut.get(),
+                                                  state.sampler.get()),
     });
     if (!bindings->create()) {
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 48> uniformData{};
+    std::array<float, 52> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
     writeGrade(uniformData, grade, curved, secondary);
+    writeLook(uniformData, lut, lutAmount);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -991,6 +1084,9 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     state.draws.push_back(State::PendingDraw{state.pipelines[blendIndex].get(), bindings.get()});
     if (curveTexture != nullptr) {
         state.sourceTextures.push_back(std::move(curveTexture));
+    }
+    if (lutTexture != nullptr) {
+        state.sourceTextures.push_back(std::move(lutTexture));
     }
     state.uniformBuffers.push_back(std::move(convertUniforms));
     state.uniformBuffers.push_back(std::move(uniforms));
@@ -1035,6 +1131,8 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
             // because the pipeline layout says it does.
             QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
                                                       state.noCurve.get(), state.sampler.get()),
+            QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
+                                                      state.noLut.get(), state.sampler.get()),
         });
         if (!state.presentBindings->create()) {
             return Error{ErrorCode::Internal, "cannot create present bindings"};
@@ -1092,7 +1190,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     matrix.scale(scaleX, scaleY * flip);
 
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
-    std::array<float, 48> uniformData{};
+    std::array<float, 52> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1101,6 +1199,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     // The present pass shows what was already composited. Grading here would
     // apply every clip's correction a second time, to the whole frame.
     writeGrade(uniformData, render::GradeConstants{}, false, nullptr);
+    writeLook(uniformData, nullptr, 0.0F);
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

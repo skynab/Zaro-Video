@@ -372,6 +372,13 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.lut.isSet() || !clip.lut.path.empty()) {
+        json lut{{"path", clip.lut.path}};
+        if (clip.lut.amount != 1.0) {
+            lut["amount"] = clip.lut.amount;
+        }
+        out["lut"] = std::move(lut);
+    }
     if (json secondary = encode(clip.secondary); !secondary.empty()) {
         out["secondary"] = std::move(secondary);
     }
@@ -551,6 +558,10 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("lut") && node.at("lut").is_object()) {
+        clip.lut.path = node.at("lut").value("path", std::string{});
+        clip.lut.amount = node.at("lut").value("amount", 1.0);
     }
     if (node.contains("secondary")) {
         clip.secondary = decodeSecondary(node.at("secondary"));

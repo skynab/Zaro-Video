@@ -13,9 +13,12 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
                               const model::Transform& transform, const time::RationalTime& at) {
     const render::SecondaryConstants secondary =
         render::secondaryConstantsFor(clip.secondary, transfer_);
+    const render::LutTable* lut =
+        clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     return compositor_
         ->drawSource(frame, transform, render::gradeConstantsFor(clip.colorAt(at)), clip.blend,
-                     &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary)
+                     &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
+                     static_cast<float>(clip.lut.amount))
         .ok();
 }
 

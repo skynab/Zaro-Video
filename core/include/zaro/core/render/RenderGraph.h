@@ -38,6 +38,9 @@ private:
                   const model::Transform& transform, const time::RationalTime& at);
 
     CurveTableCache curves_;
+    /// Baked look LUTs, keyed by path, so two clips sharing a look share one
+    /// cube and a missing file is not re-opened every frame.
+    LutCache luts_;
 
     /// The curve is drawn against the picture as it is *shown*, so baking it
     /// needs the transfer function the frame is being shown through. Rec.709

@@ -71,7 +71,7 @@ SecondaryConstants secondaryConstantsFor(const model::Secondary& secondary,
 }
 
 void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const CurveTable* curves,
-                const SecondaryConstants* secondary) {
+                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
@@ -98,6 +98,10 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
         r = grey + ((r - grey) * grade.saturation);
         g = grey + ((g - grey) * grade.saturation);
         b = grey + ((b - grey) * grade.saturation);
+    }
+
+    if (lut != nullptr && lut->isValid()) {
+        lut->apply(r, g, b, lutAmount);
     }
 
     if (curves != nullptr && !curves->isIdentity()) {
@@ -132,10 +136,11 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
 }
 
 void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves,
-                const SecondaryConstants* secondary) {
+                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
     const bool curved = curves != nullptr && !curves->isIdentity();
     const bool keyed = secondary != nullptr && secondary->isActive();
-    if ((grade.isIdentity() && !curved && !keyed) || !image.isValid()) {
+    const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
+    if ((grade.isIdentity() && !curved && !keyed && !looked) || !image.isValid()) {
         return;
     }
     for (std::int32_t y = 0; y < image.height(); ++y) {
@@ -150,7 +155,7 @@ void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable*
             float r = pixel.r * inverse;
             float g = pixel.g * inverse;
             float b = pixel.b * inverse;
-            gradePixel(grade, r, g, b, curves, secondary);
+            gradePixel(grade, r, g, b, curves, secondary, lut, lutAmount);
             pixel.r = r * alpha;
             pixel.g = g * alpha;
             pixel.b = b * alpha;
