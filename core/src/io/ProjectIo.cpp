@@ -209,6 +209,34 @@ json encode(const model::Track& track) {
     return out;
 }
 
+json encode(const model::Marker& marker) {
+    json out{{"id", marker.id.value()}, {"range", encode(marker.range)}, {"name", marker.name}};
+    if (!marker.note.empty()) {
+        out["note"] = marker.note;
+    }
+    if (marker.colour != 0) {
+        out["colour"] = marker.colour;
+    }
+    return out;
+}
+
+Result<model::Marker> decodeMarker(const json& node) {
+    model::Marker marker;
+    marker.id = model::MarkerId{node.value("id", std::uint64_t{0})};
+    if (!marker.id.isValid()) {
+        return Error{ErrorCode::InvalidData, "a marker has no id"};
+    }
+    auto range = decodeRange(node.at("range"), "marker range");
+    if (!range) {
+        return range.error();
+    }
+    marker.range = *range;
+    marker.name = node.value("name", std::string{});
+    marker.note = node.value("note", std::string{});
+    marker.colour = node.value("colour", 0);
+    return marker;
+}
+
 json encode(const model::Sequence& sequence) {
     json videoTracks = json::array();
     for (const model::Track& track : sequence.videoTracks()) {
@@ -218,6 +246,10 @@ json encode(const model::Sequence& sequence) {
     for (const model::Track& track : sequence.audioTracks()) {
         audioTracks.push_back(encode(track));
     }
+    json markers = json::array();
+    for (const model::Marker& marker : sequence.markers()) {
+        markers.push_back(encode(marker));
+    }
     return json{{"id", sequence.id().value()},
                 {"name", sequence.name()},
                 {"frameRate", encode(sequence.frameRate())},
@@ -226,7 +258,8 @@ json encode(const model::Sequence& sequence) {
                 {"height", sequence.height()},
                 {"startTime", encode(sequence.startTime())},
                 {"videoTracks", std::move(videoTracks)},
-                {"audioTracks", std::move(audioTracks)}};
+                {"audioTracks", std::move(audioTracks)},
+                {"markers", std::move(markers)}};
 }
 
 json encode(const model::MediaRef& ref) {
@@ -364,6 +397,16 @@ Result<model::Sequence> decodeSequence(const json& node) {
     if (Status status = loadTracks("audioTracks", model::TrackKind::Audio); !status) {
         return status.error();
     }
+
+    std::vector<model::Marker> markers;
+    for (const json& markerNode : node.value("markers", json::array())) {
+        auto marker = decodeMarker(markerNode);
+        if (!marker) {
+            return marker.error();
+        }
+        markers.push_back(std::move(*marker));
+    }
+    sequence.setMarkers(std::move(markers));
     return sequence;
 }
 
@@ -450,6 +493,13 @@ void mergePreserved(json& out, const json& original) {
     }
 }
 
+/// The largest id of any kind in the project.
+///
+/// Every id type shares one counter, so this has to see all of them. Missing
+/// one means the counter restarts below an id already in use and the next
+/// thing created silently collides with something — which is far worse than a
+/// field failing to round trip, because the file is fine and the corruption
+/// happens later, in memory, to whoever opens it.
 std::uint64_t highestId(const model::Project& project) {
     std::uint64_t highest = 0;
     const auto bump = [&highest](std::uint64_t value) { highest = std::max(highest, value); };
@@ -458,11 +508,18 @@ std::uint64_t highestId(const model::Project& project) {
     }
     for (const model::Sequence& sequence : project.sequences()) {
         bump(sequence.id().value());
+        for (const model::Marker& marker : sequence.markers()) {
+            bump(marker.id.value());
+        }
         for (const auto* list : {&sequence.videoTracks(), &sequence.audioTracks()}) {
             for (const model::Track& track : *list) {
                 bump(track.id().value());
                 for (const model::Clip& clip : track.clips()) {
                     bump(clip.id.value());
+                    bump(clip.link.value());
+                }
+                for (const model::Transition& transition : track.transitions()) {
+                    bump(transition.id.value());
                 }
             }
         }

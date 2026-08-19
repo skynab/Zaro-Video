@@ -29,6 +29,14 @@ const QColor kDimText{150, 150, 160};
 const QColor kWaveform{188, 236, 210};
 const QColor kTransition{212, 196, 244};
 
+/// Marker colours, indexed by the marker's own colour field. The model stores
+/// "the green one" rather than a colour value, so the palette can change
+/// without rewriting every project file.
+const QColor kMarkerPalette[] = {
+    QColor{236, 196, 92},  QColor{120, 200, 130}, QColor{110, 170, 235},
+    QColor{224, 120, 160}, QColor{200, 150, 235}, QColor{230, 140, 90},
+};
+
 }  // namespace
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget{parent} {
@@ -175,6 +183,37 @@ void TimelineWidget::paintRuler(QPainter& painter) {
 
     painter.setPen(kGridLine);
     painter.drawLine(0, metrics.rulerHeight, width(), metrics.rulerHeight);
+
+    paintMarkers(painter);
+}
+
+void TimelineWidget::paintMarkers(QPainter& painter) {
+    const model::Sequence& seq = *sequence();
+    const auto& metrics = layout_.metrics();
+    const time::TimeRange visible = layout_.visibleRange(seq.frameRate());
+
+    for (const model::Marker& marker : seq.markers()) {
+        if (!marker.range.overlaps(visible)) {
+            continue;
+        }
+        const double startX = layout_.xForTime(marker.range.start());
+        const double endX = layout_.xForTime(marker.range.endExclusive());
+        if (endX < metrics.headerWidth) {
+            continue;
+        }
+
+        const QColor colour = kMarkerPalette[static_cast<std::size_t>(std::abs(marker.colour)) %
+                                             (sizeof(kMarkerPalette) / sizeof(kMarkerPalette[0]))];
+
+        // A spanned marker is drawn as a bar, a point marker as a tab. Drawing
+        // both the same way would make a one-frame marker invisible at any zoom
+        // where a frame is under a pixel.
+        QRectF box(std::max(startX, static_cast<double>(metrics.headerWidth)),
+                   metrics.rulerHeight - 7.0, std::max(6.0, endX - startX), 6.0);
+        painter.fillRect(box, colour);
+        painter.setPen(colour.darker(140));
+        painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
+    }
 }
 
 void TimelineWidget::paintTracks(QPainter& painter) {
@@ -635,6 +674,25 @@ void TimelineWidget::razorAtPlayhead() {
     update();
 }
 
+void TimelineWidget::addMarkerAtPlayhead() {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    auto built = edit::makeAddMarker(*project_, sequenceId_, playhead_,
+                                     time::RationalTime{0, seq->frameRate()}, "Marker");
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+}
+
 void TimelineWidget::addDissolveAtPlayhead() {
     if (project_ == nullptr || commands_ == nullptr || !selectedTrack_.isValid()) {
         return;
@@ -692,6 +750,9 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
             return;
         case Qt::Key_S:
             snapEnabled_ = !snapEnabled_;
+            return;
+        case Qt::Key_M:
+            addMarkerAtPlayhead();
             return;
         case Qt::Key_D:
             if (event->modifiers().testFlag(Qt::ControlModifier) ||

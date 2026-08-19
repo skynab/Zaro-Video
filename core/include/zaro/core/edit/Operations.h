@@ -153,6 +153,24 @@ enum class PlaceMode {
                                                     const EditTarget& target, model::ClipId clip,
                                                     bool enabled);
 
+// --- Markers ----------------------------------------------------------------
+
+/// Add a marker. A duration of zero becomes a one-frame point marker.
+[[nodiscard]] Result<CommandPtr> makeAddMarker(model::Project& project, model::SequenceId sequence,
+                                               const time::RationalTime& at,
+                                               const time::RationalTime& duration, std::string name,
+                                               std::int32_t colour = 0);
+
+[[nodiscard]] Result<CommandPtr> makeRemoveMarker(model::Project& project,
+                                                  model::SequenceId sequence,
+                                                  model::MarkerId marker);
+
+/// Rename a marker, or change its note or colour.
+[[nodiscard]] Result<CommandPtr> makeUpdateMarker(model::Project& project,
+                                                  model::SequenceId sequence,
+                                                  model::MarkerId marker, std::string name,
+                                                  std::string note, std::int32_t colour);
+
 // --- Linking ----------------------------------------------------------------
 
 /// Which clip, on which track.

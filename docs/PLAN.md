@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 253 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 256 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -557,6 +557,35 @@ Two decisions worth recording, both about what to do when part of an edit cannot
 Every operation is link-aware unconditionally, so an unlinked clip behaves exactly as it
 did before links existed. The forty-five pre-existing edit tests passing unchanged is what
 made that claim checkable rather than hopeful.
+
+#### Phase 4i — markers and workspaces ✅ **mostly**
+
+- ✅ **Markers**, carrying a duration rather than being points — most of what people mark
+  is a span, and a point is a span of one frame. Modelling only the point case would mean
+  discovering that later and migrating every project file. A zero duration is stored as
+  one frame, because a genuinely empty range would answer "no" to containment everywhere,
+  including at the marker itself.
+- ✅ Drawn in the ruler, added with M, and navigated with shift-arrow.
+- ✅ **Workspaces**: the panels are splitters now rather than a fixed layout, and their
+  sizes and the window geometry are remembered between sessions.
+- ⏸️ **Not done: multi-selection.** Selecting several clips and moving or deleting them
+  together needs a selection model the timeline does not have yet, and an operation that
+  moves a set rather than one clip. Deferred rather than half-built.
+
+**A third id bug, of a kind the round-trip tests could not see.** `highestId` — which
+restarts the id counter after loading — never learned about markers, transitions or link
+groups. Each was added in a later phase and the loader was not updated. The result is not
+a field failing to round trip; it is a file that loads perfectly and then hands out an id
+already in use, so the next marker created silently *is* an existing one.
+
+The exhaustive field test added in 4f would never have caught this, because it never
+issues new ids after loading. There is now a second test that does exactly that — loads a
+project containing every kind of id and checks that fifty freshly issued ids collide with
+none of them — and it was verified to fail with the fix reverted.
+
+That is three bugs of the same shape: a new thing is added to the model, and one of the
+places that has to enumerate everything is missed. The encoder, the decoder, and the id
+counter are all such places.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

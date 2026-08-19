@@ -1,3 +1,5 @@
+#include <set>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/core/edit/Operations.h"
@@ -391,4 +393,69 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     // And the whole thing compares equal, which the field checks above make
     // meaningful rather than merely reassuring.
     CHECK(back == project);
+}
+
+TEST_CASE("Ids issued after loading never collide with ids already in the file",
+          "[io][exhaustive]") {
+    // Every id type shares one counter, so the loader has to see all of them.
+    // Missing one restarts the counter below an id already in use, and the next
+    // thing created silently collides -- worse than a field failing to round
+    // trip, because the file is fine and the damage happens later, in memory,
+    // to whoever opens it.
+    //
+    // Markers, transitions and links were each added after this was written,
+    // and the loader was not updated for any of them.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    const model::ClipId video = f.track(f.v1).clips()[0].id;
+    const model::ClipId audio = f.track(f.a1).clips()[0].id;
+    REQUIRE(f.run(edit::makeLinkClips(f.project, f.sequenceId, {{f.v1, video}, {f.a1, audio}})));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+    REQUIRE(f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(20), f.at(0), "Here")));
+
+    // Collect every id the file contains.
+    std::set<std::uint64_t> used;
+    const auto collect = [&used](const model::Project& project) {
+        used.clear();
+        for (const model::MediaRef& ref : project.media()) {
+            used.insert(ref.id.value());
+        }
+        for (const model::Sequence& sequence : project.sequences()) {
+            used.insert(sequence.id().value());
+            for (const model::Marker& marker : sequence.markers()) {
+                used.insert(marker.id.value());
+            }
+            for (const auto* list : {&sequence.videoTracks(), &sequence.audioTracks()}) {
+                for (const model::Track& track : *list) {
+                    used.insert(track.id().value());
+                    for (const model::Clip& clip : track.clips()) {
+                        used.insert(clip.id.value());
+                        if (clip.link.isValid()) {
+                            used.insert(clip.link.value());
+                        }
+                    }
+                    for (const model::Transition& transition : track.transitions()) {
+                        used.insert(transition.id.value());
+                    }
+                }
+            }
+        }
+    };
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    collect(loaded->project);
+    REQUIRE(used.size() > 6);  // media, sequence, tracks, clips, link, transition, marker
+
+    // Everything issued from here on has to be new, whatever kind it is.
+    for (int i = 0; i < 50; ++i) {
+        const std::uint64_t next = loaded->project.ids().next<model::ClipTag>().value();
+        INFO("issued " << next);
+        CHECK(used.find(next) == used.end());
+    }
 }

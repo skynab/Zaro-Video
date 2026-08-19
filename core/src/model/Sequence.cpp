@@ -6,6 +6,45 @@
 
 namespace zaro::model {
 
+void Sequence::setMarkers(std::vector<Marker> markers) {
+    // Kept in time order, so drawing and jumping can both walk them in one
+    // direction rather than each sorting a copy.
+    std::sort(markers.begin(), markers.end(),
+              [](const Marker& a, const Marker& b) { return a.range.start() < b.range.start(); });
+    markers_ = std::move(markers);
+}
+
+const Marker* Sequence::markerAt(const time::RationalTime& t) const {
+    for (const Marker& marker : markers_) {
+        if (marker.range.contains(t)) {
+            return &marker;
+        }
+        // A point marker has a range of one frame, so containment covers it.
+    }
+    return nullptr;
+}
+
+const Marker* Sequence::markerAfter(const time::RationalTime& t) const {
+    for (const Marker& marker : markers_) {
+        if (marker.range.start() > t) {
+            return &marker;
+        }
+    }
+    return nullptr;
+}
+
+const Marker* Sequence::markerBefore(const time::RationalTime& t) const {
+    const Marker* best = nullptr;
+    for (const Marker& marker : markers_) {
+        if (marker.range.start() < t) {
+            best = &marker;
+        } else {
+            break;
+        }
+    }
+    return best;
+}
+
 Track* Sequence::findTrack(TrackId id) {
     for (auto* list : {&videoTracks_, &audioTracks_}) {
         for (Track& track : *list) {

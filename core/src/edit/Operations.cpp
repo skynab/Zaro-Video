@@ -1006,6 +1006,92 @@ Result<CommandPtr> makeSetClipEnabled(Project& project, const EditTarget& target
                       {}, [enabled](Clip& clip) { clip.enabled = enabled; });
 }
 
+// --- Markers ----------------------------------------------------------------
+
+Result<CommandPtr> makeAddMarker(Project& project, model::SequenceId sequenceId,
+                                 const time::RationalTime& at, const time::RationalTime& duration,
+                                 std::string name, std::int32_t colour) {
+    Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    const time::Rational& rate = sequence->frameRate();
+    const time::RationalTime start = atRate(at, rate);
+    if (start.frames() < 0) {
+        return Error{ErrorCode::InvalidData, "a marker cannot sit before the sequence"};
+    }
+
+    // Zero becomes one frame. A point marker is a span of one frame, and having
+    // a genuinely empty range would make containment tests answer no everywhere,
+    // including at the marker itself.
+    time::RationalTime span = atRate(duration, rate);
+    if (span.frames() < 1) {
+        span = time::RationalTime{1, rate};
+    }
+
+    model::Marker marker;
+    marker.id = project.ids().next<model::MarkerTag>();
+    marker.range = time::TimeRange{start, span};
+    marker.name = std::move(name);
+    marker.colour = colour;
+
+    return makeCommand(sequenceId, "Add marker", {}, [marker](Sequence& seq) {
+        std::vector<model::Marker> rebuilt = seq.markers();
+        rebuilt.push_back(marker);
+        seq.setMarkers(std::move(rebuilt));
+    });
+}
+
+Result<CommandPtr> makeRemoveMarker(Project& project, model::SequenceId sequenceId,
+                                    model::MarkerId markerId) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    const bool exists =
+        std::any_of(sequence->markers().begin(), sequence->markers().end(),
+                    [markerId](const model::Marker& marker) { return marker.id == markerId; });
+    if (!exists) {
+        return Error{ErrorCode::NotFound, "no such marker"};
+    }
+
+    return makeCommand(sequenceId, "Remove marker", {}, [markerId](Sequence& seq) {
+        std::vector<model::Marker> rebuilt = seq.markers();
+        std::erase_if(rebuilt,
+                      [markerId](const model::Marker& marker) { return marker.id == markerId; });
+        seq.setMarkers(std::move(rebuilt));
+    });
+}
+
+Result<CommandPtr> makeUpdateMarker(Project& project, model::SequenceId sequenceId,
+                                    model::MarkerId markerId, std::string name, std::string note,
+                                    std::int32_t colour) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    const bool exists =
+        std::any_of(sequence->markers().begin(), sequence->markers().end(),
+                    [markerId](const model::Marker& marker) { return marker.id == markerId; });
+    if (!exists) {
+        return Error{ErrorCode::NotFound, "no such marker"};
+    }
+
+    return makeCommand(
+        sequenceId, "Edit marker", "marker:" + std::to_string(markerId.value()),
+        [markerId, name = std::move(name), note = std::move(note), colour](Sequence& seq) {
+            std::vector<model::Marker> rebuilt = seq.markers();
+            for (model::Marker& marker : rebuilt) {
+                if (marker.id == markerId) {
+                    marker.name = name;
+                    marker.note = note;
+                    marker.colour = colour;
+                }
+            }
+            seq.setMarkers(std::move(rebuilt));
+        });
+}
+
 // --- Linking ----------------------------------------------------------------
 
 Result<CommandPtr> makeLinkClips(Project& project, model::SequenceId sequenceId,

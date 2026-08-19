@@ -853,3 +853,103 @@ TEST_CASE("Links and sync locks survive a round trip", "[edit][link][io]") {
     CHECK_FALSE(sequence->findTrack(f.a1)->isSyncLocked());
     CHECK(sequence->findTrack(f.v1)->isSyncLocked());
 }
+
+TEST_CASE("Markers are added, found and navigated", "[edit][marker]") {
+    testing::Fixture f;
+
+    REQUIRE(f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(100), f.at(0), "Take 2")));
+    REQUIRE(f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(50), f.at(25), "Section")));
+    REQUIRE(f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(300), f.at(0), "End")));
+
+    const model::Sequence& sequence = f.sequence();
+    REQUIRE(sequence.markers().size() == 3);
+
+    SECTION("and kept in time order however they were added") {
+        CHECK(sequence.markers()[0].range.start() == f.at(50));
+        CHECK(sequence.markers()[1].range.start() == f.at(100));
+        CHECK(sequence.markers()[2].range.start() == f.at(300));
+    }
+
+    SECTION("a zero duration becomes a one-frame point") {
+        const model::Marker* point = sequence.markerAt(f.at(100));
+        REQUIRE(point != nullptr);
+        CHECK(point->name == "Take 2");
+        CHECK(point->isPoint());
+        CHECK(point->range.duration() == f.at(1));
+        // And it is findable at its own frame, which an empty range would not be.
+        CHECK(sequence.markerAt(f.at(101)) == nullptr);
+    }
+
+    SECTION("a spanned marker covers its whole range") {
+        CHECK(sequence.markerAt(f.at(50)) != nullptr);
+        CHECK(sequence.markerAt(f.at(74)) != nullptr);
+        CHECK(sequence.markerAt(f.at(75)) == nullptr);
+    }
+
+    SECTION("jumping forward and back") {
+        REQUIRE(sequence.markerAfter(f.at(0)) != nullptr);
+        CHECK(sequence.markerAfter(f.at(0))->range.start() == f.at(50));
+        CHECK(sequence.markerAfter(f.at(50))->range.start() == f.at(100));
+        CHECK(sequence.markerAfter(f.at(300)) == nullptr);
+
+        CHECK(sequence.markerBefore(f.at(300))->range.start() == f.at(100));
+        CHECK(sequence.markerBefore(f.at(0)) == nullptr);
+    }
+
+    SECTION("removing one") {
+        const model::MarkerId id = sequence.markers()[1].id;
+        REQUIRE(f.run(edit::makeRemoveMarker(f.project, f.sequenceId, id)));
+        CHECK(f.sequence().markers().size() == 2);
+        CHECK(f.sequence().markerAt(f.at(100)) == nullptr);
+
+        SECTION("and undo brings it back") {
+            REQUIRE(f.stack.undo(f.project));
+            CHECK(f.sequence().markers().size() == 3);
+        }
+    }
+
+    SECTION("renaming one, coalescing while typing") {
+        const model::MarkerId id = sequence.markers()[0].id;
+        const std::size_t before = f.stack.depth();
+        for (const char* name : {"S", "Se", "Sec", "Sect"}) {
+            REQUIRE(f.run(edit::makeUpdateMarker(f.project, f.sequenceId, id, name, "", 2)));
+        }
+        CHECK(f.stack.depth() == before + 1);
+        CHECK(f.sequence().markers()[0].name == "Sect");
+        CHECK(f.sequence().markers()[0].colour == 2);
+    }
+
+    SECTION("removing one that is not there is refused") {
+        CHECK_FALSE(f.run(edit::makeRemoveMarker(f.project, f.sequenceId, model::MarkerId{999})));
+    }
+
+    SECTION("a marker before the sequence is refused") {
+        CHECK_FALSE(f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(-5), f.at(0), "x")));
+    }
+}
+
+TEST_CASE("Markers survive a round trip", "[edit][marker][io]") {
+    testing::Fixture f;
+    REQUIRE(
+        f.run(edit::makeAddMarker(f.project, f.sequenceId, f.at(120), f.at(30), "Colour pass", 3)));
+    const model::MarkerId id = f.sequence().markers().front().id;
+    REQUIRE(f.run(edit::makeUpdateMarker(f.project, f.sequenceId, id, "Colour pass",
+                                         "Too warm from here", 3)));
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    CHECK(loaded->project == f.project);
+
+    const model::Sequence* sequence = loaded->project.findSequence(f.sequenceId);
+    REQUIRE(sequence != nullptr);
+    REQUIRE(sequence->markers().size() == 1);
+    const model::Marker& marker = sequence->markers().front();
+    CHECK(marker.id == id);
+    CHECK(marker.name == "Colour pass");
+    CHECK(marker.note == "Too warm from here");
+    CHECK(marker.colour == 3);
+    CHECK(marker.range.start() == f.at(120));
+    CHECK(marker.range.duration() == f.at(30));
+}

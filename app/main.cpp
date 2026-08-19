@@ -20,7 +20,9 @@
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSettings>
 #include <QSlider>
+#include <QSplitter>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -93,11 +95,28 @@ public:
         source_ = new app::SourceMonitor(this);
         source_->setMinimumWidth(300);
 
-        auto* topRow = new QHBoxLayout;
-        topRow->addWidget(bin_);
-        topRow->addWidget(source_, 1);
-        topRow->addWidget(monitor_, 1);
-        topRow->addWidget(effects_);
+        // Splitters rather than fixed layouts: panel sizes are a matter of what
+        // someone is doing at the time, and the arrangement is remembered
+        // between sessions.
+        // The transport belongs under the program monitor, not at the bottom of
+        // the window: it controls the picture above it, and putting the timeline
+        // between them makes that relationship harder to see.
+        auto* transportBar = new QWidget(this);
+        transportBar->setLayout(transportRow);
+
+        auto* programColumn = new QWidget(this);
+        auto* programLayout = new QVBoxLayout(programColumn);
+        programLayout->setContentsMargins(0, 0, 0, 0);
+        programLayout->addWidget(monitor_, 1);
+        programLayout->addWidget(transportBar);
+
+        topSplitter_ = new QSplitter(Qt::Horizontal, this);
+        topSplitter_->addWidget(bin_);
+        topSplitter_->addWidget(source_);
+        topSplitter_->addWidget(programColumn);
+        topSplitter_->addWidget(effects_);
+        topSplitter_->setStretchFactor(1, 1);
+        topSplitter_->setStretchFactor(2, 2);
 
         connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
             if (const model::MediaRef* ref = project_.findMedia(id)) {
@@ -115,10 +134,14 @@ public:
             refresh();
         });
 
+        mainSplitter_ = new QSplitter(Qt::Vertical, this);
+        mainSplitter_->addWidget(topSplitter_);
+        mainSplitter_->addWidget(timeline_);
+        mainSplitter_->setStretchFactor(0, 3);
+        mainSplitter_->setStretchFactor(1, 2);
+
         auto* layout = new QVBoxLayout(this);
-        layout->addLayout(topRow, 3);
-        layout->addLayout(transportRow);
-        layout->addWidget(timeline_, 2);
+        layout->addWidget(mainSplitter_, 1);
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
@@ -160,7 +183,8 @@ public:
         clockTimer_->setInterval(4);
         connect(clockTimer_, &QTimer::timeout, this, [this] { followClock(); });
 
-        setWindowTitle("Zaro — Program Monitor");
+        setWindowTitle("Zaro");
+        restoreWorkspace();
         refresh();
     }
 
@@ -233,6 +257,8 @@ protected:
             {Qt::Key_O, Qt::NoModifier, "Mark out", &PreviewWindow::doMarkOut},
             {Qt::Key_Comma, Qt::NoModifier, "Insert from source", &PreviewWindow::doInsert},
             {Qt::Key_Period, Qt::NoModifier, "Overwrite from source", &PreviewWindow::doOverwrite},
+            {Qt::Key_Left, Qt::ShiftModifier, "Previous marker", &PreviewWindow::doPreviousMarker},
+            {Qt::Key_Right, Qt::ShiftModifier, "Next marker", &PreviewWindow::doNextMarker},
             {Qt::Key_Up, Qt::NoModifier, "Source back one frame", &PreviewWindow::doSourceBack},
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
@@ -289,11 +315,39 @@ protected:
     }
 
     void closeEvent(QCloseEvent* event) override {
+        saveWorkspace();
         shutDown();
         QWidget::closeEvent(event);
     }
 
 private:
+    /// Panel sizes and window geometry, remembered between sessions.
+    ///
+    /// Saved on close rather than continuously: writing settings on every drag
+    /// of a splitter is a lot of disk traffic for something only read once.
+    void saveWorkspace() {
+        QSettings settings("Zaro", "Zaro Video");
+        settings.setValue("window/geometry", saveGeometry());
+        settings.setValue("workspace/top", topSplitter_->saveState());
+        settings.setValue("workspace/main", mainSplitter_->saveState());
+    }
+
+    void restoreWorkspace() {
+        QSettings settings("Zaro", "Zaro Video");
+        // Each restored only if it was stored, so a first run gets the
+        // stretch factors set above rather than a collapsed layout.
+        if (const auto geometry = settings.value("window/geometry").toByteArray();
+            !geometry.isEmpty()) {
+            restoreGeometry(geometry);
+        }
+        if (const auto state = settings.value("workspace/top").toByteArray(); !state.isEmpty()) {
+            topSplitter_->restoreState(state);
+        }
+        if (const auto state = settings.value("workspace/main").toByteArray(); !state.isEmpty()) {
+            mainSplitter_->restoreState(state);
+        }
+    }
+
     /// Stop everything and join. Called from both the close event and the
     /// destructor, because they are not the same path: quitting with Cmd+Q
     /// destroys the window without ever delivering a close event, and a
@@ -305,6 +359,19 @@ private:
         stop();
         if (waveformThread_.joinable()) {
             waveformThread_.join();
+        }
+    }
+
+    void doNextMarker() {
+        if (const model::Marker* marker = sequence_->markerAfter(position_)) {
+            stop();
+            setPosition(marker->range.start());
+        }
+    }
+    void doPreviousMarker() {
+        if (const model::Marker* marker = sequence_->markerBefore(position_)) {
+            stop();
+            setPosition(marker->range.start());
         }
     }
 
@@ -531,6 +598,8 @@ private:
     app::EffectControls* effects_{nullptr};
     app::ProjectBin* bin_{nullptr};
     app::SourceMonitor* source_{nullptr};
+    QSplitter* topSplitter_{nullptr};
+    QSplitter* mainSplitter_{nullptr};
     edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};

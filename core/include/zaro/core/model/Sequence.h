@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "zaro/core/model/Marker.h"
 #include "zaro/core/model/Track.h"
 #include "zaro/core/time/Rational.h"
 
@@ -43,6 +44,16 @@ public:
     [[nodiscard]] const std::vector<Track>& videoTracks() const noexcept { return videoTracks_; }
     [[nodiscard]] const std::vector<Track>& audioTracks() const noexcept { return audioTracks_; }
 
+    [[nodiscard]] const std::vector<Marker>& markers() const noexcept { return markers_; }
+    void setMarkers(std::vector<Marker> markers);
+
+    /// The marker covering `t`, if any.
+    [[nodiscard]] const Marker* markerAt(const time::RationalTime& t) const;
+    /// The nearest marker strictly after `t`, for jumping forward.
+    [[nodiscard]] const Marker* markerAfter(const time::RationalTime& t) const;
+    /// The nearest marker strictly before `t`.
+    [[nodiscard]] const Marker* markerBefore(const time::RationalTime& t) const;
+
     [[nodiscard]] Track* findTrack(TrackId id);
     [[nodiscard]] const Track* findTrack(TrackId id) const;
 
@@ -68,6 +79,7 @@ private:
     std::int32_t width_{1920};
     std::int32_t height_{1080};
     time::RationalTime startTime_{};
+    std::vector<Marker> markers_;
     std::vector<Track> videoTracks_;
     std::vector<Track> audioTracks_;
 };
