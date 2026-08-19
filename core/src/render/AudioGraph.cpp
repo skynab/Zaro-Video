@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace zaro::render {
 
@@ -60,6 +61,12 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
         float trackRight = 1.0F;
         balanceGains(track.pan(), trackLeft, trackRight);
 
+        // Reused across clips so an automated mix does not allocate per block.
+        // Sized to the block, never to the whole clip.
+        std::vector<float> clipGains;
+        std::vector<float> leftPan;
+        std::vector<float> rightPan;
+
         for (const model::Clip& clip : track.clips()) {
             if (!clip.enabled) {
                 continue;
@@ -100,6 +107,36 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 balanceGains(clip.pan, clipLeft, clipRight);
             }
 
+            // Automation is evaluated per sample rather than per block. A gain
+            // held constant across a block steps at the block boundary, and
+            // that boundary is a property of the audio device's buffer size,
+            // not of the edit: the same project would zipper differently on
+            // different hardware, and at 512 samples a fade becomes a staircase
+            // of audible clicks.
+            //
+            // Once per sample, not once per sample per channel: the curve does
+            // not know which speaker it is feeding.
+            const bool automated = clip.animation.find(model::Param::GainDb) != nullptr ||
+                                   clip.animation.find(model::Param::Pan) != nullptr;
+            if (automated) {
+                clipGains.resize(static_cast<std::size_t>(available));
+                leftPan.resize(static_cast<std::size_t>(available));
+                rightPan.resize(static_cast<std::size_t>(available));
+                for (std::int64_t i = 0; i < available; ++i) {
+                    const time::RationalTime when{overlap->start().frames() + i, rate};
+                    clipGains[static_cast<std::size_t>(i)] = gainFromDb(clip.gainDbAt(when));
+                    float left = 1.0F;
+                    float right = 1.0F;
+                    if (sourceChannels == 1) {
+                        panGains(clip.panAt(when), left, right);
+                    } else {
+                        balanceGains(clip.panAt(when), left, right);
+                    }
+                    leftPan[static_cast<std::size_t>(i)] = left;
+                    rightPan[static_cast<std::size_t>(i)] = right;
+                }
+            }
+
             for (std::int32_t channel = 0; channel < channelCount; ++channel) {
                 // Mono sources feed both outputs; a stereo source keeps its
                 // sides. Anything wider is folded by taking the first channels,
@@ -112,8 +149,20 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
 
                 const float* in = scratch.channel(from);
                 float* out = mixed.channel(channel);
+                if (!automated) {
+                    for (std::int64_t i = 0; i < available; ++i) {
+                        out[offsetInBlock + i] += in[i] * gain;
+                    }
+                    continue;
+                }
+                const float busGain =
+                    trackGain *
+                    (channelCount == 1 ? 1.0F : (channel == 0 ? trackLeft : trackRight));
+                const std::vector<float>& side = channel == 0 ? leftPan : rightPan;
                 for (std::int64_t i = 0; i < available; ++i) {
-                    out[offsetInBlock + i] += in[i] * gain;
+                    const auto at = static_cast<std::size_t>(i);
+                    const float placed = channelCount == 1 ? 1.0F : side[at];
+                    out[offsetInBlock + i] += in[i] * clipGains[at] * placed * busGain;
                 }
             }
             ++lastClipCount_;

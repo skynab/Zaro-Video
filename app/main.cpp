@@ -815,6 +815,93 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        // Keyframes have to reach the GPU compositor, not just the CPU one.
+        // The two traversals are separate code, so a curve honoured on export
+        // and ignored in preview is a bug nothing else here would catch: the
+        // headless render tests only exercise render::RenderGraph.
+        {
+            // Undo the dim above before taking any pointer into the model: undo
+            // restores a snapshot, which replaces the clips wholesale.
+            window.commands().undo(window.project());
+            QApplication::processEvents();
+
+            const auto brightnessAt = [&](std::int64_t frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                window.monitor()->update();
+                QApplication::processEvents();
+                return meanGray(window.monitor()->grabFramebuffer());
+            };
+
+            // This fixture is black except on its flash frames, so a fade has to
+            // be measured on a frame that is lit to begin with. Measuring an
+            // arbitrary frame would report a working fade on footage that was
+            // already black.
+            // Not from frame zero: the fade is anchored at the clip's first
+            // frame, so a lit frame there would give the ramp no length at all
+            // and both keyframes would land on the same instant.
+            std::int64_t litFrame = -1;
+            double baseline = 0.0;
+            for (std::int64_t frame = 8; frame < 60; ++frame) {
+                const double gray = brightnessAt(frame);
+                if (gray > baseline) {
+                    baseline = gray;
+                    litFrame = frame;
+                }
+            }
+            if (litFrame < 0 || baseline < 40.0) {
+                std::fprintf(stderr, "  FAIL: no lit frame to fade\n");
+                return 1;
+            }
+
+            zaro::model::Clip* clip = window.project()
+                                          .findSequence(sequence.id())
+                                          ->tracksMutable(zaro::model::TrackKind::Video)
+                                          .front()
+                                          .find(original.id);
+            if (clip == nullptr) {
+                std::fprintf(stderr, "  FAIL: the clip vanished\n");
+                return 1;
+            }
+
+            // Keyframes are in source time. Anchoring the fade so that the lit
+            // frame lands at a known point on the curve is what makes this a
+            // measurement of the interpolation rather than of the footage.
+            const zaro::time::RationalTime litSource =
+                clip->sourceTimeAt(zaro::time::RationalTime{litFrame, sequence.frameRate()});
+            const auto setFade = [&](std::int64_t spanFrames) {
+                zaro::model::Keyframe lit;
+                lit.time = clip->sourceRange.start();
+                lit.value = 1.0;
+                zaro::model::Keyframe dark;
+                dark.time = clip->sourceRange.start() +
+                            zaro::time::RationalTime{spanFrames, litSource.rate()};
+                dark.value = 0.0;
+                clip->animation.erase(zaro::model::Param::Opacity);
+                clip->animation.curve(zaro::model::Param::Opacity).set(lit);
+                clip->animation.curve(zaro::model::Param::Opacity).set(dark);
+            };
+
+            const std::int64_t intoClip = litSource.frames() - clip->sourceRange.start().frames();
+            setFade(intoClip * 2);  // the lit frame sits halfway down the ramp
+            const double halfway = brightnessAt(litFrame);
+            setFade(intoClip);  // and now exactly at its end
+            const double gone = brightnessAt(litFrame);
+            clip->animation.erase(zaro::model::Param::Opacity);
+
+            std::printf("  keyframed fade on the GPU: %.1f lit, %.1f halfway, %.1f faded\n",
+                        baseline, halfway, gone);
+            if (!(halfway > baseline * 0.3) || !(halfway < baseline * 0.75)) {
+                std::fprintf(stderr, "  FAIL: the GPU compositor is not interpolating keyframes\n");
+                return 1;
+            }
+            if (!(gone < baseline * 0.1)) {
+                std::fprintf(stderr,
+                             "  FAIL: the GPU compositor is not reading keyframes; preview and "
+                             "export would disagree\n");
+                return 1;
+            }
+        }
+
         // Three-point editing, through the source monitor rather than by
         // calling the operation directly: mark a range, put the playhead
         // somewhere, and press the key.

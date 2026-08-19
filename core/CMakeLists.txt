@@ -26,6 +26,7 @@ add_library(zaro_core
     src/render/Compositing.cpp
     src/render/RenderGraph.cpp
     src/render/RgbaImage.cpp
+    src/model/Animation.cpp
     src/model/Clip.cpp
     src/model/ClipEffects.cpp
     src/model/Project.cpp

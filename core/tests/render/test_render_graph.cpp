@@ -263,3 +263,67 @@ TEST_CASE("A cross dissolve blends the two clips it joins", "[render][graph][tra
         CHECK(sawPastTheCut);
     }
 }
+
+TEST_CASE("A keyframed opacity fades the composited frame", "[render][graph][animation]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+
+    // Keyframes are in source time, and this clip's source starts at frame 500,
+    // so a fade over the clip's first second lives at 500..525.
+    model::Clip clip = f.clip(100, 50, 500);
+    const auto key = [](std::int64_t sourceFrame, double value) {
+        model::Keyframe out;
+        out.time = time::RationalTime{sourceFrame, time::rates::fps25};
+        out.value = value;
+        return out;
+    };
+    clip.animation.curve(model::Param::Opacity).set(key(500, 0.0));
+    clip.animation.curve(model::Param::Opacity).set(key(525, 1.0));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), clip)));
+
+    // Premultiplied, so the stored value is the opacity itself against a
+    // transparent background.
+    CHECK(graph.composite(f.sequence(), f.at(100))->at(8, 8).a == Approx(0.0F).margin(1e-5));
+    CHECK(graph.composite(f.sequence(), f.at(112))->at(8, 8).a == Approx(0.48F).margin(0.02));
+    CHECK(graph.composite(f.sequence(), f.at(125))->at(8, 8).a == Approx(1.0F).margin(1e-5));
+    // Held past the last keyframe rather than extrapolated to 2.0.
+    CHECK(graph.composite(f.sequence(), f.at(140))->at(8, 8).a == Approx(1.0F).margin(1e-5));
+}
+
+TEST_CASE("Animation follows the picture when a clip is moved and trimmed",
+          "[render][graph][animation]") {
+    // The reason keyframes are stored in source time. A fade set on a frame
+    // has to stay on that frame when the clip is rippled down the timeline or
+    // its head is trimmed off.
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+
+    model::Clip clip = f.clip(100, 50, 500);
+    const auto key = [](std::int64_t sourceFrame, double value) {
+        model::Keyframe out;
+        out.time = time::RationalTime{sourceFrame, time::rates::fps25};
+        out.value = value;
+        return out;
+    };
+    clip.animation.curve(model::Param::Opacity).set(key(500, 0.0));
+    clip.animation.curve(model::Param::Opacity).set(key(520, 1.0));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), clip)));
+
+    const float halfway = graph.composite(f.sequence(), f.at(110))->at(8, 8).a;
+    CHECK(halfway == Approx(0.5F).margin(0.02));
+
+    // Source frame 510 is now at timeline frame 210.
+    REQUIRE(f.run(edit::makeMove(f.project, f.on(f.v1), clip.id, f.v1, f.at(200))));
+    CHECK(graph.composite(f.sequence(), f.at(210))->at(8, 8).a == Approx(halfway).margin(1e-5));
+
+    // Trim ten frames off the head. Source frame 510 is now the clip's first
+    // frame, and the fade is half done there.
+    REQUIRE(f.run(edit::makeTrim(f.project, f.on(f.v1), clip.id, edit::Edge::In, f.at(10))));
+    CHECK(graph.composite(f.sequence(), f.at(210))->at(8, 8).a == Approx(halfway).margin(1e-5));
+}

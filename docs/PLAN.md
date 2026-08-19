@@ -605,6 +605,73 @@ CLI, and the app survives a 1-hour session without leaking or desyncing.
 
 ---
 
+### Phase 5 — beyond the slice
+
+§6's dependency graph puts the keyframing engine at the root: motion, effects,
+masks and audio automation all hang off it, and the colour work is much cheaper
+once a parameter can animate. So that is where Phase 5 starts.
+
+#### Phase 5a — the keyframing engine ✅
+
+`Curve` is a sorted list of keyframes and the rule for reading a value between
+them: hold, linear, or cubic bezier with a handle at each end. `ClipAnimation`
+maps a parameter to a curve, and a clip holds one. Position, scale, rotation,
+anchor, opacity, clip gain and pan are all animatable.
+
+**Keyframes are in source time** — [ADR-008](adr/0008-keyframes-in-source-time.md).
+Stored in sequence time they are left behind by a ripple; stored relative to the
+clip's start they slide against the picture whenever the head is trimmed. In
+source time the clip can be moved, trimmed, razored and rejoined and the fade
+still lands on the frame it was set on.
+
+**Evaluated in seconds, not frames.** A 24fps clip on a 60fps timeline sampled
+in source frames holds each value for two or three output frames — a smooth move
+becomes a stutter no keyframe accounts for. A test requires all sixty output
+frames to carry distinct values, and it fails with 24 when evaluation is moved
+back to quantised frames.
+
+**Held outside the keyframed range, never extrapolated.** Continuing the slope
+off the last keyframe produces opacities of nine a few seconds later. Holding is
+also what makes a single keyframe mean something: it pins a constant.
+
+**Audio automation is per sample** — [ADR-009](adr/0009-automation-per-sample.md).
+A gain held constant across a block steps at the block boundary, and that
+boundary belongs to the audio device rather than to the edit. The test renders
+the same automated clip in one block and in blocks of 64, 128, 512 and 1000 and
+requires bit-identical output; it fails on all four when evaluation is moved
+back to once per block.
+
+**Bezier handles that reach past each other are scaled down until they meet.**
+Handles longer than the segment describe a curve that doubles back, and a
+parameter cannot have two values at one instant. Scaling both preserves their
+ratio, so the drawn shape survives as nearly as a function can. Overshoot from a
+*vertical* handle is left alone: landing a move with a bounce is a legitimate
+thing to ask for, and only a curve that is not a function of time is a bug.
+
+**A curve exists only for a parameter that is animated.** The static value stays
+authoritative until one does, so nothing is paid in storage, serialization or
+evaluation for the overwhelming majority of clips that are not animated.
+
+**The GPU compositor needed the same change as the CPU one**, and nothing in the
+headless tests would have caught it: those exercise `render::RenderGraph` only,
+so a curve honoured on export and ignored in preview would have looked fine. The
+preview self-test now sets a fade and measures it through the real GPU path
+(213 lit → 106 halfway → 0 faded), and it was verified to fail when the GPU
+traversal is reverted to the static transform.
+
+Writing that check found two things about the test rather than the code: the
+fixture is black except on its flash frames, so a fade has to be measured
+against a frame that is lit to begin with, and the brightest frame was the
+clip's first — which gave the ramp zero length and collapsed both keyframes onto
+one instant. The dedup in `Curve::set` was working; the test was asking for a
+fade with no duration.
+
+Still to do before keyframing is usable from the UI: the Effect Controls panel
+needs stopwatch toggles and a keyframe lane, and the timeline needs to draw and
+drag keyframes. The engine, the serialization and both render paths are done.
+
+---
+
 ## 4. Effort and risk, stated plainly
 
 Premiere Pro is roughly three decades of work by a large team. Feature parity is not a

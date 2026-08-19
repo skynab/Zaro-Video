@@ -38,7 +38,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 if (outgoing->enabled) {
                     if (auto image =
                             source_->imageFor(outgoing->source, outgoing->sourceTimeAt(at))) {
-                        drawTransformed(**image, out, outgoing->transform, outgoing->blend);
+                        drawTransformed(**image, out, outgoing->transformAt(at), outgoing->blend);
                         ++lastClipCount_;
                     }
                 }
@@ -48,7 +48,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                         // Drawn over the outgoing clip at the dissolve's
                         // progress: with premultiplied `over` and an opaque
                         // source that gives out*(1-p) + in*p.
-                        model::Transform fading = incoming->transform;
+                        model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
                         drawTransformed(**image, out, fading, incoming->blend);
                         ++lastClipCount_;
@@ -70,7 +70,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             // render is a stalled edit.
             continue;
         }
-        drawTransformed(**image, out, clip->transform, clip->blend);
+        drawTransformed(**image, out, clip->transformAt(at), clip->blend);
         ++lastClipCount_;
     }
     return {};

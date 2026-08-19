@@ -23,7 +23,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 if (outgoing->enabled) {
                     if (auto frame = provider_->sourceFrameFor(outgoing->source,
                                                                outgoing->sourceTimeAt(at))) {
-                        if (compositor_->drawSource(**frame, outgoing->transform,
+                        if (compositor_->drawSource(**frame, outgoing->transformAt(at),
                                                     outgoing->blend)) {
                             ++lastClipCount_;
                         }
@@ -32,7 +32,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 if (incoming->enabled) {
                     if (auto frame = provider_->sourceFrameFor(incoming->source,
                                                                incoming->sourceTimeAt(at))) {
-                        model::Transform fading = incoming->transform;
+                        model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
                         if (compositor_->drawSource(**frame, fading, incoming->blend)) {
                             ++lastClipCount_;
@@ -54,7 +54,8 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             // same as on the CPU path.
             continue;
         }
-        if (Status drawn = compositor_->drawSource(**frame, clip->transform, clip->blend); !drawn) {
+        if (Status drawn = compositor_->drawSource(**frame, clip->transformAt(at), clip->blend);
+            !drawn) {
             continue;
         }
         ++lastClipCount_;

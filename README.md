@@ -38,7 +38,8 @@ headless: there is no window yet.
 | 4h | Linked A/V, sync locks | **done** |
 | 4i | Markers, workspaces | **done** |
 | 4j | Multi-selection: shift-click, rubber band, set moves | **done** |
-| 5 | Lumetri-style colour, audio mixer, keyframes, graphics | next |
+| 5a | Keyframing engine: curves, automation, both render paths | **done** |
+| 5b | Keyframe UI, then colour, audio mixer, graphics | next |
 
 ## Building
 

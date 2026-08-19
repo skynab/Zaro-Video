@@ -297,6 +297,35 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.blend = model::BlendMode::Multiply;
         clip.gainDb = -11.5;
         clip.pan = 0.6;
+        // One curve of each interpolation, with handles that are not the
+        // default ease, so a lost handle or a mode collapsing to linear shows
+        // up here rather than as a fade with the wrong shape.
+        {
+            model::Keyframe held;
+            held.time = time::RationalTime{3, time::rates::fps23_976};
+            held.value = 0.125;
+            held.interpolation = model::Interpolation::Hold;
+            clip.animation.curve(model::Param::Opacity).set(held);
+
+            model::Keyframe eased;
+            eased.time = time::RationalTime{17, time::rates::fps23_976};
+            eased.value = 0.875;
+            eased.interpolation = model::Interpolation::Bezier;
+            eased.out = model::Handle{0.4, 0.05};
+            eased.in = model::Handle{0.15, -0.02};
+            clip.animation.curve(model::Param::Opacity).set(eased);
+
+            model::Keyframe swept;
+            swept.time = time::RationalTime{9, time::rates::fps23_976};
+            swept.value = -320.5;
+            clip.animation.curve(model::Param::PositionX).set(swept);
+
+            model::Keyframe ridden;
+            ridden.time = time::RationalTime{4, time::rates::fps23_976};
+            ridden.value = -18.25;
+            ridden.interpolation = model::Interpolation::Bezier;
+            clip.animation.curve(model::Param::GainDb).set(ridden);
+        }
         return clip;
     };
 
@@ -380,6 +409,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->blend == model::BlendMode::Multiply);
     CHECK(loadedClip->gainDb == -11.5);
     CHECK(loadedClip->pan == 0.6);
+    CHECK(loadedClip->animation == first.animation);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

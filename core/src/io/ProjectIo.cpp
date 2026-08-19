@@ -126,6 +126,89 @@ model::Transform decodeTransform(const json& node) {
     return out;
 }
 
+json encode(const model::ClipAnimation& animation) {
+    // Curves keyed by parameter name rather than an array of {param, curve}
+    // pairs: a parameter can only be animated once, and a map says so in the
+    // format instead of leaving a reader to enforce it.
+    json out = json::object();
+    for (const auto& [param, curve] : animation) {
+        if (curve.empty()) {
+            continue;
+        }
+        json keys = json::array();
+        for (const model::Keyframe& key : curve.keyframes()) {
+            const model::Keyframe defaults;
+            json encoded{{"time", encode(key.time)}, {"value", key.value}};
+            if (key.interpolation != defaults.interpolation) {
+                encoded["interpolation"] = model::toString(key.interpolation);
+            }
+            // Handles are only meaningful for beziers, and writing the default
+            // ease onto every linear keyframe would triple the size of a long
+            // automation curve for no information.
+            if (key.out != defaults.out) {
+                encoded["out"] = json{{"dx", key.out.dx}, {"dy", key.out.dy}};
+            }
+            if (key.in != defaults.in) {
+                encoded["in"] = json{{"dx", key.in.dx}, {"dy", key.in.dy}};
+            }
+            keys.push_back(std::move(encoded));
+        }
+        out[model::toString(param)] = std::move(keys);
+    }
+    return out;
+}
+
+Result<model::ClipAnimation> decodeAnimation(const json& node) {
+    model::ClipAnimation out;
+    if (!node.is_object()) {
+        return out;
+    }
+    for (const auto& [name, keys] : node.items()) {
+        model::Param param{};
+        if (!model::paramFromString(name.c_str(), param) || !keys.is_array()) {
+            // A parameter this version does not know about. Written by a later
+            // one, most likely; dropping the curve is better than refusing to
+            // open the project.
+            continue;
+        }
+        model::Curve curve;
+        for (const json& encoded : keys) {
+            if (!encoded.is_object() || !encoded.contains("time")) {
+                return Error{ErrorCode::InvalidData, "a keyframe has no time"};
+            }
+            auto when = decodeTime(encoded.at("time"), "keyframe time");
+            if (!when) {
+                return when.error();
+            }
+            model::Keyframe key;
+            key.time = *when;
+            key.value = encoded.value("value", 0.0);
+            if (encoded.contains("interpolation")) {
+                key.interpolation = model::interpolationFromString(
+                    encoded.at("interpolation").get<std::string>().c_str());
+            }
+            const auto handle = [&encoded](const char* which, model::Handle& into) {
+                if (!encoded.contains(which) || !encoded.at(which).is_object()) {
+                    return;
+                }
+                const json& from = encoded.at(which);
+                into.dx = from.value("dx", into.dx);
+                into.dy = from.value("dy", into.dy);
+            };
+            handle("out", key.out);
+            handle("in", key.in);
+            // set() rather than push_back: a hand-edited or corrupted file can
+            // hold keyframes out of order or twice over, and evaluation depends
+            // on neither being possible.
+            curve.set(key);
+        }
+        if (!curve.empty()) {
+            out.curve(param) = std::move(curve);
+        }
+    }
+    return out;
+}
+
 json encode(const model::Clip& clip) {
     json out{{"id", clip.id.value()},
              {"source", clip.source.value()},
@@ -145,6 +228,9 @@ json encode(const model::Clip& clip) {
     }
     if (clip.pan != 0.0) {
         out["pan"] = clip.pan;
+    }
+    if (json animation = encode(clip.animation); !animation.empty()) {
+        out["animation"] = std::move(animation);
     }
     if (clip.link.isValid()) {
         out["link"] = clip.link.value();
@@ -314,6 +400,13 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     clip.gainDb = node.value("gainDb", 0.0);
     clip.pan = node.value("pan", 0.0);
+    if (node.contains("animation")) {
+        auto animation = decodeAnimation(node.at("animation"));
+        if (!animation) {
+            return animation.error();
+        }
+        clip.animation = std::move(*animation);
+    }
     clip.link = model::LinkId{node.value("link", std::uint64_t{0})};
     return clip;
 }

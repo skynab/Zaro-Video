@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/time/TimeRange.h"
@@ -51,6 +52,9 @@ struct Clip {
     double gainDb{0.0};
     double pan{0.0};
 
+    /// Curves that override the static values above, where they exist.
+    ClipAnimation animation;
+
     [[nodiscard]] const time::RationalTime& start() const { return timelineRange.start(); }
     [[nodiscard]] time::RationalTime endExclusive() const { return timelineRange.endExclusive(); }
     [[nodiscard]] const time::RationalTime& duration() const { return timelineRange.duration(); }
@@ -59,6 +63,22 @@ struct Clip {
     /// across the clip. Linear is exactly right at normal speed and is the hook
     /// a speed or time-remap curve replaces later.
     [[nodiscard]] time::RationalTime sourceTimeAt(const time::RationalTime& timelineTime) const;
+
+    /// The same mapping as `sourceTimeAt`, in seconds and unquantised.
+    ///
+    /// Animation is sampled at the sequence's rate, which need not be the
+    /// source's. Rounding to a source frame first would make a 24fps clip on a
+    /// 60fps timeline hold each animated value for two or three output frames,
+    /// turning a smooth move into a stutter that no keyframe accounts for.
+    [[nodiscard]] double sourceSecondsAt(const time::RationalTime& timelineTime) const;
+
+    /// The transform to composite with at a moment, curves applied. Returns the
+    /// static transform untouched when nothing is animated, which is the case
+    /// for almost every clip.
+    [[nodiscard]] Transform transformAt(const time::RationalTime& timelineTime) const;
+
+    [[nodiscard]] double gainDbAt(const time::RationalTime& timelineTime) const;
+    [[nodiscard]] double panAt(const time::RationalTime& timelineTime) const;
 
     friend bool operator==(const Clip&, const Clip&) = default;
 };

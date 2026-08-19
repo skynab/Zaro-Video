@@ -277,3 +277,85 @@ TEST_CASE("The right source time is requested", "[render][audio]") {
     CHECK(source.lastSourceStart.rescaledTo(time::rates::hz48000).frames() ==
           501 * kSamplesPerFrame);
 }
+
+TEST_CASE("A keyframed gain ramps the mix", "[render][audio][animation]") {
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+
+    // Source time, and this clip's source starts at frame 500 of a 25fps
+    // sequence: 20 seconds in.
+    model::Clip clip = f.clip(0, 100, 500);
+    const auto key = [](double seconds, double value) {
+        model::Keyframe out;
+        out.time =
+            time::RationalTime{static_cast<std::int64_t>(seconds * 48000), time::rates::hz48000};
+        out.value = value;
+        return out;
+    };
+    clip.animation.curve(model::Param::GainDb).set(key(20.0, 0.0));
+    clip.animation.curve(model::Param::GainDb).set(key(21.0, -20.0));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), clip)));
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 48000);
+    REQUIRE(mixed);
+    CHECK(mixed->channel(0)[0] == Approx(1.0F).margin(1e-4));
+    CHECK(mixed->channel(0)[47999] == Approx(render::gainFromDb(-20.0)).margin(1e-3));
+    // Monotonically down, sample by sample, with no plateau: a gain updated
+    // once per block would hold still for hundreds of samples at a time.
+    for (std::int64_t i = 1; i < 48000; ++i) {
+        REQUIRE(mixed->channel(0)[i] < mixed->channel(0)[i - 1]);
+    }
+}
+
+TEST_CASE("Automation does not depend on the audio device's block size",
+          "[render][audio][animation]") {
+    // The reason automation is evaluated per sample. A gain held constant
+    // across a block steps at the block boundary, and the block boundary comes
+    // from the audio device's buffer size rather than from the edit: the same
+    // project would sound different on different hardware, which is not a thing
+    // a mix is allowed to do.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+
+    model::Clip clip = f.clip(0, 100, 500);
+    const auto key = [](double seconds, double value, model::Interpolation how) {
+        model::Keyframe out;
+        out.time =
+            time::RationalTime{static_cast<std::int64_t>(seconds * 48000), time::rates::hz48000};
+        out.value = value;
+        out.interpolation = how;
+        return out;
+    };
+    clip.animation.curve(model::Param::GainDb).set(key(20.0, 0.0, model::Interpolation::Bezier));
+    clip.animation.curve(model::Param::GainDb).set(key(20.25, -12.0, model::Interpolation::Linear));
+    clip.animation.curve(model::Param::Pan).set(key(20.0, -1.0, model::Interpolation::Linear));
+    clip.animation.curve(model::Param::Pan).set(key(20.25, 1.0, model::Interpolation::Linear));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), clip)));
+
+    constexpr std::int64_t kTotal = 12000;
+    auto whole = graph.mix(f.sequence(), samples(0), kTotal);
+    REQUIRE(whole);
+
+    for (std::int64_t block : {64, 128, 512, 1000}) {
+        std::vector<float> pieced;
+        pieced.reserve(static_cast<std::size_t>(kTotal));
+        for (std::int64_t at = 0; at < kTotal; at += block) {
+            const std::int64_t count = std::min(block, kTotal - at);
+            auto part = graph.mix(f.sequence(), samples(at), count);
+            REQUIRE(part);
+            for (std::int64_t i = 0; i < count; ++i) {
+                pieced.push_back(part->channel(0)[i]);
+            }
+        }
+        REQUIRE(pieced.size() == static_cast<std::size_t>(kTotal));
+        for (std::int64_t i = 0; i < kTotal; ++i) {
+            // Bit-identical, not approximately equal. Any difference at all is
+            // the block size leaking into the result.
+            REQUIRE(pieced[static_cast<std::size_t>(i)] == whole->channel(0)[i]);
+        }
+    }
+}
