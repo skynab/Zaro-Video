@@ -3,6 +3,7 @@ find_package(Qt6 REQUIRED COMPONENTS Gui)
 add_executable(zaro_media_tests
     test_gpu_compositor.cpp
     test_probe.cpp
+    test_render_sequence.cpp
     test_video_decoder.cpp
     test_audio_decoder.cpp
     test_frame_types.cpp
@@ -22,6 +23,7 @@ target_link_libraries(zaro_media_tests
 target_include_directories(zaro_media_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/tests)
 
 target_compile_definitions(zaro_media_tests PRIVATE
+    ZARO_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}"
     ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media"
 )
 

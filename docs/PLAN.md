@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 237 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 243 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -482,6 +482,27 @@ track gain and round-tripped it — so a mix would silently flatten on save. The
 as the audio-stream-info gap found in 4c, and worth noting as a pattern: an encoder and a
 decoder written at different moments drift, and only a round-trip test with the field
 actually set will catch it.
+
+#### Phase 4f — project bin and export ✅ **complete**
+
+- ✅ **A project bin**: media with size, duration and an audio marker; import through a
+  file dialog; append to the timeline. Importing is undoable, which needed a
+  `ProjectCommand` — `SequenceCommand` snapshots one sequence, and media lives on the
+  project. The alternative was to let imports bypass the command stack because they are
+  "only additive", which is how a write path that undo does not cover gets established.
+- ✅ **An export dialog**, with progress, cancellation, and a partial file deleted rather
+  than left looking like a delivery.
+- ✅ **`renderSequence` extracted** so `zaro-render` and the export dialog run the same
+  code. Two loops doing this would have to be kept agreeing, and the one nobody runs is
+  the one that drifts. Verified by re-running the A/V sync check through the extracted
+  path: 250 frames encoded, 250 packets written, 0 samples of drift, unchanged.
+
+Before any of that, I acted on the concern raised at the end of 4e — that the round-trip
+tests could not catch an encoder gap when the decoder defaults to the same value, having
+found two such bugs in two phases. There is now a test that sets **every** serializable
+field to a distinctive non-default value and checks each one individually after a round
+trip. It found nothing further, which is the useful result: the two known gaps were the
+only ones, and a third cannot now reach a project file unnoticed.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

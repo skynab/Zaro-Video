@@ -220,3 +220,175 @@ TEST_CASE("Writing and reading a file", "[io]") {
         CHECK(missing.error().code() == ErrorCode::NotFound);
     }
 }
+
+TEST_CASE("Every serializable field survives, set to a non-default value", "[io][exhaustive]") {
+    // Two encoder gaps have been found by accident so far: audio stream info,
+    // and track gain and pan. Both were invisible to the existing round-trip
+    // tests, because those compare models and a field the encoder skips will
+    // match whatever the decoder defaults it to.
+    //
+    // So this sets every field to something distinctive -- never a default --
+    // and checks each one individually after a round trip. A field the encoder
+    // forgets now fails here rather than in someone's project.
+    model::Project project;
+
+    model::MediaRef ref;
+    ref.id = project.ids().next<model::MediaRefTag>();
+    ref.path = "/media/take-01.mov";
+    ref.contentHash = "deadbeefcafe0001";
+    ref.name = "take-01.mov";
+    ref.info.duration = time::Rational{1001 * 240, 30000};
+    {
+        media::VideoStreamInfo video;
+        video.width = 4096;
+        video.height = 2160;
+        video.frameRate = time::rates::fps29_97;
+        ref.info.videoStreams.push_back(video);
+
+        media::AudioStreamInfo audio;
+        audio.sampleRate = time::rates::hz96000;
+        audio.channelCount = 6;
+        ref.info.audioStreams.push_back(audio);
+    }
+    const model::MediaRefId mediaId = project.addMedia(ref);
+
+    model::Sequence sequence{project.ids().next<model::SequenceTag>(), "Reel 3 — final",
+                             time::rates::fps23_976};
+    const model::SequenceId sequenceId = sequence.id();
+    sequence.setAudioSampleRate(time::rates::hz96000);
+    sequence.setSize(4096, 1716);
+    sequence.setStartTime(time::RationalTime{86400, time::rates::fps23_976});
+
+    const auto videoTrackId = project.ids().next<model::TrackTag>();
+    const auto audioTrackId = project.ids().next<model::TrackTag>();
+    sequence.addTrack(videoTrackId, model::TrackKind::Video, "V-main");
+    sequence.addTrack(audioTrackId, model::TrackKind::Audio, "A-dialogue");
+
+    model::Track& video = sequence.tracksMutable(model::TrackKind::Video).front();
+    video.setMuted(true);
+    video.setLocked(true);
+    video.setGainDb(-2.25);
+    video.setPan(-0.4);
+
+    model::Track& audio = sequence.tracksMutable(model::TrackKind::Audio).front();
+    audio.setGainDb(7.5);
+    audio.setPan(0.9);
+
+    const auto makeClip = [&](std::int64_t start, std::int64_t length, std::int64_t sourceStart) {
+        model::Clip clip;
+        clip.id = project.ids().next<model::ClipTag>();
+        clip.source = mediaId;
+        clip.name = "clip " + std::to_string(start);
+        clip.enabled = false;
+        clip.sourceRange = time::TimeRange{time::RationalTime{sourceStart, time::rates::fps23_976},
+                                           time::RationalTime{length, time::rates::fps23_976}};
+        clip.timelineRange = time::TimeRange{time::RationalTime{start, time::rates::fps23_976},
+                                             time::RationalTime{length, time::rates::fps23_976}};
+        clip.transform.positionX = -12.5;
+        clip.transform.positionY = 33.25;
+        clip.transform.scaleX = 1.75;
+        clip.transform.scaleY = 0.625;
+        clip.transform.rotationDegrees = -47.5;
+        clip.transform.anchorX = 8.125;
+        clip.transform.anchorY = -4.75;
+        clip.transform.opacity = 0.375;
+        clip.blend = model::BlendMode::Multiply;
+        clip.gainDb = -11.5;
+        clip.pan = 0.6;
+        return clip;
+    };
+
+    const model::Clip first = makeClip(0, 48, 100);
+    const model::Clip second = makeClip(48, 48, 400);
+    video.insert(first);
+    video.insert(second);
+
+    model::Transition dissolve;
+    dissolve.id = project.ids().next<model::TransitionTag>();
+    dissolve.from = first.id;
+    dissolve.to = second.id;
+    dissolve.range = time::TimeRange{time::RationalTime{40, time::rates::fps23_976},
+                                     time::RationalTime{16, time::rates::fps23_976}};
+    dissolve.kind = model::TransitionKind::CrossDissolve;
+    video.setTransitions({dissolve});
+
+    project.addSequence(std::move(sequence));
+    project.setActiveSequence(sequenceId);
+
+    // --- Round trip ---------------------------------------------------------
+    const auto text = io::saveProjectToString(project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    const model::Project& back = loaded->project;
+
+    CHECK(back.activeSequence() == sequenceId);
+
+    // Media, including the cached stream info that operator== deliberately
+    // ignores -- which is exactly why it needs checking by hand.
+    const model::MediaRef* loadedRef = back.findMedia(mediaId);
+    REQUIRE(loadedRef != nullptr);
+    CHECK(loadedRef->path == ref.path);
+    CHECK(loadedRef->contentHash == ref.contentHash);
+    CHECK(loadedRef->name == ref.name);
+    CHECK(loadedRef->info.duration == ref.info.duration);
+    REQUIRE(loadedRef->info.primaryVideo() != nullptr);
+    CHECK(loadedRef->info.primaryVideo()->width == 4096);
+    CHECK(loadedRef->info.primaryVideo()->height == 2160);
+    CHECK(loadedRef->info.primaryVideo()->frameRate == time::rates::fps29_97);
+    REQUIRE(loadedRef->info.primaryAudio() != nullptr);
+    CHECK(loadedRef->info.primaryAudio()->sampleRate == time::rates::hz96000);
+    CHECK(loadedRef->info.primaryAudio()->channelCount == 6);
+
+    // Sequence.
+    const model::Sequence* loadedSequence = back.findSequence(sequenceId);
+    REQUIRE(loadedSequence != nullptr);
+    CHECK(loadedSequence->name() == "Reel 3 — final");
+    CHECK(loadedSequence->frameRate() == time::rates::fps23_976);
+    CHECK(loadedSequence->audioSampleRate() == time::rates::hz96000);
+    CHECK(loadedSequence->width() == 4096);
+    CHECK(loadedSequence->height() == 1716);
+    CHECK(loadedSequence->startTime().frames() == 86400);
+
+    // Tracks, both kinds, every flag.
+    const model::Track* loadedVideo = loadedSequence->findTrack(videoTrackId);
+    REQUIRE(loadedVideo != nullptr);
+    CHECK(loadedVideo->name() == "V-main");
+    CHECK(loadedVideo->kind() == model::TrackKind::Video);
+    CHECK(loadedVideo->isMuted());
+    CHECK(loadedVideo->isLocked());
+    CHECK(loadedVideo->gainDb() == -2.25);
+    CHECK(loadedVideo->pan() == -0.4);
+
+    const model::Track* loadedAudio = loadedSequence->findTrack(audioTrackId);
+    REQUIRE(loadedAudio != nullptr);
+    CHECK(loadedAudio->kind() == model::TrackKind::Audio);
+    CHECK(loadedAudio->gainDb() == 7.5);
+    CHECK(loadedAudio->pan() == 0.9);
+
+    // Clip, every field.
+    const model::Clip* loadedClip = loadedVideo->find(first.id);
+    REQUIRE(loadedClip != nullptr);
+    CHECK(loadedClip->source == mediaId);
+    CHECK(loadedClip->name == first.name);
+    CHECK_FALSE(loadedClip->enabled);
+    CHECK(loadedClip->sourceRange == first.sourceRange);
+    CHECK(loadedClip->timelineRange == first.timelineRange);
+    CHECK(loadedClip->transform == first.transform);
+    CHECK(loadedClip->blend == model::BlendMode::Multiply);
+    CHECK(loadedClip->gainDb == -11.5);
+    CHECK(loadedClip->pan == 0.6);
+
+    // Transition, every field.
+    REQUIRE(loadedVideo->transitions().size() == 1);
+    const model::Transition& loadedTransition = loadedVideo->transitions().front();
+    CHECK(loadedTransition.id == dissolve.id);
+    CHECK(loadedTransition.from == first.id);
+    CHECK(loadedTransition.to == second.id);
+    CHECK(loadedTransition.range == dissolve.range);
+    CHECK(loadedTransition.kind == model::TransitionKind::CrossDissolve);
+
+    // And the whole thing compares equal, which the field checks above make
+    // meaningful rather than merely reassuring.
+    CHECK(back == project);
+}

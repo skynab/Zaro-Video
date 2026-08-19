@@ -43,7 +43,9 @@
 #include "zaro/platform/sdl/AudioSink.h"
 
 #include "EffectControls.h"
+#include "ExportDialog.h"
 #include "ProgramMonitor.h"
+#include "ProjectBin.h"
 #include "TimelineWidget.h"
 
 namespace {
@@ -83,9 +85,21 @@ public:
 
         // Monitor and parameters side by side, transport under them, timeline
         // across the bottom.
+        bin_ = new app::ProjectBin(this);
+        bin_->setMinimumWidth(230);
+        bin_->setMaximumWidth(300);
+
         auto* topRow = new QHBoxLayout;
+        topRow->addWidget(bin_);
         topRow->addWidget(monitor_, 1);
         topRow->addWidget(effects_);
+
+        connect(bin_, &app::ProjectBin::edited, this, [this] {
+            scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+            timeline_->update();
+            monitor_->update();
+            refresh();
+        });
 
         auto* layout = new QVBoxLayout(this);
         layout->addLayout(topRow, 3);
@@ -165,6 +179,7 @@ public:
         monitor_->setSource(sequence_, media_.get());
         timeline_->setProject(&project_, sequence_->id(), &commands_);
         effects_->setProject(&project_, sequence_->id(), &commands_);
+        bin_->setProject(&project_, sequence_->id(), &commands_);
         startWaveforms();
         scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
         refresh();
@@ -218,6 +233,15 @@ protected:
                 stop();
                 setPosition(sequence_->duration());
                 return;
+            case Qt::Key_E:
+                if (event->modifiers().testFlag(Qt::ControlModifier) ||
+                    event->modifiers().testFlag(Qt::MetaModifier)) {
+                    stop();
+                    app::ExportDialog dialog{project_, sequence_->id(), this};
+                    dialog.exec();
+                    return;
+                }
+                break;
             default:
                 QWidget::keyPressEvent(event);
         }
@@ -433,6 +457,7 @@ private:
     app::ProgramMonitor* monitor_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
     app::EffectControls* effects_{nullptr};
+    app::ProjectBin* bin_{nullptr};
     edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};

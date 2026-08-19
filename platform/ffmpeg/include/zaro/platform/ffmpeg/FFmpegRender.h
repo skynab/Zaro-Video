@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -44,6 +45,50 @@ private:
     struct State;
     std::unique_ptr<State> state_;
 };
+
+/// Everything a render needs beyond the project itself.
+struct RenderRequest {
+    std::string outputPath;
+    model::SequenceId sequence;
+    /// First frame, and how many. A count of -1 means to the end.
+    std::int64_t startFrame{0};
+    std::int64_t frameCount{-1};
+    bool includeAudio{true};
+    std::size_t cacheBudgetBytes{64u * 1024u * 1024u};
+    /// Composite on the GPU where it is available. Falls back on its own.
+    bool preferGpu{true};
+};
+
+/// What the encoder actually wrote.
+///
+/// Kept because the gap between frames encoded and packets written is what
+/// caught an export that was silently one frame short: the container reported
+/// the right frame count while the last packet had a duration of zero.
+struct RenderSummary {
+    std::int64_t framesEncoded{0};
+    std::int64_t videoPacketsWritten{0};
+    std::int64_t audioSamplesWritten{0};
+    std::int64_t audioSamplesExpected{0};
+    std::uint64_t cacheHits{0};
+    std::uint64_t cacheMisses{0};
+};
+
+struct RenderProgress {
+    std::int64_t framesDone{0};
+    std::int64_t framesTotal{0};
+    double elapsedSeconds{0.0};
+};
+
+/// Render a sequence to a file.
+///
+/// Extracted so the command-line renderer and the export dialog run the same
+/// code rather than two loops that have to be kept agreeing. `onProgress` is
+/// called from the calling thread; `keepGoing` is polled per frame and
+/// abandoning leaves a partial file, which the caller should remove.
+[[nodiscard]] Status renderSequence(
+    const model::Project& project, const RenderRequest& request,
+    const std::function<void(const RenderProgress&)>& onProgress = {},
+    const std::function<bool()>& keepGoing = {}, RenderSummary* summary = nullptr);
 
 struct EncodeSettings {
     std::string path;

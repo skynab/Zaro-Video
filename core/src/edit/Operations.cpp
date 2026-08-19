@@ -950,6 +950,38 @@ Result<CommandPtr> makeRemoveTransition(Project& project, const EditTarget& targ
                        });
 }
 
+// --- The project ------------------------------------------------------------
+
+namespace {
+
+class ImportMediaCommand final : public ProjectCommand {
+public:
+    ImportMediaCommand(model::MediaRef media, std::string description)
+        : ProjectCommand{std::move(description)}, media_{std::move(media)} {}
+
+protected:
+    void mutate(Project& project) override { project.addMedia(media_); }
+
+private:
+    model::MediaRef media_;
+};
+
+}  // namespace
+
+Result<CommandPtr> makeImportMedia(Project& project, model::MediaRef media) {
+    if (media.path.empty()) {
+        return Error{ErrorCode::InvalidData, "media needs a path"};
+    }
+    if (!media.id.isValid()) {
+        media.id = project.ids().next<model::MediaRefTag>();
+    }
+    if (project.findMedia(media.id) != nullptr) {
+        return Error{ErrorCode::InvalidData, "that media id is already in the project"};
+    }
+    const std::string name = media.name.empty() ? media.path : media.name;
+    return CommandPtr{std::make_unique<ImportMediaCommand>(std::move(media), "Import " + name)};
+}
+
 // --- Structure --------------------------------------------------------------
 
 Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,

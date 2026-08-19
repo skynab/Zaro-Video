@@ -12,6 +12,7 @@ add_library(zaro_platform_ffmpeg
     ffmpeg/src/ProjectMediaSource.cpp
     ffmpeg/src/Encoder.cpp
     ffmpeg/src/WaveformStore.cpp
+    ffmpeg/src/RenderSequence.cpp
 )
 add_library(zaro::platform_ffmpeg ALIAS zaro_platform_ffmpeg)
 

@@ -10,6 +10,10 @@ add_executable(zaro-preview
     TimelineWidget.h
     EffectControls.cpp
     EffectControls.h
+    ExportDialog.cpp
+    ExportDialog.h
+    ProjectBin.cpp
+    ProjectBin.h
 )
 
 target_link_libraries(zaro-preview

@@ -81,7 +81,6 @@ int main(int argc, char** argv) {
     }
 
     const zaro::time::Rational& rate = sequence->frameRate();
-    const zaro::time::Rational& audioRate = sequence->audioSampleRate();
     if (frameCount < 0) {
         frameCount = sequence->duration().frames() - startFrame;
     }
@@ -90,80 +89,36 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto sourceOpened =
-        zaro::platform::ffmpeg::ProjectMediaSource::open(project, cacheMegabytes * 1024u * 1024u);
-    if (!sourceOpened) {
-        std::fprintf(stderr, "zaro-render: %s\n", sourceOpened.error().toString().c_str());
-        return 1;
-    }
-    zaro::platform::ffmpeg::ProjectMediaSource& source = **sourceOpened;
+    zaro::platform::ffmpeg::RenderRequest request;
+    request.outputPath = outputPath;
+    request.sequence = sequence->id();
+    request.startFrame = startFrame;
+    request.frameCount = frameCount;
+    request.includeAudio = includeAudio;
+    request.cacheBudgetBytes = cacheMegabytes * 1024u * 1024u;
 
-    zaro::render::RenderGraph video{source};
-    zaro::render::AudioGraph audio{source};
-
-    zaro::platform::ffmpeg::EncodeSettings settings;
-    settings.path = outputPath;
-    settings.width = sequence->width();
-    settings.height = sequence->height();
-    settings.frameRate = rate;
-    settings.audioSampleRate = audioRate;
-    settings.includeAudio = includeAudio;
-
-    auto encoderOpened = zaro::platform::ffmpeg::Encoder::open(settings);
-    if (!encoderOpened) {
-        std::fprintf(stderr, "zaro-render: %s\n", encoderOpened.error().toString().c_str());
-        return 1;
-    }
-    zaro::platform::ffmpeg::Encoder& encoder = **encoderOpened;
-
-    // Audio is addressed by an exact rational relationship to the frame number,
-    // not by adding a per-frame duration to a running total. At 29.97 there are
-    // 1601.6 samples per frame; accumulating that as a rounded integer drifts by
-    // a sample every few frames, and by a visible lip-sync error over an hour.
-    const zaro::time::Rational samplesPerFrame = audioRate / rate;
-    const auto sampleAtFrame = [&](std::int64_t frame) {
-        return (zaro::time::Rational::fromInt(frame) * samplesPerFrame).floorToInt();
-    };
-
-    zaro::render::RgbaImage frame;
-    const auto began = std::chrono::steady_clock::now();
-
-    for (std::int64_t index = 0; index < frameCount; ++index) {
-        const std::int64_t timelineFrame = startFrame + index;
-        const zaro::time::RationalTime at{timelineFrame, rate};
-
-        if (const auto status = video.compositeInto(*sequence, at, frame); !status) {
-            std::fprintf(stderr, "zaro-render: frame %lld: %s\n",
-                         static_cast<long long>(timelineFrame), status.error().toString().c_str());
-            return 1;
+    // The same function the export dialog calls. Two loops doing this would
+    // have to be kept agreeing, and the one nobody runs would be the one that
+    // drifted.
+    std::int64_t lastReported = -1;
+    const auto onProgress = [&](const zaro::platform::ffmpeg::RenderProgress& progress) {
+        if (quiet) {
+            return;
         }
-        if (const auto status = encoder.writeVideo(frame); !status) {
-            std::fprintf(stderr, "zaro-render: %s\n", status.error().toString().c_str());
-            return 1;
-        }
-
-        if (includeAudio) {
-            const std::int64_t from = sampleAtFrame(startFrame + index);
-            const std::int64_t to = sampleAtFrame(startFrame + index + 1);
-            auto mixed = audio.mix(*sequence, zaro::time::RationalTime{from, audioRate}, to - from);
-            if (!mixed) {
-                std::fprintf(stderr, "zaro-render: %s\n", mixed.error().toString().c_str());
-                return 1;
-            }
-            if (const auto status = encoder.writeAudio(*mixed); !status) {
-                std::fprintf(stderr, "zaro-render: %s\n", status.error().toString().c_str());
-                return 1;
-            }
-        }
-
-        if (!quiet && (index % 50 == 0 || index + 1 == frameCount)) {
-            std::printf("\r  %lld / %lld frames", static_cast<long long>(index + 1),
-                        static_cast<long long>(frameCount));
+        if (progress.framesDone == progress.framesTotal ||
+            progress.framesDone - lastReported >= 50) {
+            lastReported = progress.framesDone;
+            std::printf("\r  %lld / %lld frames", static_cast<long long>(progress.framesDone),
+                        static_cast<long long>(progress.framesTotal));
             std::fflush(stdout);
         }
-    }
+    };
 
-    if (const auto status = encoder.finish(); !status) {
+    zaro::platform::ffmpeg::RenderSummary summary;
+    const auto began = std::chrono::steady_clock::now();
+    if (const auto status = zaro::platform::ffmpeg::renderSequence(loaded->project, request,
+                                                                   onProgress, {}, &summary);
+        !status) {
         std::fprintf(stderr, "\nzaro-render: %s\n", status.error().toString().c_str());
         return 1;
     }
@@ -171,26 +126,24 @@ int main(int argc, char** argv) {
     const double elapsed =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
     if (!quiet) {
-        const std::int64_t expectedSamples =
-            sampleAtFrame(startFrame + frameCount) - sampleAtFrame(startFrame);
         std::printf("\n%s\n", outputPath.c_str());
         std::printf("  %lld frames encoded, %lld packets written\n",
-                    static_cast<long long>(encoder.framesWritten()),
-                    static_cast<long long>(encoder.videoPacketsWritten()));
+                    static_cast<long long>(summary.framesEncoded),
+                    static_cast<long long>(summary.videoPacketsWritten));
         std::printf("  %lld frames at %s in %.2fs (%.1f fps, %.2fx realtime)\n",
-                    static_cast<long long>(encoder.framesWritten()), rate.toString().c_str(),
-                    elapsed, static_cast<double>(frameCount) / elapsed,
+                    static_cast<long long>(frameCount), rate.toString().c_str(), elapsed,
+                    static_cast<double>(frameCount) / elapsed,
                     static_cast<double>(frameCount) / elapsed / rate.toDouble());
         if (includeAudio) {
-            std::printf("  %lld audio samples written, %lld expected -- drift %lld\n",
-                        static_cast<long long>(encoder.samplesWritten()),
-                        static_cast<long long>(expectedSamples),
-                        static_cast<long long>(encoder.samplesWritten() - expectedSamples));
+            std::printf(
+                "  %lld audio samples written, %lld expected -- drift %lld\n",
+                static_cast<long long>(summary.audioSamplesWritten),
+                static_cast<long long>(summary.audioSamplesExpected),
+                static_cast<long long>(summary.audioSamplesWritten - summary.audioSamplesExpected));
         }
-        std::printf("  frame cache: %llu hits, %llu misses, %zu MB held\n",
-                    static_cast<unsigned long long>(source.cache().hits()),
-                    static_cast<unsigned long long>(source.cache().misses()),
-                    source.cache().byteSize() / (1024u * 1024u));
+        std::printf("  frame cache: %llu hits, %llu misses\n",
+                    static_cast<unsigned long long>(summary.cacheHits),
+                    static_cast<unsigned long long>(summary.cacheMisses));
     }
     return 0;
 }

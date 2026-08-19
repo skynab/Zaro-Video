@@ -606,3 +606,44 @@ TEST_CASE("Transitions and track gain survive a round trip", "[edit][transition]
     CHECK(audio->gainDb() == -4.5);
     CHECK(audio->pan() == 0.75);
 }
+
+TEST_CASE("Importing media goes through the command stack", "[edit][import]") {
+    Fixture f;
+    const std::size_t before = f.project.media().size();
+
+    model::MediaRef ref;
+    ref.path = "/media/new-take.mov";
+    ref.name = "new-take.mov";
+    ref.info.duration = time::Rational{30, 1};
+
+    REQUIRE(f.run(edit::makeImportMedia(f.project, ref)));
+    CHECK(f.project.media().size() == before + 1);
+    CHECK(f.stack.undoDescription() == "Import new-take.mov");
+
+    SECTION("and undo removes it again") {
+        REQUIRE(f.stack.undo(f.project));
+        CHECK(f.project.media().size() == before);
+
+        SECTION("without ever reissuing an id something already used") {
+            // Snapshot restore would otherwise roll the counter back, and the
+            // next import would hand out an id that the undone one had taken.
+            const auto next = f.project.ids().next<model::MediaRefTag>();
+            for (const model::MediaRef& existing : f.project.media()) {
+                CHECK(existing.id != next);
+            }
+            REQUIRE(f.stack.redo(f.project));
+            for (const model::MediaRef& existing : f.project.media()) {
+                CHECK(existing.id != next);
+            }
+        }
+    }
+
+    SECTION("media with no path is refused") {
+        model::MediaRef empty;
+        CHECK_FALSE(f.run(edit::makeImportMedia(f.project, empty)));
+    }
+
+    SECTION("the sequence is untouched by an import") {
+        CHECK(f.track(f.v1).isEmpty());
+    }
+}

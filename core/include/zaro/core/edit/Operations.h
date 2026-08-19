@@ -149,6 +149,15 @@ enum class Edge { In, Out };
                                                       const EditTarget& target,
                                                       model::TransitionId transition);
 
+// --- The project ------------------------------------------------------------
+
+/// Add a media reference to the project.
+///
+/// The caller supplies an already-probed MediaRef, because probing touches the
+/// file system and belongs on whichever thread the caller chooses rather than
+/// inside a command.
+[[nodiscard]] Result<CommandPtr> makeImportMedia(model::Project& project, model::MediaRef media);
+
 // --- Structure --------------------------------------------------------------
 
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,

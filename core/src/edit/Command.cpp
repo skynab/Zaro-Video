@@ -55,4 +55,39 @@ std::size_t SequenceCommand::snapshotBytes() const {
     return bytes;
 }
 
+ProjectCommand::ProjectCommand(std::string description, std::string mergeKey)
+    : description_{std::move(description)}, mergeKey_{std::move(mergeKey)} {}
+
+void ProjectCommand::apply(model::Project& project) {
+    if (!captured_) {
+        before_ = project;
+        mutate(project);
+        after_ = project;
+        captured_ = true;
+        return;
+    }
+    project = after_;
+}
+
+void ProjectCommand::revert(model::Project& project) {
+    ZARO_CHECK(captured_, "reverting a command that was never applied");
+    // The id counter is not part of Project's equality but is part of its
+    // state, and rolling it back would let a later import reissue an id that
+    // something undone still refers to. Snapshot restore keeps it moving
+    // forward, which is what the generator promises.
+    const std::uint64_t highestIssued = project.ids().peek();
+    project = before_;
+    project.ids().observe(highestIssued - 1);
+}
+
+bool ProjectCommand::mergeWith(const Command& newer) {
+    const auto* other = dynamic_cast<const ProjectCommand*>(&newer);
+    if (other == nullptr || !other->captured_) {
+        return false;
+    }
+    after_ = other->after_;
+    description_ = other->description_;
+    return true;
+}
+
 }  // namespace zaro::edit

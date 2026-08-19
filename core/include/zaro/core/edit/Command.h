@@ -40,6 +40,37 @@ protected:
 
 using CommandPtr = std::unique_ptr<Command>;
 
+/// A command that changes the project outside any one sequence — importing
+/// media, adding a sequence — undone by restoring a snapshot of the whole
+/// project.
+///
+/// Heavier than SequenceCommand, and used for the operations where that does
+/// not matter: importing happens once per file, not once per mouse move. The
+/// alternative was to let imports bypass the command stack because they are
+/// "only additive", which is how a write path that undo does not cover gets
+/// established.
+class ProjectCommand : public Command {
+public:
+    ProjectCommand(std::string description, std::string mergeKey = {});
+
+    void apply(model::Project& project) final;
+    void revert(model::Project& project) final;
+
+    [[nodiscard]] std::string description() const final { return description_; }
+    [[nodiscard]] std::string mergeKey() const final { return mergeKey_; }
+    [[nodiscard]] bool mergeWith(const Command& newer) final;
+
+protected:
+    virtual void mutate(model::Project& project) = 0;
+
+private:
+    std::string description_;
+    std::string mergeKey_;
+    model::Project before_;
+    model::Project after_;
+    bool captured_{false};
+};
+
 /// A command that edits one sequence, undone by restoring a snapshot of it.
 ///
 /// The alternative -- every operation computing its own precise inverse -- is
