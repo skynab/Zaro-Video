@@ -8,6 +8,7 @@
 #include "zaro/core/model/Project.h"
 
 #include "CurveEditor.h"
+#include "HueBand.h"
 
 class QCheckBox;
 class QComboBox;
@@ -83,6 +84,9 @@ private:
     void pushAudio();
     void pushColor();
     void pushCurves(const model::ToneCurves& curves, bool committed);
+    void pushSecondary();
+    /// The secondary as the widgets currently describe it.
+    [[nodiscard]] model::Secondary secondaryFromWidgets() const;
     void applyToWidgets();
     void setEditingEnabled(bool enabled);
 
@@ -119,6 +123,20 @@ private:
     QWidget* videoGroup_{nullptr};
     QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
+    QWidget* secondaryGroup_{nullptr};
+    QCheckBox* qualifierOn_{nullptr};
+    QCheckBox* showMask_{nullptr};
+    HueBand* hueBand_{nullptr};
+    QDoubleSpinBox* hueCentre_{nullptr};
+    QDoubleSpinBox* hueWidth_{nullptr};
+    QDoubleSpinBox* hueSoftness_{nullptr};
+    QDoubleSpinBox* satLow_{nullptr};
+    QDoubleSpinBox* satHigh_{nullptr};
+    QDoubleSpinBox* lumaLow_{nullptr};
+    QDoubleSpinBox* lumaHigh_{nullptr};
+    QDoubleSpinBox* keyExposure_{nullptr};
+    QDoubleSpinBox* keySaturation_{nullptr};
+    QDoubleSpinBox* keyTemperature_{nullptr};
     QWidget* audioGroup_{nullptr};
 };
 

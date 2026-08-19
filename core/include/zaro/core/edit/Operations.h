@@ -165,6 +165,11 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+/// The secondary: its qualifier, its correction, and the mask view.
+[[nodiscard]] Result<CommandPtr> makeSetSecondary(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip,
+                                                  const model::Secondary& secondary);
+
 /// Tone curves: master and per-channel.
 [[nodiscard]] Result<CommandPtr> makeSetToneCurves(model::Project& project,
                                                    const EditTarget& target, model::ClipId clip,

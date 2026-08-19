@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -107,19 +108,89 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
             });
     colorGroup_ = colour;
 
+    // The secondary. Its correction is deliberately a subset of the primary's:
+    // temperature, exposure and saturation are what a keyed correction is
+    // almost always for, and every extra control here is one more thing
+    // between someone and the qualifier they are actually trying to set.
+    qualifierOn_ = new QCheckBox("Key a colour range", this);
+    qualifierOn_->setObjectName("qualifier-enabled");
+    showMask_ = new QCheckBox("Show mask", this);
+    showMask_->setObjectName("qualifier-show-mask");
+    hueBand_ = new HueBand(this);
+    hueCentre_ = makeSpin(0.0, 360.0, 5.0, 1, QString::fromUtf8("\u00B0"));
+    hueWidth_ = makeSpin(0.0, 360.0, 5.0, 1, QString::fromUtf8("\u00B0"));
+    hueSoftness_ = makeSpin(0.0, 180.0, 5.0, 1, QString::fromUtf8("\u00B0"));
+    satLow_ = makeSpin(0.0, 1.0, 0.05, 3);
+    satHigh_ = makeSpin(0.0, 1.0, 0.05, 3);
+    lumaLow_ = makeSpin(0.0, 1.0, 0.05, 3);
+    lumaHigh_ = makeSpin(0.0, 1.0, 0.05, 3);
+    lumaHigh_->setObjectName("qualifier-luma-high");
+    keyTemperature_ = makeSpin(-100.0, 100.0, 1.0, 1);
+    keyExposure_ = makeSpin(-6.0, 6.0, 0.1, 2, " EV");
+    keySaturation_ = makeSpin(0.0, 200.0, 1.0, 1);
+
+    auto* secondary = new QGroupBox("Secondary", this);
+    auto* secondaryForm = new QFormLayout(secondary);
+    secondaryForm->addRow(qualifierOn_);
+    secondaryForm->addRow(showMask_);
+    secondaryForm->addRow(hueBand_);
+    secondaryForm->addRow("Hue", hueCentre_);
+    secondaryForm->addRow("Hue width", hueWidth_);
+    secondaryForm->addRow("Hue softness", hueSoftness_);
+    secondaryForm->addRow("Sat from", satLow_);
+    secondaryForm->addRow("Sat to", satHigh_);
+    secondaryForm->addRow("Luma from", lumaLow_);
+    secondaryForm->addRow("Luma to", lumaHigh_);
+    secondaryForm->addRow("Temperature", keyTemperature_);
+    secondaryForm->addRow("Exposure", keyExposure_);
+    secondaryForm->addRow("Saturation", keySaturation_);
+    secondaryGroup_ = secondary;
+
+    for (QDoubleSpinBox* spin : {hueCentre_, hueWidth_, hueSoftness_, satLow_, satHigh_, lumaLow_,
+                                 lumaHigh_, keyTemperature_, keyExposure_, keySaturation_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushSecondary(); });
+    }
+    for (QCheckBox* box : {qualifierOn_, showMask_}) {
+        connect(box, &QCheckBox::toggled, this, [this] { pushSecondary(); });
+    }
+    connect(hueBand_, &HueBand::centreChanged, this, [this](double centre) {
+        if (updating_) {
+            return;
+        }
+        hueCentre_->setValue(centre);  // which pushes on its own
+    });
+
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
     addRow(audioForm, "Gain", model::Param::GainDb, gain_);
     addRow(audioForm, "Pan", model::Param::Pan, pan_);
     audioGroup_ = audio;
 
-    auto* layout = new QVBoxLayout(this);
+    // Scrolled, because the panel is now taller than a short display: motion,
+    // colour, a curve editor, a secondary and audio. Without this the last
+    // group is simply unreachable, with nothing on screen to suggest it exists.
+    auto* inner = new QWidget;
+    auto* layout = new QVBoxLayout(inner);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(title_);
     layout->addWidget(enabled_);
     layout->addWidget(motion);
     layout->addWidget(colour);
+    layout->addWidget(secondary);
     layout->addWidget(audio);
     layout->addStretch(1);
+
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidget(inner);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    // Never horizontally: the controls already keep the width they need, and a
+    // horizontal scrollbar would hide the values rather than reveal them.
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(scroll);
 
     for (const Row& row : rows_) {
         const model::Param param = row.param;
@@ -182,6 +253,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     enabled_->setEnabled(enabled);
     videoGroup_->setEnabled(enabled);
     colorGroup_->setEnabled(enabled);
+    secondaryGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
 }
 
@@ -210,6 +282,19 @@ void EffectControls::applyToWidgets() {
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
         curves_->setCurves(model::ToneCurves{});
+        const model::Secondary blank;
+        qualifierOn_->setChecked(false);
+        showMask_->setChecked(false);
+        hueCentre_->setValue(blank.qualifier.hueCentre);
+        hueWidth_->setValue(blank.qualifier.hueWidth);
+        hueSoftness_->setValue(blank.qualifier.hueSoftness);
+        satLow_->setValue(blank.qualifier.saturationLow);
+        satHigh_->setValue(blank.qualifier.saturationHigh);
+        lumaLow_->setValue(blank.qualifier.lumaLow);
+        lumaHigh_->setValue(blank.qualifier.lumaHigh);
+        keyTemperature_->setValue(blank.correction.temperature);
+        keyExposure_->setValue(blank.correction.exposure);
+        keySaturation_->setValue(blank.correction.saturation);
         const model::ColorCorrection neutral;
         temperature_->setValue(neutral.temperature);
         tint_->setValue(neutral.tint);
@@ -234,6 +319,7 @@ void EffectControls::applyToWidgets() {
     // clip would offer controls that do nothing.
     videoGroup_->setVisible(isVideo);
     colorGroup_->setVisible(isVideo);
+    secondaryGroup_->setVisible(isVideo);
     audioGroup_->setVisible(!isVideo);
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
@@ -257,6 +343,21 @@ void EffectControls::applyToWidgets() {
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
     curves_->setCurves(clip->curves);
+    const model::Secondary& keyed = clip->secondary;
+    qualifierOn_->setChecked(keyed.qualifier.enabled);
+    showMask_->setChecked(keyed.showMask);
+    hueCentre_->setValue(keyed.qualifier.hueCentre);
+    hueWidth_->setValue(keyed.qualifier.hueWidth);
+    hueSoftness_->setValue(keyed.qualifier.hueSoftness);
+    satLow_->setValue(keyed.qualifier.saturationLow);
+    satHigh_->setValue(keyed.qualifier.saturationHigh);
+    lumaLow_->setValue(keyed.qualifier.lumaLow);
+    lumaHigh_->setValue(keyed.qualifier.lumaHigh);
+    keyTemperature_->setValue(keyed.correction.temperature);
+    keyExposure_->setValue(keyed.correction.exposure);
+    keySaturation_->setValue(keyed.correction.saturation);
+    hueBand_->setWindow(keyed.qualifier.hueCentre, keyed.qualifier.hueWidth,
+                        keyed.qualifier.hueSoftness);
     const model::ColorCorrection color = clip->colorAt(position_);
     temperature_->setValue(color.temperature);
     tint_->setValue(color.tint);
@@ -512,6 +613,45 @@ void EffectControls::pushCurves(const model::ToneCurves& curves, bool committed)
         // A drag is one undo step; the next gesture is a new one.
         commands_->breakMerge();
     }
+    emit edited();
+}
+
+model::Secondary EffectControls::secondaryFromWidgets() const {
+    model::Secondary out;
+    out.qualifier.enabled = qualifierOn_->isChecked();
+    out.showMask = showMask_->isChecked();
+    out.qualifier.hueCentre = hueCentre_->value();
+    out.qualifier.hueWidth = hueWidth_->value();
+    out.qualifier.hueSoftness = hueSoftness_->value();
+    out.qualifier.saturationLow = satLow_->value();
+    out.qualifier.saturationHigh = satHigh_->value();
+    out.qualifier.lumaLow = lumaLow_->value();
+    out.qualifier.lumaHigh = lumaHigh_->value();
+    // Softness for saturation and luma is not exposed: two more spin boxes for
+    // a number nobody reaches for, when the default already keeps the edge from
+    // stepping. It stays in the model, and in the file.
+    const model::HslQualifier defaults;
+    out.qualifier.saturationSoftness = defaults.saturationSoftness;
+    out.qualifier.lumaSoftness = defaults.lumaSoftness;
+
+    out.correction.temperature = keyTemperature_->value();
+    out.correction.exposure = keyExposure_->value();
+    out.correction.saturation = keySaturation_->value();
+    return out;
+}
+
+void EffectControls::pushSecondary() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Secondary secondary = secondaryFromWidgets();
+    auto built = edit::makeSetSecondary(*project_, {sequenceId_, track_}, clip_, secondary);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    hueBand_->setWindow(secondary.qualifier.hueCentre, secondary.qualifier.hueWidth,
+                        secondary.qualifier.hueSoftness);
     emit edited();
 }
 

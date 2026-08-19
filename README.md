@@ -45,7 +45,8 @@ headless: there is no window yet.
 | 5e | Tone curves: monotonic splines, baked LUT, both paths | **done** |
 | 5f | Curve editor: draggable points, per-channel | **done** |
 | 5g | HSL secondaries: qualifier, mask view, both paths | **done** |
-| 5h | Qualifier UI, LUTs, audio mixer, graphics | next |
+| 5h | Qualifier UI: hue band, windows, mask toggle | **done** |
+| 5i | LUTs (.cube), audio mixer, graphics | next |
 
 ## Building
 

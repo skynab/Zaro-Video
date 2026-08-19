@@ -981,6 +981,41 @@ handles, and the mask toggle, and half of that is worse than none.
 
 ---
 
+#### Phase 5h — the qualifier UI ✅
+
+The secondary is reachable: an enable toggle, a mask toggle, a hue band, and
+controls for the three windows and the keyed correction.
+
+**The hue band exists because three numbers describe nothing anyone can
+picture.** Centre, width and softness on a circle are arithmetic; the band shows
+them as a selection, dimming what is outside rather than hiding it — what is
+*not* selected is as much a part of reading a qualifier as what is. It draws the
+window with the same wrap and the same smoothstep the mask uses, because a band
+that disagreed with the selection would be worse than no band.
+
+**The keyed correction is deliberately a subset of the primary's** — temperature,
+exposure, saturation. Those are what a keyed correction is almost always for,
+and every extra control is one more thing between someone and the qualifier they
+are actually trying to set. Saturation and luma softness are not exposed either:
+the default already keeps the edge from stepping, and they remain in the model
+and in the file for anyone who needs them.
+
+**The panel scrolls now.** Motion, colour, a curve editor, a secondary and audio
+is taller than a short display, and without scrolling the last group is simply
+unreachable with nothing on screen to suggest it exists.
+
+**One more absolute pixel threshold removed.** The self-test asserted that a
+wide-open qualifier reads above 100, which had been calibrated when the panel
+was narrower — mean brightness of the monitor depends on how much of it the
+letterbox covers, and that moves whenever a control is added. It compares the
+mask against the same frame's picture instead: a white picture entirely selected
+shows as a white mask, and the two readings now agree exactly (240.1 and 240.1),
+against 0.0 once the luma window is narrowed to the darks.
+
+Next: LUT (.cube) support, then the audio track mixer and Essential Graphics.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

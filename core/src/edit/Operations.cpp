@@ -1372,6 +1372,23 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeSetSecondary(Project& project, const EditTarget& target, ClipId clipId,
+                                    const model::Secondary& secondary) {
+    const model::HslQualifier& window = secondary.qualifier;
+    for (const double value :
+         {window.hueCentre, window.hueWidth, window.hueSoftness, window.saturationLow,
+          window.saturationHigh, window.saturationSoftness, window.lumaLow, window.lumaHigh,
+          window.lumaSoftness, secondary.correction.temperature, secondary.correction.tint,
+          secondary.correction.exposure, secondary.correction.contrast,
+          secondary.correction.saturation}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a secondary has to be real numbers"};
+        }
+    }
+    return modifyClip(project, target, clipId, "Adjust secondary", "secondary:" + idText(clipId),
+                      [secondary](Clip& clip) { clip.secondary = secondary; });
+}
+
 Result<CommandPtr> makeSetToneCurves(Project& project, const EditTarget& target, ClipId clipId,
                                      const model::ToneCurves& curves) {
     for (const model::ToneCurve* curve :

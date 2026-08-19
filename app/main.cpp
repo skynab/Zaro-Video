@@ -12,6 +12,7 @@
 // currently on is both simpler and lower latency.
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFontDatabase>
@@ -1113,6 +1114,79 @@ int main(int argc, char** argv) {
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // The secondary, through its panel. The qualifier is tested headlessly
+        // and compared against the shader; what neither of those can see is
+        // whether these controls are connected to any of it.
+        {
+            auto* enable = window.effects()->findChild<QCheckBox*>("qualifier-enabled");
+            auto* mask = window.effects()->findChild<QCheckBox*>("qualifier-show-mask");
+            auto* lumaHigh = window.effects()->findChild<QDoubleSpinBox*>("qualifier-luma-high");
+            if (enable == nullptr || mask == nullptr || lumaHigh == nullptr) {
+                std::fprintf(stderr, "  FAIL: the qualifier controls are missing\n");
+                return 1;
+            }
+            window.effects()->setSelection(videoTrack.id(), original.id);
+            QApplication::processEvents();
+
+            // A lit frame, so "selected" and "not selected" are a white mask
+            // and a black one rather than two black pictures.
+            std::int64_t litFrame = 0;
+            double litness = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray > litness) {
+                    litness = gray;
+                    litFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            // The picture itself, to compare the mask against. An absolute
+            // threshold would be measuring the letterbox: how much of the
+            // monitor the picture covers depends on the panel layout, and that
+            // changes whenever a control is added.
+            const double picture = meanGray(window.monitor()->grabFramebuffer());
+
+            enable->setChecked(true);
+            mask->setChecked(true);
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double everything = meanGray(window.monitor()->grabFramebuffer());
+
+            // Now key only the darks. This frame is white, so it drops out.
+            lumaHigh->setValue(0.2);
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double nothing = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  qualifier mask: picture %.1f, wide open %.1f, keyed to darks %.1f\n",
+                        picture, everything, nothing);
+            // A white picture, entirely selected, shows as a white mask -- so
+            // the two readings should agree.
+            if (!(everything > picture * 0.85)) {
+                std::fprintf(stderr,
+                             "  FAIL: a qualifier left wide open did not select the picture "
+                             "(%.1f against %.1f)\n",
+                             everything, picture);
+                return 1;
+            }
+            if (!(nothing < everything * 0.2)) {
+                std::fprintf(stderr,
+                             "  FAIL: narrowing the luma window did not change the mask; the "
+                             "controls are not reaching the compositor\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.effects()->refresh();
             window.monitor()->update();
             QApplication::processEvents();
         }
