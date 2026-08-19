@@ -52,6 +52,27 @@ enum class Edge { In, Out };
                                           model::ClipId clip, model::TrackId toTrack,
                                           const time::RationalTime& newStart);
 
+/// Three-point editing: two points marked in the source, one on the timeline,
+/// and the fourth derived.
+///
+/// This is how an edit is actually assembled — mark the part of the take you
+/// want, put the playhead where it goes, and press a key. The duration follows
+/// from the source range rather than being chosen separately, which is the
+/// whole point of counting to three.
+enum class PlaceMode {
+    Overwrite,  ///< Replace whatever is under it.
+    Insert,     ///< Push what follows to the right.
+};
+
+/// Build a clip from a media reference and a range of it, and place it.
+///
+/// The source range is in the media's own frame rate and the placement is in
+/// the sequence's; converting between them is the part worth having in one
+/// tested place rather than in whichever panel happens to be assembling a clip.
+[[nodiscard]] Result<CommandPtr> makePlaceFromSource(
+    model::Project& project, const EditTarget& target, model::MediaRefId media,
+    const time::TimeRange& sourceRange, const time::RationalTime& timelineStart, PlaceMode mode);
+
 // --- Cutting ----------------------------------------------------------------
 
 /// Split the clip under `at` into two abutting clips. `at` must fall strictly

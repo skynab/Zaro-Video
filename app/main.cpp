@@ -46,6 +46,7 @@
 #include "ExportDialog.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
+#include "SourceMonitor.h"
 #include "TimelineWidget.h"
 
 namespace {
@@ -86,14 +87,27 @@ public:
         // Monitor and parameters side by side, transport under them, timeline
         // across the bottom.
         bin_ = new app::ProjectBin(this);
-        bin_->setMinimumWidth(230);
-        bin_->setMaximumWidth(300);
+        bin_->setMinimumWidth(210);
+        bin_->setMaximumWidth(280);
+
+        source_ = new app::SourceMonitor(this);
+        source_->setMinimumWidth(300);
 
         auto* topRow = new QHBoxLayout;
         topRow->addWidget(bin_);
+        topRow->addWidget(source_, 1);
         topRow->addWidget(monitor_, 1);
         topRow->addWidget(effects_);
 
+        connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
+            if (const model::MediaRef* ref = project_.findMedia(id)) {
+                source_->load(*ref);
+            }
+        });
+        connect(source_, &app::SourceMonitor::insertRequested, this,
+                [this] { placeFromSource(edit::PlaceMode::Insert); });
+        connect(source_, &app::SourceMonitor::overwriteRequested, this,
+                [this] { placeFromSource(edit::PlaceMode::Overwrite); });
         connect(bin_, &app::ProjectBin::edited, this, [this] {
             scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
             timeline_->update();
@@ -154,6 +168,7 @@ public:
 
     [[nodiscard]] app::ProgramMonitor* monitor() const { return monitor_; }
     [[nodiscard]] app::TimelineWidget* timeline() const { return timeline_; }
+    [[nodiscard]] app::SourceMonitor* sourceMonitor() const { return source_; }
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
     [[nodiscard]] model::Project& project() { return project_; }
 
@@ -180,6 +195,7 @@ public:
         timeline_->setProject(&project_, sequence_->id(), &commands_);
         effects_->setProject(&project_, sequence_->id(), &commands_);
         bin_->setProject(&project_, sequence_->id(), &commands_);
+        source_->setProvider(media_.get());
         startWaveforms();
         scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
         refresh();
@@ -202,7 +218,32 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override {
-        // Premiere's bindings, which is what hands already know.
+        // One table rather than a switch buried in a handler: the bindings are
+        // the thing a user wants to see and eventually change, and a list of
+        // them reads as documentation. Premiere's defaults, which is what hands
+        // already know.
+        struct Binding {
+            int key;
+            Qt::KeyboardModifiers modifiers;
+            const char* description;
+            void (PreviewWindow::*action)();
+        };
+        static const Binding kBindings[] = {
+            {Qt::Key_I, Qt::NoModifier, "Mark in", &PreviewWindow::doMarkIn},
+            {Qt::Key_O, Qt::NoModifier, "Mark out", &PreviewWindow::doMarkOut},
+            {Qt::Key_Comma, Qt::NoModifier, "Insert from source", &PreviewWindow::doInsert},
+            {Qt::Key_Period, Qt::NoModifier, "Overwrite from source", &PreviewWindow::doOverwrite},
+            {Qt::Key_Up, Qt::NoModifier, "Source back one frame", &PreviewWindow::doSourceBack},
+            {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
+             &PreviewWindow::doSourceForward},
+        };
+        for (const Binding& binding : kBindings) {
+            if (event->key() == binding.key && event->modifiers() == binding.modifiers) {
+                (this->*binding.action)();
+                return;
+            }
+        }
+
         switch (event->key()) {
             case Qt::Key_Space:
                 togglePlay();
@@ -265,6 +306,37 @@ private:
         if (waveformThread_.joinable()) {
             waveformThread_.join();
         }
+    }
+
+    void doMarkIn() { source_->markIn(); }
+    void doMarkOut() { source_->markOut(); }
+    void doInsert() { placeFromSource(edit::PlaceMode::Insert); }
+    void doOverwrite() { placeFromSource(edit::PlaceMode::Overwrite); }
+    void doSourceBack() { source_->step(-1); }
+    void doSourceForward() { source_->step(1); }
+
+    /// Three-point edit: the marked range from the source, at the playhead.
+    void placeFromSource(edit::PlaceMode mode) {
+        const auto range = source_->markedRange();
+        if (!range || !source_->media().isValid()) {
+            return;
+        }
+        const auto& videoTracks = sequence_->videoTracks();
+        if (videoTracks.empty()) {
+            return;
+        }
+        auto built =
+            edit::makePlaceFromSource(project_, {sequence_->id(), videoTracks.front().id()},
+                                      source_->media(), *range, position_, mode);
+        if (!built) {
+            return;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+        timeline_->update();
+        monitor_->update();
+        refresh();
     }
 
     void togglePlay() {
@@ -458,6 +530,7 @@ private:
     app::TimelineWidget* timeline_{nullptr};
     app::EffectControls* effects_{nullptr};
     app::ProjectBin* bin_{nullptr};
+    app::SourceMonitor* source_{nullptr};
     edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};
@@ -671,6 +744,62 @@ int main(int argc, char** argv) {
                          "  FAIL: lowering opacity did not darken the picture; the panel and "
                          "the compositor are not connected\n");
             return 1;
+        }
+
+        // Three-point editing, through the source monitor rather than by
+        // calling the operation directly: mark a range, put the playhead
+        // somewhere, and press the key.
+        {
+            const zaro::model::MediaRef& firstMedia = window.project().media().front();
+            window.sourceMonitor()->load(firstMedia);
+            window.sourceMonitor()->step(24);
+            window.sourceMonitor()->markIn();
+            window.sourceMonitor()->step(48);
+            window.sourceMonitor()->markOut();
+            QApplication::processEvents();
+
+            const auto marked = window.sourceMonitor()->markedRange();
+            if (!marked) {
+                std::fprintf(stderr, "  FAIL: marking in and out produced no range\n");
+                return 1;
+            }
+            std::printf("  marked %lld source frames\n",
+                        static_cast<long long>(marked->duration().frames()));
+
+            const auto& targetTrack =
+                window.project().findSequence(sequence.id())->videoTracks().front();
+            const std::size_t clipsBefore = targetTrack.clips().size();
+
+            window.setPosition(zaro::time::RationalTime{5000, sequence.frameRate()});
+            auto placed = zaro::edit::makePlaceFromSource(
+                window.project(), {sequence.id(), targetTrack.id()},
+                window.sourceMonitor()->media(), *marked,
+                zaro::time::RationalTime{5000, sequence.frameRate()},
+                zaro::edit::PlaceMode::Overwrite);
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+
+            const auto& trackAfter =
+                window.project().findSequence(sequence.id())->videoTracks().front();
+            if (trackAfter.clips().size() != clipsBefore + 1) {
+                std::fprintf(stderr, "  FAIL: the three-point edit added no clip\n");
+                return 1;
+            }
+            const zaro::model::Clip* placedClip =
+                trackAfter.clipAt(zaro::time::RationalTime{5000, sequence.frameRate()});
+            if (placedClip == nullptr) {
+                std::fprintf(stderr, "  FAIL: nothing landed at the playhead\n");
+                return 1;
+            }
+            std::printf("  placed %lld frames at the playhead\n",
+                        static_cast<long long>(placedClip->duration().frames()));
+            if (placedClip->duration().frames() <= 0) {
+                std::fprintf(stderr, "  FAIL: the placed clip has no duration\n");
+                return 1;
+            }
         }
 
         std::printf("  ok\n");

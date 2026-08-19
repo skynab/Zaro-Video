@@ -24,6 +24,8 @@ public:
 signals:
     /// Media was imported, or a clip appended.
     void edited();
+    /// Open this in the source monitor.
+    void openRequested(zaro::model::MediaRefId media);
 
 private:
     void importFiles();

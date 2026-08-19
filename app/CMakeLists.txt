@@ -14,6 +14,8 @@ add_executable(zaro-preview
     ExportDialog.h
     ProjectBin.cpp
     ProjectBin.h
+    SourceMonitor.cpp
+    SourceMonitor.h
 )
 
 target_link_libraries(zaro-preview

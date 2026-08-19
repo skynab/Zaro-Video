@@ -371,6 +371,53 @@ Result<CommandPtr> makeMove(Project& project, const EditTarget& target, ClipId c
                        });
 }
 
+Result<CommandPtr> makePlaceFromSource(Project& project, const EditTarget& target,
+                                       model::MediaRefId mediaId,
+                                       const time::TimeRange& sourceRange,
+                                       const time::RationalTime& timelineStart, PlaceMode mode) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    const model::MediaRef* media = project.findMedia(mediaId);
+    if (media == nullptr) {
+        return Error{ErrorCode::NotFound, "that media is not in the project"};
+    }
+    if (sourceRange.isEmpty()) {
+        return Error{ErrorCode::InvalidData, "mark an in and an out point first"};
+    }
+
+    const time::Rational& rate = located->sequence->frameRate();
+    const time::RationalTime start = atRate(timelineStart, rate);
+    if (start.frames() < 0) {
+        return Error{ErrorCode::InvalidData, "a clip cannot start before the sequence"};
+    }
+
+    // The duration follows from the marked source range, converted to the
+    // sequence's rate. Twenty-four frames of a 24fps take is one second, which
+    // on a 25fps timeline is twenty-five frames -- not twenty-four.
+    const time::RationalTime duration =
+        time::RationalTime::fromSeconds(sourceRange.duration().toSeconds(), rate);
+    if (duration.frames() <= 0) {
+        return Error{ErrorCode::InvalidData,
+                     "that range is shorter than a frame at the sequence rate"};
+    }
+
+    Clip clip;
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.source = mediaId;
+    clip.name = media->name.empty() ? media->path : media->name;
+    clip.sourceRange = sourceRange;
+    clip.timelineRange = time::TimeRange{start, duration};
+
+    if (Status fits = checkSourceFits(project, clip); !fits) {
+        return fits.error();
+    }
+
+    return mode == PlaceMode::Insert ? makeInsert(project, target, std::move(clip))
+                                     : makeOverwrite(project, target, std::move(clip));
+}
+
 // --- Cutting ----------------------------------------------------------------
 
 Result<CommandPtr> makeRazor(Project& project, const EditTarget& target, const RationalTime& at) {

@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 243 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 245 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -503,6 +503,29 @@ found two such bugs in two phases. There is now a test that sets **every** seria
 field to a distinctive non-default value and checks each one individually after a round
 trip. It found nothing further, which is the useful result: the two known gaps were the
 only ones, and a third cannot now reach a project file unnoticed.
+
+#### Phase 4g — source monitor and three-point editing ✅ **complete**
+
+Three- and four-point editing were deferred from Phase 2 with the reasoning that they are
+defined by interactions that did not exist yet. Those interactions exist now.
+
+- ✅ **A source monitor**, which is a sequence with a single clip in it. That is not a
+  shortcut — it is what a source monitor *is* — and it means the program monitor renders
+  both, rather than there being a second render path to keep in agreement with the first.
+- ✅ **In and out marking**, with the out point inclusive to the eye and exclusive in the
+  model, and unmarked ends falling back to the whole media so that marking only an in
+  point means "from here to the end".
+- ✅ **Three-point editing**: `makePlaceFromSource` derives the duration from the marked
+  range rather than taking it separately, which is the whole point of counting to three.
+  It converts between the media's frame rate and the sequence's — twenty-four frames of a
+  24fps take is twenty-five frames on a 25fps timeline, and copying the count across would
+  put every edit assembled from mixed-rate media a frame short per second.
+- ✅ **A keymap table** replacing the hardcoded switch. The bindings are the thing a user
+  wants to see and eventually change, and a list of them reads as documentation.
+
+Verified end to end through the widgets rather than by calling the operation: the
+self-test loads media into the source monitor, steps, marks in and out, and places the
+result — 49 source frames marked, 49 frames placed at the playhead.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

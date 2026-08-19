@@ -647,3 +647,68 @@ TEST_CASE("Importing media goes through the command stack", "[edit][import]") {
         CHECK(f.track(f.v1).isEmpty());
     }
 }
+
+TEST_CASE("Three-point editing places a marked range on the timeline", "[edit][threepoint]") {
+    Fixture f;
+
+    SECTION("overwrite at the playhead") {
+        REQUIRE(
+            f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.longMedia, f.range(200, 50),
+                                            f.at(100), edit::PlaceMode::Overwrite)));
+        CHECK(f.layout(f.v1) == "100-150@200");
+    }
+
+    SECTION("insert pushes what follows") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 100, 500))));
+        REQUIRE(
+            f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.longMedia, f.range(200, 20),
+                                            f.at(40), edit::PlaceMode::Insert)));
+        // The clip under the point is split and the tail moves along.
+        CHECK(f.layout(f.v1) == "0-40@500 40-60@200 60-120@540");
+    }
+
+    SECTION("the duration comes from the marked range, not from the caller") {
+        REQUIRE(f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.longMedia, f.range(0, 37),
+                                                f.at(0), edit::PlaceMode::Overwrite)));
+        CHECK(f.track(f.v1).clips()[0].duration() == f.at(37));
+    }
+
+    SECTION("an unmarked range is refused") {
+        CHECK_FALSE(
+            f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.longMedia, f.range(200, 0),
+                                            f.at(0), edit::PlaceMode::Overwrite)));
+        CHECK(f.lastError.find("in and an out") != std::string::npos);
+    }
+
+    SECTION("a range that runs past the end of the media is refused") {
+        CHECK_FALSE(f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.shortMedia,
+                                                    f.range(Fixture::kShortMediaFrames - 5, 50),
+                                                    f.at(0), edit::PlaceMode::Overwrite)));
+    }
+
+    SECTION("media that is not in the project is refused") {
+        CHECK_FALSE(
+            f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), model::MediaRefId{9999},
+                                            f.range(0, 10), f.at(0), edit::PlaceMode::Overwrite)));
+    }
+}
+
+TEST_CASE("A marked range converts between source and sequence rates", "[edit][threepoint]") {
+    // Twenty-four frames of a 24fps take is one second, which on this 25fps
+    // timeline is twenty-five frames. Copying the frame count across would put
+    // every edit assembled from mixed-rate media a frame short per second.
+    Fixture f;
+    const time::Rational sourceRate = time::rates::fps24;
+    const time::TimeRange marked{time::RationalTime{48, sourceRate},
+                                 time::RationalTime{24, sourceRate}};
+
+    REQUIRE(f.run(edit::makePlaceFromSource(f.project, f.on(f.v1), f.longMedia, marked, f.at(0),
+                                            edit::PlaceMode::Overwrite)));
+
+    const model::Clip& clip = f.track(f.v1).clips()[0];
+    CHECK(clip.duration() == f.at(25));
+    // And the source range keeps its own rate, so decoding still asks the right
+    // questions of the file.
+    CHECK(clip.sourceRange.start().rate() == sourceRate);
+    CHECK(clip.sourceRange.start().frames() == 48);
+}
