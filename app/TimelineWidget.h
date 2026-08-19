@@ -1,11 +1,14 @@
 #pragma once
 
+#include <QPoint>
+#include <QRect>
 #include <QWidget>
 #include <map>
 #include <memory>
 #include <optional>
 
 #include "zaro/core/edit/CommandStack.h"
+#include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/Waveform.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/time/RationalTime.h"
@@ -100,12 +103,22 @@ private:
 
     ui::TimelineLayout layout_;
     time::RationalTime playhead_{};
+    /// Everything selected. The first entry is the primary selection, which is
+    /// what the Effect Controls panel shows: a panel of parameters has to be
+    /// about one clip, even when several are selected for moving.
+    std::vector<edit::ClipRef> selection_;
     model::ClipId selected_;
     model::TrackId selectedTrack_;
     /// The selected clip's link group, so its partners can be outlined too.
     model::LinkId selectedLink_;
 
-    enum class Drag { None, Scrub, MoveClip, TrimIn, TrimOut };
+    [[nodiscard]] bool isSelected(model::ClipId clip) const;
+    void selectOnly(const ui::TimelineLayout::Hit& hit);
+    void toggleSelected(const ui::TimelineLayout::Hit& hit);
+    void announceSelection();
+    void removeSelection(bool ripple);
+
+    enum class Drag { None, Scrub, MoveClip, TrimIn, TrimOut, Band, MaybeBand };
     Drag drag_{Drag::None};
     /// Where in the clip the drag started, so it does not jump to the pointer.
     time::RationalTime grabOffset_{};
@@ -117,6 +130,9 @@ private:
     /// error the pointer never asked for.
     time::RationalTime trimAnchor_{};
     bool rippleTrim_{false};
+    /// Where a press landed, so a click and a drag can be told apart.
+    QPoint pressAt_;
+    QRect band_;
     bool snapEnabled_{true};
     std::map<std::uint64_t, std::shared_ptr<const media::Waveform>> waveforms_;
     /// Fit once the widget knows how wide it really is.

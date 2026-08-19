@@ -207,6 +207,46 @@ std::optional<TimelineLayout::Hit> TimelineLayout::hitTest(const model::Sequence
     return hit;
 }
 
+std::vector<TimelineLayout::Hit> TimelineLayout::hitTestRect(const model::Sequence& sequence,
+                                                             std::int32_t x0, std::int32_t y0,
+                                                             std::int32_t x1,
+                                                             std::int32_t y1) const {
+    std::vector<Hit> hits;
+
+    // Dragged in any direction.
+    const std::int32_t left = std::min(x0, x1);
+    const std::int32_t right = std::max(x0, x1);
+    const std::int32_t top = std::min(y0, y1);
+    const std::int32_t bottom = std::max(y0, y1);
+
+    // A band that never leaves the track headers is not a selection gesture.
+    // Clamping it to the content area instead would turn it into a one-frame
+    // span at time zero and select whatever happens to start there.
+    if (right < metrics_.headerWidth) {
+        return hits;
+    }
+
+    const time::Rational& rate = sequence.frameRate();
+    const time::TimeRange span = time::TimeRange::fromStartEnd(
+        timeForX(std::max(left, metrics_.headerWidth), rate),
+        timeForX(std::max(right, metrics_.headerWidth), rate) + time::RationalTime{1, rate});
+
+    for (const Row& row : rows(sequence)) {
+        // Rows the band touches at all, not only those it covers.
+        if (row.top + row.height <= top || row.top >= bottom) {
+            continue;
+        }
+        const model::Track* track = sequence.findTrack(row.track);
+        if (track == nullptr) {
+            continue;
+        }
+        for (const model::Clip* clip : track->clipsIn(span)) {
+            hits.push_back(Hit{row.track, clip->id, Part::Body});
+        }
+    }
+    return hits;
+}
+
 time::RationalTime TimelineLayout::rulerStep(const time::Rational& frameRate) const {
     const double frameSeconds = frameRate.isPositive() ? 1.0 / frameRate.toDouble() : 1.0 / 25.0;
 

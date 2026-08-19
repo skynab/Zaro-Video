@@ -493,6 +493,147 @@ Result<CommandPtr> makePlaceFromSource(Project& project, const EditTarget& targe
                                      : makeOverwrite(project, target, std::move(clip));
 }
 
+// --- Several clips at once --------------------------------------------------
+
+namespace {
+
+/// The selection, plus everything linked to any of it, with duplicates removed.
+std::vector<ClipRef> withLinkedPartners(Sequence& sequence, const std::vector<ClipRef>& clips) {
+    std::vector<ClipRef> all;
+    const auto alreadyThere = [&all](TrackId track, ClipId clip) {
+        return std::any_of(all.begin(), all.end(), [&](const ClipRef& ref) {
+            return ref.track == track && ref.clip == clip;
+        });
+    };
+
+    for (const ClipRef& ref : clips) {
+        for (const auto& [track, clip] : linkedGroup(sequence, ref.track, ref.clip)) {
+            if (!alreadyThere(track, clip)) {
+                all.push_back(ClipRef{track, clip});
+            }
+        }
+    }
+    return all;
+}
+
+}  // namespace
+
+Result<CommandPtr> makeMoveClips(Project& project, model::SequenceId sequenceId,
+                                 const std::vector<ClipRef>& clips,
+                                 const time::RationalTime& delta) {
+    Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (clips.empty()) {
+        return Error{ErrorCode::InvalidData, "nothing selected to move"};
+    }
+
+    const time::Rational& rate = sequence->frameRate();
+    const time::RationalTime shift = atRate(delta, rate);
+    if (shift.isZero()) {
+        return Error{ErrorCode::InvalidData, "a move of nothing"};
+    }
+
+    const std::vector<ClipRef> all = withLinkedPartners(*sequence, clips);
+    for (const ClipRef& ref : all) {
+        const Track* track = sequence->findTrack(ref.track);
+        if (track == nullptr || track->isLocked()) {
+            return Error{ErrorCode::Unsupported, "one of those clips is on a locked track"};
+        }
+        const Clip* clip = track->find(ref.clip);
+        if (clip == nullptr) {
+            return Error{ErrorCode::NotFound, "one of those clips is not there"};
+        }
+        if ((clip->start() + shift).frames() < 0) {
+            return Error{ErrorCode::InvalidData,
+                         "that would move a clip before the start of the sequence"};
+        }
+    }
+
+    model::IdGenerator& ids = project.ids();
+    return makeCommand(sequenceId, all.size() == 1 ? "Move clip" : "Move clips", {},
+                       [all, shift, &ids](Sequence& seq) {
+                           // Lift everything first, then place it. Moving them one at a time
+                           // would have each overwrite the next while the set is mid-flight,
+                           // and the result would depend on the order they came in.
+                           std::vector<std::pair<TrackId, Clip>> lifted;
+                           lifted.reserve(all.size());
+                           for (const ClipRef& ref : all) {
+                               Track* track = seq.findTrack(ref.track);
+                               if (track == nullptr || track->find(ref.clip) == nullptr) {
+                                   continue;
+                               }
+                               Clip clip = track->remove(ref.clip);
+                               clip.timelineRange =
+                                   TimeRange{clip.start() + shift, clip.duration()};
+                               lifted.emplace_back(ref.track, std::move(clip));
+                           }
+                           for (auto& [trackId, clip] : lifted) {
+                               Track* track = seq.findTrack(trackId);
+                               if (track == nullptr) {
+                                   continue;
+                               }
+                               clearRange(*track, clip.timelineRange, ids);
+                               track->insert(clip);
+                           }
+                       });
+}
+
+Result<CommandPtr> makeRemoveClips(Project& project, model::SequenceId sequenceId,
+                                   const std::vector<ClipRef>& clips, bool ripple) {
+    Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (clips.empty()) {
+        return Error{ErrorCode::InvalidData, "nothing selected to remove"};
+    }
+
+    const std::vector<ClipRef> all = withLinkedPartners(*sequence, clips);
+    for (const ClipRef& ref : all) {
+        const Track* track = sequence->findTrack(ref.track);
+        if (track == nullptr || track->find(ref.clip) == nullptr) {
+            return Error{ErrorCode::NotFound, "one of those clips is not there"};
+        }
+        if (track->isLocked()) {
+            return Error{ErrorCode::Unsupported, "one of those clips is on a locked track"};
+        }
+    }
+
+    return makeCommand(
+        sequenceId, ripple ? "Extract clips" : "Lift clips", {}, [all, ripple](Sequence& seq) {
+            // Latest first, so closing one gap cannot move a clip that is still
+            // to be removed out from under its recorded position.
+            std::vector<std::pair<TrackId, TimeRange>> removed;
+            for (const ClipRef& ref : all) {
+                Track* track = seq.findTrack(ref.track);
+                if (track == nullptr) {
+                    continue;
+                }
+                const Clip* clip = track->find(ref.clip);
+                if (clip == nullptr) {
+                    continue;
+                }
+                removed.emplace_back(ref.track, clip->timelineRange);
+                track->remove(ref.clip);
+            }
+            if (!ripple) {
+                return;
+            }
+            std::sort(removed.begin(), removed.end(), [](const auto& a, const auto& b) {
+                return a.second.start() > b.second.start();
+            });
+            for (const auto& [trackId, range] : removed) {
+                Track* track = seq.findTrack(trackId);
+                if (track != nullptr &&
+                    track->canShiftFrom(range.endExclusive(), -range.duration())) {
+                    track->shiftFrom(range.endExclusive(), -range.duration());
+                }
+            }
+        });
+}
+
 // --- Cutting ----------------------------------------------------------------
 
 Result<CommandPtr> makeRazor(Project& project, const EditTarget& target, const RationalTime& at) {

@@ -37,7 +37,8 @@ headless: there is no window yet.
 | 4g | Source monitor, three-point editing | **done** |
 | 4h | Linked A/V, sync locks | **done** |
 | 4i | Markers, workspaces | **done** |
-| 4j | Multi-selection, then §7 features | next |
+| 4j | Multi-selection: shift-click, rubber band, set moves | **done** |
+| 5 | Lumetri-style colour, audio mixer, keyframes, graphics | next |
 
 ## Building
 

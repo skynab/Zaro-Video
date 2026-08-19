@@ -295,3 +295,47 @@ TEST_CASE("The ruler step coarsens as you zoom out", "[ui][timeline]") {
     }
     CHECK(previous > 25);  // coarser than a second
 }
+
+TEST_CASE("A rubber band selects what it touches", "[ui][timeline][hit]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 25))));    // 150..250
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(25, 25))));   // 250..350
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(100, 25))));  // 550..650
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 25))));
+    TimelineLayout layout = makeLayout();
+
+    const std::int32_t v1Y = 100;
+    const std::int32_t a1Y = 160;
+
+    SECTION("across two clips on one track") {
+        const auto hits = layout.hitTestRect(f.sequence(), 200, v1Y - 10, 300, v1Y + 10);
+        CHECK(hits.size() == 2);
+    }
+
+    SECTION("a clip only partly inside still counts") {
+        // Requiring full containment would leave out the long clip the band was
+        // obviously aimed at.
+        const auto hits = layout.hitTestRect(f.sequence(), 260, v1Y - 5, 280, v1Y + 5);
+        REQUIRE(hits.size() == 1);
+        CHECK(hits[0].clip == f.track(f.v1).clips()[1].id);
+    }
+
+    SECTION("spanning tracks picks up both") {
+        const auto hits = layout.hitTestRect(f.sequence(), 160, v1Y, 240, a1Y);
+        CHECK(hits.size() == 2);
+    }
+
+    SECTION("dragged right to left is the same band") {
+        const auto forward = layout.hitTestRect(f.sequence(), 200, v1Y - 10, 300, v1Y + 10);
+        const auto backward = layout.hitTestRect(f.sequence(), 300, v1Y + 10, 200, v1Y - 10);
+        CHECK(forward.size() == backward.size());
+    }
+
+    SECTION("a band over empty timeline selects nothing") {
+        CHECK(layout.hitTestRect(f.sequence(), 700, v1Y - 10, 900, v1Y + 10).empty());
+    }
+
+    SECTION("a band entirely in the headers selects nothing") {
+        CHECK(layout.hitTestRect(f.sequence(), 0, v1Y - 10, 100, v1Y + 10).empty());
+    }
+}

@@ -23,6 +23,7 @@ const QColor kGridLine{58, 58, 66};
 const QColor kVideoClip{62, 96, 148};
 const QColor kAudioClip{58, 122, 96};
 const QColor kSelectedOutline{255, 196, 92};
+const QColor kBand{140, 180, 235};
 const QColor kPlayhead{236, 92, 82};
 const QColor kText{224, 224, 230};
 const QColor kDimText{150, 150, 160};
@@ -142,6 +143,52 @@ void TimelineWidget::paintEvent(QPaintEvent* /*event*/) {
     paintTracks(painter);
     paintRuler(painter);
     paintPlayhead(painter);
+
+    if (drag_ == Drag::Band && !band_.isNull()) {
+        painter.setPen(QPen(kBand, 1, Qt::DashLine));
+        painter.fillRect(band_, QColor(kBand.red(), kBand.green(), kBand.blue(), 40));
+        painter.drawRect(band_.adjusted(0, 0, -1, -1));
+    }
+}
+
+bool TimelineWidget::isSelected(model::ClipId clip) const {
+    return std::any_of(selection_.begin(), selection_.end(),
+                       [clip](const edit::ClipRef& ref) { return ref.clip == clip; });
+}
+
+void TimelineWidget::selectOnly(const ui::TimelineLayout::Hit& hit) {
+    selection_.assign(1, edit::ClipRef{hit.track, hit.clip});
+    announceSelection();
+}
+
+void TimelineWidget::toggleSelected(const ui::TimelineLayout::Hit& hit) {
+    const auto found =
+        std::find_if(selection_.begin(), selection_.end(),
+                     [&hit](const edit::ClipRef& ref) { return ref.clip == hit.clip; });
+    if (found != selection_.end()) {
+        selection_.erase(found);
+    } else {
+        selection_.push_back(edit::ClipRef{hit.track, hit.clip});
+    }
+    announceSelection();
+}
+
+void TimelineWidget::announceSelection() {
+    // The primary selection is the first entry, which is what the parameter
+    // panel shows. With nothing selected it reports an invalid id and the panel
+    // empties itself.
+    selected_ = selection_.empty() ? model::ClipId{} : selection_.front().clip;
+    selectedTrack_ = selection_.empty() ? model::TrackId{} : selection_.front().track;
+    selectedLink_ = {};
+    if (const model::Sequence* seq = sequence(); seq != nullptr && selected_.isValid()) {
+        if (const model::Track* track = seq->findTrack(selectedTrack_)) {
+            if (const model::Clip* clip = track->find(selected_)) {
+                selectedLink_ = clip->link;
+            }
+        }
+    }
+    emit selectionChanged(selectedTrack_, selected_);
+    update();
 }
 
 void TimelineWidget::paintRuler(QPainter& painter) {
@@ -294,12 +341,12 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
         // The whole link group is outlined, not just the clip clicked on:
         // an edit is going to move all of them, so all of them should look
         // selected.
-        const bool isSelected = clip->id == selected_;
+        const bool selected = isSelected(clip->id);
         const bool isLinkedToSelection =
-            !isSelected && clip->link.isValid() && clip->link == selectedLink_;
+            !selected && clip->link.isValid() && clip->link == selectedLink_;
 
-        if (isSelected || isLinkedToSelection) {
-            painter.setPen(QPen(kSelectedOutline, isSelected ? 2 : 1));
+        if (selected || isLinkedToSelection) {
+            painter.setPen(QPen(kSelectedOutline, selected ? 2 : 1));
             painter.drawRect(body.adjusted(1, 1, -1, -1));
         } else {
             painter.setPen(base.lighter(135));
@@ -469,28 +516,31 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
+    pressAt_ = QPoint(x, y);
     const auto hit = layout_.hitTest(*seq, x, y);
+
     if (!hit) {
-        selected_ = {};
-        selectedTrack_ = {};
-        selectedLink_ = {};
-        emit selectionChanged(selectedTrack_, selected_);
-        // Clicking empty timeline still moves the playhead: it is the most
-        // common thing to want there.
-        drag_ = Drag::Scrub;
-        scrubTo(x);
+        // Not yet a band and not yet a scrub. Which it becomes depends on
+        // whether the pointer moves: a click on empty timeline should still put
+        // the playhead there, and a drag should select.
+        drag_ = Drag::MaybeBand;
+        band_ = QRect(pressAt_, pressAt_);
+        if (!event->modifiers().testFlag(Qt::ShiftModifier)) {
+            selection_.clear();
+            announceSelection();
+        }
         return;
     }
 
-    selected_ = hit->clip;
-    selectedTrack_ = hit->track;
-    selectedLink_ = {};
-    if (const model::Track* track = seq->findTrack(selectedTrack_)) {
-        if (const model::Clip* clip = track->find(selected_)) {
-            selectedLink_ = clip->link;
-        }
+    if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+        toggleSelected(*hit);
+        return;
     }
-    emit selectionChanged(selectedTrack_, selected_);
+    // Clicking something already selected keeps the selection, so a set can be
+    // dragged by any of its members.
+    if (!isSelected(hit->clip)) {
+        selectOnly(*hit);
+    }
     // Alt turns a trim into a ripple trim, closing the gap it would leave
     // instead of opening one.
     beginDrag(*hit, x, event->modifiers().testFlag(Qt::AltModifier));
@@ -572,6 +622,20 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
 
+    if (drag_ == Drag::MaybeBand) {
+        // A few pixels of slack, so a click with an unsteady hand is still a
+        // click.
+        if ((QPoint(x, y) - pressAt_).manhattanLength() > 4) {
+            drag_ = Drag::Band;
+        } else {
+            return;
+        }
+    }
+    if (drag_ == Drag::Band) {
+        band_ = QRect(pressAt_, QPoint(x, y)).normalized();
+        update();
+        return;
+    }
     if (drag_ == Drag::Scrub) {
         scrubTo(x);
         return;
@@ -603,10 +667,34 @@ void TimelineWidget::updateDrag(int x) {
     if (seq == nullptr || !selected_.isValid() || commands_ == nullptr) {
         return;
     }
+    const model::Track* track = seq->findTrack(selectedTrack_);
+    const model::Clip* clip = track != nullptr ? track->find(selected_) : nullptr;
+    if (clip == nullptr) {
+        return;
+    }
+
     auto start = layout_.timeForX(x, seq->frameRate()) - grabOffset_;
     start = maybeSnap(start, selected_);
     if (start.frames() < 0) {
         start = time::RationalTime{0, seq->frameRate()};
+    }
+
+    if (selection_.size() > 1) {
+        // The whole set moves by whatever the dragged clip moved, measured
+        // against where the clip is now, so a step the model refuses does not
+        // accumulate into a growing offset.
+        const time::RationalTime delta = start - clip->start();
+        if (delta.frames() == 0) {
+            return;
+        }
+        auto multi = edit::makeMoveClips(*project_, sequenceId_, selection_, delta);
+        if (!multi) {
+            return;
+        }
+        commands_->execute(*project_, std::move(*multi));
+        emit edited();
+        update();
+        return;
     }
 
     // Each move is its own command, and they coalesce: the merge key is the
@@ -631,7 +719,31 @@ void TimelineWidget::finishDrag() {
     rippleTrim_ = false;
 }
 
-void TimelineWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
+void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
+    const model::Sequence* seq = sequence();
+    if (drag_ == Drag::MaybeBand) {
+        // Never became a drag, so it was a click: put the playhead there.
+        drag_ = Drag::None;
+        scrubTo(static_cast<int>(event->position().x()));
+        return;
+    }
+    if (drag_ == Drag::Band && seq != nullptr) {
+        const auto hits =
+            layout_.hitTestRect(*seq, band_.left(), band_.top(), band_.right(), band_.bottom());
+        if (!event->modifiers().testFlag(Qt::ShiftModifier)) {
+            selection_.clear();
+        }
+        for (const auto& hit : hits) {
+            if (!isSelected(hit.clip)) {
+                selection_.push_back(edit::ClipRef{hit.track, hit.clip});
+            }
+        }
+        band_ = QRect();
+        drag_ = Drag::None;
+        announceSelection();
+        update();
+        return;
+    }
     finishDrag();
 }
 
@@ -716,18 +828,17 @@ void TimelineWidget::addDissolveAtPlayhead() {
 }
 
 void TimelineWidget::removeSelected(bool ripple) {
-    if (project_ == nullptr || commands_ == nullptr || !selected_.isValid()) {
+    if (project_ == nullptr || commands_ == nullptr || selection_.empty()) {
         return;
     }
-    const edit::EditTarget target{sequenceId_, selectedTrack_};
-    auto built = ripple ? edit::makeExtract(*project_, target, selected_)
-                        : edit::makeLift(*project_, target, selected_);
+    auto built = edit::makeRemoveClips(*project_, sequenceId_, selection_, ripple);
     if (!built) {
         return;
     }
     commands_->execute(*project_, std::move(*built));
     commands_->breakMerge();
-    selected_ = {};
+    selection_.clear();
+    announceSelection();
     emit edited();
     update();
 }
@@ -761,6 +872,21 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
                 return;
             }
             break;
+        case Qt::Key_A:
+            if (event->modifiers().testFlag(Qt::ControlModifier) ||
+                event->modifiers().testFlag(Qt::MetaModifier)) {
+                selection_.clear();
+                for (const auto* list : {&seq->videoTracks(), &seq->audioTracks()}) {
+                    for (const model::Track& track : *list) {
+                        for (const model::Clip& clip : track.clips()) {
+                            selection_.push_back(edit::ClipRef{track.id(), clip.id});
+                        }
+                    }
+                }
+                announceSelection();
+                return;
+            }
+            break;
         case Qt::Key_Z:
             if (event->modifiers().testFlag(Qt::ControlModifier) ||
                 event->modifiers().testFlag(Qt::MetaModifier)) {
@@ -769,7 +895,8 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
                 } else {
                     commands_->undo(*project_);
                 }
-                selected_ = {};
+                selection_.clear();
+                announceSelection();
                 emit edited();
                 update();
                 return;

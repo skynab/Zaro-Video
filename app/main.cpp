@@ -871,6 +871,161 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Multi-selection, driven as a rubber band. Starting below the last
+        // track means the press lands on empty timeline rather than grabbing a
+        // clip, which is what makes it a band rather than a move.
+        {
+            const auto* seq = window.project().findSequence(sequence.id());
+            const auto lastRow = timeline->rowFor(seq->audioTracks().back().id());
+            if (!lastRow) {
+                std::fprintf(stderr, "  FAIL: no audio row\n");
+                return 1;
+            }
+            const int belowTracks = lastRow->top + lastRow->height + 12;
+            const int acrossTop = timeline->rowFor(seq->videoTracks().front().id())->top + 4;
+
+            std::int64_t clipsBefore = 0;
+            for (const auto* list : {&seq->videoTracks(), &seq->audioTracks()}) {
+                for (const auto& track : *list) {
+                    clipsBefore += static_cast<std::int64_t>(track.clips().size());
+                }
+            }
+
+            {
+                QMouseEvent press(QEvent::MouseButtonPress, QPointF(200, belowTracks),
+                                  QPointF(200, belowTracks), Qt::LeftButton, Qt::LeftButton,
+                                  Qt::NoModifier);
+                QCoreApplication::sendEvent(timeline, &press);
+                // Baseline after the press, not before: the press clears the
+                // previous selection, and those clips repaint. Taking it here
+                // leaves the band as the only difference.
+                const QImage quiet = timeline->grab().toImage();
+                for (int i = 1; i <= 8; ++i) {
+                    const int bx = 200 + (1400 - 200) * i / 8;
+                    const int by = belowTracks + (acrossTop - belowTracks) * i / 8;
+                    QMouseEvent move(QEvent::MouseMove, QPointF(bx, by), QPointF(bx, by),
+                                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(timeline, &move);
+                }
+                // The band rectangle is the only feedback this gesture gives,
+                // so check it actually reaches the screen, and only inside its
+                // own bounds.
+                const QImage banded = timeline->grab().toImage();
+                // grab() returns device pixels, so on a retina display the
+                // image is twice the size of the coordinates the events used.
+                const auto dpr = static_cast<int>(banded.devicePixelRatio());
+                const QRect drawn = QRect(QPoint(200, belowTracks), QPoint(1400, acrossTop))
+                                        .normalized()
+                                        .intersected(timeline->rect());
+                std::int64_t changedInside = 0;
+                std::int64_t changedOutside = 0;
+                for (int py = 0; py < banded.height(); ++py) {
+                    for (int px = 0; px < banded.width(); ++px) {
+                        if (banded.pixel(px, py) == quiet.pixel(px, py)) {
+                            continue;
+                        }
+                        if (drawn.adjusted(-2, -2, 2, 2).contains(px / dpr, py / dpr)) {
+                            ++changedInside;
+                        } else {
+                            ++changedOutside;
+                        }
+                    }
+                }
+                std::printf("  band drawn: %lld pixels changed inside, %lld outside\n",
+                            static_cast<long long>(changedInside),
+                            static_cast<long long>(changedOutside));
+                if (changedInside == 0) {
+                    std::fprintf(stderr, "  FAIL: the rubber band painted nothing\n");
+                    return 1;
+                }
+                if (changedOutside > 0) {
+                    std::fprintf(stderr, "  FAIL: the band painted outside its own rectangle\n");
+                    return 1;
+                }
+
+                QMouseEvent release(QEvent::MouseButtonRelease, QPointF(1400, acrossTop),
+                                    QPointF(1400, acrossTop), Qt::LeftButton, Qt::NoButton,
+                                    Qt::NoModifier);
+                QCoreApplication::sendEvent(timeline, &release);
+            }
+
+            // Dragging any member of a selection has to move all of it, by the
+            // same amount. Record where everything sits, nudge one clip, and
+            // compare the shifts.
+            std::vector<std::pair<model::ClipId, std::int64_t>> startsBefore;
+            for (const auto* list : {&seq->videoTracks(), &seq->audioTracks()}) {
+                for (const auto& track : *list) {
+                    for (const auto& clip : track.clips()) {
+                        startsBefore.emplace_back(clip.id, clip.start().frames());
+                    }
+                }
+            }
+            const auto videoRow = timeline->rowFor(seq->videoTracks().front().id());
+            const int grabY = videoRow->top + videoRow->height / 2;
+            dragOnTimeline(timeline, 400, 520, grabY);
+
+            const auto* moved = window.project().findSequence(sequence.id());
+            std::int64_t shifted = 0;
+            std::int64_t commonShift = 0;
+            for (const auto* list : {&moved->videoTracks(), &moved->audioTracks()}) {
+                for (const auto& track : *list) {
+                    for (const auto& clip : track.clips()) {
+                        for (const auto& [id, was] : startsBefore) {
+                            if (id != clip.id) {
+                                continue;
+                            }
+                            const std::int64_t delta = clip.start().frames() - was;
+                            if (delta == 0) {
+                                continue;
+                            }
+                            ++shifted;
+                            if (commonShift == 0) {
+                                commonShift = delta;
+                            } else if (commonShift != delta) {
+                                std::fprintf(stderr,
+                                             "  FAIL: selection moved unevenly (%lld vs %lld)\n",
+                                             static_cast<long long>(commonShift),
+                                             static_cast<long long>(delta));
+                                shifted = -1;
+                            }
+                        }
+                    }
+                }
+            }
+            if (shifted < 2) {
+                std::fprintf(stderr, "  FAIL: dragging one selected clip moved %lld clips\n",
+                             static_cast<long long>(shifted));
+                return 1;
+            }
+            std::printf("  dragging one member moved %lld clips by %lld frames each\n",
+                        static_cast<long long>(shifted), static_cast<long long>(commonShift));
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+
+            // Deleting reports how much the band caught.
+            QKeyEvent del(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+            QCoreApplication::sendEvent(timeline, &del);
+
+            const auto* banded = window.project().findSequence(sequence.id());
+            std::int64_t clipsAfter = 0;
+            for (const auto* list : {&banded->videoTracks(), &banded->audioTracks()}) {
+                for (const auto& track : *list) {
+                    clipsAfter += static_cast<std::int64_t>(track.clips().size());
+                }
+            }
+            std::printf("  rubber band removed %lld of %lld clips\n",
+                        static_cast<long long>(clipsBefore - clipsAfter),
+                        static_cast<long long>(clipsBefore));
+            if (clipsBefore - clipsAfter < 2) {
+                std::fprintf(stderr,
+                             "  FAIL: the band selected fewer than two clips across tracks\n");
+                return 1;
+            }
+
+            window.commands().undo(window.project());
+        }
+
         std::printf("  ok\n");
         return 0;
     }

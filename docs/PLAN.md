@@ -568,9 +568,7 @@ made that claim checkable rather than hopeful.
 - ✅ Drawn in the ruler, added with M, and navigated with shift-arrow.
 - ✅ **Workspaces**: the panels are splitters now rather than a fixed layout, and their
   sizes and the window geometry are remembered between sessions.
-- ⏸️ **Not done: multi-selection.** Selecting several clips and moving or deleting them
-  together needs a selection model the timeline does not have yet, and an operation that
-  moves a set rather than one clip. Deferred rather than half-built.
+- ✅ **Multi-selection** — deferred out of this phase and done in 4j, below.
 
 **A third id bug, of a kind the round-trip tests could not see.** `highestId` — which
 restarts the id counter after loading — never learned about markers, transitions or link
@@ -751,3 +749,47 @@ Carried forward as known work:
 - A display-referred working space option ([ADR-005](adr/0005-working-colour-space.md)).
 - QRhi is private API in Qt 6.11, so a Qt minor upgrade may require changes in
   `platform/qrhi` ([ADR-007](adr/0007-gpu-compositor-on-qrhi.md)).
+
+#### Phase 4j — multi-selection ✅
+
+Shift-click adds and removes; a rubber band drawn on empty timeline selects everything it
+touches; Cmd/Ctrl-A selects all; dragging any member moves the whole set; Delete lifts the
+set and Shift-Delete extracts it.
+
+**Overlap, not enclosure.** A band selects a clip it *touches*. Requiring a clip to be
+wholly enclosed would make long clips nearly unselectable by band at a normal zoom, since
+one clip can easily be wider than the window.
+
+**A band confined to the track headers selects nothing.** Clamping it into the content
+area instead — the obvious way to handle an out-of-range rectangle — silently turns it
+into a one-frame span at time zero, which then selects whatever happens to start there.
+Refusing is the honest answer to a gesture that never entered the timeline.
+
+**Moving a set lifts everything before placing anything.** Placing clips one at a time
+makes the result depend on the order they are visited: a clip moving right collides with
+its own neighbour, which has not moved yet. Removing them all first and then placing them
+all makes the operation order-independent, which is what "move these together" means.
+
+**Removing a set with ripple goes latest-first.** Closing one gap shifts everything after
+it, so a clip removed early by position would be somewhere else by the time its turn came.
+
+**The primary selection is the first entry**, and it is what Effect Controls shows. A
+panel of parameters has to be about one clip even when several are selected, and picking
+the one the user clicked is the only choice that is not arbitrary.
+
+**Drag deltas are measured against where the clip is now**, not against where the pointer
+started. When the model refuses a step — a locked track, a collision — measuring from the
+press point would keep re-applying the whole accumulated offset and make the set jump as
+soon as the obstruction cleared.
+
+**A retina display broke the first version of the test.** `QWidget::grab` returns device
+pixels, so on a 2× display the band's pixels sit at twice the coordinates the synthetic
+mouse events used, and a check that the band painted only inside its own rectangle failed
+against an image where it did exactly that. The test divides by the device pixel ratio
+now. The band check is worth keeping despite this: a rubber band is a gesture whose only
+feedback is the rectangle, and painting bugs here are invisible to every other test.
+
+The self-test drives real `QMouseEvent`s through the widget rather than calling the
+operations directly, and it caught a genuine failure while being written: the release
+handler had not been wired up, so bands were drawn but never committed, and the test
+reported zero clips selected out of three.

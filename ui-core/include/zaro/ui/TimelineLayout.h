@@ -111,6 +111,16 @@ public:
     [[nodiscard]] std::optional<Hit> hitTest(const model::Sequence& sequence, std::int32_t x,
                                              std::int32_t y) const;
 
+    /// Every clip inside a rectangle, for rubber-band selection.
+    ///
+    /// A clip counts if it overlaps at all rather than only if it is wholly
+    /// enclosed: dragging a band across a timeline is a gesture at the scale of
+    /// the whole track, and requiring full containment means the long clip you
+    /// were obviously pointing at is the one thing left out.
+    [[nodiscard]] std::vector<Hit> hitTestRect(const model::Sequence& sequence, std::int32_t x0,
+                                               std::int32_t y0, std::int32_t x1,
+                                               std::int32_t y1) const;
+
     /// Whether a point is in the ruler, where dragging scrubs the playhead.
     [[nodiscard]] bool isInRuler(std::int32_t x, std::int32_t y) const;
     /// Whether a point is over the track headers.

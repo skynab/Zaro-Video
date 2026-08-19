@@ -953,3 +953,110 @@ TEST_CASE("Markers survive a round trip", "[edit][marker][io]") {
     CHECK(marker.range.start() == f.at(120));
     CHECK(marker.range.duration() == f.at(30));
 }
+
+TEST_CASE("Several clips move as one", "[edit][multiselect]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(200, 50, 700))));
+
+    const auto& clips = f.track(f.v1).clips();
+    const std::vector<edit::ClipRef> selection{{f.v1, clips[0].id}, {f.v1, clips[1].id}};
+
+    SECTION("keeping their spacing") {
+        REQUIRE(f.run(edit::makeMoveClips(f.project, f.sequenceId, selection, f.at(300))));
+        CHECK(f.layout(f.v1) == "200-250@700 300-350@500 350-400@600");
+    }
+
+    SECTION("the result does not depend on the order they were given in") {
+        testing::Fixture g;
+        REQUIRE(g.run(edit::makeOverwrite(g.project, g.on(g.v1), g.clip(0, 50, 500))));
+        REQUIRE(g.run(edit::makeOverwrite(g.project, g.on(g.v1), g.clip(50, 50, 600))));
+        const auto& other = g.track(g.v1).clips();
+        // Reversed: moving one at a time, the first would overwrite the second
+        // on its way past.
+        REQUIRE(g.run(edit::makeMoveClips(g.project, g.sequenceId,
+                                          {{g.v1, other[1].id}, {g.v1, other[0].id}},
+                                          g.at(25))));
+        CHECK(g.layout(g.v1) == "25-75@500 75-125@600");
+    }
+
+    SECTION("moving onto itself is not a collision") {
+        // A shift smaller than the clips' own length means the set overlaps
+        // where it was, which only works because everything is lifted first.
+        REQUIRE(f.run(edit::makeMoveClips(f.project, f.sequenceId, selection, f.at(10))));
+        CHECK(f.layout(f.v1) == "10-60@500 60-110@600 200-250@700");
+    }
+
+    SECTION("one undo for the whole set") {
+        REQUIRE(f.run(edit::makeMoveClips(f.project, f.sequenceId, selection, f.at(300))));
+        REQUIRE(f.stack.undo(f.project));
+        CHECK(f.layout(f.v1) == "0-50@500 50-100@600 200-250@700");
+    }
+
+    SECTION("moving before the start is refused") {
+        CHECK_FALSE(f.run(edit::makeMoveClips(f.project, f.sequenceId, selection, f.at(-10))));
+    }
+
+    SECTION("an empty selection is refused") {
+        CHECK_FALSE(f.run(edit::makeMoveClips(f.project, f.sequenceId, {}, f.at(10))));
+    }
+}
+
+TEST_CASE("Several clips are removed as one", "[edit][multiselect]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(100, 50, 700))));
+
+    const auto& clips = f.track(f.v1).clips();
+    const std::vector<edit::ClipRef> selection{{f.v1, clips[0].id}, {f.v1, clips[2].id}};
+
+    SECTION("lifting leaves the gaps") {
+        REQUIRE(f.run(edit::makeRemoveClips(f.project, f.sequenceId, selection, false)));
+        CHECK(f.layout(f.v1) == "50-100@600");
+    }
+
+    SECTION("extracting closes them, latest first") {
+        // Closing the earlier gap first would move the later clip out from
+        // under the position recorded for it.
+        REQUIRE(f.run(edit::makeRemoveClips(f.project, f.sequenceId, selection, true)));
+        CHECK(f.layout(f.v1) == "0-50@600");
+    }
+}
+
+TEST_CASE("A multi-clip edit carries linked partners with it",
+          "[edit][multiselect][link]") {
+    testing::Fixture f;
+    const LinkedPair first = linkPair(f, 0, 50);
+    const LinkedPair second = linkPair(f, 50, 50);
+
+    // Only the picture is selected; the sound comes along because it is linked.
+    REQUIRE(f.run(edit::makeMoveClips(f.project, f.sequenceId,
+                                      {{f.v1, first.video}, {f.v1, second.video}}, f.at(200))));
+    CHECK(f.layout(f.v1) == "200-250@500 250-300@500");
+    CHECK(f.layout(f.a1) == "200-250@500 250-300@500");
+
+    SECTION("and removing them takes the sound too") {
+        REQUIRE(f.run(edit::makeRemoveClips(f.project, f.sequenceId,
+                                            {{f.v1, first.video}}, false)));
+        CHECK(f.layout(f.v1) == "250-300@500");
+        CHECK(f.layout(f.a1) == "250-300@500");
+    }
+}
+
+TEST_CASE("A multi-clip edit refuses a locked track", "[edit][multiselect]") {
+    testing::Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v2), f.clip(0, 50, 600))));
+    const model::ClipId a = f.track(f.v1).clips()[0].id;
+    const model::ClipId b = f.track(f.v2).clips()[0].id;
+    f.track(f.v2).setLocked(true);
+
+    // Refused outright rather than moving half the selection: the user pointed
+    // at a set, and half of it arriving somewhere else is worse than nothing.
+    CHECK_FALSE(f.run(edit::makeMoveClips(f.project, f.sequenceId,
+                                          {{f.v1, a}, {f.v2, b}}, f.at(100))));
+    CHECK(f.layout(f.v1) == "0-50@500");
+    CHECK(f.layout(f.v2) == "0-50@600");
+}

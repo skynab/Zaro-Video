@@ -19,6 +19,12 @@ struct EditTarget {
 /// Which end of a clip a trim moves.
 enum class Edge { In, Out };
 
+/// Which clip, on which track.
+struct ClipRef {
+    model::TrackId track;
+    model::ClipId clip;
+};
+
 /// Every operation is built, validated and only then executed.
 ///
 /// Validation happens here, before the command exists, so an edit that cannot
@@ -73,6 +79,22 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makePlaceFromSource(
     model::Project& project, const EditTarget& target, model::MediaRefId media,
     const time::TimeRange& sourceRange, const time::RationalTime& timelineStart, PlaceMode mode);
+
+// --- Several clips at once --------------------------------------------------
+
+/// Move a set of clips by the same amount, keeping their spacing.
+///
+/// Not the same as moving each in turn: doing it one at a time would have each
+/// overwrite the next while they are mid-flight, and the result would depend on
+/// the order they happened to be in. They are all lifted first and then placed.
+[[nodiscard]] Result<CommandPtr> makeMoveClips(model::Project& project, model::SequenceId sequence,
+                                               const std::vector<ClipRef>& clips,
+                                               const time::RationalTime& delta);
+
+/// Remove a set of clips, leaving gaps or closing them.
+[[nodiscard]] Result<CommandPtr> makeRemoveClips(model::Project& project,
+                                                 model::SequenceId sequence,
+                                                 const std::vector<ClipRef>& clips, bool ripple);
 
 // --- Cutting ----------------------------------------------------------------
 
@@ -172,12 +194,6 @@ enum class PlaceMode {
                                                   std::string note, std::int32_t colour);
 
 // --- Linking ----------------------------------------------------------------
-
-/// Which clip, on which track.
-struct ClipRef {
-    model::TrackId track;
-    model::ClipId clip;
-};
 
 /// Join clips into a link group, so they move, trim and are removed together.
 ///
