@@ -61,7 +61,8 @@ public:
     [[nodiscard]] Status draw(const render::RgbaImage& source, const model::Transform& transform,
                               model::BlendMode blend = model::BlendMode::Normal,
                               const render::GradeConstants& grade = {},
-                              const render::CurveTable* curves = nullptr);
+                              const render::CurveTable* curves = nullptr,
+                              const render::SecondaryConstants* secondary = nullptr);
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -74,7 +75,8 @@ public:
                                     const model::Transform& transform,
                                     const render::GradeConstants& grade,
                                     model::BlendMode blend = model::BlendMode::Normal,
-                                    const render::CurveTable* curves = nullptr);
+                                    const render::CurveTable* curves = nullptr,
+                                    const render::SecondaryConstants* secondary = nullptr);
 
     /// Finish, and bring the result back to the CPU.
     ///

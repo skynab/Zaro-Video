@@ -61,8 +61,17 @@ GradeConstants gradeConstantsFor(const model::ColorCorrection& correction) {
     return grade;
 }
 
-void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
-                const CurveTable* curves) {
+SecondaryConstants secondaryConstantsFor(const model::Secondary& secondary,
+                                         media::TransferFunction transfer) {
+    SecondaryConstants out;
+    out.qualifier = qualifierConstantsFor(secondary.qualifier, transfer);
+    out.grade = gradeConstantsFor(secondary.correction);
+    out.showMask = secondary.showMask;
+    return out;
+}
+
+void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const CurveTable* curves,
+                const SecondaryConstants* secondary) {
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
@@ -96,11 +105,37 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
         g = curves->apply(g, 1);
         b = curves->apply(b, 2);
     }
+
+    if (secondary != nullptr && secondary->isActive()) {
+        const float mask = qualifierMask(secondary->qualifier, r, g, b);
+        if (secondary->showMask) {
+            // The mask itself, as a grey picture. Judging a qualifier by
+            // looking at the corrected result is guesswork.
+            r = mask;
+            g = mask;
+            b = mask;
+            return;
+        }
+        if (mask > 0.0F) {
+            float sr = r;
+            float sg = g;
+            float sb = b;
+            gradePixel(secondary->grade, sr, sg, sb);
+            // Blended by the mask rather than switched on it: a soft edge is
+            // the whole point of the qualifier, and a hard swap would throw it
+            // away at the last step.
+            r += (sr - r) * mask;
+            g += (sg - g) * mask;
+            b += (sb - b) * mask;
+        }
+    }
 }
 
-void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves) {
+void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves,
+                const SecondaryConstants* secondary) {
     const bool curved = curves != nullptr && !curves->isIdentity();
-    if ((grade.isIdentity() && !curved) || !image.isValid()) {
+    const bool keyed = secondary != nullptr && secondary->isActive();
+    if ((grade.isIdentity() && !curved && !keyed) || !image.isValid()) {
         return;
     }
     for (std::int32_t y = 0; y < image.height(); ++y) {
@@ -115,7 +150,7 @@ void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable*
             float r = pixel.r * inverse;
             float g = pixel.g * inverse;
             float b = pixel.b * inverse;
-            gradePixel(grade, r, g, b, curves);
+            gradePixel(grade, r, g, b, curves, secondary);
             pixel.r = r * alpha;
             pixel.g = g * alpha;
             pixel.b = b * alpha;

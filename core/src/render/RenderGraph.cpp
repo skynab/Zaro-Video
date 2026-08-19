@@ -4,6 +4,23 @@
 
 namespace zaro::render {
 
+/// Draw one clip's frame, with everything that applies to it.
+///
+/// A single place on purpose. The three call sites below -- an ordinary clip
+/// and the two halves of a transition -- each used to compute the grade for
+/// themselves, and they drifted: the outgoing half of a transition went two
+/// phases without its colour correction, because a patch that was meant to add
+/// it silently did not match that copy of the code.
+void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
+                           const model::Transform& transform, const time::RationalTime& at) {
+    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at));
+    const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
+    const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
+    const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive();
+    drawTransformed(image, out, transform, clip.blend, active ? &grade : nullptr,
+                    active ? &table : nullptr, active ? &secondary : nullptr);
+}
+
 Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,
                                   RgbaImage& out) {
     if (sequence.width() <= 0 || sequence.height() <= 0) {
@@ -40,7 +57,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 if (outgoing->enabled) {
                     if (auto image =
                             source_->imageFor(outgoing->source, outgoing->sourceTimeAt(at))) {
-                        drawTransformed(**image, out, outgoing->transformAt(at), outgoing->blend);
+                        drawClip(*outgoing, **image, out, outgoing->transformAt(at), at);
                         ++lastClipCount_;
                     }
                 }
@@ -52,9 +69,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                         // source that gives out*(1-p) + in*p.
                         model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
-                        const GradeConstants grade = gradeConstantsFor(incoming->colorAt(at));
-                        drawTransformed(**image, out, fading, incoming->blend,
-                                        grade.isIdentity() ? nullptr : &grade);
+                        drawClip(*incoming, **image, out, fading, at);
                         ++lastClipCount_;
                     }
                 }
@@ -74,11 +89,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             // render is a stalled edit.
             continue;
         }
-        const GradeConstants grade = gradeConstantsFor(clip->colorAt(at));
-        const CurveTable& table = curves_.tableFor(clip->id.value(), clip->curves, transfer_);
-        const bool active = !grade.isIdentity() || !table.isIdentity();
-        drawTransformed(**image, out, clip->transformAt(at), clip->blend, active ? &grade : nullptr,
-                        active ? &table : nullptr);
+        drawClip(*clip, **image, out, clip->transformAt(at), at);
         ++lastClipCount_;
     }
     return {};

@@ -26,6 +26,7 @@ add_library(zaro_core
     src/render/Compositing.cpp
     src/render/CurveTable.cpp
     src/render/Grade.cpp
+    src/render/Qualifier.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp
     src/render/RgbaImage.cpp

@@ -158,6 +158,69 @@ model::ColorCorrection decodeColor(const json& node) {
     return out;
 }
 
+json encode(const model::Secondary& secondary) {
+    const model::Secondary neutral;
+    if (secondary == neutral) {
+        return json::object();
+    }
+    const model::HslQualifier defaults;
+    json window = json::object();
+    const auto put = [&window](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            window[key] = value;
+        }
+    };
+    put("hueCentre", secondary.qualifier.hueCentre, defaults.hueCentre);
+    put("hueWidth", secondary.qualifier.hueWidth, defaults.hueWidth);
+    put("hueSoftness", secondary.qualifier.hueSoftness, defaults.hueSoftness);
+    put("saturationLow", secondary.qualifier.saturationLow, defaults.saturationLow);
+    put("saturationHigh", secondary.qualifier.saturationHigh, defaults.saturationHigh);
+    put("saturationSoftness", secondary.qualifier.saturationSoftness, defaults.saturationSoftness);
+    put("lumaLow", secondary.qualifier.lumaLow, defaults.lumaLow);
+    put("lumaHigh", secondary.qualifier.lumaHigh, defaults.lumaHigh);
+    put("lumaSoftness", secondary.qualifier.lumaSoftness, defaults.lumaSoftness);
+    if (secondary.qualifier.enabled) {
+        window["enabled"] = true;
+    }
+
+    json out = json::object();
+    if (!window.empty()) {
+        out["qualifier"] = std::move(window);
+    }
+    if (json correction = encode(secondary.correction); !correction.empty()) {
+        out["correction"] = std::move(correction);
+    }
+    // Deliberately not saved: a mask view is how someone is looking at the
+    // picture right now, not something about the cut. Reopening a project into
+    // a grey silhouette would be baffling.
+    return out;
+}
+
+model::Secondary decodeSecondary(const json& node) {
+    model::Secondary out;
+    if (!node.is_object()) {
+        return out;
+    }
+    if (node.contains("qualifier") && node.at("qualifier").is_object()) {
+        const json& window = node.at("qualifier");
+        model::HslQualifier& into = out.qualifier;
+        into.enabled = window.value("enabled", false);
+        into.hueCentre = window.value("hueCentre", into.hueCentre);
+        into.hueWidth = window.value("hueWidth", into.hueWidth);
+        into.hueSoftness = window.value("hueSoftness", into.hueSoftness);
+        into.saturationLow = window.value("saturationLow", into.saturationLow);
+        into.saturationHigh = window.value("saturationHigh", into.saturationHigh);
+        into.saturationSoftness = window.value("saturationSoftness", into.saturationSoftness);
+        into.lumaLow = window.value("lumaLow", into.lumaLow);
+        into.lumaHigh = window.value("lumaHigh", into.lumaHigh);
+        into.lumaSoftness = window.value("lumaSoftness", into.lumaSoftness);
+    }
+    if (node.contains("correction")) {
+        out.correction = decodeColor(node.at("correction"));
+    }
+    return out;
+}
+
 json encode(const model::ToneCurves& curves) {
     json out = json::object();
     const auto put = [&out](const char* name, const model::ToneCurve& curve) {
@@ -308,6 +371,9 @@ json encode(const model::Clip& clip) {
     }
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
+    }
+    if (json secondary = encode(clip.secondary); !secondary.empty()) {
+        out["secondary"] = std::move(secondary);
     }
     if (json curves = encode(clip.curves); !curves.empty()) {
         out["curves"] = std::move(curves);
@@ -485,6 +551,9 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("secondary")) {
+        clip.secondary = decodeSecondary(node.at("secondary"));
     }
     if (node.contains("curves")) {
         clip.curves = decodeCurves(node.at("curves"));

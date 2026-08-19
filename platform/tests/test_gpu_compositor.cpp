@@ -1081,3 +1081,143 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
     INFO("worst " << difference.worst << ", mean " << difference.mean);
     CHECK(difference.worst < 0.02F);
 }
+
+TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][secondary]") {
+    // The qualifier is the one piece of this pipeline written twice: the CPU
+    // has render::qualifierMask and the shader has its own copy, because a
+    // per-pixel mask cannot be baked into a table the way a curve can. So it
+    // gets the same treatment the primary correction did -- checked directly,
+    // over enough cases that a disagreement in any one window shows up.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::Secondary secondary;
+    };
+    std::vector<Case> cases;
+    {
+        model::Secondary reds;
+        reds.qualifier.enabled = true;
+        reds.qualifier.hueCentre = 0.0;
+        reds.qualifier.hueWidth = 60.0;
+        reds.qualifier.hueSoftness = 20.0;
+        reds.correction.exposure = -1.5;
+        cases.push_back({"reds down", reds});
+
+        model::Secondary greens;
+        greens.qualifier.enabled = true;
+        greens.qualifier.hueCentre = 120.0;
+        greens.qualifier.hueWidth = 80.0;
+        greens.qualifier.hueSoftness = 30.0;
+        greens.correction.saturation = 170.0;
+        cases.push_back({"greens up", greens});
+
+        model::Secondary shadows;
+        shadows.qualifier.enabled = true;
+        shadows.qualifier.lumaHigh = 0.35;
+        shadows.qualifier.lumaSoftness = 0.1;
+        shadows.correction.temperature = 60.0;
+        cases.push_back({"cool shadows", shadows});
+
+        model::Secondary highs;
+        highs.qualifier.enabled = true;
+        highs.qualifier.lumaLow = 0.6;
+        highs.qualifier.lumaSoftness = 0.1;
+        highs.correction.contrast = 40.0;
+        cases.push_back({"highlight contrast", highs});
+
+        model::Secondary vivid;
+        vivid.qualifier.enabled = true;
+        vivid.qualifier.saturationLow = 0.4;
+        vivid.qualifier.saturationSoftness = 0.15;
+        vivid.correction.saturation = 40.0;
+        cases.push_back({"tame the vivid", vivid});
+
+        model::Secondary masked;
+        masked.qualifier.enabled = true;
+        masked.qualifier.hueCentre = 200.0;
+        masked.qualifier.hueWidth = 70.0;
+        masked.qualifier.hueSoftness = 25.0;
+        masked.showMask = true;
+        cases.push_back({"mask view", masked});
+    }
+
+    // Every hue, a spread of saturations, and brightnesses from shadow to
+    // above white -- so each window is exercised by something.
+    RgbaImage source{48, 48};
+    for (std::int32_t y = 0; y < 48; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 48; ++x) {
+            const float hue = (static_cast<float>(x) / 48.0F) * 6.0F;
+            const auto sector = static_cast<int>(hue) % 6;
+            const float f = hue - std::floor(hue);
+            const float level = 0.02F + ((static_cast<float>(y) / 47.0F) * 1.3F);
+            const float dull = static_cast<float>(y % 3) * 0.25F;
+            float r = 0.0F;
+            float g = 0.0F;
+            float b = 0.0F;
+            switch (sector) {
+                case 0:
+                    r = 1.0F;
+                    g = f;
+                    b = 0.0F;
+                    break;
+                case 1:
+                    r = 1.0F - f;
+                    g = 1.0F;
+                    b = 0.0F;
+                    break;
+                case 2:
+                    r = 0.0F;
+                    g = 1.0F;
+                    b = f;
+                    break;
+                case 3:
+                    r = 0.0F;
+                    g = 1.0F - f;
+                    b = 1.0F;
+                    break;
+                case 4:
+                    r = f;
+                    g = 0.0F;
+                    b = 1.0F;
+                    break;
+                default:
+                    r = 1.0F;
+                    g = 0.0F;
+                    b = 1.0F - f;
+                    break;
+            }
+            row[x] =
+                Rgba{((r * (1.0F - dull)) + dull) * level, ((g * (1.0F - dull)) + dull) * level,
+                     ((b * (1.0F - dull)) + dull) * level, 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const auto secondary =
+            render::secondaryConstantsFor(testCase.secondary, media::TransferFunction::BT709);
+        REQUIRE(secondary.isActive());
+        const render::GradeConstants neutral;
+
+        RgbaImage cpuOut{48, 48};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
+                                &secondary);
+
+        REQUIRE(compositor->beginFrame(48, 48).ok());
+        REQUIRE(
+            compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, &secondary)
+                .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.002F);
+    }
+}

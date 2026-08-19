@@ -34,6 +34,9 @@ private:
     /// Baked tone curves, kept between frames: building one is thousands of
     /// spline evaluations, and a grade that is not being edited changes on no
     /// frames at all.
+    void drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
+                  const model::Transform& transform, const time::RationalTime& at);
+
     CurveTableCache curves_;
 
     /// The curve is drawn against the picture as it is *shown*, so baking it

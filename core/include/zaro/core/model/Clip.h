@@ -5,8 +5,9 @@
 #include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
-#include "zaro/core/model/ToneCurve.h"
 #include "zaro/core/model/Ids.h"
+#include "zaro/core/model/Secondary.h"
+#include "zaro/core/model/ToneCurve.h"
 #include "zaro/core/time/TimeRange.h"
 
 namespace zaro::model {
@@ -62,6 +63,11 @@ struct Clip {
     /// the display-encoded domain; the baking into linear happens in
     /// render::CurveTable.
     ToneCurves curves;
+
+    /// One secondary: a correction applied only where its qualifier selects.
+    /// One rather than a list, for now — the machinery is the same either way,
+    /// and a list with no UI to manage it is a list nobody can reach.
+    Secondary secondary;
 
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;

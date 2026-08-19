@@ -23,7 +23,7 @@ constexpr std::array<float, 12> kQuad{
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16;
+constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16);
 
 /// Write a grade into the composite shader's uniform block.
 ///
@@ -61,8 +61,8 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
     return texture;
 }
 
-void writeGrade(std::array<float, 28>& uniformData, const render::GradeConstants& grade,
-                bool curved) {
+void writeGrade(std::array<float, 48>& uniformData, const render::GradeConstants& grade,
+                bool curved, const render::SecondaryConstants* secondary) {
     uniformData[20] = grade.balance.r;
     uniformData[21] = grade.balance.g;
     uniformData[22] = grade.balance.b;
@@ -73,6 +73,35 @@ void writeGrade(std::array<float, 28>& uniformData, const render::GradeConstants
     // ungraded pixel through the table's own resolution, and an ungraded clip
     // has to come out bit-identical.
     uniformData[26] = curved ? 1.0F : 0.0F;
+
+    // Five more vec4s: the secondary's own correction and its three windows.
+    // Written here rather than at each call site for the same reason the flag
+    // is -- a site that forgot them would key on zeros, which selects nothing
+    // and looks exactly like a feature that is switched off.
+    const bool keyed = secondary != nullptr && secondary->isActive();
+    uniformData[28] = keyed ? secondary->grade.balance.r : 1.0F;
+    uniformData[29] = keyed ? secondary->grade.balance.g : 1.0F;
+    uniformData[30] = keyed ? secondary->grade.balance.b : 1.0F;
+    uniformData[31] = keyed ? secondary->grade.exposure : 1.0F;
+    uniformData[32] = keyed ? secondary->grade.contrast : 1.0F;
+    uniformData[33] = keyed ? secondary->grade.saturation : 1.0F;
+    uniformData[34] = keyed && secondary->showMask ? 1.0F : 0.0F;
+    uniformData[35] = keyed ? 1.0F : 0.0F;
+    if (!keyed) {
+        return;
+    }
+    const render::QualifierConstants& window = secondary->qualifier;
+    uniformData[36] = window.hueCentre;
+    uniformData[37] = window.hueInner;
+    uniformData[38] = window.hueOuter;
+    uniformData[40] = window.satInnerLow;
+    uniformData[41] = window.satOuterLow;
+    uniformData[42] = window.satInnerHigh;
+    uniformData[43] = window.satOuterHigh;
+    uniformData[44] = window.lumaInnerLow;
+    uniformData[45] = window.lumaOuterLow;
+    uniformData[46] = window.lumaInnerHigh;
+    uniformData[47] = window.lumaOuterHigh;
 }
 /// The YUV shader adds two more vec4s of colour parameters.
 constexpr int kYuvUniformBytes = 64 + 16 * 3;
@@ -429,7 +458,8 @@ Status GpuCompositor::ensureCompositePipeline(std::size_t blendIndex) {
 
 Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transform& transform,
                            BlendMode blend, const render::GradeConstants& grade,
-                           const render::CurveTable* curves) {
+                           const render::CurveTable* curves,
+                           const render::SecondaryConstants* secondary) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -512,13 +542,13 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 28> uniformData{};
+    std::array<float, 48> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
-    writeGrade(uniformData, grade, curved);
+    writeGrade(uniformData, grade, curved, secondary);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -692,7 +722,8 @@ YuvParameters parametersFor(const media::VideoFrame& source) {
 
 Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::Transform& transform,
                                  const render::GradeConstants& grade, BlendMode blend,
-                                 const render::CurveTable* curves) {
+                                 const render::CurveTable* curves,
+                                 const render::SecondaryConstants* secondary) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -945,13 +976,13 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 28> uniformData{};
+    std::array<float, 48> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
-    writeGrade(uniformData, grade, curved);
+    writeGrade(uniformData, grade, curved, secondary);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -1061,7 +1092,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     matrix.scale(scaleX, scaleY * flip);
 
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
-    std::array<float, 28> uniformData{};
+    std::array<float, 48> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1069,7 +1100,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     uniformData[16] = 1.0F;  // opacity
     // The present pass shows what was already composited. Grading here would
     // apply every clip's correction a second time, to the whole frame.
-    writeGrade(uniformData, render::GradeConstants{}, false);
+    writeGrade(uniformData, render::GradeConstants{}, false, nullptr);
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

@@ -21,10 +21,80 @@ layout(std140, binding = 0) uniform Block {
     // an amount too small to notice and too large to accept.
     vec4 balance;  // rgb: white balance gains, w: exposure multiplier
     vec4 grade;    // x: contrast exponent, y: saturation, z: curves active
+    // The secondary: a correction applied only where the qualifier selects.
+    vec4 secBalance;  // rgb: white balance gains, w: exposure multiplier
+    vec4 secGrade;    // x: contrast, y: saturation, z: show mask, w: enabled
+    vec4 hueWindow;   // x: centre, y: inner, z: outer
+    vec4 satWindow;   // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
+    vec4 lumaWindow;  // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
 } ubuf;
 
 const float kMiddleGrey = 0.18;
 const vec3 kLumaWeights = vec3(0.2126, 0.7152, 0.0722);
+
+// Must agree with render::qualifierMask. It is checked against it.
+float smoothly(float t)
+{
+    float c = clamp(t, 0.0, 1.0);
+    return c * c * (3.0 - 2.0 * c);
+}
+
+float rampUp(float value, float outer, float inner)
+{
+    if (inner <= outer) {
+        return value >= inner ? 1.0 : 0.0;
+    }
+    return smoothly((value - outer) / (inner - outer));
+}
+
+float rampDown(float value, float inner, float outer)
+{
+    if (outer <= inner) {
+        return value <= inner ? 1.0 : 0.0;
+    }
+    return smoothly((outer - value) / (outer - inner));
+}
+
+float qualifierMask(vec3 colour)
+{
+    float high = max(colour.r, max(colour.g, colour.b));
+    float low = min(colour.r, min(colour.g, colour.b));
+    float range = high - low;
+    float saturation = high > 0.0001 ? range / high : 0.0;
+
+    float hue = 0.0;
+    if (range > 0.0001) {
+        if (high == colour.r) {
+            hue = 60.0 * mod((colour.g - colour.b) / range, 6.0);
+        } else if (high == colour.g) {
+            hue = 60.0 * (((colour.b - colour.r) / range) + 2.0);
+        } else {
+            hue = 60.0 * (((colour.r - colour.g) / range) + 4.0);
+        }
+        if (hue < 0.0) {
+            hue += 360.0;
+        }
+    }
+
+    float luma = dot(colour, kLumaWeights);
+
+    // The whole circle selects every hue, including the neutral pixels whose
+    // hue is arbitrary.
+    float distance = abs(hue - ubuf.hueWindow.x);
+    if (distance > 180.0) {
+        distance = 360.0 - distance;
+    }
+    float hueMask = ubuf.hueWindow.y >= 180.0
+                        ? 1.0
+                        : rampDown(distance, ubuf.hueWindow.y, ubuf.hueWindow.z);
+
+    float satMask = rampUp(saturation, ubuf.satWindow.y, ubuf.satWindow.x) *
+                    rampDown(saturation, ubuf.satWindow.z, ubuf.satWindow.w);
+    float lumaMask = rampUp(luma, ubuf.lumaWindow.y, ubuf.lumaWindow.x) *
+                     rampDown(luma, ubuf.lumaWindow.z, ubuf.lumaWindow.w);
+
+    return clamp(hueMask * satMask * lumaMask, 0.0, 1.0);
+}
 
 // Must agree with render::gradePixel. It is checked against it.
 vec3 applyGrade(vec3 colour)
@@ -53,6 +123,25 @@ vec3 applyGrade(vec3 colour)
         colour = vec3(texture(curveTable, vec2(index.r, 0.5)).r,
                       texture(curveTable, vec2(index.g, 0.5)).g,
                       texture(curveTable, vec2(index.b, 0.5)).b);
+    }
+
+    if (ubuf.secGrade.w != 0.0) {
+        float mask = qualifierMask(colour);
+        if (ubuf.secGrade.z != 0.0) {
+            return vec3(mask);
+        }
+        vec3 keyed = colour * ubuf.secBalance.rgb * ubuf.secBalance.w;
+        if (ubuf.secGrade.x != 1.0) {
+            vec3 lifted = max(keyed, vec3(0.0));
+            vec3 curved = kMiddleGrey * pow(lifted / kMiddleGrey, vec3(ubuf.secGrade.x));
+            keyed = mix(keyed, curved, step(vec3(1e-8), keyed));
+        }
+        if (ubuf.secGrade.y != 1.0) {
+            float grey = dot(keyed, kLumaWeights);
+            keyed = vec3(grey) + (keyed - vec3(grey)) * ubuf.secGrade.y;
+        }
+        // Blended by the mask, not switched on it: the soft edge is the point.
+        colour = mix(colour, keyed, mask);
     }
     return colour;
 }

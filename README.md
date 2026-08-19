@@ -44,7 +44,8 @@ headless: there is no window yet.
 | 5d | Primary correction: balance, exposure, contrast, saturation | **done** |
 | 5e | Tone curves: monotonic splines, baked LUT, both paths | **done** |
 | 5f | Curve editor: draggable points, per-channel | **done** |
-| 5g | HSL secondaries, LUTs, audio mixer, graphics | next |
+| 5g | HSL secondaries: qualifier, mask view, both paths | **done** |
+| 5h | Qualifier UI, LUTs, audio mixer, graphics | next |
 
 ## Building
 

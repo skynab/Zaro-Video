@@ -327,3 +327,73 @@ TEST_CASE("Animation follows the picture when a clip is moved and trimmed",
     REQUIRE(f.run(edit::makeTrim(f.project, f.on(f.v1), clip.id, edit::Edge::In, f.at(10))));
     CHECK(graph.composite(f.sequence(), f.at(210))->at(8, 8).a == Approx(halfway).margin(1e-5));
 }
+
+TEST_CASE("Both halves of a transition are graded", "[render][graph][grade]") {
+    // The outgoing half went two phases without its colour correction: each of
+    // the three draw sites carried its own copy of the grade setup, and a patch
+    // meant to update all three matched only two. They share one path now, and
+    // this is the test that says so.
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+
+    model::Clip first = f.clip(0, 50, 500);
+    model::Clip second = f.clip(50, 50, 600);
+    // Both graded down hard, so a half that is not graded shows as a bright
+    // frame rather than as a subtly wrong one.
+    first.color.exposure = -3.0;
+    second.color.exposure = -3.0;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), first)));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), second)));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+
+    // Inside the dissolve both clips contribute. Ungraded white is 1.0; three
+    // stops down is an eighth of that.
+    const auto during = graph.composite(f.sequence(), f.at(48));
+    REQUIRE(during);
+    CHECK(graph.lastClipCount() == 2);
+    CHECK(during->at(8, 8).r < 0.2F);
+
+    // And each half on its own, away from the transition.
+    CHECK(graph.composite(f.sequence(), f.at(10))->at(8, 8).r < 0.2F);
+    CHECK(graph.composite(f.sequence(), f.at(80))->at(8, 8).r < 0.2F);
+}
+
+TEST_CASE("A secondary corrects only what its qualifier selects", "[render][graph][secondary]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    // A saturated red frame.
+    source.define(f.longMedia, opaque(0.8F, 0.05F, 0.05F));
+    render::RenderGraph graph{source};
+
+    model::Clip clip = f.clip(0, 50, 500);
+    clip.secondary.qualifier.enabled = true;
+    clip.secondary.qualifier.hueCentre = 120.0;  // greens, which this frame has none of
+    clip.secondary.qualifier.hueWidth = 30.0;
+    clip.secondary.qualifier.hueSoftness = 5.0;
+    clip.secondary.correction.exposure = -4.0;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), clip)));
+
+    // Nothing selected, so nothing changes.
+    const auto untouched = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(untouched);
+    CHECK(untouched->at(8, 8).r == Approx(0.8F).epsilon(0.01));
+
+    // Aim the same window at red and it takes effect.
+    model::Clip* placed = f.track(f.v1).find(clip.id);
+    placed->secondary.qualifier.hueCentre = 0.0;
+    const auto keyed = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(keyed);
+    CHECK(keyed->at(8, 8).r < 0.1F);
+
+    // And the mask view shows the selection rather than the picture.
+    placed->secondary.showMask = true;
+    const auto mask = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(mask);
+    CHECK(mask->at(8, 8).r == Approx(1.0F).margin(0.01));
+    CHECK(mask->at(8, 8).g == Approx(mask->at(8, 8).r));
+    CHECK(mask->at(8, 8).b == Approx(mask->at(8, 8).r));
+}

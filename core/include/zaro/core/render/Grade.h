@@ -2,6 +2,7 @@
 
 #include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/render/CurveTable.h"
+#include "zaro/core/render/Qualifier.h"
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {
@@ -54,12 +55,33 @@ inline constexpr float kMiddleGrey = 0.18F;
 /// is drawn against what the picture looks like once it has been balanced and
 /// exposed, so applying it first would change its meaning whenever exposure
 /// moved.
+/// A secondary: a correction applied only where the qualifier selects.
+struct SecondaryConstants {
+    QualifierConstants qualifier;
+    GradeConstants grade;
+    /// Show the selection instead of the picture.
+    bool showMask{false};
+
+    [[nodiscard]] bool isActive() const {
+        return qualifier.enabled && (showMask || !grade.isIdentity());
+    }
+};
+
+[[nodiscard]] SecondaryConstants secondaryConstantsFor(const model::Secondary& secondary,
+                                                       media::TransferFunction transfer);
+
+/// The order is primary, curves, secondary — and it is the order a grade is
+/// built in. The primary sets the picture's exposure and balance, the curves
+/// shape its tones, and only then is there something recognisable for a
+/// qualifier to select: a secondary keyed on skin tone before the shot is
+/// balanced is keyed on the wrong colour.
 void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
-                const CurveTable* curves = nullptr);
+                const CurveTable* curves = nullptr, const SecondaryConstants* secondary = nullptr);
 
 /// Grade a whole image in place. The image is premultiplied, so alpha is
 /// divided out and multiplied back: grading a half-faded clip must not depend
 /// on how faded it is.
-void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves = nullptr);
+void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves = nullptr,
+                const SecondaryConstants* secondary = nullptr);
 
 }  // namespace zaro::render

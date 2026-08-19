@@ -309,6 +309,19 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.curves.red.set(model::CurvePoint{0.75, 0.8});
         clip.curves.blue.set(model::CurvePoint{0.1, 0.0});
         clip.curves.blue.set(model::CurvePoint{0.9, 1.0});
+        clip.secondary.qualifier.enabled = true;
+        clip.secondary.qualifier.hueCentre = 214.5;
+        clip.secondary.qualifier.hueWidth = 47.25;
+        clip.secondary.qualifier.hueSoftness = 12.75;
+        clip.secondary.qualifier.saturationLow = 0.185;
+        clip.secondary.qualifier.saturationHigh = 0.925;
+        clip.secondary.qualifier.saturationSoftness = 0.075;
+        clip.secondary.qualifier.lumaLow = 0.135;
+        clip.secondary.qualifier.lumaHigh = 0.865;
+        clip.secondary.qualifier.lumaSoftness = 0.115;
+        clip.secondary.correction.temperature = 31.5;
+        clip.secondary.correction.exposure = -0.875;
+        clip.secondary.correction.saturation = 62.5;
         // One curve of each interpolation, with handles that are not the
         // default ease, so a lost handle or a mode collapsing to linear shows
         // up here rather than as a fade with the wrong shape.
@@ -424,6 +437,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->animation == first.animation);
     CHECK(loadedClip->color == first.color);
     CHECK(loadedClip->curves == first.curves);
+    CHECK(loadedClip->secondary == first.secondary);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

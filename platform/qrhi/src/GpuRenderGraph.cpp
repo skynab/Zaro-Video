@@ -4,6 +4,21 @@
 
 namespace zaro::platform::qrhi {
 
+/// Draw one clip, with everything that applies to it.
+///
+/// A single place, for the same reason the CPU graph has one: the three call
+/// sites below each used to compute the grade for themselves and they drifted
+/// apart, leaving one half of a transition without its tone curves.
+bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& frame,
+                              const model::Transform& transform, const time::RationalTime& at) {
+    const render::SecondaryConstants secondary =
+        render::secondaryConstantsFor(clip.secondary, transfer_);
+    return compositor_
+        ->drawSource(frame, transform, render::gradeConstantsFor(clip.colorAt(at)), clip.blend,
+                     &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary)
+        .ok();
+}
+
 Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::RationalTime& at) {
     lastClipCount_ = 0;
 
@@ -25,11 +40,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 if (outgoing->enabled) {
                     if (auto frame = provider_->sourceFrameFor(outgoing->source,
                                                                outgoing->sourceTimeAt(at))) {
-                        if (compositor_->drawSource(
-                                **frame, outgoing->transformAt(at),
-                                render::gradeConstantsFor(outgoing->colorAt(at)), outgoing->blend,
-                                &curves_.tableFor(outgoing->id.value(), outgoing->curves,
-                                                  transfer_))) {
+                        if (drawClip(*outgoing, **frame, outgoing->transformAt(at), at)) {
                             ++lastClipCount_;
                         }
                     }
@@ -39,9 +50,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                                                                incoming->sourceTimeAt(at))) {
                         model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
-                        if (compositor_->drawSource(
-                                **frame, fading, render::gradeConstantsFor(incoming->colorAt(at)),
-                                incoming->blend)) {
+                        if (drawClip(*incoming, **frame, fading, at)) {
                             ++lastClipCount_;
                         }
                     }
@@ -61,10 +70,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             // same as on the CPU path.
             continue;
         }
-        if (Status drawn = compositor_->drawSource(
-                **frame, clip->transformAt(at), render::gradeConstantsFor(clip->colorAt(at)),
-                clip->blend, &curves_.tableFor(clip->id.value(), clip->curves, transfer_));
-            !drawn) {
+        if (!drawClip(*clip, **frame, clip->transformAt(at), at)) {
             continue;
         }
         ++lastClipCount_;

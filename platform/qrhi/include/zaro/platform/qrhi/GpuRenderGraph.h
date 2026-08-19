@@ -45,6 +45,9 @@ private:
 
     /// graph keeps them: building one is thousands of spline evaluations.
 
+    bool drawClip(const model::Clip& clip, const media::VideoFrame& frame,
+                  const model::Transform& transform, const time::RationalTime& at);
+
     render::CurveTableCache curves_;
 
     media::TransferFunction transfer_{media::TransferFunction::BT709};

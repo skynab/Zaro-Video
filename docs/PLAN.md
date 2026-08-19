@@ -916,6 +916,71 @@ Next: HSL secondaries, LUT (.cube) support, and shot matching.
 
 ---
 
+#### Phase 5g — HSL secondaries ✅ **engine, not yet an editor**
+
+A qualifier — hue, saturation and luma windows multiplied together — and a
+correction applied only where it selects, on both render paths, with a mask view.
+
+**Every edge is soft.** A hard threshold gives a mask with stepped edges, and a
+correction through it looks like a sticker rather than a grade. All three
+windows fall off with the same smoothstep, so a mask has no seam where one axis
+takes over from another.
+
+**Hue wraps.** A window centred on red runs from about 350 to about 10, and
+subtracting hues without wrapping calls those 340 degrees apart and selects
+nothing — which is the first thing anyone reaching for skin tones would hit. A
+window covering the whole circle keeps neutral pixels too, since grey has no
+hue and "everything dark" is mostly grey.
+
+**Hue and saturation are scene-referred; luma is display-referred.** Hue and
+saturation of light are properties of the light, and computing them from an
+encoded signal would make a qualifier's meaning depend on the display curve the
+sequence happens to carry. Luma is the one axis where a display threshold is
+what somebody means — "midtones" means the tones that look like midtones — so
+those two numbers are converted to linear once, on the CPU, and everything
+downstream compares in linear with no transfer function near a per-pixel path.
+
+**A selection reaching white keeps everything above it.** Linear light does not
+stop at white; a highlight three times white is not "outside the highlights",
+and dropping it would punch holes in exactly the region the qualifier was aimed
+at.
+
+**The mask view is not a debugging aid.** Judging a qualifier by looking at the
+corrected result is guesswork, and it is the only way to see what is selected.
+
+**The order is primary, curves, secondary** — the order a grade is built in. A
+secondary keyed on skin tone before the shot is balanced is keyed on the wrong
+colour.
+
+The qualifier is the one piece of this pipeline that had to be written twice: a
+per-pixel mask cannot be baked into a table the way a curve can. So it gets the
+treatment the primary correction got — six cases over a frame spanning every
+hue, three saturations and brightnesses from shadow to above white, required to
+agree between CPU and shader. Verified to fail when the hue wrap is removed from
+the shader alone.
+
+**The real find was in old code.** Both render graphs had three copies of the
+draw setup — an ordinary clip and the two halves of a transition — and they had
+drifted: the outgoing half of a transition had gone two phases with no colour
+correction at all on the CPU path, and the incoming half had no tone curves on
+the GPU path. Patches meant to update all three had silently matched only some,
+because clang-format had reflowed the others past the patterns being matched.
+Both graphs now have one `drawClip`, and a test composites a graded transition
+and checks both halves; it fails if either is drawn without its grade.
+
+**The undo budget test became a per-clip budget.** Colour correction, curves and
+a qualifier between them added about a tenth to what a snapshot costs, which
+pushed a flat 200 KB cap over. A flat cap would have to be argued upwards every
+time a clip gains a field, without anyone deciding whether the growth was
+reasonable; it now asserts what one clip costs in one snapshot, which is the
+number that actually matters when snapshots hold whole sequences.
+
+**Not done: the qualifier UI.** Same split as the curves: engine first, editor
+next. A qualifier needs eyedroppers, three range controls with soft-edge
+handles, and the mask toggle, and half of that is worse than none.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

@@ -48,7 +48,8 @@ Rgba scaled(const Rgba& pixel, float factor) {
 /// Grading the premultiplied values directly would make the correction depend
 /// on how transparent the pixel is, so a clip would grade differently in the
 /// middle of a dissolve than either side of it.
-Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* curves) {
+Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* curves,
+            const SecondaryConstants* secondary) {
     if (pixel.a <= 0.0001F) {
         return pixel;
     }
@@ -56,14 +57,15 @@ Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* cu
     float r = pixel.r * inverse;
     float g = pixel.g * inverse;
     float b = pixel.b * inverse;
-    gradePixel(grade, r, g, b, curves);
+    gradePixel(grade, r, g, b, curves, secondary);
     return Rgba{r * pixel.a, g * pixel.a, b * pixel.a, pixel.a};
 }
 
 }  // namespace
 
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend,
-              const GradeConstants* grade, const CurveTable* curves) {
+              const GradeConstants* grade, const CurveTable* curves,
+              const SecondaryConstants* secondary) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
@@ -81,7 +83,8 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
         for (std::int32_t x = 0; x < width; ++x) {
             // Opacity scales a premultiplied pixel uniformly, colour and
             // coverage together; that is what keeps a fade linear.
-            const Rgba corrected = grade != nullptr ? graded(in[x], *grade, curves) : in[x];
+            const Rgba corrected =
+                grade != nullptr ? graded(in[x], *grade, curves, secondary) : in[x];
             out[x] =
                 blendPixel(alpha == 1.0F ? corrected : scaled(corrected, alpha), out[x], blend);
         }
@@ -89,13 +92,14 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
 }
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Transform& transform,
-                     BlendMode blend, const GradeConstants* grade, const CurveTable* curves) {
+                     BlendMode blend, const GradeConstants* grade, const CurveTable* curves,
+                     const SecondaryConstants* secondary) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
     if (transform.isIdentity() && source.width() == destination.width() &&
         source.height() == destination.height()) {
-        drawOver(source, destination, 1.0, blend, grade, curves);
+        drawOver(source, destination, 1.0, blend, grade, curves, secondary);
         return;
     }
 
@@ -141,7 +145,7 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
                 continue;
             }
             if (grade != nullptr) {
-                sample = graded(sample, *grade, curves);
+                sample = graded(sample, *grade, curves, secondary);
             }
             out[x] = blendPixel(opacity == 1.0F ? sample : scaled(sample, opacity), out[x], blend);
         }
