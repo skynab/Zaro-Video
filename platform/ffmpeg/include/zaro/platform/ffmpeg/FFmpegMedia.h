@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -39,8 +40,14 @@ namespace zaro::platform::ffmpeg {
 ///
 /// Reads the whole stream, so it is slow enough to belong on a background
 /// thread and is why the result is cached.
+///
+/// `keepGoing` is polled while decoding; returning false abandons the work and
+/// reports `ErrorCode::Cancelled`. Without it, quitting an application during a
+/// scan means either waiting for a two-hour file to finish or killing a thread
+/// mid-decode, and neither is acceptable.
 [[nodiscard]] Result<media::Waveform> buildWaveform(const std::string& path,
-                                                    std::int64_t samplesPerBucket = 512);
+                                                    std::int64_t samplesPerBucket = 512,
+                                                    const std::function<bool()>& keepGoing = {});
 
 /// Peaks on disk, keyed by a file's quick content hash.
 ///
@@ -54,8 +61,12 @@ public:
     explicit WaveformStore(std::string directory);
 
     /// From memory, then from disk, then by decoding. Whatever it takes.
+    ///
+    /// A cancelled build is never written to the cache: a truncated waveform on
+    /// disk would be a wrong answer that persists across restarts.
     [[nodiscard]] Result<media::Waveform> get(const std::string& path,
-                                              std::int64_t samplesPerBucket = 512);
+                                              std::int64_t samplesPerBucket = 512,
+                                              const std::function<bool()>& keepGoing = {});
 
     [[nodiscard]] const std::string& directory() const noexcept { return directory_; }
 

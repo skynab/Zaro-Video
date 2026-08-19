@@ -136,6 +136,8 @@ public:
         refresh();
     }
 
+    ~PreviewWindow() override { shutDown(); }
+
     [[nodiscard]] app::ProgramMonitor* monitor() const { return monitor_; }
     [[nodiscard]] app::TimelineWidget* timeline() const { return timeline_; }
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
@@ -222,14 +224,25 @@ protected:
     }
 
     void closeEvent(QCloseEvent* event) override {
-        stop();
-        if (waveformThread_.joinable()) {
-            waveformThread_.join();
-        }
+        shutDown();
         QWidget::closeEvent(event);
     }
 
 private:
+    /// Stop everything and join. Called from both the close event and the
+    /// destructor, because they are not the same path: quitting with Cmd+Q
+    /// destroys the window without ever delivering a close event, and a
+    /// std::thread destroyed while still joinable calls std::terminate. That
+    /// was a real crash -- the application aborted on quit whenever a waveform
+    /// scan was still running, which on a freshly opened project is always.
+    void shutDown() {
+        shuttingDown_.store(true, std::memory_order_relaxed);
+        stop();
+        if (waveformThread_.joinable()) {
+            waveformThread_.join();
+        }
+    }
+
     void togglePlay() {
         if (playing_) {
             transport_.pause();
@@ -318,8 +331,17 @@ private:
 
         waveformThread_ = std::thread{[this, wanted, cacheDirectory] {
             platform::ffmpeg::WaveformStore store{cacheDirectory.string()};
+            const auto keepGoing = [this] {
+                return !shuttingDown_.load(std::memory_order_relaxed);
+            };
             for (const auto& [id, path] : wanted) {
-                auto built = store.get(path);
+                if (!keepGoing()) {
+                    return;
+                }
+                // Cancellable mid-file, not just between files: one long clip
+                // is the common case, so checking only at file boundaries would
+                // still make quitting wait for the whole scan.
+                auto built = store.get(path, 512, keepGoing);
                 if (!built) {
                     continue;
                 }
@@ -426,6 +448,7 @@ private:
 
     std::thread audioThread_;
     std::thread waveformThread_;
+    std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> audioRunning_{false};
 };
 
@@ -459,6 +482,7 @@ int main(int argc, char** argv) {
     QStringList arguments = QApplication::arguments();
     const bool selfTest = arguments.removeAll("--selftest") > 0;
     const bool editTest = arguments.removeAll("--selftest-edit") > 0;
+    const bool quitTest = arguments.removeAll("--selftest-quit") > 0;
     QString capturePath;
     if (const auto at = arguments.indexOf("--capture"); at >= 0 && at + 1 < arguments.size()) {
         capturePath = arguments.at(at + 1);
@@ -474,6 +498,7 @@ int main(int argc, char** argv) {
         std::puts("  --selftest        render, verify a picture came out, exit");
         std::puts("  --capture <png>   with --selftest, save what the monitor showed");
         std::puts("  --selftest-edit   drive a trim and a drag through the timeline, exit");
+        std::puts("  --selftest-quit   quit with background work in flight, exit");
         return 2;
     }
 
@@ -497,6 +522,17 @@ int main(int argc, char** argv) {
     }
     window.resize(960, 620);
     window.show();
+
+    if (quitTest) {
+        // Quit while the waveform thread is still running, which is what
+        // happens when someone presses Cmd+Q on a freshly opened project.
+        // The window is a local here, so returning destroys it -- and a
+        // std::thread destroyed while still joinable calls std::terminate.
+        // No joining, no waiting: that is the point.
+        QApplication::processEvents();
+        std::printf("zaro-preview quit selftest: exiting with background work in flight\n");
+        return 0;
+    }
 
     if (editTest) {
         // Exercise the timeline's editing interactions the way a mouse does.

@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 
 #include "zaro/core/media/Decoder.h"
@@ -9,7 +10,8 @@
 
 namespace zaro::platform::ffmpeg {
 
-Result<media::Waveform> buildWaveform(const std::string& path, std::int64_t samplesPerBucket) {
+Result<media::Waveform> buildWaveform(const std::string& path, std::int64_t samplesPerBucket,
+                                      const std::function<bool()>& keepGoing) {
     if (samplesPerBucket <= 0) {
         return Error{ErrorCode::InvalidData, "a waveform needs a positive bucket size"};
     }
@@ -22,6 +24,12 @@ Result<media::Waveform> buildWaveform(const std::string& path, std::int64_t samp
     media::Waveform waveform{decoder.info().channelCount, samplesPerBucket,
                              decoder.outputSampleRate()};
     while (true) {
+        // Polled per block rather than per file: a single long clip is the
+        // common case, so checking only between files would still make quitting
+        // wait for the whole thing.
+        if (keepGoing && !keepGoing()) {
+            return Error{ErrorCode::Cancelled, "waveform scan abandoned"};
+        }
         auto block = decoder.nextBuffer();
         if (!block) {
             break;
@@ -37,7 +45,8 @@ WaveformStore::WaveformStore(std::string directory) : directory_{std::move(direc
     std::filesystem::create_directories(directory_, code);
 }
 
-Result<media::Waveform> WaveformStore::get(const std::string& path, std::int64_t samplesPerBucket) {
+Result<media::Waveform> WaveformStore::get(const std::string& path, std::int64_t samplesPerBucket,
+                                           const std::function<bool()>& keepGoing) {
     const auto hash = media::quickContentHash(path);
     if (!hash) {
         return hash.error();
@@ -59,8 +68,10 @@ Result<media::Waveform> WaveformStore::get(const std::string& path, std::int64_t
         // there is no reason to report it.
     }
 
-    auto built = buildWaveform(path, samplesPerBucket);
+    auto built = buildWaveform(path, samplesPerBucket, keepGoing);
     if (!built) {
+        // A cancelled scan is not cached. Writing a partial waveform would make
+        // a wrong answer permanent.
         return built.error();
     }
 

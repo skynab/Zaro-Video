@@ -20,6 +20,8 @@ const char* toString(ErrorCode code) noexcept {
             return "i/o error";
         case ErrorCode::Internal:
             return "internal error";
+        case ErrorCode::Cancelled:
+            return "cancelled";
     }
     return "unknown error";
 }

@@ -16,6 +16,7 @@ enum class ErrorCode {
     EndOfStream,   ///< Not a failure; the caller ran off the end.
     Io,            ///< Read/write failure below us.
     Internal,      ///< Our bug.
+    Cancelled,     ///< Abandoned on request. Not a failure.
 };
 
 [[nodiscard]] const char* toString(ErrorCode code) noexcept;
