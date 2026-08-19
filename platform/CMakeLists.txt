@@ -11,6 +11,7 @@ add_library(zaro_platform_ffmpeg
     ffmpeg/src/ImageIo.cpp
     ffmpeg/src/ProjectMediaSource.cpp
     ffmpeg/src/Encoder.cpp
+    ffmpeg/src/WaveformStore.cpp
 )
 add_library(zaro::platform_ffmpeg ALIAS zaro_platform_ffmpeg)
 

@@ -35,6 +35,7 @@ add_library(zaro_core
     src/media/ColorInfo.cpp
     src/media/PixelFormat.cpp
     src/media/VideoFrame.cpp
+    src/media/Waveform.cpp
     src/time/Rational.cpp
     src/time/RationalTime.cpp
     src/time/TimeRange.cpp

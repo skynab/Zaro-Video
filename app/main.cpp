@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSlider>
@@ -25,8 +26,10 @@
 #include <QWidget>
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
@@ -45,6 +48,9 @@ namespace {
 
 using namespace zaro;
 
+// No Q_OBJECT: this declares no signals or slots of its own, and
+// QMetaObject::invokeMethod with a lambda needs only a QObject to bind the
+// call to. Adding it in a .cpp would also require including its moc output.
 class PreviewWindow : public QWidget {
 public:
     PreviewWindow(model::Project project, io::LoadedProject loaded)
@@ -109,7 +115,22 @@ public:
     }
 
     [[nodiscard]] app::ProgramMonitor* monitor() const { return monitor_; }
+    [[nodiscard]] app::TimelineWidget* timeline() const { return timeline_; }
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
+    [[nodiscard]] model::Project& project() { return project_; }
+
+    /// Block until the background peak generation has finished and its results
+    /// have been delivered. For the self-test, which would otherwise capture
+    /// the timeline before any waveform arrived.
+    void waitForWaveforms() {
+        if (waveformThread_.joinable()) {
+            waveformThread_.join();
+        }
+        // The results are handed over through the event loop, so they are not
+        // on screen until it has been given a chance to run.
+        QApplication::processEvents();
+    }
+    [[nodiscard]] edit::CommandStack& commands() { return commands_; }
 
     Status openMedia() {
         auto opened = platform::ffmpeg::ProjectMediaSource::open(project_);
@@ -119,6 +140,7 @@ public:
         media_ = std::move(*opened);
         monitor_->setSource(sequence_, media_.get());
         timeline_->setProject(&project_, sequence_->id(), &commands_);
+        startWaveforms();
         scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
         refresh();
         return {};
@@ -178,6 +200,9 @@ protected:
 
     void closeEvent(QCloseEvent* event) override {
         stop();
+        if (waveformThread_.joinable()) {
+            waveformThread_.join();
+        }
         QWidget::closeEvent(event);
     }
 
@@ -245,6 +270,44 @@ private:
             sink_->pause();
         }
         playButton_->setText("Play");
+    }
+
+    /// Peaks are generated off the UI thread: decoding a long file's audio
+    /// takes seconds, and a project that freezes while it opens is worse than
+    /// one whose waveforms arrive a moment late.
+    void startWaveforms() {
+        const std::filesystem::path cacheDirectory =
+            std::filesystem::temp_directory_path() / "zaro" / "waveforms";
+
+        // Every media reference is tried, rather than only those the project
+        // file says have audio. That cached info is a cache -- it can be stale,
+        // absent, or written by a build that did not record it -- and deciding
+        // whether to look at a file based on it means a missing field silently
+        // becomes a missing waveform. Files without audio simply fail and are
+        // skipped.
+        std::vector<std::pair<model::MediaRefId, std::string>> wanted;
+        for (const model::MediaRef& ref : project_.media()) {
+            wanted.emplace_back(ref.id, ref.path);
+        }
+        if (wanted.empty()) {
+            return;
+        }
+
+        waveformThread_ = std::thread{[this, wanted, cacheDirectory] {
+            platform::ffmpeg::WaveformStore store{cacheDirectory.string()};
+            for (const auto& [id, path] : wanted) {
+                auto built = store.get(path);
+                if (!built) {
+                    continue;
+                }
+                auto shared = std::make_shared<const media::Waveform>(std::move(*built));
+                // Back to the UI thread to hand it over: the widget is not
+                // thread safe and neither is repainting.
+                QMetaObject::invokeMethod(
+                    this, [this, id, shared] { timeline_->setWaveform(id, shared); },
+                    Qt::QueuedConnection);
+            }
+        }};
     }
 
     void pumpAudio() {
@@ -338,8 +401,31 @@ private:
     bool playing_{false};
 
     std::thread audioThread_;
+    std::thread waveformThread_;
     std::atomic<bool> audioRunning_{false};
 };
+
+}  // namespace
+
+namespace {
+
+/// Drive a real drag through the widget, as the mouse would.
+void dragOnTimeline(app::TimelineWidget* timeline, int fromX, int toX, int y,
+                    Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    const auto press = [&](QEvent::Type type, int x, Qt::MouseButton button,
+                           Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(x, y), QPointF(x, y), button, buttons, modifiers);
+        QCoreApplication::sendEvent(timeline, &event);
+    };
+    press(QEvent::MouseButtonPress, fromX, Qt::LeftButton, Qt::LeftButton);
+    // In steps, because a trim is applied incrementally and a single jump would
+    // not exercise the accumulation the real interaction relies on.
+    const int steps = 8;
+    for (int i = 1; i <= steps; ++i) {
+        press(QEvent::MouseMove, fromX + (toX - fromX) * i / steps, Qt::NoButton, Qt::LeftButton);
+    }
+    press(QEvent::MouseButtonRelease, toX, Qt::LeftButton, Qt::NoButton);
+}
 
 }  // namespace
 
@@ -348,6 +434,7 @@ int main(int argc, char** argv) {
 
     QStringList arguments = QApplication::arguments();
     const bool selfTest = arguments.removeAll("--selftest") > 0;
+    const bool editTest = arguments.removeAll("--selftest-edit") > 0;
     QString capturePath;
     if (const auto at = arguments.indexOf("--capture"); at >= 0 && at + 1 < arguments.size()) {
         capturePath = arguments.at(at + 1);
@@ -362,6 +449,7 @@ int main(int argc, char** argv) {
         std::puts("");
         std::puts("  --selftest        render, verify a picture came out, exit");
         std::puts("  --capture <png>   with --selftest, save what the monitor showed");
+        std::puts("  --selftest-edit   drive a trim and a drag through the timeline, exit");
         return 2;
     }
 
@@ -386,6 +474,80 @@ int main(int argc, char** argv) {
     window.resize(960, 620);
     window.show();
 
+    if (editTest) {
+        // Exercise the timeline's editing interactions the way a mouse does.
+        // The edit operations themselves are covered headlessly; what this
+        // checks is the wiring -- that a drag reaches the right operation with
+        // the right arguments, and that undo steps over the whole gesture.
+        QApplication::processEvents();
+        app::TimelineWidget* timeline = window.timeline();
+        const zaro::model::Sequence& sequence = *window.sequence();
+
+        const zaro::model::Track& videoTrack = sequence.videoTracks().front();
+        if (videoTrack.clips().empty()) {
+            std::fprintf(stderr, "zaro-preview: nothing on V1 to edit\n");
+            return 1;
+        }
+        const zaro::model::Clip original = videoTrack.clips().front();
+        const auto row = timeline->rowFor(videoTrack.id());
+        if (!row) {
+            std::fprintf(stderr, "zaro-preview: V1 has no row\n");
+            return 1;
+        }
+        const int y = row->top + row->height / 2;
+
+        std::printf("zaro-preview edit selftest\n");
+        std::printf("  clip starts at %lld, %lld frames long\n",
+                    static_cast<long long>(original.start().frames()),
+                    static_cast<long long>(original.duration().frames()));
+
+        // Trim the out point inwards by dragging its right edge left.
+        const int outX = static_cast<int>(timeline->layout().xForTime(original.endExclusive()));
+        const int wantedX = outX - 120;
+        dragOnTimeline(timeline, outX - 2, wantedX, y);
+
+        const zaro::model::Clip* trimmed =
+            window.project().findSequence(sequence.id())->videoTracks().front().find(original.id);
+        if (trimmed == nullptr) {
+            std::fprintf(stderr, "  FAIL: the clip disappeared\n");
+            return 1;
+        }
+        const std::int64_t shortened = original.duration().frames() - trimmed->duration().frames();
+        std::printf("  after trimming out by 120px: %lld frames shorter\n",
+                    static_cast<long long>(shortened));
+        if (shortened <= 0) {
+            std::fprintf(stderr, "  FAIL: the trim did not shorten the clip\n");
+            return 1;
+        }
+        // The clip's start must not have moved: that is what distinguishes a
+        // trim from a move.
+        if (trimmed->start() != original.start()) {
+            std::fprintf(stderr, "  FAIL: trimming the out point moved the clip\n");
+            return 1;
+        }
+
+        // One undo, for the whole drag.
+        const std::size_t depthBefore = window.commands().depth();
+        window.commands().undo(window.project());
+        const zaro::model::Clip* restored =
+            window.project().findSequence(sequence.id())->videoTracks().front().find(original.id);
+        if (restored == nullptr || restored->duration() != original.duration()) {
+            std::fprintf(stderr, "  FAIL: one undo did not restore the clip\n");
+            return 1;
+        }
+        std::printf("  one undo restored it (%zu command%s on the stack)\n", depthBefore,
+                    depthBefore == 1 ? "" : "s");
+        if (depthBefore != 1) {
+            std::fprintf(stderr,
+                         "  FAIL: the drag left %zu undo steps; it should coalesce to one\n",
+                         depthBefore);
+            return 1;
+        }
+
+        std::printf("  ok\n");
+        return 0;
+    }
+
     if (!selfTest) {
         return QApplication::exec();
     }
@@ -395,11 +557,34 @@ int main(int argc, char** argv) {
     // back -- the only readback in this program, and it exists for this check.
     const zaro::model::Sequence& sequence = *window.sequence();
     const std::int64_t last = std::max<std::int64_t>(0, sequence.duration().frames() - 1);
+    window.waitForWaveforms();
+    // Sample across the sequence and keep the brightest. A single position is
+    // not a fair test: plenty of real footage is legitimately black at any
+    // given moment, and a fixture that is black except on flash frames would
+    // fail a check aimed at one timecode.
     QImage grabbed;
+    double bestLit = 0.0;
     for (int i = 0; i < 5; ++i) {
         window.setPosition(zaro::time::RationalTime{last * i / 5, sequence.frameRate()});
         QApplication::processEvents();
-        grabbed = window.monitor()->grabFramebuffer();
+        const QImage shot = window.monitor()->grabFramebuffer();
+        if (shot.isNull()) {
+            continue;
+        }
+        std::int64_t lit = 0;
+        for (int y = 0; y < shot.height(); ++y) {
+            for (int x = 0; x < shot.width(); ++x) {
+                if (qGray(shot.pixel(x, y)) > 8) {
+                    ++lit;
+                }
+            }
+        }
+        const double fraction =
+            static_cast<double>(lit) / static_cast<double>(shot.width() * shot.height());
+        if (grabbed.isNull() || fraction > bestLit) {
+            bestLit = fraction;
+            grabbed = shot;
+        }
     }
 
     if (!window.monitor()->lastError().isEmpty()) {
@@ -412,18 +597,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // A frame of solid black would mean the pipeline ran and drew nothing,
-    // which is the failure this is really looking for.
-    std::int64_t lit = 0;
-    for (int y = 0; y < grabbed.height(); ++y) {
-        for (int x = 0; x < grabbed.width(); ++x) {
-            if (qGray(grabbed.pixel(x, y)) > 8) {
-                ++lit;
-            }
-        }
-    }
-    const double litFraction =
-        static_cast<double>(lit) / static_cast<double>(grabbed.width() * grabbed.height());
+    // Black at every sampled position would mean the pipeline ran and drew
+    // nothing, which is the failure this is really looking for.
+    const double litFraction = bestLit;
 
     std::printf("zaro-preview selftest\n");
     std::printf("  %lld frames rendered through the widget\n",

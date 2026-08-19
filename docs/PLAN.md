@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 217 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 225 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -397,6 +397,39 @@ Three bugs, all caught by the layout tests before any of it was painted:
 
 And one caught only by looking: `zoomToFit` ran before the widget had been laid out, so it
 fitted to a width the widget did not yet have. Deferred to the first resize.
+
+#### Phase 4c — trimming and waveforms ✅ **complete**
+
+- ✅ **Trim by dragging clip edges**, with Alt for ripple trim. Trims are expressed as
+  deltas, so each mouse move is measured against where the edge *actually landed* rather
+  than where the pointer wanted it — a clamped trim would otherwise accumulate the
+  difference over a drag.
+- ✅ **Waveforms**, the last thing carried forward from Phase 1. Peaks are min/max per
+  bucket, not averages: averaging a symmetric signal gives zero everywhere and draws a
+  flat line. Bucket boundaries are counted across calls, so a waveform is identical
+  however the decoder happened to chunk its output.
+- ✅ **The content-hashed disk cache**, also deferred from Phase 1. Keyed on size,
+  modification time and a sample of the bytes at each end — deliberately *not* a hash of
+  the whole file, because hashing a hundred gigabytes of camera media on import would
+  make importing unusable, and the cost of being wrong is a stale waveform rather than a
+  corrupted project.
+- ✅ Generation runs on a background thread; a project that freezes while it opens is
+  worse than one whose waveforms arrive a moment late.
+
+Two bugs found along the way, neither in the new code:
+
+- **`ProjectIo` never serialized audio stream info**, so a loaded project silently had no
+  audio metadata at all. It now round-trips. The waveform generator was also changed to
+  try every media reference rather than only those the project file *claims* have audio:
+  that cached info is a cache, and gating work on it means a missing field becomes a
+  missing feature.
+- **The preview self-test asserted the monitor was at least 5% lit at one timecode**, which
+  is fixture-dependent — the click fixture is legitimately black except on flash frames,
+  and the check failed on correct output. It now samples across the sequence and keeps the
+  brightest.
+
+I also twice reported a clean build from a stale binary, because the error grep matched
+`error:` and missed `AutoMoc error`. Broadened.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

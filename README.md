@@ -8,9 +8,10 @@ locked in.
 
 ## Status
 
-**Phase 4b — timeline panel.** A project can be edited, saved, composited,
-rendered to a file, watched, and now cut — there is a program monitor and a
-timeline, with transport, scrubbing, drag-to-move, razor and undo. On a 1080p59.94 timeline the GPU
+**Phase 4c — trimming and waveforms.** A project can be edited, saved,
+composited, rendered to a file, watched, and cut — a program monitor and a
+timeline with transport, scrubbing, drag-to-move, trim, razor, undo, and audio
+waveforms backed by a content-hashed disk cache. On a 1080p59.94 timeline the GPU
 path holds the playhead to zero frames of offset with no audio underruns,
 presenting about 47 of the 59.94 frames per second against the CPU path's 7 —
 the remaining gap is the readback, which a preview window will not do. Still
@@ -27,7 +28,8 @@ headless: there is no window yet.
 | 3d | YUV texture path, GPU colour conversion | **done** |
 | 4a | Preview window, transport, scrubbing | **done** |
 | 4b | Timeline panel: paint, scrub, drag, razor | **done** |
-| 4c | Trim by dragging, waveforms, project bin | next |
+| 4c | Trim by dragging, waveforms, disk cache | **done** |
+| 4d | Project bin, effect controls, transitions | next |
 
 ## Building
 

@@ -188,6 +188,10 @@ json encode(const model::MediaRef& ref) {
         cached["height"] = video->height;
         cached["frameRate"] = encode(video->frameRate);
     }
+    if (const media::AudioStreamInfo* audio = ref.info.primaryAudio()) {
+        cached["audioSampleRate"] = encode(audio->sampleRate);
+        cached["audioChannels"] = audio->channelCount;
+    }
     return json{{"id", ref.id.value()},
                 {"path", ref.path},
                 {"contentHash", ref.contentHash},
@@ -323,6 +327,15 @@ Result<model::MediaRef> decodeMedia(const json& node) {
                 return duration.error();
             }
             ref.info.duration = *duration;
+        }
+        if (cached.contains("audioSampleRate")) {
+            media::AudioStreamInfo audio;
+            if (auto rate = decodeRational(cached.at("audioSampleRate"), "media audioSampleRate")) {
+                audio.sampleRate = *rate;
+            }
+            audio.channelCount = cached.value("audioChannels", 0);
+            audio.duration = ref.info.duration;
+            ref.info.audioStreams.push_back(std::move(audio));
         }
         if (cached.contains("width") && cached.contains("frameRate")) {
             media::VideoStreamInfo video;

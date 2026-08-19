@@ -26,6 +26,7 @@ const QColor kSelectedOutline{255, 196, 92};
 const QColor kPlayhead{236, 92, 82};
 const QColor kText{224, 224, 230};
 const QColor kDimText{150, 150, 160};
+const QColor kWaveform{188, 236, 210};
 
 }  // namespace
 
@@ -93,6 +94,19 @@ void TimelineWidget::zoomToFit() {
         layout_.zoomToFit(duration);
     }
     update();
+}
+
+std::optional<ui::TimelineLayout::Row> TimelineWidget::rowFor(model::TrackId track) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return std::nullopt;
+    }
+    for (const ui::TimelineLayout::Row& row : layout_.rows(*seq)) {
+        if (row.track == track) {
+            return row;
+        }
+    }
+    return std::nullopt;
 }
 
 void TimelineWidget::resizeEvent(QResizeEvent* event) {
@@ -238,11 +252,70 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             painter.drawRect(body.adjusted(0.5, 0.5, -0.5, -0.5));
         }
 
+        if (row.kind == model::TrackKind::Audio) {
+            paintWaveform(painter, *clip, body);
+        }
+
         if (body.width() > 28.0) {
             painter.setPen(kText);
             painter.drawText(body.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
                              QString::fromStdString(clip->name));
         }
+    }
+}
+
+void TimelineWidget::setWaveform(model::MediaRefId media,
+                                 std::shared_ptr<const media::Waveform> waveform) {
+    waveforms_[media.value()] = std::move(waveform);
+    update();
+}
+
+void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body) {
+    const auto found = waveforms_.find(clip.source.value());
+    if (found == waveforms_.end() || found->second == nullptr) {
+        return;
+    }
+    const media::Waveform& waveform = *found->second;
+    if (!waveform.isValid() || waveform.bucketCount() == 0) {
+        return;
+    }
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+
+    const double midY = body.center().y();
+    const double halfHeight = body.height() * 0.42;
+    painter.setPen(kWaveform);
+
+    // One column per pixel, resolved through the clip's own source mapping --
+    // so a trimmed clip shows the part of the waveform it actually plays, and a
+    // clip moved along the timeline takes its waveform with it, without any of
+    // that being special-cased here.
+    const auto from = static_cast<int>(std::floor(body.left()));
+    const auto to = static_cast<int>(std::ceil(body.right()));
+    for (int x = from; x < to; ++x) {
+        const time::RationalTime timelineTime = layout_.timeForX(x, seq->frameRate());
+        if (!clip.timelineRange.contains(timelineTime)) {
+            continue;
+        }
+        const time::RationalTime sourceTime = clip.sourceTimeAt(timelineTime);
+        const std::int64_t sample = sourceTime.rescaledTo(waveform.sampleRate()).frames();
+        const std::int64_t bucket = sample / waveform.samplesPerBucket();
+        if (bucket < 0 || bucket >= waveform.bucketCount()) {
+            continue;
+        }
+
+        // Channels folded together: at track height there is no room to show
+        // them apart, and the envelope of the loudest is what matters.
+        float minimum = 0.0F;
+        float maximum = 0.0F;
+        for (std::int32_t c = 0; c < waveform.channelCount(); ++c) {
+            minimum = std::min(minimum, waveform.at(c, bucket).minimum);
+            maximum = std::max(maximum, waveform.at(c, bucket).maximum);
+        }
+        painter.drawLine(QPointF(x, midY - static_cast<double>(maximum) * halfHeight),
+                         QPointF(x, midY - static_cast<double>(minimum) * halfHeight));
     }
 }
 
@@ -327,13 +400,13 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
 
     selected_ = hit->clip;
     selectedTrack_ = hit->track;
-    if (hit->part == ui::TimelineLayout::Part::Body) {
-        beginDrag(*hit, x);
-    }
+    // Alt turns a trim into a ripple trim, closing the gap it would leave
+    // instead of opening one.
+    beginDrag(*hit, x, event->modifiers().testFlag(Qt::AltModifier));
     update();
 }
 
-void TimelineWidget::beginDrag(const ui::TimelineLayout::Hit& hit, int x) {
+void TimelineWidget::beginDrag(const ui::TimelineLayout::Hit& hit, int x, bool ripple) {
     const model::Sequence* seq = sequence();
     const model::Track* track = seq->findTrack(hit.track);
     if (track == nullptr) {
@@ -343,10 +416,65 @@ void TimelineWidget::beginDrag(const ui::TimelineLayout::Hit& hit, int x) {
     if (clip == nullptr) {
         return;
     }
-    // Remember where in the clip the pointer landed, so it does not leap to
-    // put its start under the cursor.
-    grabOffset_ = layout_.timeForX(x, seq->frameRate()) - clip->start();
-    drag_ = Drag::MoveClip;
+    rippleTrim_ = ripple;
+
+    switch (hit.part) {
+        case ui::TimelineLayout::Part::InEdge:
+            drag_ = Drag::TrimIn;
+            trimAnchor_ = clip->start();
+            return;
+        case ui::TimelineLayout::Part::OutEdge:
+            drag_ = Drag::TrimOut;
+            trimAnchor_ = clip->endExclusive();
+            return;
+        case ui::TimelineLayout::Part::Body:
+        default:
+            // Remember where in the clip the pointer landed, so it does not
+            // leap to put its start under the cursor.
+            grabOffset_ = layout_.timeForX(x, seq->frameRate()) - clip->start();
+            drag_ = Drag::MoveClip;
+            return;
+    }
+}
+
+void TimelineWidget::updateTrim(int x) {
+    model::Sequence* seq = project_->findSequence(sequenceId_);
+    if (seq == nullptr || !selected_.isValid() || commands_ == nullptr) {
+        return;
+    }
+    const bool trimmingIn = drag_ == Drag::TrimIn;
+
+    auto wanted = layout_.timeForX(x, seq->frameRate());
+    wanted = maybeSnap(wanted, selected_);
+
+    const time::RationalTime delta = wanted - trimAnchor_;
+    if (delta.isZero()) {
+        return;
+    }
+
+    const edit::EditTarget target{sequenceId_, selectedTrack_};
+    const edit::Edge edge = trimmingIn ? edit::Edge::In : edit::Edge::Out;
+    auto built = rippleTrim_ ? edit::makeRippleTrim(*project_, target, selected_, edge, delta)
+                             : edit::makeTrim(*project_, target, selected_, edge, delta);
+    if (!built) {
+        // Refused -- out of source, or into a neighbour. Leave the clip alone;
+        // the pointer can keep moving and the trim resumes when it becomes
+        // legal again.
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+
+    // Re-read where the edge actually ended up. A trim can be clamped, and
+    // measuring the next delta from where the pointer wanted rather than from
+    // where the edge landed would accumulate the difference.
+    if (const model::Track* track = seq->findTrack(selectedTrack_)) {
+        if (const model::Clip* clip = track->find(selected_)) {
+            trimAnchor_ = trimmingIn ? clip->start() : clip->endExclusive();
+        }
+    }
+
+    emit edited();
+    update();
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
@@ -359,6 +487,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     }
     if (drag_ == Drag::MoveClip) {
         updateDrag(x);
+        return;
+    }
+    if (drag_ == Drag::TrimIn || drag_ == Drag::TrimOut) {
+        updateTrim(x);
         return;
     }
 
@@ -400,11 +532,12 @@ void TimelineWidget::updateDrag(int x) {
 }
 
 void TimelineWidget::finishDrag() {
-    if (drag_ == Drag::MoveClip && commands_ != nullptr) {
+    if (drag_ != Drag::None && drag_ != Drag::Scrub && commands_ != nullptr) {
         // Close the merge group, so the next gesture is a separate undo step.
         commands_->breakMerge();
     }
     drag_ = Drag::None;
+    rippleTrim_ = false;
 }
 
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
