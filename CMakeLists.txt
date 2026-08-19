@@ -23,6 +23,7 @@ option(ZARO_SANITIZE          "Enable ASan+UBSan (Debug only)"  OFF)
 include(CompilerWarnings)
 
 add_subdirectory(core)
+add_subdirectory(ui-core)
 add_subdirectory(platform)
 add_subdirectory(tools)
 add_subdirectory(app)

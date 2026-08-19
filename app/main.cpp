@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSlider>
 #include <QTimer>
@@ -28,6 +29,7 @@
 #include <thread>
 #include <vector>
 
+#include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
@@ -37,6 +39,7 @@
 #include "zaro/platform/sdl/AudioSink.h"
 
 #include "ProgramMonitor.h"
+#include "TimelineWidget.h"
 
 namespace {
 
@@ -65,9 +68,27 @@ public:
         transportRow->addWidget(scrubber_, 1);
         transportRow->addWidget(timecode_);
 
+        timeline_ = new app::TimelineWidget(this);
+
         auto* layout = new QVBoxLayout(this);
-        layout->addWidget(monitor_, 1);
+        layout->addWidget(monitor_, 3);
         layout->addLayout(transportRow);
+        layout->addWidget(timeline_, 2);
+
+        // The two panels drive each other: scrubbing the timeline moves the
+        // picture, and playback moves the playhead.
+        connect(timeline_, &app::TimelineWidget::playheadMoved, this,
+                [this](const time::RationalTime& position) {
+                    stop();
+                    setPosition(position);
+                });
+        connect(timeline_, &app::TimelineWidget::edited, this, [this] {
+            // An edit can change the duration, and can change what is under the
+            // playhead, so both the scrubber and the picture need refreshing.
+            scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+            monitor_->update();
+            refresh();
+        });
 
         connect(playButton_, &QPushButton::clicked, this, [this] { togglePlay(); });
         connect(scrubber_, &QSlider::sliderMoved, this, [this](int value) {
@@ -97,6 +118,7 @@ public:
         }
         media_ = std::move(*opened);
         monitor_->setSource(sequence_, media_.get());
+        timeline_->setProject(&project_, sequence_->id(), &commands_);
         scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
         refresh();
         return {};
@@ -107,6 +129,7 @@ public:
         const std::int64_t clamped = std::clamp<std::int64_t>(position.frames(), 0, last);
         position_ = time::RationalTime{clamped, sequence_->frameRate()};
         monitor_->setPosition(position_);
+        timeline_->setPlayhead(position_);
         refresh();
     }
 
@@ -300,6 +323,8 @@ private:
     std::unique_ptr<platform::sdl::AudioSink> sink_;
 
     app::ProgramMonitor* monitor_{nullptr};
+    app::TimelineWidget* timeline_{nullptr};
+    edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};
     QSlider* scrubber_{nullptr};
@@ -407,6 +432,11 @@ int main(int argc, char** argv) {
                 litFraction * 100.0);
 
     if (!capturePath.isEmpty()) {
+        // The whole window, so the timeline is in the picture too.
+        const QPixmap windowShot = window.grab();
+        if (!windowShot.isNull()) {
+            windowShot.save(capturePath + ".window.png");
+        }
         if (grabbed.save(capturePath)) {
             std::printf("  saved %s\n", capturePath.toUtf8().constData());
         } else {

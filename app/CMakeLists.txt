@@ -6,10 +6,13 @@ add_executable(zaro-preview
     main.cpp
     ProgramMonitor.cpp
     ProgramMonitor.h
+    TimelineWidget.cpp
+    TimelineWidget.h
 )
 
 target_link_libraries(zaro-preview
     PRIVATE
+        zaro::ui_core
         zaro::platform_qrhi
         zaro::platform_ffmpeg
         zaro::platform_sdl

@@ -321,7 +321,7 @@ sampler. Converting into a linear surface first costs one GPU pass and no bus tr
 **Done when:** a 3-clip sequence plays at 1080p59.94 with locked A/V sync for 10 minutes,
 scrubbing stays responsive, and the exported file's audio drift is 0 samples end-to-end.
 
-**Result so far:** 204 tests green across `debug`, `release` and `asan`. The export half
+**Result so far:** 217 tests green across `debug`, `release` and `asan`. The export half
 of the criterion is met and measured, not asserted: `scripts/verify-av-sync.sh` renders
 the flash-and-click fixture, then extracts picture and sound from the *output file*
 independently and compares them — **0 samples of drift over 250 frames, with all 10
@@ -368,6 +368,35 @@ with row 0 as the top of the picture while the present quad maps texture V=0 to 
 bottom of clip space, which flips on Y-down backends (Metal, Vulkan, D3D) and not on Y-up
 ones (OpenGL). There is now a headless test that renders a deliberately asymmetric frame
 and checks which end it comes out at, verified to fail when the correction is removed.
+
+#### Phase 4b — the timeline panel ✅ **first cut**
+
+- ✅ `ui::TimelineLayout` — a **toolkit-free** layer holding all the geometry: time↔pixel
+  mapping, zoom anchoring, row layout, hit-testing and culling. Thirteen test cases cover
+  it, none of which need a window. The widget on top is then mostly painting.
+- ✅ `TimelineWidget`: ruler with drop-frame-aware timecode, track headers with mute and
+  lock indicators, clips culled to the visible range, playhead that follows playback.
+- ✅ Interaction: scrub, select, drag-to-move with snapping, razor at the playhead,
+  lift and extract, undo/redo, zoom and scroll. **Every edit goes through the command
+  stack**, so all of it is undoable by construction rather than by remembering to make it
+  so — and a whole drag collapses to one undo step via the merge key.
+- ⏸️ Outstanding: trim by dragging clip edges (the hit-testing distinguishes the edges
+  already, the interaction is not wired), waveforms and thumbnails, the project bin,
+  effect controls.
+
+Three bugs, all caught by the layout tests before any of it was painted:
+
+1. **`timeForX` rounded instead of flooring**, so a click near the right edge of a clip
+   resolved past its exclusive end and hit nothing. The same bug class as the playback
+   clock's `positionAt`, for the same reason: a pixel sits *inside* a frame for that
+   frame's whole width.
+2. **The visible range rounded rather than ceiling**, leaving a half-frame sliver
+   unpainted at the right edge — wrong for a culling range, which must over-cover.
+3. **A short clip was all trim handle and no body**, so it could never be selected or
+   dragged. Each grab zone is now capped at a third of the clip's width.
+
+And one caught only by looking: `zoomToFit` ran before the widget had been laid out, so it
+fitted to a width the widget did not yet have. Deferred to the first resize.
 
 ### Phase 4 — The application
 *Goal: the slice becomes a program someone can actually use.*

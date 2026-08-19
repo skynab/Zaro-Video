@@ -28,6 +28,7 @@ add_executable(zaro_core_tests
     edit/test_snapping.cpp
     edit/test_fuzz.cpp
     io/test_project_io.cpp
+    ui/test_timeline_layout.cpp
     playback/test_transport.cpp
     playback/test_ring_buffer.cpp
     playback/test_scheduler.cpp
@@ -41,6 +42,7 @@ add_executable(zaro_core_tests
 target_link_libraries(zaro_core_tests
     PRIVATE
         zaro::core
+        zaro::ui_core
         zaro::warnings
         Catch2::Catch2WithMain
 )

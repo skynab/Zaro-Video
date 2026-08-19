@@ -1,0 +1,130 @@
+#pragma once
+
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+#include "zaro/core/model/Sequence.h"
+#include "zaro/core/time/RationalTime.h"
+
+namespace zaro::ui {
+
+/// The geometry of a timeline: where a time lands in pixels, where a track
+/// lands in rows, and what is under the pointer.
+///
+/// Deliberately free of any toolkit. A timeline's hard parts are arithmetic --
+/// zoom that keeps the right frame under the cursor, hit-testing that
+/// distinguishes a clip's body from its edges, culling that keeps painting
+/// proportional to what is visible rather than to how long the sequence is --
+/// and all of it is testable without a window. The widget on top is then mostly
+/// painting.
+class TimelineLayout {
+public:
+    struct Metrics {
+        /// Zoom. The one number that everything else is derived from.
+        double pixelsPerSecond{120.0};
+        std::int32_t videoTrackHeight{62};
+        std::int32_t audioTrackHeight{48};
+        std::int32_t trackGap{1};
+        std::int32_t rulerHeight{26};
+        /// Width of the track headers, to the left of the time area.
+        std::int32_t headerWidth{150};
+        /// How close to a clip edge counts as grabbing the edge rather than the
+        /// body. Generous, because a trim handle that needs pixel accuracy is
+        /// one nobody uses.
+        std::int32_t edgeGrabPixels{6};
+    };
+
+    TimelineLayout() = default;
+    explicit TimelineLayout(Metrics metrics) : metrics_{metrics} {}
+
+    [[nodiscard]] const Metrics& metrics() const noexcept { return metrics_; }
+    void setMetrics(const Metrics& metrics) { metrics_ = metrics; }
+
+    /// Leftmost visible time. Never negative: scrolling before the start of the
+    /// sequence shows nothing useful and makes every coordinate signed.
+    [[nodiscard]] const time::RationalTime& scroll() const noexcept { return scroll_; }
+    void setScroll(const time::RationalTime& start);
+
+    void setViewportSize(std::int32_t width, std::int32_t height);
+    [[nodiscard]] std::int32_t viewportWidth() const noexcept { return viewportWidth_; }
+    [[nodiscard]] std::int32_t viewportHeight() const noexcept { return viewportHeight_; }
+
+    /// Width of the area that shows time, excluding the headers.
+    [[nodiscard]] std::int32_t contentWidth() const noexcept {
+        return std::max(0, viewportWidth_ - metrics_.headerWidth);
+    }
+
+    // --- Time and pixels ----------------------------------------------------
+
+    /// Widget x for a timeline time, including the header offset.
+    [[nodiscard]] double xForTime(const time::RationalTime& t) const;
+    /// The time at a widget x. Clamped at zero.
+    [[nodiscard]] time::RationalTime timeForX(double x, const time::Rational& frameRate) const;
+
+    /// The span currently on screen. What painting and hit-testing iterate
+    /// over, so that a four-hour sequence costs the same to draw as a
+    /// four-minute one.
+    [[nodiscard]] time::TimeRange visibleRange(const time::Rational& frameRate) const;
+
+    /// Zoom by `factor`, keeping whatever time is under `anchorX` in place.
+    /// Anchoring on the pointer is what makes zooming feel like the timeline is
+    /// being pulled rather than jumping.
+    void zoomBy(double factor, double anchorX, const time::Rational& frameRate);
+
+    /// Fit `duration` into the viewport, with a little air at the end.
+    void zoomToFit(const time::RationalTime& duration);
+
+    // --- Rows ---------------------------------------------------------------
+
+    struct Row {
+        model::TrackId track;
+        model::TrackKind kind{model::TrackKind::Video};
+        std::int32_t top{0};
+        std::int32_t height{0};
+        /// Index within its own kind: 0 is V1, or A1.
+        std::int32_t index{0};
+    };
+
+    /// Video above, audio below, with V1 immediately above A1 -- the
+    /// arrangement every editor expects, and the reason video rows are laid out
+    /// bottom-up while audio rows are laid out top-down.
+    [[nodiscard]] std::vector<Row> rows(const model::Sequence& sequence) const;
+    [[nodiscard]] std::optional<Row> rowAt(const model::Sequence& sequence, std::int32_t y) const;
+
+    /// Total height the tracks need, for scrollbar range.
+    [[nodiscard]] std::int32_t contentHeight(const model::Sequence& sequence) const;
+
+    // --- Hit testing --------------------------------------------------------
+
+    enum class Part { Body, InEdge, OutEdge };
+
+    struct Hit {
+        model::TrackId track;
+        model::ClipId clip;
+        Part part{Part::Body};
+    };
+
+    /// What is under a widget point, if anything. Points over the headers or
+    /// the ruler are not hits.
+    [[nodiscard]] std::optional<Hit> hitTest(const model::Sequence& sequence, std::int32_t x,
+                                             std::int32_t y) const;
+
+    /// Whether a point is in the ruler, where dragging scrubs the playhead.
+    [[nodiscard]] bool isInRuler(std::int32_t x, std::int32_t y) const;
+    /// Whether a point is over the track headers.
+    [[nodiscard]] bool isInHeaders(std::int32_t x) const;
+
+    /// A sensible tick interval for the ruler at the current zoom: the finest
+    /// division that still leaves labels readable.
+    [[nodiscard]] time::RationalTime rulerStep(const time::Rational& frameRate) const;
+
+private:
+    Metrics metrics_{};
+    time::RationalTime scroll_{};
+    std::int32_t viewportWidth_{0};
+    std::int32_t viewportHeight_{0};
+};
+
+}  // namespace zaro::ui
