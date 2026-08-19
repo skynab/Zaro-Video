@@ -158,6 +158,51 @@ model::ColorCorrection decodeColor(const json& node) {
     return out;
 }
 
+json encode(const model::ToneCurves& curves) {
+    json out = json::object();
+    const auto put = [&out](const char* name, const model::ToneCurve& curve) {
+        if (curve.isIdentity()) {
+            return;
+        }
+        json points = json::array();
+        for (const model::CurvePoint& point : curve.points()) {
+            points.push_back(json{{"x", point.x}, {"y", point.y}});
+        }
+        out[name] = std::move(points);
+    };
+    put("master", curves.master);
+    put("red", curves.red);
+    put("green", curves.green);
+    put("blue", curves.blue);
+    return out;
+}
+
+model::ToneCurves decodeCurves(const json& node) {
+    model::ToneCurves out;
+    if (!node.is_object()) {
+        return out;
+    }
+    const auto load = [&node](const char* name, model::ToneCurve& into) {
+        if (!node.contains(name) || !node.at(name).is_array()) {
+            return;
+        }
+        for (const json& point : node.at(name)) {
+            if (!point.is_object()) {
+                continue;
+            }
+            // set() rather than push_back: a hand-edited file can hold points
+            // out of order or twice over, and evaluation depends on neither
+            // being possible.
+            into.set(model::CurvePoint{point.value("x", 0.0), point.value("y", 0.0)});
+        }
+    };
+    load("master", out.master);
+    load("red", out.red);
+    load("green", out.green);
+    load("blue", out.blue);
+    return out;
+}
+
 json encode(const model::ClipAnimation& animation) {
     // Curves keyed by parameter name rather than an array of {param, curve}
     // pairs: a parameter can only be animated once, and a map says so in the
@@ -263,6 +308,9 @@ json encode(const model::Clip& clip) {
     }
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
+    }
+    if (json curves = encode(clip.curves); !curves.empty()) {
+        out["curves"] = std::move(curves);
     }
     if (json animation = encode(clip.animation); !animation.empty()) {
         out["animation"] = std::move(animation);
@@ -437,6 +485,9 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("curves")) {
+        clip.curves = decodeCurves(node.at("curves"));
     }
     if (node.contains("animation")) {
         auto animation = decodeAnimation(node.at("animation"));

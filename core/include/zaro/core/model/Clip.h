@@ -5,6 +5,7 @@
 #include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/model/ToneCurve.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/time/TimeRange.h"
 
@@ -56,6 +57,11 @@ struct Clip {
     /// Primary colour correction, applied in the linear working space before
     /// the clip is placed in the frame.
     ColorCorrection color;
+
+    /// Tone curves, applied after the primary correction. Curves are defined in
+    /// the display-encoded domain; the baking into linear happens in
+    /// render::CurveTable.
+    ToneCurves curves;
 
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;

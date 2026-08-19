@@ -20,12 +20,12 @@ namespace zaro::render {
 void drawTransformed(const RgbaImage& source, RgbaImage& destination,
                      const model::Transform& transform,
                      model::BlendMode blend = model::BlendMode::Normal,
-                     const GradeConstants* grade = nullptr);
+                     const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr);
 
 /// Composite `source` over `destination` with no geometry -- the common case,
 /// and much faster than going through the sampler.
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity = 1.0,
               model::BlendMode blend = model::BlendMode::Normal,
-              const GradeConstants* grade = nullptr);
+              const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr);
 
 }  // namespace zaro::render

@@ -38,6 +38,7 @@ add_executable(zaro_core_tests
     render/test_frame_cache.cpp
     render/test_compositing.cpp
     render/test_render_graph.cpp
+    render/test_curves.cpp
     render/test_grade.cpp
     render/test_scopes.cpp
     render/test_audio_graph.cpp

@@ -27,8 +27,9 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                                                                outgoing->sourceTimeAt(at))) {
                         if (compositor_->drawSource(
                                 **frame, outgoing->transformAt(at),
-                                render::gradeConstantsFor(outgoing->colorAt(at)),
-                                outgoing->blend)) {
+                                render::gradeConstantsFor(outgoing->colorAt(at)), outgoing->blend,
+                                &curves_.tableFor(outgoing->id.value(), outgoing->curves,
+                                                  transfer_))) {
                             ++lastClipCount_;
                         }
                     }

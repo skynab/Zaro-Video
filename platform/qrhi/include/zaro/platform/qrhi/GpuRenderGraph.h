@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zaro/core/model/Sequence.h"
+#include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/FrameSource.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 
@@ -39,6 +40,14 @@ public:
 
 private:
     [[nodiscard]] Status drawClips(const model::Sequence& sequence, const time::RationalTime& at);
+
+    /// Baked tone curves, kept between frames for the same reason the CPU
+
+    /// graph keeps them: building one is thousands of spline evaluations.
+
+    render::CurveTableCache curves_;
+
+    media::TransferFunction transfer_{media::TransferFunction::BT709};
 
     GpuCompositor* compositor_;
     render::SourceFrameProvider* provider_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {
@@ -49,11 +50,16 @@ inline constexpr float kMiddleGrey = 0.18F;
 /// applied to it, and saturation last so it acts on the tones being delivered
 /// rather than on the ones on the way in. The shader applies the same order;
 /// this is the reference it is checked against.
-void gradePixel(const GradeConstants& grade, float& r, float& g, float& b);
+/// The curve table, if any, is applied *after* the primary correction: a curve
+/// is drawn against what the picture looks like once it has been balanced and
+/// exposed, so applying it first would change its meaning whenever exposure
+/// moved.
+void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
+                const CurveTable* curves = nullptr);
 
 /// Grade a whole image in place. The image is premultiplied, so alpha is
 /// divided out and multiplied back: grading a half-faded clip must not depend
 /// on how faded it is.
-void gradeImage(const GradeConstants& grade, RgbaImage& image);
+void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves = nullptr);
 
 }  // namespace zaro::render

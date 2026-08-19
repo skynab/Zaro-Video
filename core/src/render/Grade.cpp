@@ -61,7 +61,8 @@ GradeConstants gradeConstantsFor(const model::ColorCorrection& correction) {
     return grade;
 }
 
-void gradePixel(const GradeConstants& grade, float& r, float& g, float& b) {
+void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
+                const CurveTable* curves) {
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
@@ -89,10 +90,17 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b) {
         g = grey + ((g - grey) * grade.saturation);
         b = grey + ((b - grey) * grade.saturation);
     }
+
+    if (curves != nullptr && !curves->isIdentity()) {
+        r = curves->apply(r, 0);
+        g = curves->apply(g, 1);
+        b = curves->apply(b, 2);
+    }
 }
 
-void gradeImage(const GradeConstants& grade, RgbaImage& image) {
-    if (grade.isIdentity() || !image.isValid()) {
+void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves) {
+    const bool curved = curves != nullptr && !curves->isIdentity();
+    if ((grade.isIdentity() && !curved) || !image.isValid()) {
         return;
     }
     for (std::int32_t y = 0; y < image.height(); ++y) {
@@ -107,7 +115,7 @@ void gradeImage(const GradeConstants& grade, RgbaImage& image) {
             float r = pixel.r * inverse;
             float g = pixel.g * inverse;
             float b = pixel.b * inverse;
-            gradePixel(grade, r, g, b);
+            gradePixel(grade, r, g, b, curves);
             pixel.r = r * alpha;
             pixel.g = g * alpha;
             pixel.b = b * alpha;

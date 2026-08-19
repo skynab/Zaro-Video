@@ -6,6 +6,12 @@ layout(location = 0) out vec4 fragColor;
 
 layout(binding = 1) uniform sampler2D source;
 
+// Tone curves, baked on the CPU into linear-in, linear-out entries. The shader
+// never sees a control point or a transfer function: it looks up what
+// render::CurveTable already worked out, which is why the two paths cannot
+// drift apart. See ADR-012.
+layout(binding = 2) uniform sampler2D curveTable;
+
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
     vec4 params;  // x: opacity
@@ -14,7 +20,7 @@ layout(std140, binding = 0) uniform Block {
     // that question are two answers, and preview would disagree with export by
     // an amount too small to notice and too large to accept.
     vec4 balance;  // rgb: white balance gains, w: exposure multiplier
-    vec4 grade;    // x: contrast exponent, y: saturation
+    vec4 grade;    // x: contrast exponent, y: saturation, z: curves active
 } ubuf;
 
 const float kMiddleGrey = 0.18;
@@ -37,6 +43,16 @@ vec3 applyGrade(vec3 colour)
     if (ubuf.grade.y != 1.0) {
         float grey = dot(colour, kLumaWeights);
         colour = vec3(grey) + (colour - vec3(grey)) * ubuf.grade.y;
+    }
+
+    if (ubuf.grade.z != 0.0) {
+        // Must be exactly render::CurveTable::indexFor. Three operations, so
+        // there is nothing here to get subtly different.
+        vec3 lifted = max(colour, vec3(0.0));
+        vec3 index = sqrt(lifted / (vec3(1.0) + lifted));
+        colour = vec3(texture(curveTable, vec2(index.r, 0.5)).r,
+                      texture(curveTable, vec2(index.g, 0.5)).g,
+                      texture(curveTable, vec2(index.b, 0.5)).b);
     }
     return colour;
 }

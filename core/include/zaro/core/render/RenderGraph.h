@@ -31,6 +31,16 @@ public:
     [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
 
 private:
+    /// Baked tone curves, kept between frames: building one is thousands of
+    /// spline evaluations, and a grade that is not being edited changes on no
+    /// frames at all.
+    CurveTableCache curves_;
+
+    /// The curve is drawn against the picture as it is *shown*, so baking it
+    /// needs the transfer function the frame is being shown through. Rec.709
+    /// until a sequence carries its own; the same default the scopes use.
+    media::TransferFunction transfer_{media::TransferFunction::BT709};
+
     FrameSource* source_;
     std::int32_t lastClipCount_{0};
 };

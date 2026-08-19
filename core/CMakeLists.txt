@@ -24,6 +24,7 @@ add_library(zaro_core
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp
     src/render/Compositing.cpp
+    src/render/CurveTable.cpp
     src/render/Grade.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp
@@ -33,6 +34,7 @@ add_library(zaro_core
     src/model/ClipEffects.cpp
     src/model/Project.cpp
     src/model/Sequence.cpp
+    src/model/ToneCurve.cpp
     src/model/Track.cpp
     src/model/Transition.cpp
     src/media/AudioBuffer.cpp

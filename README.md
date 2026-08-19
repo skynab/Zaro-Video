@@ -42,7 +42,8 @@ headless: there is no window yet.
 | 5b | Stopwatches, keyframe lane, keyframe dragging | **done** |
 | 5c | Scopes: waveform, parade, histogram, vectorscope | **done** |
 | 5d | Primary correction: balance, exposure, contrast, saturation | **done** |
-| 5e | Curves, HSL secondaries, LUTs, audio mixer, graphics | next |
+| 5e | Tone curves: monotonic splines, baked LUT, both paths | **done** |
+| 5f | Curve editor UI, then HSL secondaries and LUTs | next |
 
 ## Building
 

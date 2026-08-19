@@ -913,3 +913,114 @@ TEST_CASE("A grade on the GPU survives a fade without changing", "[gpu][golden][
     CHECK(partial.g / partial.a == Catch::Approx(opaque.g).margin(0.005));
     CHECK(partial.b / partial.a == Catch::Approx(opaque.b).margin(0.005));
 }
+
+TEST_CASE("The GPU tone curve agrees with the CPU reference", "[gpu][golden][curves]") {
+    // The curve is defined on the CPU, baked on the CPU, and the shader only
+    // looks the answer up. This test is what says the lookup -- the index
+    // function, the texture format, the filtering -- does not change it.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    const auto through = [](std::initializer_list<model::CurvePoint> points) {
+        model::ToneCurve curve;
+        for (const model::CurvePoint& point : points) {
+            curve.set(point);
+        }
+        return curve;
+    };
+
+    struct Case {
+        const char* name;
+        model::ToneCurves curves;
+    };
+    std::vector<Case> cases;
+    {
+        model::ToneCurves lift;
+        lift.master = through({{0.0, 0.1}, {0.5, 0.55}, {1.0, 1.0}});
+        cases.push_back({"lifted blacks", lift});
+
+        model::ToneCurves sCurve;
+        sCurve.master = through({{0.0, 0.0}, {0.25, 0.15}, {0.75, 0.85}, {1.0, 1.0}});
+        cases.push_back({"s-curve", sCurve});
+
+        model::ToneCurves split;
+        split.red = through({{0.0, 0.05}, {1.0, 1.0}});
+        split.blue = through({{0.0, 0.0}, {1.0, 0.9}});
+        cases.push_back({"warm split tone", split});
+
+        model::ToneCurves everything;
+        everything.master = through({{0.0, 0.02}, {0.5, 0.6}, {1.0, 0.98}});
+        everything.red = through({{0.0, 0.0}, {0.4, 0.5}, {1.0, 1.0}});
+        everything.green = through({{0.0, 0.0}, {0.6, 0.5}, {1.0, 1.0}});
+        everything.blue = through({{0.0, 0.05}, {1.0, 0.95}});
+        cases.push_back({"all four", everything});
+    }
+
+    RgbaImage source{32, 32};
+    for (std::int32_t y = 0; y < 32; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 32; ++x) {
+            const float u = static_cast<float>(x) / 31.0F;
+            const float v = static_cast<float>(y) / 31.0F;
+            row[x] = Rgba{u * 1.4F, v, (1.0F - u) * 0.8F, 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const render::CurveTable table{testCase.curves, media::TransferFunction::BT709};
+        REQUIRE_FALSE(table.isIdentity());
+        const render::GradeConstants neutral;
+
+        RgbaImage cpuOut{32, 32};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, &table);
+
+        REQUIRE(compositor->beginFrame(32, 32).ok());
+        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, &table).ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.01F);
+        CHECK(difference.mean < 0.002F);
+    }
+}
+
+TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][curves]") {
+    // Sampling an identity table would round every ungraded pixel through the
+    // table's own resolution. An ungraded clip has to come back exactly as it
+    // went in, which is what the frame-exact harness depends on.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    RgbaImage source{16, 16};
+    for (std::int32_t y = 0; y < 16; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 16; ++x) {
+            row[x] = Rgba{x / 15.0F, y / 15.0F, 0.37F, 1.0F};
+        }
+    }
+
+    const render::CurveTable identity{model::ToneCurves{}, media::TransferFunction::BT709};
+    REQUIRE(identity.isIdentity());
+
+    REQUIRE(compositor->beginFrame(16, 16).ok());
+    REQUIRE(compositor
+                ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{}, &identity)
+                .ok());
+    RgbaImage out;
+    REQUIRE(compositor->endFrame(out).ok());
+
+    for (std::int32_t y = 0; y < 16; ++y) {
+        for (std::int32_t x = 0; x < 16; ++x) {
+            REQUIRE(out.at(x, y).r == Catch::Approx(source.at(x, y).r).margin(1e-6));
+            REQUIRE(out.at(x, y).g == Catch::Approx(source.at(x, y).g).margin(1e-6));
+            REQUIRE(out.at(x, y).b == Catch::Approx(source.at(x, y).b).margin(1e-6));
+        }
+    }
+}

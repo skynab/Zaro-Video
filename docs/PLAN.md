@@ -818,6 +818,51 @@ Next in the colour chain: curves, HSL secondaries, LUTs and shot matching.
 
 ---
 
+#### Phase 5e — tone curves ✅ **engine, not yet an editor**
+
+Master and per-channel curves, on both render paths, saved with the project.
+
+**Baked into a table both paths share** — [ADR-012](adr/0012-curves-baked-into-a-shared-table.md).
+The curve is evaluated only on the CPU, only when it changes, into 1024
+linear-in linear-out entries per channel; the shader looks the answer up. There
+is nothing in the shader that *can* drift from the reference, because it does
+not implement the reference. Where the primary correction needed a parity test
+to keep two implementations honest, here there is one implementation.
+
+**Indexed by `sqrt(v / (1 + v))`.** It maps all of [0, ∞) — linear light has no
+ceiling and a highlight may be several times white — onto [0, 1] in three
+operations, identical on both sides. It also spends its resolution where the
+picture is: middle grey lands near entry 400, a thousandth of white near entry
+30. A linear index would give the shadows one entry, and the shadows are where a
+curve is read most closely. Indexing by the encoded value instead would have put
+the transfer functions in the shader, which is the duplication the whole design
+avoids.
+
+**Monotonic cubic interpolation** (Fritsch–Carlson). A natural spline overshoots
+near a steep segment, and an overshooting tone curve puts a dark halo above a
+highlight and can invert a gradient. A test walks a thousand points across a
+deliberately steep curve and requires the result never to decrease; it was
+verified to fail with the slope limiting removed.
+
+**An identity curve is skipped rather than sampled**, since sampling one would
+round every ungraded pixel through the table's resolution and an ungraded clip
+has to come out bit-identical.
+
+**Tables are cached against the curves themselves** rather than behind a dirty
+flag — the kind of flag that is correct until an undo restores a snapshot behind
+its back.
+
+The GPU work cost one real bug: the curve texture was freed at the end of the
+draw while the resource bindings still held a raw pointer to it, which is a
+segfault rather than a wrong picture. The parity test found it immediately.
+
+**Not done: the curve editor.** The curves are reachable from code and from a
+project file, not from the UI. A curve editor is a real widget — click to add,
+drag to shape, right-click to remove, with the four channels switchable — and
+building half of one is worse than none, so it is its own phase.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

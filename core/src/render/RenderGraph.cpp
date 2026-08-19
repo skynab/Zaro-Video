@@ -75,8 +75,10 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             continue;
         }
         const GradeConstants grade = gradeConstantsFor(clip->colorAt(at));
-        drawTransformed(**image, out, clip->transformAt(at), clip->blend,
-                        grade.isIdentity() ? nullptr : &grade);
+        const CurveTable& table = curves_.tableFor(clip->id.value(), clip->curves, transfer_);
+        const bool active = !grade.isIdentity() || !table.isIdentity();
+        drawTransformed(**image, out, clip->transformAt(at), clip->blend, active ? &grade : nullptr,
+                        active ? &table : nullptr);
         ++lastClipCount_;
     }
     return {};
