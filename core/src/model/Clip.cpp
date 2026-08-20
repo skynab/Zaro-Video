@@ -1,6 +1,7 @@
 #include "zaro/core/model/Clip.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "zaro/core/Check.h"
 
@@ -38,6 +39,19 @@ time::RationalTime Clip::activeSourceTimeAt(const time::RationalTime& timelineTi
     return base + angles[liveAngle(angles, activeAngle)].offset.rescaledTo(base.rate());
 }
 
+time::RationalTime Clip::activeBaseSourceTimeAt(const time::RationalTime& timelineTime) const {
+    const time::RationalTime base = baseSourceTimeAt(timelineTime);
+    if (angles.empty()) {
+        return base;
+    }
+    return base + angles[liveAngle(angles, activeAngle)].offset.rescaledTo(base.rate());
+}
+
+bool Clip::isTimeRemapped() const {
+    const Curve* remap = animation.find(Param::TimeRemap);
+    return remap != nullptr && !remap->empty();
+}
+
 double Clip::speed() const {
     if (timelineRange.duration().toSeconds().isZero()) {
         return 1.0;
@@ -46,6 +60,30 @@ double Clip::speed() const {
 }
 
 time::RationalTime Clip::sourceTimeAt(const time::RationalTime& timelineTime) const {
+    const time::RationalTime base = baseSourceTimeAt(timelineTime);
+    const Curve* remap = animation.find(Param::TimeRemap);
+    if (remap == nullptr || remap->empty()) {
+        return base;
+    }
+    // The curve is read at the *un-remapped* time, which is what makes it a
+    // remap rather than a definition of itself. Everything else on the clip is
+    // read at the un-remapped time too, so a fade still runs over the seconds
+    // it was drawn over even where the picture is frozen -- which is what
+    // somebody dragging an opacity ramp across a freeze means by it.
+    const double seconds = remap->valueAtSeconds(sourceSecondsAt(timelineTime));
+    // Never before the start of the file. A curve dragged below zero is a
+    // request for frames that do not exist, and the first frame is the honest
+    // answer; the alternative is a clip that silently stops drawing.
+    //
+    // To the nearest frame rather than truncated: the curve is continuous and
+    // the media is not, and rounding down would show every frame a little late
+    // and hold the last one of a ramp for two.
+    const double rate = base.rate().toDouble();
+    const auto frames = static_cast<std::int64_t>(std::llround(std::max(0.0, seconds) * rate));
+    return time::RationalTime{frames, base.rate()};
+}
+
+time::RationalTime Clip::baseSourceTimeAt(const time::RationalTime& timelineTime) const {
     ZARO_CHECK(!timelineRange.isEmpty(), "sourceTimeAt on a zero-length clip");
 
     const time::RationalTime offset = timelineTime - timelineRange.start();
@@ -170,6 +208,14 @@ double Clip::parameterValue(Param param) const {
             return color.contrast;
         case Param::Saturation:
             return color.saturation;
+        case Param::TimeRemap:
+            // No static value, on purpose. Every other parameter has a value
+            // the clip holds when nothing is animated; a time remap that is not
+            // animated is not a remap at all, it is the clip's ordinary
+            // mapping. Giving it a static value would mean a "remap of 0
+            // seconds" -- a clip frozen on its first frame -- was one stopwatch
+            // click away from every clip in the project.
+            return 0.0;
     }
     return 0.0;
 }
@@ -220,6 +266,9 @@ void Clip::setParameterValue(Param param, double value) {
             return;
         case Param::Saturation:
             color.saturation = value;
+            return;
+        case Param::TimeRemap:
+            // Nothing to set: see parameterValue.
             return;
     }
 }

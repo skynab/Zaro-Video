@@ -93,6 +93,48 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     // Blend has no stopwatch: it is a mode rather than a quantity, and there is
     // no meaningful value halfway between Multiply and Screen.
     motionForm->addRow("Blend", blend_);
+
+    // Time remapping is a switch, not a stopwatch. Every other parameter has a
+    // value the clip holds when nothing is animated; a remap that is not
+    // animated is the clip's ordinary mapping, so there is nothing for a
+    // stopwatch to turn off *to*.
+    timeRemap_ = new QCheckBox("Time remap", this);
+    timeRemap_->setObjectName("time-remap");
+    timeRemap_->setToolTip("Pick which frame shows when, with keyframes");
+    freeze_ = new QPushButton("Freeze here", this);
+    freeze_->setObjectName("freeze-frame");
+    freeze_->setToolTip("Hold the frame under the playhead for the whole clip");
+    auto* remapRow = new QHBoxLayout;
+    remapRow->setContentsMargins(0, 0, 0, 0);
+    remapRow->addWidget(timeRemap_);
+    remapRow->addWidget(freeze_);
+    motionForm->addRow(remapRow);
+    connect(timeRemap_, &QCheckBox::toggled, this, [this](bool on) {
+        if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+            return;
+        }
+        auto built = edit::makeSetTimeRemapped(*project_, {sequenceId_, track_}, clip_, on);
+        if (!built) {
+            return;
+        }
+        commands_->execute(*project_, std::move(*built));
+        commands_->breakMerge();
+        applyToWidgets();
+        emit edited();
+    });
+    connect(freeze_, &QPushButton::clicked, this, [this] {
+        if (commands_ == nullptr || !clip_.isValid()) {
+            return;
+        }
+        auto built = edit::makeFreezeFrame(*project_, {sequenceId_, track_}, clip_, position_);
+        if (!built) {
+            return;
+        }
+        commands_->execute(*project_, std::move(*built));
+        commands_->breakMerge();
+        applyToWidgets();
+        emit edited();
+    });
     videoGroup_ = motion;
 
     auto* colour = new QGroupBox("Colour", this);
@@ -396,6 +438,7 @@ void EffectControls::applyToWidgets() {
         anchorY_->setValue(identity.anchorY);
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
+        timeRemap_->setChecked(false);
         graphicGroup_->setVisible(false);
         maskGroup_->setVisible(false);
         curves_->setCurves(model::ToneCurves{});
@@ -493,6 +536,11 @@ void EffectControls::applyToWidgets() {
     lutAmount_->setEnabled(!path.isEmpty());
     lutClear_->setEnabled(!path.isEmpty());
 
+    timeRemap_->setChecked(clip->isTimeRemapped());
+    // Freezing a clip that is already frozen is a no-op the operation refuses,
+    // so the button says so rather than letting somebody find out.
+    freeze_->setEnabled(clip->timelineRange.contains(position_));
+
     const model::Secondary& keyed = clip->secondary;
     qualifierOn_->setChecked(keyed.qualifier.enabled);
     showMask_->setChecked(keyed.showMask);
@@ -588,7 +636,7 @@ std::optional<time::RationalTime> EffectControls::keyframeTime() const {
     if (!clip->timelineRange.contains(position_.rescaledTo(clip->start().rate()))) {
         return std::nullopt;
     }
-    return clip->sourceTimeAt(position_);
+    return clip->baseSourceTimeAt(position_);
 }
 
 void EffectControls::toggleAnimated(model::Param param, bool on) {

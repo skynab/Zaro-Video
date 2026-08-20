@@ -110,7 +110,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 }
                 ++depth_;
                 auto nested =
-                    mix(*inner, clip.sourceTimeAt(overlap->start()), wanted, channelCount);
+                    mix(*inner, clip.baseSourceTimeAt(overlap->start()), wanted, channelCount);
                 --depth_;
                 if (!nested) {
                     continue;
@@ -127,7 +127,9 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 continue;
             }
 
-            const time::RationalTime sourceStart = clip.activeSourceTimeAt(overlap->start());
+            // The base mapping: time remapping is a picture operation (see
+            // Clip::baseSourceTimeAt), so the sound runs at the clip's own speed.
+            const time::RationalTime sourceStart = clip.activeBaseSourceTimeAt(overlap->start());
             // A retimed clip covers more (or less) source than it occupies on
             // the timeline, so it has to read that much and resample. Without
             // this the picture retimes and the sound does not, which is drift
@@ -139,9 +141,9 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                               2, static_cast<std::int64_t>(std::ceil(wanted * speed)) + 2)
                         : wanted;
             const time::RationalTime readFrom =
-                clip.reversed
-                    ? clip.activeSourceTimeAt(overlap->endExclusive() - time::RationalTime{1, rate})
-                    : sourceStart;
+                clip.reversed ? clip.activeBaseSourceTimeAt(overlap->endExclusive() -
+                                                            time::RationalTime{1, rate})
+                              : sourceStart;
             if (Status status = source_->read(clip.activeSource(), readFrom, toRead, rate, scratch);
                 !status) {
                 // A clip whose audio cannot be read is silence, not a failed

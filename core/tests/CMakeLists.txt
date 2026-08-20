@@ -27,6 +27,7 @@ add_executable(zaro_core_tests
     edit/test_command_stack.cpp
     edit/test_multicam.cpp
     edit/test_sync.cpp
+    edit/test_time_remap.cpp
     edit/test_nesting.cpp
     edit/test_operations.cpp
     edit/test_snapping.cpp

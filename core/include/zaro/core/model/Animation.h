@@ -140,6 +140,15 @@ enum class Param : std::uint8_t {
     Exposure,
     Contrast,
     Saturation,
+
+    /// Which frame of the media is shown, in seconds of source time.
+    ///
+    /// The odd one out, and deliberately so. Every other parameter answers
+    /// "what is done to the picture"; this one answers "which picture", which
+    /// is why it is read before the others rather than alongside them, and why
+    /// its own keyframes are the only ones positioned in the clip's
+    /// *un-remapped* source time -- they are what defines the remapped one.
+    TimeRemap,
 };
 
 /// Every parameter, once. Anything that has to visit them all uses this, so

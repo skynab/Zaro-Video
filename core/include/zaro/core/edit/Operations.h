@@ -250,6 +250,39 @@ enum class PlaceMode {
                                               model::ClipId clip, double speed, bool reversed,
                                               bool ripple = true);
 
+// --- Time remapping ---------------------------------------------------------
+//
+// Constant speed is a property of the clip's two ranges; a *varying* speed is a
+// curve, and it is a curve of which frame to show rather than of how fast to
+// go. Storing the speed would mean integrating it to find a frame, and an
+// integral accumulates its own error over a long clip -- so a freeze that was
+// supposed to end on frame 300 ends on 299 or 302 depending how far into the
+// timeline it sits. Storing the frame makes every keyframe exact by
+// construction and leaves speed as the slope, which is the thing nobody has to
+// be told twice.
+
+/// Turn time remapping on for a clip, seeding the curve it already plays.
+///
+/// The seeded curve is the identity: two keyframes, one at each end of the
+/// clip, holding exactly the mapping the clip has now. Switching remapping on
+/// must not change the picture -- it is a statement about what can be edited
+/// next, not an edit.
+///
+/// Passing false removes the curve, which puts the clip back on its ranges.
+[[nodiscard]] Result<CommandPtr> makeSetTimeRemapped(model::Project& project,
+                                                     const EditTarget& target, model::ClipId clip,
+                                                     bool remapped);
+
+/// Freeze a clip on the frame showing at a moment.
+///
+/// A remap whose value never changes, rather than a separate kind of clip:
+/// everything that already works on a remapped clip -- the keyframe lane,
+/// trimming, the render cache -- goes on working, and a freeze that somebody
+/// then wants to ramp out of is two keyframes away rather than a different
+/// feature.
+[[nodiscard]] Result<CommandPtr> makeFreezeFrame(model::Project& project, const EditTarget& target,
+                                                 model::ClipId clip, const time::RationalTime& at);
+
 /// Set a clip's mask: where on the screen it shows through.
 [[nodiscard]] Result<CommandPtr> makeSetMask(model::Project& project, const EditTarget& target,
                                              model::ClipId clip, const model::Mask& mask);

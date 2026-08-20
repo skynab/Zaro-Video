@@ -1744,6 +1744,63 @@ function.
 
 ---
 
+#### Phase 5y — time remapping and freeze frames ✅
+
+Speed that varies along a clip, and the freeze that falls out of it.
+[ADR-014](adr/0014-time-remapping-stores-frames-not-speed.md).
+
+**The curve stores which frame, not how fast.** Keyframing the speed is how the
+control usually presents itself, and it means integrating to find a frame — an
+integral that accumulates its own error along the clip, so a hold set to end on
+frame 300 ends on 299 or 302 depending how far into the timeline it sits.
+Storing the frame makes every keyframe exact by construction, and leaves speed
+as the slope.
+
+**It collapses three features into one.** A freeze is a curve that does not
+change; reverse is a curve that falls; a ramp is a bezier segment. All of them
+are edited in the keyframe lane that already exists, by the same operations,
+with the same undo — and both render paths, the render cache and export got it
+for free, because they already ask the clip which source time to read and that
+is the one function that changed.
+
+**The remap is keyed in the clip's un-remapped source time, and so is
+everything else.** The first half is forced: reading the remap through the
+remap it defines is circular. The second half is a choice — a fade drawn across
+a frozen shot still fades, because stopping the picture is not a statement
+about the graphics on top of it. A test requires exactly that: an opacity ramp
+over a total freeze is halfway down at the halfway point.
+
+**It is a picture operation; the sound runs at the clip's own speed.** Retiming
+a signal is resampling it, and a remap changes rate continuously — a varispeed
+resampler is real work, worth doing properly rather than badly in passing. So
+audio reads through `Clip::baseSourceTimeAt`, and the name says which mapping
+it is rather than leaving it to be discovered.
+
+**A switch, not a stopwatch.** Every other animatable parameter has a value the
+clip holds when nothing is animated. A remap that is not animated is the clip's
+ordinary mapping — there is nothing for a stopwatch to turn off *to*, and
+inventing one would put "frozen on the first frame" one click away from every
+clip in the project. Turning it on seeds the identity: two keyframes holding
+exactly what the clip already plays, because switching it on is a statement
+about what can be edited next, not an edit.
+
+**Frames are chosen to the nearest, and clamped at the front of the file.** A
+continuous curve against discrete media otherwise shows every frame slightly
+late and holds the last frame of a ramp for two; a curve dragged below zero
+otherwise asks for frames that do not exist and the clip silently stops
+drawing, which looks like a broken decode.
+
+The self-test finds a lit frame and a black one in the real preview, freezes on
+the lit one through the panel's own button, and requires the black frame to
+show the lit picture — then unticks the box and requires it to go black again.
+With the remap lookup disabled it reports 0.0 and fails.
+
+**Not done: frame blending and optical flow.** A slowed clip repeats frames.
+That is a rendering feature on top of this one, and this one has to be right
+first.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

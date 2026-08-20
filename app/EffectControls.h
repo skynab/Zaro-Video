@@ -150,6 +150,11 @@ private:
     QPushButton* lutClear_{nullptr};
     QLabel* lutName_{nullptr};
     QDoubleSpinBox* lutAmount_{nullptr};
+    /// Time remapping: a switch rather than a stopwatch, because a remap that
+    /// is not keyframed is not a remap -- see model::Param::TimeRemap.
+    QCheckBox* timeRemap_{nullptr};
+    QPushButton* freeze_{nullptr};
+
     QCheckBox* qualifierOn_{nullptr};
     QCheckBox* showMask_{nullptr};
     HueBand* hueBand_{nullptr};

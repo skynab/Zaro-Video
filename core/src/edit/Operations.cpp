@@ -1575,6 +1575,89 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makeSetTimeRemapped(Project& project, const EditTarget& target, ClipId clipId,
+                                       bool remapped) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    if (existing.isTimeRemapped() == remapped) {
+        return Error{ErrorCode::InvalidData,
+                     remapped ? "that clip is already time remapped" : "that clip is not remapped"};
+    }
+    if (!remapped) {
+        return modifyClip(project, target, clipId, "Remove time remapping",
+                          "remap:" + idText(clipId),
+                          [](Clip& clip) { clip.animation.erase(model::Param::TimeRemap); });
+    }
+
+    // The identity: what the clip already plays, said as a curve. Measured at
+    // the first and last frames rather than at the range's ends, because the
+    // out point is exclusive and a keyframe there would describe a frame the
+    // clip does not show.
+    const time::Rational& rate = existing.timelineRange.start().rate();
+    const time::RationalTime lastFrame = existing.endExclusive() - time::RationalTime{1, rate};
+
+    model::Keyframe first;
+    first.time = existing.baseSourceTimeAt(existing.start());
+    first.value = first.time.toSecondsDouble();
+    model::Keyframe last;
+    last.time = existing.baseSourceTimeAt(lastFrame);
+    last.value = last.time.toSecondsDouble();
+    if (last.time == first.time) {
+        return Error{ErrorCode::InvalidData, "that clip is too short to remap"};
+    }
+
+    return modifyClip(project, target, clipId, "Time remap", "remap:" + idText(clipId),
+                      [first, last](Clip& clip) {
+                          model::Curve& curve = clip.animation.curve(model::Param::TimeRemap);
+                          curve.set(first);
+                          curve.set(last);
+                      });
+}
+
+Result<CommandPtr> makeFreezeFrame(Project& project, const EditTarget& target, ClipId clipId,
+                                   const time::RationalTime& at) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    const time::Rational& rate = existing.timelineRange.start().rate();
+    const time::RationalTime when = at.rescaledTo(rate);
+    if (!existing.timelineRange.contains(when)) {
+        return Error{ErrorCode::InvalidData, "that moment is not inside the clip"};
+    }
+
+    // The frame showing now -- through any remap already on the clip, because
+    // what somebody means by "freeze this" is the picture in front of them.
+    const double frozen = existing.sourceTimeAt(when).toSecondsDouble();
+    const time::RationalTime lastFrame = existing.endExclusive() - time::RationalTime{1, rate};
+
+    model::Keyframe first;
+    first.time = existing.baseSourceTimeAt(existing.start());
+    first.value = frozen;
+    // Held rather than linear: two keyframes of equal value would freeze
+    // correctly today and thaw the moment somebody dragged either of them.
+    first.interpolation = model::Interpolation::Hold;
+    model::Keyframe last;
+    last.time = existing.baseSourceTimeAt(lastFrame);
+    last.value = frozen;
+    last.interpolation = model::Interpolation::Hold;
+    if (last.time == first.time) {
+        return Error{ErrorCode::InvalidData, "that clip is too short to freeze"};
+    }
+
+    return modifyClip(project, target, clipId, "Freeze frame", "freeze:" + idText(clipId),
+                      [first, last](Clip& clip) {
+                          model::Curve& curve = clip.animation.curve(model::Param::TimeRemap);
+                          curve = model::Curve{};
+                          curve.set(first);
+                          curve.set(last);
+                      });
+}
+
 Result<CommandPtr> makeSetSpeed(Project& project, const EditTarget& target, ClipId clipId,
                                 double speed, bool reversed, bool ripple) {
     auto found = lookupClip(project, target, clipId);

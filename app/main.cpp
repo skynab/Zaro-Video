@@ -1562,6 +1562,93 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Time remapping and freeze frames, through the real panel.
+        //
+        // A freeze is the one retime whose effect is visible in a single frame:
+        // a frame that was black shows the lit one instead. That makes it
+        // measurable here in a way a speed ramp is not, and it exercises the
+        // same curve a ramp would use.
+        {
+            const auto grayAt = [&](std::int64_t frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                window.monitor()->update();
+                QApplication::processEvents();
+                return meanGray(window.monitor()->grabFramebuffer());
+            };
+
+            std::int64_t litFrame = -1;
+            double lit = 0.0;
+            std::int64_t darkFrame = -1;
+            double darkest = 1e9;
+            for (std::int64_t frame = 8; frame < 60; ++frame) {
+                const double gray = grayAt(frame);
+                if (gray > lit) {
+                    lit = gray;
+                    litFrame = frame;
+                }
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+            if (litFrame < 0 || darkFrame < 0 || !(lit > darkest * 4.0 + 10.0)) {
+                std::fprintf(stderr, "  FAIL: no lit and dark pair to freeze between\n");
+                return 1;
+            }
+
+            const auto remapTrackId =
+                window.project().findSequence(sequence.id())->videoTracks().front().id();
+            const auto remapClipId = window.project()
+                                         .findSequence(sequence.id())
+                                         ->findTrack(remapTrackId)
+                                         ->clips()
+                                         .front()
+                                         .id;
+            timeline->selectOnlyForTest(remapTrackId, remapClipId);
+            window.effects()->setSelection(remapTrackId, remapClipId);
+            window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
+            QApplication::processEvents();
+
+            auto* freezeButton = window.effects()->findChild<QPushButton*>("freeze-frame");
+            auto* remapBox = window.effects()->findChild<QCheckBox*>("time-remap");
+            if (freezeButton == nullptr || remapBox == nullptr) {
+                std::fprintf(stderr, "  FAIL: the time remap controls are not in the panel\n");
+                return 1;
+            }
+            freezeButton->click();
+            QApplication::processEvents();
+
+            if (!remapBox->isChecked()) {
+                std::fprintf(stderr, "  FAIL: freezing did not turn time remapping on\n");
+                return 1;
+            }
+            // The frame that was black now shows the lit one.
+            const double frozen = grayAt(darkFrame);
+            std::printf(
+                "  freeze frame: %.1f lit, %.1f dark, %.1f after freezing on the lit "
+                "frame\n",
+                lit, darkest, frozen);
+            if (!(frozen > lit * 0.8)) {
+                std::fprintf(stderr, "  FAIL: the freeze did not reach the picture\n");
+                return 1;
+            }
+
+            // And switching it off puts the clip back on its own frames.
+            remapBox->setChecked(false);
+            QApplication::processEvents();
+            const double thawed = grayAt(darkFrame);
+            if (!(thawed < lit * 0.5)) {
+                std::fprintf(stderr, "  FAIL: removing the remap did not restore the clip\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // The scopes, end to end: a measurement has to reach the panel and be
         // drawn there, and it has to be drawn the right way up. Where the trace
         // sits is the assertion, not how many pixels it covers -- the

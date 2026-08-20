@@ -198,7 +198,8 @@ std::span<const Param> allParams() noexcept {
                                      Param::ScaleY,    Param::Opacity,     Param::RotationDegrees,
                                      Param::AnchorX,   Param::AnchorY,     Param::GainDb,
                                      Param::Pan,       Param::Temperature, Param::Tint,
-                                     Param::Exposure,  Param::Contrast,    Param::Saturation};
+                                     Param::Exposure,  Param::Contrast,    Param::Saturation,
+                                     Param::TimeRemap};
     return kAll;
 }
 
@@ -234,6 +235,8 @@ const char* toString(Param param) noexcept {
             return "contrast";
         case Param::Saturation:
             return "saturation";
+        case Param::TimeRemap:
+            return "timeRemap";
     }
     return "";
 }

@@ -425,7 +425,9 @@ void TimelineWidget::dragKeyframeTo(int x) {
         clip->endExclusive() - time::RationalTime{1, clip->start().rate()};
     when = std::clamp(when, clip->start(), lastFrame);
 
-    const time::RationalTime target = clip->sourceTimeAt(when);
+    // Keyframes are placed against the un-remapped mapping, so dragging one
+    // has to speak the same coordinates.
+    const time::RationalTime target = clip->baseSourceTimeAt(when);
     if (target == keyframeDrag_.time) {
         return;
     }
@@ -505,7 +507,7 @@ void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, c
         if (!clip.timelineRange.contains(timelineTime)) {
             continue;
         }
-        const time::RationalTime sourceTime = clip.sourceTimeAt(timelineTime);
+        const time::RationalTime sourceTime = clip.baseSourceTimeAt(timelineTime);
         const std::int64_t sample = sourceTime.rescaledTo(waveform.sampleRate()).frames();
         const std::int64_t bucket = sample / waveform.samplesPerBucket();
         if (bucket < 0 || bucket >= waveform.bucketCount()) {

@@ -161,6 +161,23 @@ struct Clip {
     /// a speed or time-remap curve replaces later.
     [[nodiscard]] time::RationalTime sourceTimeAt(const time::RationalTime& timelineTime) const;
 
+    /// The same mapping with time remapping *not* applied: where the clip's
+    /// trims, speed and direction alone say to read.
+    ///
+    /// This is what the audio reads, and what keyframes are positioned in.
+    /// Audio because retiming a signal is resampling it and a remap changes
+    /// rate continuously -- a problem worth solving on its own rather than
+    /// badly in passing. Keyframes because they are placed against this
+    /// mapping, and reading them through the remap they define would be
+    /// circular.
+    [[nodiscard]] time::RationalTime baseSourceTimeAt(const time::RationalTime& timelineTime) const;
+    [[nodiscard]] time::RationalTime activeBaseSourceTimeAt(
+        const time::RationalTime& timelineTime) const;
+
+    /// Whether the clip picks its frames from a curve rather than from its
+    /// range and speed.
+    [[nodiscard]] bool isTimeRemapped() const;
+
     /// Where a source time sits on the timeline: the inverse of `sourceTimeAt`.
     ///
     /// Keyframes are stored in source time and drawn on the timeline, so this
