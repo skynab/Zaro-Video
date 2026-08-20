@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "zaro/core/model/Caption.h"
 #include "zaro/core/model/Marker.h"
 #include "zaro/core/model/Track.h"
 #include "zaro/core/time/Rational.h"
@@ -61,6 +62,9 @@ public:
     /// and either nothing is soloed or it is one of the soloed ones. Asking a
     /// track on its own gives the wrong answer for every track in a sequence
     /// where something else is soloed, which is why this lives here.
+    [[nodiscard]] const CaptionTrack& captions() const noexcept { return captions_; }
+    [[nodiscard]] CaptionTrack& captions() noexcept { return captions_; }
+
     [[nodiscard]] bool isAudible(const Track& track) const;
     /// Whether any track of either kind is soloed.
     [[nodiscard]] bool hasSolo() const;
@@ -92,6 +96,7 @@ private:
     std::vector<Marker> markers_;
     std::vector<Track> videoTracks_;
     std::vector<Track> audioTracks_;
+    CaptionTrack captions_;
 };
 
 }  // namespace zaro::model

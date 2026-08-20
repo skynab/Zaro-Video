@@ -1195,6 +1195,51 @@ looking like a broken mixer.
 
 ---
 
+#### Phase 5m — captions ✅
+
+SubRip and WebVTT in and out, a caption track on the sequence, burn-in on both
+render paths, and a menu to import, export and switch it on.
+
+**Captions are timed in milliseconds, not frames.** Subtitle formats are defined
+in milliseconds; a caption imported at 24fps, rounded to frames and written back
+would come back a few milliseconds different from the file that produced it,
+every time, compounding across a round trip through another tool. A test
+requires writing and reading to be exact inverses.
+
+**One reader for both formats.** They differ in a header, a decimal separator
+and features nobody uses in an edit — refusing a .vtt that is a .srt with dots
+in it would be pedantry rather than correctness. The reader handles optional
+hours, one to three fraction digits, cue settings after the timestamps, a byte
+order mark, and CRLF, because files in the wild have all of them.
+
+**Overlapping captions are both kept.** The formats allow them, and a reader
+that assumed one at a time would drop the second half of every conversation
+where two people speak over each other.
+
+**Burn-in is off by default and is its own decision.** A sidecar file delivered
+alongside the picture is the normal case, and burning in has no way back once
+the file is written. Captions draw over everything: they are a deliverable laid
+on the picture rather than a layer in it, and a caption a later track could
+cover is one nobody can read.
+
+**The caption graphic is built by shared code**, so the CPU and the GPU put
+captions in the same place — which is the whole of what a burned-in caption has
+to get right.
+
+**Importing keeps the style and the burn-in setting.** Those belong to the
+sequence, not to the file: bringing in a revised script should not silently turn
+burn-in off or lose a typeface somebody chose.
+
+**An import is one undo step.** Captions arrive and leave as a file, and three
+hundred undo steps would bury whatever came before them.
+
+Two of my own mistakes, both the same shape as before: the round-trip test
+compared against a sequence that had already been moved into the project, and
+the burn-in self-test measured a white caption on the fixture's white flash
+frame. Both said "no difference" while the code was right.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

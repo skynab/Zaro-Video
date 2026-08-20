@@ -122,6 +122,24 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
         drawClip(*clip, **image, out, clip->transformAt(at), at);
         ++lastClipCount_;
     }
+
+    // Captions last, over everything: they are a deliverable laid on top of the
+    // picture rather than a layer in it, and a caption a later track could
+    // cover is a caption nobody can read.
+    if (sequence.captions().isBurnedIn()) {
+        for (const model::Caption* caption : sequence.captions().at(at)) {
+            if (generated_.width() != out.width() || generated_.height() != out.height()) {
+                generated_ = RgbaImage{out.width(), out.height()};
+            }
+            const model::Graphic graphic = captionGraphic(sequence.captions().style(),
+                                                          caption->text, out.width(), out.height());
+            if (drawText(graphic, text_, generated_)) {
+                drawOver(generated_, out);
+            } else {
+                ++skippedText_;
+            }
+        }
+    }
     return {};
 }
 

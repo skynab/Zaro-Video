@@ -261,6 +261,35 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     sequence.setSize(4096, 1716);
     sequence.setStartTime(time::RationalTime{86400, time::rates::fps23_976});
 
+    {
+        model::CaptionStyle style;
+        style.family = "Avenir Next";
+        style.pointSize = 54.5;
+        style.bold = true;
+        style.bottomMargin = 112.25;
+        style.widthFraction = 0.675;
+        style.red = 0.95;
+        style.green = 0.9;
+        style.blue = 0.15;
+        style.alpha = 0.85;
+        sequence.captions().setStyle(style);
+        sequence.captions().setBurnedIn(true);
+
+        model::Caption first;
+        first.range =
+            time::TimeRange::fromStartEnd(time::RationalTime{1500, time::Rational{1000, 1}},
+                                          time::RationalTime{4250, time::Rational{1000, 1}});
+        first.text = "First caption\nsecond line";
+        sequence.captions().add(first);
+
+        model::Caption second;
+        second.range =
+            time::TimeRange::fromStartEnd(time::RationalTime{9000, time::Rational{1000, 1}},
+                                          time::RationalTime{11000, time::Rational{1000, 1}});
+        second.text = "Later";
+        sequence.captions().add(second);
+    }
+
     const auto videoTrackId = project.ids().next<model::TrackTag>();
     const auto audioTrackId = project.ids().next<model::TrackTag>();
     sequence.addTrack(videoTrackId, model::TrackKind::Video, "V-main");
@@ -433,6 +462,14 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedVideo->kind() == model::TrackKind::Video);
     CHECK(loadedVideo->isMuted());
     CHECK(loadedVideo->isLocked());
+    // Against the project's own sequence: the local was moved into the project
+    // long before this point, and comparing with a moved-from object compares
+    // nothing.
+    CHECK(loadedSequence->captions() == project.findSequence(sequenceId)->captions());
+    CHECK(loadedSequence->captions().isBurnedIn());
+    REQUIRE(loadedSequence->captions().size() == 2);
+    CHECK(loadedSequence->captions().captions()[0].text == "First caption\nsecond line");
+
     CHECK(loadedVideo->isSoloed());
     CHECK(loadedVideo->gainDb() == -2.25);
     CHECK(loadedVideo->pan() == -0.4);

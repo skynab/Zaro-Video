@@ -14,11 +14,14 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
@@ -41,6 +44,7 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
+#include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderGraph.h"
@@ -113,6 +117,12 @@ public:
         // The transport belongs under the program monitor, not at the bottom of
         // the window: it controls the picture above it, and putting the timeline
         // between them makes that relationship harder to see.
+        auto* captionsButton = new QPushButton("Captions…", this);
+        captionsButton->setToolTip("Import, export or burn in subtitles");
+        captionsButton->setMinimumWidth(captionsButton->sizeHint().width());
+        transportRow->addWidget(captionsButton);
+        connect(captionsButton, &QPushButton::clicked, this, [this] { captionsMenu(); });
+
         auto* transportBar = new QWidget(this);
         transportBar->setLayout(transportRow);
 
@@ -705,6 +715,87 @@ private:
         scopes_->setScopes(render::measure(*frame, options));
     }
 
+    /// Import, export and burn-in, from one menu.
+    ///
+    /// A menu rather than a panel: captions are imported once, exported once,
+    /// and otherwise left alone, and a permanent panel for three actions would
+    /// take room from the ones used constantly.
+    void captionsMenu() {
+        if (sequence_ == nullptr) {
+            return;
+        }
+        QMenu menu;
+        QAction* importAction = menu.addAction("Import subtitles…");
+        QAction* exportAction = menu.addAction("Export subtitles…");
+        menu.addSeparator();
+        QAction* burnAction = menu.addAction("Burn in");
+        burnAction->setCheckable(true);
+        burnAction->setChecked(sequence_->captions().isBurnedIn());
+
+        const std::size_t count = sequence_->captions().size();
+        exportAction->setEnabled(count > 0);
+        burnAction->setEnabled(count > 0);
+        menu.addSeparator();
+        menu.addAction(QString("%1 captions").arg(count))->setEnabled(false);
+
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == nullptr) {
+            return;
+        }
+        if (chosen == importAction) {
+            const QString path = QFileDialog::getOpenFileName(
+                this, "Open subtitles", {}, "Subtitles (*.srt *.vtt);;All files (*)");
+            if (path.isEmpty()) {
+                return;
+            }
+            auto loaded = io::loadSubtitles(path.toStdString());
+            if (!loaded) {
+                QMessageBox::warning(this, "Subtitles",
+                                     QString::fromStdString(loaded.error().toString()));
+                return;
+            }
+            // The style and the burn-in setting belong to the sequence, not to
+            // the file: importing a new script should not silently turn burn-in
+            // off or lose a typeface somebody chose.
+            model::CaptionTrack merged = *loaded;
+            merged.setStyle(sequence_->captions().style());
+            merged.setBurnedIn(sequence_->captions().isBurnedIn());
+            applyCaptions(merged);
+            return;
+        }
+        if (chosen == exportAction) {
+            const QString path = QFileDialog::getSaveFileName(
+                this, "Save subtitles", "captions.srt", "SubRip (*.srt);;WebVTT (*.vtt)");
+            if (path.isEmpty()) {
+                return;
+            }
+            const auto format = io::formatForPath(path.toStdString());
+            if (Status saved = io::saveSubtitles(sequence_->captions(), path.toStdString(), format);
+                !saved) {
+                QMessageBox::warning(this, "Subtitles",
+                                     QString::fromStdString(saved.error().toString()));
+            }
+            return;
+        }
+        if (chosen == burnAction) {
+            model::CaptionTrack changed = sequence_->captions();
+            changed.setBurnedIn(burnAction->isChecked());
+            applyCaptions(changed);
+        }
+    }
+
+    void applyCaptions(const model::CaptionTrack& captions) {
+        auto built = edit::makeSetCaptions(project_, sequence_->id(), captions);
+        if (!built) {
+            return;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        monitor_->update();
+        timeline_->update();
+        measureScopes();
+    }
+
     void refresh() {
         if (sequence_ == nullptr) {
             return;
@@ -1249,6 +1340,72 @@ int main(int argc, char** argv) {
                         without);
             if (!(withShape > without + 50.0)) {
                 std::fprintf(stderr, "  FAIL: the shape layer did not reach the preview\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Captions: imported from a real file, burned in, and measured through
+        // the compositor. The parser and the burn-in are tested headlessly;
+        // what those cannot show is whether an imported file reaches the
+        // picture.
+        {
+            auto subtitles = zaro::io::loadSubtitles(
+                "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
+                "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/test.srt");
+            if (!subtitles) {
+                std::fprintf(stderr, "  FAIL: %s\n", subtitles.error().toString().c_str());
+                return 1;
+            }
+            if (subtitles->size() != 2) {
+                std::fprintf(stderr, "  FAIL: read %zu captions, expected 2\n", subtitles->size());
+                return 1;
+            }
+
+            std::int64_t darkFrame = 0;
+            double darkest = 1e9;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+
+            zaro::model::CaptionTrack burned = *subtitles;
+            burned.setBurnedIn(true);
+            auto built = zaro::edit::makeSetCaptions(window.project(), sequence.id(), burned);
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+
+            // The darkest frame inside the caption's span, not frame zero: this
+            // fixture's frame zero is a white flash, and a white caption on a
+            // white frame is invisible. The caption runs to two seconds, which
+            // covers the whole range searched above.
+            window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double withCaption = meanGray(window.monitor()->grabFramebuffer());
+
+            window.commands().undo(window.project());
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double without = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  captions: %zu read, frame reads %.2f burned in against %.2f\n",
+                        subtitles->size(), withCaption, without);
+            if (!(withCaption > without + 0.2)) {
+                std::fprintf(stderr, "  FAIL: the burned-in caption did not reach the picture\n");
                 return 1;
             }
 

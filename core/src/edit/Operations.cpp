@@ -1372,6 +1372,15 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeSetCaptions(Project& project, model::SequenceId sequenceId,
+                                   const model::CaptionTrack& captions) {
+    if (project.findSequence(sequenceId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    return makeCommand(sequenceId, "Set captions", {},
+                       [captions](Sequence& sequence) { sequence.captions() = captions; });
+}
+
 Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
                                   const model::Graphic& graphic, const time::TimeRange& range) {
     if (range.isEmpty()) {

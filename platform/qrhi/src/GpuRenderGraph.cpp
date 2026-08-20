@@ -110,6 +110,22 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
         }
         ++lastClipCount_;
     }
+    // Captions over everything, the same as the CPU path. The two have to put
+    // them in the same place, which is why the graphic is built by shared code
+    // rather than by each of them.
+    if (sequence.captions().isBurnedIn() && text_ != nullptr) {
+        for (const model::Caption* caption : sequence.captions().at(at)) {
+            if (generated_.width() != sequence.width() ||
+                generated_.height() != sequence.height()) {
+                generated_ = render::RgbaImage{sequence.width(), sequence.height()};
+            }
+            const model::Graphic graphic = render::captionGraphic(
+                sequence.captions().style(), caption->text, sequence.width(), sequence.height());
+            if (render::drawText(graphic, text_, generated_)) {
+                (void)compositor_->draw(generated_, model::Transform{}, model::BlendMode::Normal);
+            }
+        }
+    }
     return {};
 }
 

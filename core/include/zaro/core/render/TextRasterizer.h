@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zaro/core/Error.h"
+#include "zaro/core/model/Caption.h"
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/render/RgbaImage.h"
 
@@ -46,5 +47,14 @@ public:
 /// frame instead would look like a bug in the text.
 [[nodiscard]] bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer,
                             RgbaImage& out);
+
+/// The graphic a caption is drawn as, at a given frame size.
+///
+/// Built here rather than in each render graph, so the CPU and the GPU put
+/// captions in the same place — which is the whole of what a burned-in caption
+/// has to get right.
+[[nodiscard]] model::Graphic captionGraphic(const model::CaptionStyle& style,
+                                            const std::string& text, std::int32_t frameWidth,
+                                            std::int32_t frameHeight);
 
 }  // namespace zaro::render

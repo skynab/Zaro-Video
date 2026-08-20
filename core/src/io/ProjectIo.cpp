@@ -533,16 +533,57 @@ json encode(const model::Sequence& sequence) {
     for (const model::Marker& marker : sequence.markers()) {
         markers.push_back(encode(marker));
     }
-    return json{{"id", sequence.id().value()},
-                {"name", sequence.name()},
-                {"frameRate", encode(sequence.frameRate())},
-                {"audioSampleRate", encode(sequence.audioSampleRate())},
-                {"width", sequence.width()},
-                {"height", sequence.height()},
-                {"startTime", encode(sequence.startTime())},
-                {"videoTracks", std::move(videoTracks)},
-                {"audioTracks", std::move(audioTracks)},
-                {"markers", std::move(markers)}};
+    json captions = json::array();
+    for (const model::Caption& caption : sequence.captions().captions()) {
+        captions.push_back(json{{"range", encode(caption.range)}, {"text", caption.text}});
+    }
+    const model::CaptionStyle& style = sequence.captions().style();
+    const model::CaptionStyle defaultStyle;
+    json captionStyle = json::object();
+    const auto putStyle = [&captionStyle](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            captionStyle[key] = value;
+        }
+    };
+    if (!style.family.empty()) {
+        captionStyle["family"] = style.family;
+    }
+    putStyle("pointSize", style.pointSize, defaultStyle.pointSize);
+    putStyle("bottomMargin", style.bottomMargin, defaultStyle.bottomMargin);
+    putStyle("widthFraction", style.widthFraction, defaultStyle.widthFraction);
+    putStyle("red", style.red, defaultStyle.red);
+    putStyle("green", style.green, defaultStyle.green);
+    putStyle("blue", style.blue, defaultStyle.blue);
+    putStyle("alpha", style.alpha, defaultStyle.alpha);
+    if (style.bold) {
+        captionStyle["bold"] = true;
+    }
+
+    json captionTrack = json::object();
+    if (!captions.empty()) {
+        captionTrack["cues"] = std::move(captions);
+    }
+    if (!captionStyle.empty()) {
+        captionTrack["style"] = std::move(captionStyle);
+    }
+    if (sequence.captions().isBurnedIn()) {
+        captionTrack["burnIn"] = true;
+    }
+
+    json out{{"id", sequence.id().value()},
+             {"name", sequence.name()},
+             {"frameRate", encode(sequence.frameRate())},
+             {"audioSampleRate", encode(sequence.audioSampleRate())},
+             {"width", sequence.width()},
+             {"height", sequence.height()},
+             {"startTime", encode(sequence.startTime())},
+             {"videoTracks", std::move(videoTracks)},
+             {"audioTracks", std::move(audioTracks)},
+             {"markers", std::move(markers)}};
+    if (!captionTrack.empty()) {
+        out["captions"] = std::move(captionTrack);
+    }
+    return out;
 }
 
 json encode(const model::MediaRef& ref) {
@@ -722,6 +763,39 @@ Result<model::Sequence> decodeSequence(const json& node) {
     }
     if (Status status = loadTracks("audioTracks", model::TrackKind::Audio); !status) {
         return status.error();
+    }
+
+    if (node.contains("captions") && node.at("captions").is_object()) {
+        const json& captionNode = node.at("captions");
+        model::CaptionTrack& track = sequence.captions();
+        track.setBurnedIn(captionNode.value("burnIn", false));
+        if (captionNode.contains("style") && captionNode.at("style").is_object()) {
+            const json& styleNode = captionNode.at("style");
+            model::CaptionStyle style;
+            style.family = styleNode.value("family", std::string{});
+            style.pointSize = styleNode.value("pointSize", style.pointSize);
+            style.bold = styleNode.value("bold", false);
+            style.bottomMargin = styleNode.value("bottomMargin", style.bottomMargin);
+            style.widthFraction = styleNode.value("widthFraction", style.widthFraction);
+            style.red = styleNode.value("red", style.red);
+            style.green = styleNode.value("green", style.green);
+            style.blue = styleNode.value("blue", style.blue);
+            style.alpha = styleNode.value("alpha", style.alpha);
+            track.setStyle(style);
+        }
+        for (const json& cue : captionNode.value("cues", json::array())) {
+            if (!cue.is_object() || !cue.contains("range")) {
+                continue;
+            }
+            auto range = decodeRange(cue.at("range"), "caption range");
+            if (!range) {
+                return range.error();
+            }
+            model::Caption caption;
+            caption.range = *range;
+            caption.text = cue.value("text", std::string{});
+            track.add(caption);
+        }
     }
 
     std::vector<model::Marker> markers;

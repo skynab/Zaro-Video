@@ -17,6 +17,7 @@ add_library(zaro_core
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
     src/io/CubeLut.cpp
+    src/io/SubtitleIo.cpp
     src/io/ProjectIo.cpp
     src/playback/AudioRingBuffer.cpp
     src/playback/PlaybackScheduler.cpp
@@ -35,6 +36,7 @@ add_library(zaro_core
     src/render/Scopes.cpp
     src/render/RgbaImage.cpp
     src/model/Animation.cpp
+    src/model/Caption.cpp
     src/model/Clip.cpp
     src/model/Graphic.cpp
     src/model/ClipEffects.cpp

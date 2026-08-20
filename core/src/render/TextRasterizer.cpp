@@ -36,4 +36,29 @@ bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer, RgbaIma
     return true;
 }
 
+model::Graphic captionGraphic(const model::CaptionStyle& style, const std::string& text,
+                              std::int32_t frameWidth, std::int32_t frameHeight) {
+    model::Graphic graphic;
+    graphic.kind = model::GraphicKind::Text;
+    graphic.text = text;
+    graphic.family = style.family;
+    graphic.pointSize = style.pointSize;
+    graphic.bold = style.bold;
+    graphic.alignment = 0;  // centred, which is where captions go
+
+    graphic.width = frameWidth * std::clamp(style.widthFraction, 0.05, 1.0);
+    // Tall enough for several lines, and anchored by its bottom edge: captions
+    // grow upwards from the margin, so a two-line caption does not push itself
+    // off the bottom of the frame.
+    graphic.height = std::max(1.0, style.pointSize * 4.0);
+    graphic.centreX = 0.0;
+    graphic.centreY = (frameHeight * 0.5) - style.bottomMargin - (graphic.height * 0.5);
+
+    graphic.red = style.red;
+    graphic.green = style.green;
+    graphic.blue = style.blue;
+    graphic.alpha = style.alpha;
+    return graphic;
+}
+
 }  // namespace zaro::render

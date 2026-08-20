@@ -1,10 +1,17 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/edit/Operations.h"
+#include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/TextRasterizer.h"
+
+#include "ModelFixtures.h"
+#include "TestSources.h"
 
 using namespace zaro;
 using Catch::Approx;
+using zaro::testing::Fixture;
+using zaro::testing::SolidFrameSource;
 
 namespace {
 
@@ -126,4 +133,83 @@ TEST_CASE("A shape graphic is not text", "[render][text]") {
     render::RgbaImage out{32, 32};
     CHECK(render::drawText(graphic, &engine, out));
     CHECK(engine.calls == 0);
+}
+
+TEST_CASE("A caption graphic sits above the bottom margin", "[render][text][captions]") {
+    // Built by shared code so the CPU and GPU paths put captions in the same
+    // place, which is the whole of what a burned-in caption has to get right.
+    model::CaptionStyle style;
+    style.pointSize = 40.0;
+    style.bottomMargin = 100.0;
+    style.widthFraction = 0.5;
+
+    const model::Graphic graphic = render::captionGraphic(style, "Hello", 1920, 1080);
+    CHECK(graphic.kind == model::GraphicKind::Text);
+    CHECK(graphic.text == "Hello");
+    CHECK(graphic.width == Approx(960.0));
+    CHECK(graphic.centreX == Approx(0.0));
+
+    // The box's bottom edge is the margin above the bottom of the frame.
+    const double bottomEdge = graphic.centreY + (graphic.height * 0.5);
+    CHECK(bottomEdge == Approx((1080 * 0.5) - 100.0));
+
+    // Tall enough for several lines, since captions grow upwards from the
+    // margin and a two-line caption must not push itself off the frame.
+    CHECK(graphic.height > style.pointSize * 2.0);
+}
+
+TEST_CASE("Captions are drawn over the picture", "[render][graph][captions]") {
+    Fixture f;
+    f.sequence().setSize(64, 64);
+    SolidFrameSource source{64, 64};
+    source.define(f.longMedia, render::Rgba{0.0F, 0.0F, 0.0F, 1.0F});
+    render::RenderGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 100, 500))));
+
+    model::Caption caption;
+    caption.range =
+        time::TimeRange::fromStartEnd(time::RationalTime{0, time::Rational{1000, 1}},
+                                      time::RationalTime{2000, time::Rational{1000, 1}});
+    caption.text = "Subtitle";
+    f.sequence().captions().add(caption);
+
+    // Off by default: a sidecar file is the normal delivery, and burning in is
+    // a decision with no way back once the file is written.
+    CHECK_FALSE(f.sequence().captions().isBurnedIn());
+    const auto plain = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(plain);
+
+    f.sequence().captions().setBurnedIn(true);
+    BlockRasterizer engine;
+    graph.setTextRasterizer(&engine);
+    const auto burned = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(burned);
+    CHECK(engine.calls == 1);
+
+    // Past the caption's end there is nothing to draw.
+    engine.calls = 0;
+    REQUIRE(graph.composite(f.sequence(), f.at(80)));
+    CHECK(engine.calls == 0);
+}
+
+TEST_CASE("Burned-in captions with no font engine are counted", "[render][graph][captions]") {
+    // A delivered file quietly missing its captions is the worst outcome
+    // available, so the number is on the record.
+    Fixture f;
+    f.sequence().setSize(32, 32);
+    SolidFrameSource source{32, 32};
+    source.define(f.longMedia, render::Rgba{0.0F, 0.0F, 0.0F, 1.0F});
+    render::RenderGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 100, 500))));
+
+    model::Caption caption;
+    caption.range =
+        time::TimeRange::fromStartEnd(time::RationalTime{0, time::Rational{1000, 1}},
+                                      time::RationalTime{2000, time::Rational{1000, 1}});
+    caption.text = "Subtitle";
+    f.sequence().captions().add(caption);
+    f.sequence().captions().setBurnedIn(true);
+
+    REQUIRE(graph.composite(f.sequence(), f.at(10)));
+    CHECK(graph.lastSkippedTextCount() == 1);
 }

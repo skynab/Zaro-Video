@@ -165,6 +165,17 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+// --- Captions ---------------------------------------------------------------
+
+/// Replace a sequence's captions wholesale.
+///
+/// One operation rather than per-cue edits: captions arrive and leave as a
+/// file, and an import that landed as three hundred undo steps would bury
+/// whatever came before it.
+[[nodiscard]] Result<CommandPtr> makeSetCaptions(model::Project& project,
+                                                 model::SequenceId sequence,
+                                                 const model::CaptionTrack& captions);
+
 /// Place a generated shape on a track, at a time, for a duration.
 ///
 /// A graphic has no media, so it has no source range to speak of -- but a clip
