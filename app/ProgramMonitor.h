@@ -5,6 +5,7 @@
 
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/TextRasterizer.h"
 #include "zaro/core/time/RationalTime.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
@@ -27,6 +28,10 @@ public:
     /// Neither is owned; both must outlive the widget.
     void setSource(const model::Sequence* sequence, render::SourceFrameProvider* provider);
 
+    /// How to draw text layers. Held until the graph exists, since the graph is
+    /// built lazily when the GPU device is ready.
+    void setTextRasterizer(render::TextRasterizer* rasterizer);
+
     void setPosition(const time::RationalTime& position);
     [[nodiscard]] const time::RationalTime& position() const noexcept { return position_; }
 
@@ -42,6 +47,7 @@ protected:
 private:
     const model::Sequence* sequence_{nullptr};
     render::SourceFrameProvider* provider_{nullptr};
+    render::TextRasterizer* text_{nullptr};
     time::RationalTime position_{};
 
     std::unique_ptr<platform::qrhi::GpuCompositor> compositor_;

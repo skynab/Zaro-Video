@@ -2,6 +2,7 @@
 
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/ShapeRaster.h"
+#include "zaro/core/render/TextRasterizer.h"
 
 namespace zaro::platform::qrhi {
 
@@ -78,7 +79,13 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 generated_.height() != sequence.height()) {
                 generated_ = render::RgbaImage{sequence.width(), sequence.height()};
             }
-            render::drawShape(clip->graphic, generated_);
+            if (clip->graphic.kind == model::GraphicKind::Text) {
+                if (!render::drawText(clip->graphic, text_, generated_)) {
+                    continue;
+                }
+            } else {
+                render::drawShape(clip->graphic, generated_);
+            }
             const render::SecondaryConstants secondary =
                 render::secondaryConstantsFor(clip->secondary, transfer_);
             const render::LutTable* lut =

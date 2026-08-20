@@ -8,6 +8,7 @@
 #include "zaro/core/model/Project.h"
 #include "zaro/core/render/FrameCache.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/TextRasterizer.h"
 
 namespace zaro::platform::ffmpeg {
 
@@ -66,6 +67,8 @@ struct RenderRequest {
 /// the right frame count while the last packet had a duration of zero.
 struct RenderSummary {
     std::int64_t framesEncoded{0};
+    /// Text layers that could not be drawn because there was no font engine.
+    std::int64_t textLayersSkipped{0};
     std::int64_t videoPacketsWritten{0};
     std::int64_t audioSamplesWritten{0};
     std::int64_t audioSamplesExpected{0};
@@ -85,10 +88,14 @@ struct RenderProgress {
 /// code rather than two loops that have to be kept agreeing. `onProgress` is
 /// called from the calling thread; `keepGoing` is polled per frame and
 /// abandoning leaves a partial file, which the caller should remove.
+/// `text` is how to draw text layers. Null renders everything else and reports
+/// the count it skipped in the summary — a delivered file quietly missing its
+/// titles is the worst outcome available, so the number is on the record.
 [[nodiscard]] Status renderSequence(
     const model::Project& project, const RenderRequest& request,
     const std::function<void(const RenderProgress&)>& onProgress = {},
-    const std::function<bool()>& keepGoing = {}, RenderSummary* summary = nullptr);
+    const std::function<bool()>& keepGoing = {}, RenderSummary* summary = nullptr,
+    render::TextRasterizer* text = nullptr);
 
 struct EncodeSettings {
     std::string path;

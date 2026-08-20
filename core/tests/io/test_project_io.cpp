@@ -321,6 +321,12 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.graphic.green = 0.875;
         clip.graphic.blue = 0.375;
         clip.graphic.alpha = 0.625;
+        clip.graphic.text = "Chapter Two";
+        clip.graphic.family = "Helvetica Neue";
+        clip.graphic.pointSize = 96.5;
+        clip.graphic.bold = true;
+        clip.graphic.italic = true;
+        clip.graphic.alignment = -1;
         clip.lut.path = "/looks/kodak-2383.cube";
         clip.lut.amount = 0.625;
         clip.secondary.qualifier.enabled = true;

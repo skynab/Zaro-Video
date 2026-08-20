@@ -3,6 +3,7 @@
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/Compositing.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/TextRasterizer.h"
 
 namespace zaro::render {
 
@@ -30,6 +31,22 @@ public:
     /// basis of a "this frame is expensive" indicator later.
     [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
 
+    /// How to draw text, if anything can.
+
+    ///
+
+    /// Null is normal: a headless tool that was never given a font engine renders
+
+    /// the rest of the sequence and counts the text it had to leave out, which is
+
+    /// visible and diagnosable. Drawing an empty frame instead would look like a
+
+    /// bug in the text.
+
+    void setTextRasterizer(TextRasterizer* rasterizer) { text_ = rasterizer; }
+
+    [[nodiscard]] std::int32_t lastSkippedTextCount() const noexcept { return skippedText_; }
+
 private:
     /// Baked tone curves, kept between frames: building one is thousands of
     /// spline evaluations, and a grade that is not being edited changes on no
@@ -40,6 +57,8 @@ private:
     /// Scratch for generated clips, kept between frames so a shape layer does
     /// not allocate a frame-sized buffer on every frame.
     RgbaImage generated_;
+    TextRasterizer* text_{nullptr};
+    std::int32_t skippedText_{0};
 
     CurveTableCache curves_;
     /// Baked look LUTs, keyed by path, so two clips sharing a look share one

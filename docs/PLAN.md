@@ -1153,6 +1153,48 @@ all work now.
 
 ---
 
+#### Phase 5l — text layers ✅
+
+Text graphics, rasterised by Qt's font engine behind a core interface, drawn by
+the preview and by the export tool.
+
+**The font engine produces coverage, not colour.** An implementation renders
+glyphs as an alpha mask, and this layer multiplies by the graphic's colour in
+linear light. Asking the engine for coloured text and converting the result from
+sRGB per pixel would convert the antialiased edges as if they were colours,
+which is the reason text composited in a linear pipeline so often comes out
+looking thin.
+
+**`core/` has no font engine and is not getting one.** It links neither Qt nor
+FFmpeg, and text is exactly the sort of thing that drags a toolkit in through
+the back door. `render::TextRasterizer` is an interface; `platform/qtext`
+implements it on Qt Gui — not Widgets, so the export tool needs no window to put
+a title into a delivered file.
+
+**No rasteriser is a countable outcome, not a blank frame.** A tool that was
+never given one renders everything else and reports how many text layers it had
+to skip; `zaro-render` prints a warning. A delivered file quietly missing its
+titles is the worst outcome available, so the number is on the record.
+
+**Sizes are in pixels, not points.** A point size depends on a notional DPI, and
+a title has to be the same size in a delivered frame whatever the machine that
+rendered it thought its screen was. Subpixel antialiasing is off for the same
+class of reason: it is specific to one screen's pixel layout and is wrong the
+moment the result is composited or delivered anywhere else.
+
+**`zaro-render` builds its own `QGuiApplication`.** Qt's font engine needs one
+even with no window. A library that constructed one behind its caller's back
+would fight whatever the caller had already made, so the tool does it and the
+rasteriser says so plainly when there is none.
+
+**A flaky check became a deterministic one.** The mixer self-test read zero
+once: meters are only updated while the panel is visible — which is right — and
+whether a widget has become visible depends on how many event loops have run. It
+now asks explicitly and fails with a message about visibility rather than
+looking like a broken mixer.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

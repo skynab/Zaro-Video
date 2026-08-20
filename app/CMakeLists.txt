@@ -30,6 +30,7 @@ target_link_libraries(zaro-preview
     PRIVATE
         zaro::ui_core
         zaro::platform_qrhi
+    zaro::platform_qtext
         zaro::platform_ffmpeg
         zaro::platform_sdl
         zaro::warnings

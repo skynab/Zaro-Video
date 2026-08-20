@@ -49,7 +49,8 @@ headless: there is no window yet.
 | 5i | Look LUTs: .cube reader, baked cube, both paths | **done** |
 | 5j | Audio track mixer: strips, solo, metering | **done** |
 | 5k | Shape layers: generated rectangles and ellipses | **done** |
-| 5l | Text layers, then captions | next |
+| 5l | Text layers: Qt font engine behind a core interface | **done** |
+| 5m | Captions, graphics templates | next |
 
 ## Building
 

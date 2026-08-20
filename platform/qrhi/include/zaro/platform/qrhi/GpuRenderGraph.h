@@ -3,6 +3,7 @@
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/TextRasterizer.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 
 namespace zaro::platform::qrhi {
@@ -21,6 +22,9 @@ namespace zaro::platform::qrhi {
 /// with a flag.
 class GpuRenderGraph {
 public:
+    /// How to draw text. Set by whoever owns a font engine.
+    void setTextRasterizer(render::TextRasterizer* rasterizer) { text_ = rasterizer; }
+
     GpuRenderGraph(GpuCompositor& compositor, render::SourceFrameProvider& provider)
         : compositor_{&compositor}, provider_{&provider} {}
 
@@ -49,6 +53,7 @@ private:
                   const model::Transform& transform, const time::RationalTime& at);
 
     render::RgbaImage generated_;
+    render::TextRasterizer* text_{nullptr};
     render::CurveTableCache curves_;
     render::LutCache luts_;
 

@@ -10,7 +10,8 @@ namespace zaro::platform::ffmpeg {
 
 Status renderSequence(const model::Project& project, const RenderRequest& request,
                       const std::function<void(const RenderProgress&)>& onProgress,
-                      const std::function<bool()>& keepGoing, RenderSummary* summary) {
+                      const std::function<bool()>& keepGoing, RenderSummary* summary,
+                      render::TextRasterizer* text) {
     const model::Sequence* sequence = project.findSequence(request.sequence);
     if (sequence == nullptr) {
         return Error{ErrorCode::NotFound, "no such sequence"};
@@ -33,7 +34,9 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
     }
     ProjectMediaSource& source = **sourceOpened;
 
+    std::int64_t skippedText = 0;
     render::RenderGraph video{source};
+    video.setTextRasterizer(text);
     render::AudioGraph audio{source};
 
     EncodeSettings settings;
@@ -73,6 +76,7 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
         if (Status status = video.compositeInto(*sequence, at, frame); !status) {
             return status;
         }
+        skippedText += video.lastSkippedTextCount();
         if (Status status = encoder.writeVideo(frame); !status) {
             return status;
         }
@@ -102,6 +106,7 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
 
     if (summary != nullptr) {
         summary->framesEncoded = encoder.framesWritten();
+        summary->textLayersSkipped = skippedText;
         summary->videoPacketsWritten = encoder.videoPacketsWritten();
         summary->audioSamplesWritten = encoder.samplesWritten();
         summary->audioSamplesExpected =

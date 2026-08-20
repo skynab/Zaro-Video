@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace zaro::model {
 
@@ -16,6 +17,7 @@ enum class GraphicKind : std::uint8_t {
     None,
     Rectangle,
     Ellipse,
+    Text,
 };
 
 [[nodiscard]] const char* toString(GraphicKind kind) noexcept;
@@ -29,6 +31,20 @@ enum class GraphicKind : std::uint8_t {
 /// being special-cased.
 struct Graphic {
     GraphicKind kind{GraphicKind::None};
+
+    /// What a text layer says, and how.
+    ///
+    /// The family is a name, resolved when the text is drawn rather than
+    /// stored as a resolved font: a project opened on a machine without that
+    /// typeface should fall back to something readable, and it should fall back
+    /// again — to the right thing — when it goes back to a machine that has it.
+    std::string text;
+    std::string family;
+    double pointSize{72.0};
+    bool bold{false};
+    bool italic{false};
+    /// -1 left, 0 centre, 1 right, about the shape's own box.
+    int alignment{0};
 
     double width{400.0};
     double height{200.0};

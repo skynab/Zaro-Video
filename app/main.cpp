@@ -48,6 +48,7 @@
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
+#include "zaro/platform/qtext/QtTextRasterizer.h"
 #include "zaro/platform/sdl/AudioSink.h"
 
 #include "CurveEditor.h"
@@ -297,6 +298,7 @@ public:
         }
         media_ = std::move(*opened);
         monitor_->setSource(sequence_, media_.get());
+        monitor_->setTextRasterizer(&text_);
         timeline_->setProject(&project_, sequence_->id(), &commands_);
         effects_->setProject(&project_, sequence_->id(), &commands_);
         mixer_->setProject(&project_, sequence_->id(), &commands_);
@@ -688,6 +690,7 @@ private:
             return;
         }
         render::RenderGraph graph{*media_};
+        graph.setTextRasterizer(&text_);
         auto frame = graph.composite(*sequence_, position_);
         if (!frame) {
             scopes_->clear();
@@ -719,6 +722,9 @@ private:
     io::LoadedProject loaded_;
     const model::Sequence* sequence_{nullptr};
     std::unique_ptr<platform::ffmpeg::ProjectMediaSource> media_;
+    /// One font engine for the window: the preview, the scopes and the export
+    /// dialog all draw the same titles.
+    platform::qtext::QtTextRasterizer text_;
     std::unique_ptr<platform::sdl::AudioSink> sink_;
 
     app::ProgramMonitor* monitor_{nullptr};
@@ -1253,6 +1259,68 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // A text layer, through the real font engine and the real compositor.
+        // The coverage-to-colour step is tested headlessly against a stand-in
+        // engine; what that cannot show is whether Qt is actually being asked
+        // for glyphs and whether they reach the screen.
+        {
+            std::int64_t darkFrame = 0;
+            double darkest = 1e9;
+            for (std::int64_t frame = 0; frame < 35; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double blank = meanGray(window.monitor()->grabFramebuffer());
+
+            zaro::model::Graphic title;
+            title.kind = zaro::model::GraphicKind::Text;
+            title.text = "ZARO";
+            title.pointSize = 160.0;
+            title.bold = true;
+            title.width = 2000.0;
+            title.height = 800.0;
+            title.red = 1.0;
+            title.green = 1.0;
+            title.blue = 1.0;
+
+            auto built = zaro::edit::makeAddGraphic(
+                window.project(), {sequence.id(), videoTrack.id()}, title,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{40, sequence.frameRate()}});
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double withText = meanGray(window.monitor()->grabFramebuffer());
+
+            // Glyphs cover a small fraction of the frame, so this is not a big
+            // number -- but it is unambiguously more than nothing, and nothing
+            // is what a missing font engine produces.
+            std::printf("  text layer: %.2f with a title, %.2f without\n", withText, blank);
+            if (!(withText > blank + 0.5)) {
+                std::fprintf(stderr,
+                             "  FAIL: the text layer drew nothing; either Qt was not asked for "
+                             "glyphs or they did not reach the compositor\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // The mixer: solo, and the meters. Solo is a rule about the whole
         // sequence rather than a property of one track, so the check is that
         // soloing one track silences another.
@@ -1267,6 +1335,19 @@ int main(int argc, char** argv) {
             }
             window.mixer()->refresh();
             QApplication::processEvents();
+
+            // The meters are only updated while the panel is visible, which is
+            // the right behaviour and a trap for a test: whether a widget has
+            // become visible depends on how many event loops have run, so this
+            // asks explicitly rather than depending on it. Left implicit it
+            // read zero once in five runs and looked like a broken mixer.
+            for (int i = 0; i < 5 && !window.mixer()->isVisible(); ++i) {
+                QApplication::processEvents();
+            }
+            if (!window.mixer()->isVisible()) {
+                std::fprintf(stderr, "  FAIL: the mixer panel never became visible\n");
+                return 1;
+            }
 
             auto* meter = window.mixer()->findChild<app::LevelMeter*>(
                 QString{"mixer-meter-"} + QString::number(audioTrack->id().value()));

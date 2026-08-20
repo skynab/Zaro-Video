@@ -15,6 +15,8 @@ ProgramMonitor::~ProgramMonitor() = default;
 
 void ProgramMonitor::setSource(const model::Sequence* sequence,
                                render::SourceFrameProvider* provider) {
+    // Ordering: the graph may not exist yet, so the rasteriser is remembered
+    // and applied when it does.
     sequence_ = sequence;
     provider_ = provider;
     graph_.reset();
@@ -50,6 +52,7 @@ void ProgramMonitor::initialize(QRhiCommandBuffer* commandBuffer) {
     }
     if (!graph_ && provider_ != nullptr) {
         graph_ = std::make_unique<platform::qrhi::GpuRenderGraph>(*compositor_, *provider_);
+        graph_->setTextRasterizer(text_);
     }
 }
 
@@ -73,6 +76,13 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     }
     lastError_.clear();
     ++framesRendered_;
+}
+
+void ProgramMonitor::setTextRasterizer(render::TextRasterizer* rasterizer) {
+    text_ = rasterizer;
+    if (graph_ != nullptr) {
+        graph_->setTextRasterizer(rasterizer);
+    }
 }
 
 }  // namespace zaro::app

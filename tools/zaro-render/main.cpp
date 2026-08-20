@@ -5,6 +5,7 @@
 // driven by a clock for playback, which is why there is no separate export
 // renderer to keep in agreement with the playback one.
 
+#include <QGuiApplication>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +16,7 @@
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
+#include "zaro/platform/qtext/QtTextRasterizer.h"
 
 namespace {
 
@@ -115,9 +117,16 @@ int main(int argc, char** argv) {
     };
 
     zaro::platform::ffmpeg::RenderSummary summary;
+    // Qt's font engine needs an application object even with no window. Built
+    // here rather than inside the rasteriser: one per process, and a library
+    // that constructs one behind its caller's back is a library that fights
+    // whatever the caller already made.
+    QGuiApplication fonts{argc, argv};
+    zaro::platform::qtext::QtTextRasterizer text;
+
     const auto began = std::chrono::steady_clock::now();
     if (const auto status = zaro::platform::ffmpeg::renderSequence(loaded->project, request,
-                                                                   onProgress, {}, &summary);
+                                                                   onProgress, {}, &summary, &text);
         !status) {
         std::fprintf(stderr, "\nzaro-render: %s\n", status.error().toString().c_str());
         return 1;
@@ -127,6 +136,10 @@ int main(int argc, char** argv) {
         std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
     if (!quiet) {
         std::printf("\n%s\n", outputPath.c_str());
+        if (summary.textLayersSkipped > 0) {
+            std::printf("  WARNING: %lld text layers were not drawn\n",
+                        static_cast<long long>(summary.textLayersSkipped));
+        }
         std::printf("  %lld frames encoded, %lld packets written\n",
                     static_cast<long long>(summary.framesEncoded),
                     static_cast<long long>(summary.videoPacketsWritten));

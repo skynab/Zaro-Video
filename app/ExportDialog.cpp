@@ -12,6 +12,7 @@
 #include <filesystem>
 
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
+#include "zaro/platform/qtext/QtTextRasterizer.h"
 
 namespace zaro::app {
 
@@ -138,8 +139,12 @@ void ExportDialog::start() {
                 Qt::QueuedConnection);
         };
 
-        const Status status =
-            platform::ffmpeg::renderSequence(*project_, request, onProgress, keepGoing);
+        // The same font engine the preview uses, so what is exported is what was
+        // on screen. A dialog that rendered without one would produce a file
+        // quietly missing its titles.
+        platform::qtext::QtTextRasterizer text;
+        const Status status = platform::ffmpeg::renderSequence(*project_, request, onProgress,
+                                                               keepGoing, nullptr, &text);
         const bool cancelled = !status && status.error().code() == ErrorCode::Cancelled;
         const QString message =
             status ? QString("Done.") : QString::fromStdString(status.error().toString());

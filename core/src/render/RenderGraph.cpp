@@ -2,6 +2,7 @@
 
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/ShapeRaster.h"
+#include "zaro/core/render/TextRasterizer.h"
 
 namespace zaro::render {
 
@@ -38,6 +39,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
     // is exported with an alpha channel.
     out.clear();
     lastClipCount_ = 0;
+    skippedText_ = 0;
 
     // Bottom-up. Index 0 is V1, the lowest track, and each later track
     // composites over what is already there.
@@ -93,7 +95,18 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             if (generated_.width() != out.width() || generated_.height() != out.height()) {
                 generated_ = RgbaImage{out.width(), out.height()};
             }
-            drawShape(clip->graphic, generated_);
+            if (clip->graphic.kind == model::GraphicKind::Text) {
+                if (!drawText(clip->graphic, text_, generated_)) {
+                    // No rasteriser, or it failed. Counted rather than
+                    // ignored, so a caller can say "this render had no font
+                    // engine" instead of leaving someone to notice the missing
+                    // title in the delivered file.
+                    ++skippedText_;
+                    continue;
+                }
+            } else {
+                drawShape(clip->graphic, generated_);
+            }
             drawClip(*clip, generated_, out, clip->transformAt(at), at);
             ++lastClipCount_;
             continue;

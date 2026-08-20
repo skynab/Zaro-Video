@@ -390,6 +390,22 @@ json encode(const model::Clip& clip) {
         put("green", clip.graphic.green, defaults.green);
         put("blue", clip.graphic.blue, defaults.blue);
         put("alpha", clip.graphic.alpha, defaults.alpha);
+        if (!clip.graphic.text.empty()) {
+            graphic["text"] = clip.graphic.text;
+        }
+        if (!clip.graphic.family.empty()) {
+            graphic["family"] = clip.graphic.family;
+        }
+        put("pointSize", clip.graphic.pointSize, defaults.pointSize);
+        if (clip.graphic.bold) {
+            graphic["bold"] = true;
+        }
+        if (clip.graphic.italic) {
+            graphic["italic"] = true;
+        }
+        if (clip.graphic.alignment != defaults.alignment) {
+            graphic["alignment"] = clip.graphic.alignment;
+        }
         out["graphic"] = std::move(graphic);
     }
     if (clip.lut.isSet() || !clip.lut.path.empty()) {
@@ -599,6 +615,12 @@ Result<model::Clip> decodeClip(const json& node) {
         into.green = graphic.value("green", into.green);
         into.blue = graphic.value("blue", into.blue);
         into.alpha = graphic.value("alpha", into.alpha);
+        into.text = graphic.value("text", std::string{});
+        into.family = graphic.value("family", std::string{});
+        into.pointSize = graphic.value("pointSize", into.pointSize);
+        into.bold = graphic.value("bold", false);
+        into.italic = graphic.value("italic", false);
+        into.alignment = graphic.value("alignment", into.alignment);
     }
     if (node.contains("lut") && node.at("lut").is_object()) {
         clip.lut.path = node.at("lut").value("path", std::string{});

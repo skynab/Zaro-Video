@@ -30,6 +30,7 @@ add_library(zaro_core
     src/render/LutTable.cpp
     src/render/Qualifier.cpp
     src/render/ShapeRaster.cpp
+    src/render/TextRasterizer.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp
     src/render/RgbaImage.cpp

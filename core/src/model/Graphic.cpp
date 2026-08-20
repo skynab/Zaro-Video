@@ -12,6 +12,8 @@ const char* toString(GraphicKind kind) noexcept {
             return "rectangle";
         case GraphicKind::Ellipse:
             return "ellipse";
+        case GraphicKind::Text:
+            return "text";
     }
     return "none";
 }
@@ -25,6 +27,9 @@ GraphicKind graphicKindFromString(const char* name) noexcept {
     }
     if (std::strcmp(name, "ellipse") == 0) {
         return GraphicKind::Ellipse;
+    }
+    if (std::strcmp(name, "text") == 0) {
+        return GraphicKind::Text;
     }
     return GraphicKind::None;
 }
