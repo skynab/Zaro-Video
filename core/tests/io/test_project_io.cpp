@@ -360,6 +360,18 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.curves.red.set(model::CurvePoint{0.75, 0.8});
         clip.curves.blue.set(model::CurvePoint{0.1, 0.0});
         clip.curves.blue.set(model::CurvePoint{0.9, 1.0});
+        {
+            model::Clip::Angle first;
+            first.media = mediaId;
+            first.offset = time::RationalTime{0, time::rates::fps23_976};
+            first.name = "A camera";
+            model::Clip::Angle second;
+            second.media = mediaId;
+            second.offset = time::RationalTime{137, time::rates::fps23_976};
+            second.name = "B camera";
+            clip.angles = {first, second};
+            clip.activeAngle = 1;
+        }
         clip.reversed = true;
         clip.mask.shape = model::MaskShape::Ellipse;
         clip.mask.width = 640.5;
@@ -537,6 +549,8 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->graphic == first.graphic);
     CHECK(loadedClip->mask == first.mask);
     CHECK(loadedClip->reversed);
+    CHECK(loadedClip->angles == first.angles);
+    CHECK(loadedClip->activeAngle == 1);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

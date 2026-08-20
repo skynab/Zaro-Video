@@ -1,8 +1,42 @@
 #include "zaro/core/model/Clip.h"
 
+#include <algorithm>
+
 #include "zaro/core/Check.h"
 
 namespace zaro::model {
+namespace {
+
+/// The live angle, or the first when the index is not one.
+///
+/// Falling back to the first rather than clamping: an index outside the list is
+/// a data error, and clamping would answer "the last angle", which is an
+/// arbitrary camera to pick. The first is where a multicam clip starts, so it
+/// is the one recovery nobody has to reason about.
+std::size_t liveAngle(const std::vector<Clip::Angle>& angles, std::int32_t requested) {
+    return requested >= 0 && requested < static_cast<std::int32_t>(angles.size())
+               ? static_cast<std::size_t>(requested)
+               : 0;
+}
+
+}  // namespace
+
+MediaRefId Clip::activeSource() const {
+    if (angles.empty()) {
+        return source;
+    }
+    return angles[liveAngle(angles, activeAngle)].media;
+}
+
+time::RationalTime Clip::activeSourceTimeAt(const time::RationalTime& timelineTime) const {
+    const time::RationalTime base = sourceTimeAt(timelineTime);
+    if (angles.empty()) {
+        return base;
+    }
+    // The offset is in the angle's own material, so it is added after the
+    // clip's own mapping -- which has already accounted for trims and speed.
+    return base + angles[liveAngle(angles, activeAngle)].offset.rescaledTo(base.rate());
+}
 
 double Clip::speed() const {
     if (timelineRange.duration().toSeconds().isZero()) {

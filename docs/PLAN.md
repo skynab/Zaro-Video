@@ -1529,6 +1529,45 @@ denominator deep inside rational arithmetic, which is a long way from the cause.
 
 ---
 
+#### Phase 5u — multicam ✅
+
+Several angles on one clip, one of them live, switched with the number keys at
+the playhead.
+
+**A switch is a cut.** The clip splits and the part after takes the new angle.
+Modelling it as anything else would mean a second kind of edit that trims,
+transitions and ripples all had to learn about — when what somebody wants is
+exactly the cut they would have made by hand. Switching at the very first frame
+changes the clip instead, since splitting there leaves a piece of no length.
+
+**Angles are synced by an offset, not by trimming.** Cameras rarely start
+rolling together, so each angle carries how far into its own material the
+group's zero point is. Trimming each to a common start would mean re-deriving
+the sync on every switch, and a switch that lands a frame out *sometimes* is
+unfindable.
+
+**A multicam clip is still a clip.** Only which file it reads changes, so trims,
+grades, transitions, masks and keyframes all go on working, and the three read
+sites — CPU, GPU and audio — needed one change each: ask for the active angle
+rather than the clip's source.
+
+**An out-of-range angle falls back to the first, not the nearest.** The header
+said "the first" and the code clamped, which answers "the last" — an arbitrary
+camera to land on. The test caught the disagreement; the code now matches what
+was documented, because the first angle is where a multicam clip starts and is
+the one recovery nobody has to reason about.
+
+The number keys act on the primary selection only: switching several clips at
+once would be several cuts in several places, which is not what pressing a
+number means.
+
+**Not done: sync detection.** Working out the offsets from timecode, from
+markers or from the audio is a separate problem — the first two are arithmetic
+on data that may not be there, and the third is cross-correlation. The
+operations take the offsets they are given and do not guess.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

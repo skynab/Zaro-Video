@@ -1381,6 +1381,101 @@ Result<CommandPtr> makeSetCaptions(Project& project, model::SequenceId sequenceI
                        [captions](Sequence& sequence) { sequence.captions() = captions; });
 }
 
+Result<CommandPtr> makeMulticam(Project& project, const EditTarget& target,
+                                const std::vector<Clip::Angle>& angles,
+                                const time::TimeRange& range) {
+    if (angles.empty()) {
+        return Error{ErrorCode::InvalidData, "a multicam clip needs at least one angle"};
+    }
+    if (range.isEmpty()) {
+        return Error{ErrorCode::InvalidData, "a multicam clip needs a duration"};
+    }
+    for (const Clip::Angle& angle : angles) {
+        if (project.findMedia(angle.media) == nullptr) {
+            return Error{ErrorCode::NotFound, "an angle names media that is not in the project"};
+        }
+    }
+
+    Clip clip;
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.angles = angles;
+    clip.activeAngle = 0;
+    clip.name = angles.front().name.empty() ? "multicam" : angles.front().name;
+    clip.source = angles.front().media;
+    clip.timelineRange = range;
+    // The group's own time, from zero: each angle's offset says where that is
+    // in its own material, so the clip's source range is the group's.
+    clip.sourceRange =
+        time::TimeRange{time::RationalTime{0, range.start().rate()}, range.duration()};
+    return makeOverwrite(project, target, clip);
+}
+
+Result<CommandPtr> makeSwitchAngle(Project& project, const EditTarget& target, ClipId clipId,
+                                   std::int32_t angle, const time::RationalTime& at) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    if (!existing.isMulticam()) {
+        return Error{ErrorCode::InvalidData, "that clip has no angles"};
+    }
+    if (angle < 0 || angle >= static_cast<std::int32_t>(existing.angles.size())) {
+        return Error{ErrorCode::InvalidData, "there is no such angle"};
+    }
+    if (angle == existing.activeAngle) {
+        return Error{ErrorCode::InvalidData, "that angle is already live"};
+    }
+
+    const time::RationalTime when = at.rescaledTo(existing.start().rate());
+    if (!existing.timelineRange.contains(when)) {
+        return Error{ErrorCode::InvalidData, "that moment is not inside the clip"};
+    }
+
+    // Switching at the very first frame is not a cut, it is a choice about the
+    // whole clip -- and splitting there would leave a piece of no length.
+    const bool atStart = when == existing.start();
+    Clip before = existing;
+    Clip after = existing;
+    after.id = project.ids().next<model::ClipTag>();
+    after.activeAngle = angle;
+    before.timelineRange = time::TimeRange::fromStartEnd(existing.start(), when);
+    before.sourceRange =
+        time::TimeRange::fromStartEnd(existing.sourceRange.start(), existing.sourceTimeAt(when));
+    after.timelineRange = time::TimeRange::fromStartEnd(when, existing.endExclusive());
+    after.sourceRange = time::TimeRange::fromStartEnd(existing.sourceTimeAt(when),
+                                                      existing.sourceRange.endExclusive());
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, "Switch angle", {},
+                       [clipId, before, after, atStart, trackId](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           if (track == nullptr) {
+                               return;
+                           }
+                           std::vector<Clip> clips = track->clips();
+                           std::vector<Clip> rebuilt;
+                           rebuilt.reserve(clips.size() + 1);
+                           for (Clip& clip : clips) {
+                               if (clip.id != clipId) {
+                                   rebuilt.push_back(std::move(clip));
+                                   continue;
+                               }
+                               if (atStart) {
+                                   Clip whole = after;
+                                   whole.id = clipId;
+                                   whole.timelineRange = clip.timelineRange;
+                                   whole.sourceRange = clip.sourceRange;
+                                   rebuilt.push_back(std::move(whole));
+                                   continue;
+                               }
+                               rebuilt.push_back(before);
+                               rebuilt.push_back(after);
+                           }
+                           track->setClips(std::move(rebuilt));
+                       });
+}
+
 Result<CommandPtr> makeNestSequence(Project& project, const EditTarget& target,
                                     model::SequenceId nestedId, const time::RationalTime& at) {
     const Sequence* inner = project.findSequence(nestedId);

@@ -127,7 +127,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 continue;
             }
 
-            const time::RationalTime sourceStart = clip.sourceTimeAt(overlap->start());
+            const time::RationalTime sourceStart = clip.activeSourceTimeAt(overlap->start());
             // A retimed clip covers more (or less) source than it occupies on
             // the timeline, so it has to read that much and resample. Without
             // this the picture retimes and the sound does not, which is drift
@@ -140,9 +140,9 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                         : wanted;
             const time::RationalTime readFrom =
                 clip.reversed
-                    ? clip.sourceTimeAt(overlap->endExclusive() - time::RationalTime{1, rate})
+                    ? clip.activeSourceTimeAt(overlap->endExclusive() - time::RationalTime{1, rate})
                     : sourceStart;
-            if (Status status = source_->read(clip.source, readFrom, toRead, rate, scratch);
+            if (Status status = source_->read(clip.activeSource(), readFrom, toRead, rate, scratch);
                 !status) {
                 // A clip whose audio cannot be read is silence, not a failed
                 // render. The same reasoning as a missing picture: a hole is

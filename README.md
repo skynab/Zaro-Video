@@ -58,7 +58,8 @@ headless: there is no window yet.
 | 5r | Loudness to EBU R128, with normalisation | **done** |
 | 5s | Proxies: attach, toggle, and never export them | **done** |
 | 5t | Nesting: a sequence as a clip, cycles refused | **done** |
-| 5u | §7 remainder: multicam, render cache, adjustment layers | next |
+| 5u | Multicam: angles, offsets, switching as a cut | **done** |
+| 5v | Adjustment layers, render cache, sync detection | next |
 
 ## Building
 

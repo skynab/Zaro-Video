@@ -61,6 +61,39 @@ struct Clip {
     /// the clip is placed in the frame.
     ColorCorrection color;
 
+    /// One camera in a multicam clip.
+    ///
+    /// The offset is what syncs it: angles rarely start rolling together, so
+    /// each carries how far into its own material the group's zero point is.
+    /// Storing an offset rather than trimming each angle to a common start
+    /// means switching angles never has to re-derive the sync -- which is the
+    /// thing that must not drift, because a switch that lands a frame out is
+    /// visible and a switch that lands a frame out *sometimes* is unfindable.
+    struct Angle {
+        MediaRefId media;
+        time::RationalTime offset;
+        std::string name;
+
+        friend bool operator==(const Angle&, const Angle&) = default;
+    };
+
+    /// The cameras, when this is a multicam clip. Empty for an ordinary one.
+    ///
+    /// A clip rather than a container of clips: an angle switch is a cut, and a
+    /// cut is something this timeline already does. Everything else -- trims,
+    /// grades, transitions, keyframes -- goes on working because nothing about
+    /// the clip changed except which file it reads.
+    std::vector<Angle> angles;
+    /// Which angle is live. Out of range means the first.
+    std::int32_t activeAngle{0};
+
+    [[nodiscard]] bool isMulticam() const noexcept { return !angles.empty(); }
+
+    /// The media this clip actually reads, and the time in it.
+    [[nodiscard]] MediaRefId activeSource() const;
+    [[nodiscard]] time::RationalTime activeSourceTimeAt(
+        const time::RationalTime& timelineTime) const;
+
     /// Another sequence, used as a clip.
     ///
     /// When set, `source` is ignored and the clip is whatever that sequence

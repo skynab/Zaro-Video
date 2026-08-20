@@ -176,6 +176,27 @@ enum class PlaceMode {
                                                  model::SequenceId sequence,
                                                  const model::CaptionTrack& captions);
 
+// --- Multicam ---------------------------------------------------------------
+
+/// Place a multicam clip: several angles, one of them live.
+///
+/// The offsets are what sync the angles, and they are the caller's to work out
+/// — from timecode, from a marker, or by ear. This places what it is given and
+/// does not guess.
+[[nodiscard]] Result<CommandPtr> makeMulticam(model::Project& project, const EditTarget& target,
+                                              const std::vector<model::Clip::Angle>& angles,
+                                              const time::TimeRange& range);
+
+/// Cut to another angle at a moment.
+///
+/// A switch is a cut: the clip is split and the part after takes the new angle.
+/// Modelling it as anything else would mean a second kind of edit that trims,
+/// transitions and ripples all had to learn about — when what somebody wants is
+/// exactly the cut they would have made by hand.
+[[nodiscard]] Result<CommandPtr> makeSwitchAngle(model::Project& project, const EditTarget& target,
+                                                 model::ClipId clip, std::int32_t angle,
+                                                 const time::RationalTime& at);
+
 /// Put one sequence on another's timeline.
 ///
 /// Refused if it would make a cycle: a sequence containing itself, directly or

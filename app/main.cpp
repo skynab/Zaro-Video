@@ -2697,6 +2697,83 @@ int main(int argc, char** argv) {
             window.commands().undo(window.project());
         }
 
+        // Multicam, switched with the keyboard the way it is actually cut:
+        // watch it play and press the camera you want. The angles and the cut
+        // are tested headlessly; what that cannot show is whether the key
+        // reaches the edit.
+        {
+            const auto outerSequenceId = sequence.id();
+            const auto trackId = videoTrack.id();
+            const auto mediaId = window.project().media().front().id;
+
+            zaro::model::Clip::Angle a;
+            a.media = mediaId;
+            a.offset = zaro::time::RationalTime{0, sequence.frameRate()};
+            a.name = "A";
+            zaro::model::Clip::Angle b;
+            b.media = mediaId;
+            // A different point in the same file stands in for a second camera:
+            // what is being checked is the switch, not the footage.
+            b.offset = zaro::time::RationalTime{50, sequence.frameRate()};
+            b.name = "B";
+
+            auto built = zaro::edit::makeMulticam(
+                window.project(), {outerSequenceId, trackId}, {a, b},
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{60, sequence.frameRate()}});
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+
+            const auto clipsOn = [&]() {
+                return window.project()
+                    .findSequence(outerSequenceId)
+                    ->findTrack(trackId)
+                    ->clips()
+                    .size();
+            };
+            const std::size_t clipsBeforeSwitch = clipsOn();
+
+            // Select it, put the playhead inside it, and press 2.
+            const auto id = window.project()
+                                .findSequence(outerSequenceId)
+                                ->findTrack(trackId)
+                                ->clips()
+                                .front()
+                                .id;
+            window.effects()->setSelection(trackId, id);
+            timeline->selectOnlyForTest(trackId, id);
+            window.setPosition(zaro::time::RationalTime{25, sequence.frameRate()});
+            QApplication::processEvents();
+
+            QKeyEvent two(QEvent::KeyPress, Qt::Key_2, Qt::NoModifier);
+            QCoreApplication::sendEvent(timeline, &two);
+            QApplication::processEvents();
+
+            const std::size_t clipsAfterSwitch = clipsOn();
+            std::printf("  multicam: %zu clips before the switch, %zu after\n", clipsBeforeSwitch,
+                        clipsAfterSwitch);
+            if (clipsAfterSwitch != clipsBeforeSwitch + 1) {
+                std::fprintf(stderr, "  FAIL: switching an angle did not cut the clip\n");
+                return 1;
+            }
+            const auto& clips =
+                window.project().findSequence(outerSequenceId)->findTrack(trackId)->clips();
+            if (clips[1].activeAngle != 1 || clips[1].start().frames() != 25) {
+                std::fprintf(stderr,
+                             "  FAIL: the cut is in the wrong place or on the wrong angle\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Last on purpose. Adding a sequence reallocates the project's
         // vector of them, so the reference this function has held since the
         // top dangles from here on -- and everything else is done by now.

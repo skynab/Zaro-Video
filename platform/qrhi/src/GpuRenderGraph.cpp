@@ -57,16 +57,16 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 const double progress = transition->progressAt(at);
 
                 if (outgoing->enabled) {
-                    if (auto frame = provider_->sourceFrameFor(outgoing->source,
-                                                               outgoing->sourceTimeAt(at))) {
+                    if (auto frame = provider_->sourceFrameFor(outgoing->activeSource(),
+                                                               outgoing->activeSourceTimeAt(at))) {
                         if (drawClip(*outgoing, **frame, outgoing->transformAt(at), at)) {
                             ++lastClipCount_;
                         }
                     }
                 }
                 if (incoming->enabled) {
-                    if (auto frame = provider_->sourceFrameFor(incoming->source,
-                                                               incoming->sourceTimeAt(at))) {
+                    if (auto frame = provider_->sourceFrameFor(incoming->activeSource(),
+                                                               incoming->activeSourceTimeAt(at))) {
                         model::Transform fading = incoming->transformAt(at);
                         fading.opacity *= progress;
                         if (drawClip(*incoming, **frame, fading, at)) {
@@ -129,7 +129,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             continue;
         }
 
-        auto frame = provider_->sourceFrameFor(clip->source, clip->sourceTimeAt(at));
+        auto frame = provider_->sourceFrameFor(clip->activeSource(), clip->activeSourceTimeAt(at));
         if (!frame) {
             // One unreadable clip must not take the whole frame with it, the
             // same as on the CPU path.

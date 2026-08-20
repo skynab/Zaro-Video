@@ -108,15 +108,15 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 // either side of the cut. sourceTimeAt extrapolates linearly,
                 // which is exactly the mapping wanted here.
                 if (outgoing->enabled) {
-                    if (auto image =
-                            source_->imageFor(outgoing->source, outgoing->sourceTimeAt(at))) {
+                    if (auto image = source_->imageFor(outgoing->activeSource(),
+                                                       outgoing->activeSourceTimeAt(at))) {
                         drawClip(*outgoing, **image, out, outgoing->transformAt(at), at);
                         ++lastClipCount_;
                     }
                 }
                 if (incoming->enabled) {
-                    if (auto image =
-                            source_->imageFor(incoming->source, incoming->sourceTimeAt(at))) {
+                    if (auto image = source_->imageFor(incoming->activeSource(),
+                                                       incoming->activeSourceTimeAt(at))) {
                         // Drawn over the outgoing clip at the dissolve's
                         // progress: with premultiplied `over` and an opaque
                         // source that gives out*(1-p) + in*p.
@@ -167,7 +167,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             continue;
         }
 
-        auto image = source_->imageFor(clip->source, clip->sourceTimeAt(at));
+        auto image = source_->imageFor(clip->activeSource(), clip->activeSourceTimeAt(at));
         if (!image) {
             // One unreadable clip must not take the whole frame with it. A gap
             // where a clip should be is a visible, diagnosable problem; a failed

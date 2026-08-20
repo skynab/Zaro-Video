@@ -938,6 +938,34 @@ void TimelineWidget::addDissolveAtPlayhead() {
     update();
 }
 
+void TimelineWidget::selectOnlyForTest(model::TrackId track, model::ClipId clip) {
+    selection_.clear();
+    selection_.push_back(edit::ClipRef{track, clip});
+    announceSelection();
+    update();
+}
+
+void TimelineWidget::switchAngle(int angle) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || project_ == nullptr || commands_ == nullptr || selection_.empty()) {
+        return;
+    }
+    // The primary selection: switching several clips at once would be several
+    // cuts in several places, which is not what pressing a number means.
+    const edit::ClipRef& target = selection_.front();
+    auto built = edit::makeSwitchAngle(*project_, {sequenceId_, target.track}, target.clip, angle,
+                                       playhead_);
+    if (!built) {
+        return;  // no such angle, already live, or the playhead is elsewhere
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    selection_.clear();
+    announceSelection();
+    emit edited();
+    update();
+}
+
 void TimelineWidget::removeSelected(bool ripple) {
     if (project_ == nullptr || commands_ == nullptr || selection_.empty()) {
         return;
@@ -983,6 +1011,19 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
                 return;
             }
             break;
+        case Qt::Key_1:
+        case Qt::Key_2:
+        case Qt::Key_3:
+        case Qt::Key_4:
+        case Qt::Key_5:
+        case Qt::Key_6:
+        case Qt::Key_7:
+        case Qt::Key_8:
+        case Qt::Key_9:
+            // Number keys switch angle at the playhead, which is how a
+            // multicam is cut: watch it play and press the camera you want.
+            switchAngle(event->key() - Qt::Key_1);
+            return;
         case Qt::Key_A:
             if (event->modifiers().testFlag(Qt::ControlModifier) ||
                 event->modifiers().testFlag(Qt::MetaModifier)) {

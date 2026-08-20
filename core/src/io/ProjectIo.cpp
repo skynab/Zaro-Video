@@ -372,6 +372,20 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.isMulticam()) {
+        json angles = json::array();
+        for (const model::Clip::Angle& angle : clip.angles) {
+            json entry{{"media", angle.media.value()}, {"offset", encode(angle.offset)}};
+            if (!angle.name.empty()) {
+                entry["name"] = angle.name;
+            }
+            angles.push_back(std::move(entry));
+        }
+        out["angles"] = std::move(angles);
+        if (clip.activeAngle != 0) {
+            out["activeAngle"] = clip.activeAngle;
+        }
+    }
     if (clip.nested.isValid()) {
         out["nested"] = clip.nested.value();
     }
@@ -684,6 +698,23 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("angles") && node.at("angles").is_array()) {
+        for (const json& entry : node.at("angles")) {
+            if (!entry.is_object() || !entry.contains("offset")) {
+                continue;
+            }
+            auto offset = decodeTime(entry.at("offset"), "angle offset");
+            if (!offset) {
+                return offset.error();
+            }
+            model::Clip::Angle angle;
+            angle.media = model::MediaRefId{entry.value("media", std::uint64_t{0})};
+            angle.offset = *offset;
+            angle.name = entry.value("name", std::string{});
+            clip.angles.push_back(std::move(angle));
+        }
+        clip.activeAngle = node.value("activeAngle", 0);
     }
     clip.nested = model::SequenceId{node.value("nested", std::uint64_t{0})};
     clip.reversed = node.value("reversed", false);

@@ -98,7 +98,15 @@ private:
     void addDissolveAtPlayhead();
     void addMarkerAtPlayhead();
     void removeSelected(bool ripple);
+    void switchAngle(int angle);
 
+public:
+    /// Select one clip, for a self-test that needs a selection without a
+    /// mouse. The keyboard paths all act on the selection, so a test that
+    /// cannot make one cannot reach them.
+    void selectOnlyForTest(model::TrackId track, model::ClipId clip);
+
+private:
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;
     edit::CommandStack* commands_{nullptr};
