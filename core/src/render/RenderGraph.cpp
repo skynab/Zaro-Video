@@ -1,6 +1,7 @@
 #include "zaro/core/render/RenderGraph.h"
 
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/TextRasterizer.h"
 
@@ -134,6 +135,24 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
     if (sequence.width() <= 0 || sequence.height() <= 0) {
         return Error{ErrorCode::InvalidData, "the sequence has no frame size"};
     }
+
+    // Only at the top. A nested composite is part of the outer frame's recipe,
+    // so caching it separately would store the same work twice.
+    const bool cacheable = cache_ != nullptr && depth_ == 0;
+    std::uint64_t recipe = 0;
+    if (cacheable) {
+        recipe = frameRecipe(project_, sequence, at);
+        if (const RenderCache::Entry hit = cache_->find(sequence.id(), at, recipe);
+            hit.image != nullptr) {
+            out = hit.image->clone();
+            // The counters describe the frame, not the work: a cached frame
+            // still had three clips on it, and a caller showing "3 layers"
+            // must not have it flicker to zero when the cache answers.
+            lastClipCount_ = hit.clipCount;
+            skippedText_ = hit.skippedText;
+            return {};
+        }
+    }
     if (out.width() != sequence.width() || out.height() != sequence.height()) {
         out = RgbaImage{sequence.width(), sequence.height()};
     }
@@ -256,6 +275,10 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 ++skippedText_;
             }
         }
+    }
+
+    if (cacheable) {
+        cache_->insert(sequence.id(), at, recipe, out.clone(), lastClipCount_, skippedText_);
     }
     return {};
 }

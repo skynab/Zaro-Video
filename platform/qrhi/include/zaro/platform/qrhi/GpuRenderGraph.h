@@ -5,6 +5,7 @@
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/TextRasterizer.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
@@ -39,6 +40,18 @@ public:
 
     /// How to draw text. Set by whoever owns a font engine.
     void setTextRasterizer(render::TextRasterizer* rasterizer) { text_ = rasterizer; }
+
+    /// Where the CPU fallback memoises its frames.
+    ///
+    /// The GPU path never reads this, and does not need to: it is already fast.
+    /// What is slow is the whole-frame CPU composite an adjustment layer
+    /// forces, and that is what a cached frame replaces.
+    void setRenderCache(render::RenderCache* cache) {
+        cache_ = cache;
+        if (nested_ != nullptr) {
+            nested_->setRenderCache(cache);
+        }
+    }
 
     GpuRenderGraph(GpuCompositor& compositor, render::SourceFrameProvider& provider)
         : compositor_{&compositor}, provider_{&provider} {}
@@ -81,6 +94,7 @@ private:
     const model::Project* project_{nullptr};
     render::FrameSource* nestedSource_{nullptr};
     std::unique_ptr<render::RenderGraph> nested_;
+    render::RenderCache* cache_{nullptr};
     render::TextRasterizer* text_{nullptr};
     render::CurveTableCache curves_;
     render::LutCache luts_;

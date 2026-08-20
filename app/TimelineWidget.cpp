@@ -25,6 +25,9 @@ const QColor kAudioClip{58, 122, 96};
 const QColor kSelectedOutline{255, 196, 92};
 const QColor kBand{140, 180, 235};
 const QColor kPlayhead{236, 92, 82};
+// Green, and only green: a bar with green, yellow and red in it is three
+// claims, and only one of them -- "this will play" -- is one we can make.
+const QColor kCachedSpan{92, 176, 108};
 const QColor kKeyframe{226, 226, 236};
 const QColor kKeyframeHeld{255, 196, 92};
 const QColor kKeyframeOutline{20, 20, 24};
@@ -106,6 +109,7 @@ void TimelineWidget::zoomToFit() {
     if (duration.frames() > 0) {
         layout_.zoomToFit(duration);
     }
+    emit viewChanged();
     update();
 }
 
@@ -231,10 +235,41 @@ void TimelineWidget::paintRuler(QPainter& painter) {
         painter.drawText(QPointF(x + 4, fontMetrics.ascent() + 3), label);
     }
 
+    paintCacheBar(painter);
+
     painter.setPen(kGridLine);
     painter.drawLine(0, metrics.rulerHeight, width(), metrics.rulerHeight);
 
     paintMarkers(painter);
+}
+
+void TimelineWidget::setCachedSpans(std::vector<time::TimeRange> spans) {
+    cachedSpans_ = std::move(spans);
+    update();
+}
+
+/// A thin strip along the bottom of the ruler, showing what is rendered.
+///
+/// Under the ruler rather than over the tracks: what is cached is a property of
+/// the timeline as a whole, not of any one clip, and a stripe across the clips
+/// would read as something about them.
+void TimelineWidget::paintCacheBar(QPainter& painter) {
+    if (cachedSpans_.empty() || sequence() == nullptr) {
+        return;
+    }
+    const auto& metrics = layout_.metrics();
+    const double top = metrics.rulerHeight - 3.0;
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(kCachedSpan);
+    for (const time::TimeRange& span : cachedSpans_) {
+        const double x0 = std::max<double>(layout_.xForTime(span.start()), metrics.headerWidth);
+        const double x1 = layout_.xForTime(span.endExclusive());
+        if (x1 <= x0) {
+            continue;
+        }
+        painter.drawRect(QRectF(x0, top, x1 - x0, 3.0));
+    }
+    painter.setBrush(Qt::NoBrush);
 }
 
 void TimelineWidget::paintMarkers(QPainter& painter) {
@@ -880,6 +915,7 @@ void TimelineWidget::wheelEvent(QWheelEvent* event) {
         layout_.setScroll(layout_.scroll().rescaledTo(seq->frameRate()) +
                           time::RationalTime{delta, seq->frameRate()});
     }
+    emit viewChanged();
     update();
 }
 
@@ -1057,10 +1093,12 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
         case Qt::Key_Equal:
         case Qt::Key_Plus:
             layout_.zoomBy(1.4, width() / 2.0, seq->frameRate());
+            emit viewChanged();
             update();
             return;
         case Qt::Key_Minus:
             layout_.zoomBy(1.0 / 1.4, width() / 2.0, seq->frameRate());
+            emit viewChanged();
             update();
             return;
         case Qt::Key_Backslash:

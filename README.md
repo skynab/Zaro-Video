@@ -60,7 +60,8 @@ headless: there is no window yet.
 | 5t | Nesting: a sequence as a clip, cycles refused | **done** |
 | 5u | Multicam: angles, offsets, switching as a cut | **done** |
 | 5v | Adjustment layers, grading a stack from above | **done** |
-| 5w | Render cache for the timeline | next |
+| 5w | Render cache: pre-render a range, play it back | **done** |
+| 5x | Sync detection for multicam angles | next |
 
 ## Building
 

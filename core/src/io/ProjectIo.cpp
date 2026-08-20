@@ -577,24 +577,12 @@ Result<model::Marker> decodeMarker(const json& node) {
     return marker;
 }
 
-json encode(const model::Sequence& sequence) {
-    json videoTracks = json::array();
-    for (const model::Track& track : sequence.videoTracks()) {
-        videoTracks.push_back(encode(track));
-    }
-    json audioTracks = json::array();
-    for (const model::Track& track : sequence.audioTracks()) {
-        audioTracks.push_back(encode(track));
-    }
-    json markers = json::array();
-    for (const model::Marker& marker : sequence.markers()) {
-        markers.push_back(encode(marker));
-    }
+json encodeCaptions(const model::CaptionTrack& track) {
     json captions = json::array();
-    for (const model::Caption& caption : sequence.captions().captions()) {
+    for (const model::Caption& caption : track.captions()) {
         captions.push_back(json{{"range", encode(caption.range)}, {"text", caption.text}});
     }
-    const model::CaptionStyle& style = sequence.captions().style();
+    const model::CaptionStyle& style = track.style();
     const model::CaptionStyle defaultStyle;
     json captionStyle = json::object();
     const auto putStyle = [&captionStyle](const char* key, double value, double fallback) {
@@ -623,10 +611,27 @@ json encode(const model::Sequence& sequence) {
     if (!captionStyle.empty()) {
         captionTrack["style"] = std::move(captionStyle);
     }
-    if (sequence.captions().isBurnedIn()) {
+    if (track.isBurnedIn()) {
         captionTrack["burnIn"] = true;
     }
 
+    return captionTrack;
+}
+
+json encode(const model::Sequence& sequence) {
+    json videoTracks = json::array();
+    for (const model::Track& track : sequence.videoTracks()) {
+        videoTracks.push_back(encode(track));
+    }
+    json audioTracks = json::array();
+    for (const model::Track& track : sequence.audioTracks()) {
+        audioTracks.push_back(encode(track));
+    }
+    json markers = json::array();
+    for (const model::Marker& marker : sequence.markers()) {
+        markers.push_back(encode(marker));
+    }
+    json captionTrack = encodeCaptions(sequence.captions());
     json out{{"id", sequence.id().value()},
              {"name", sequence.name()},
              {"frameRate", encode(sequence.frameRate())},
@@ -1044,6 +1049,37 @@ std::uint64_t highestId(const model::Project& project) {
 }
 
 }  // namespace
+
+namespace {
+
+/// FNV-1a over the encoded form. A non-cryptographic hash is the right tool:
+/// the inputs are this program's own output, not something an attacker
+/// supplies, and 64 bits makes an accidental collision between two versions of
+/// one clip a thing that does not happen in a session.
+std::uint64_t hashOf(const json& node) {
+    const std::string text = node.dump();
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const char c : text) {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(c));
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+}  // namespace
+
+std::uint64_t fingerprint(const model::Clip& clip) {
+    return hashOf(encode(clip));
+}
+std::uint64_t fingerprint(const model::Transition& transition) {
+    return hashOf(encode(transition));
+}
+std::uint64_t fingerprint(const model::MediaRef& media) {
+    return hashOf(encode(media));
+}
+std::uint64_t fingerprint(const model::CaptionTrack& captions) {
+    return hashOf(encodeCaptions(captions));
+}
 
 Result<std::string> saveProjectToString(const model::Project& project,
                                         const std::shared_ptr<const UnknownFields>& unknown) {

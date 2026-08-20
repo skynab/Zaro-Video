@@ -35,6 +35,10 @@ public:
     /// What nested clips are resolved against, and what composites them.
     void setNesting(const model::Project* project, render::FrameSource* source);
 
+    /// Where the CPU fallback keeps its frames. Held until the graph exists,
+    /// for the same reason the rasteriser is.
+    void setRenderCache(render::RenderCache* cache);
+
     void setPosition(const time::RationalTime& position);
     [[nodiscard]] const time::RationalTime& position() const noexcept { return position_; }
 
@@ -55,6 +59,7 @@ private:
     render::TextRasterizer* text_{nullptr};
     const model::Project* project_{nullptr};
     render::FrameSource* nestedSource_{nullptr};
+    render::RenderCache* cache_{nullptr};
     time::RationalTime position_{};
 
     std::unique_ptr<platform::qrhi::GpuCompositor> compositor_;

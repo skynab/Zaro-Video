@@ -1620,6 +1620,68 @@ one, and adjustment layers are exactly the case that makes it worth having.
 
 ---
 
+#### Phase 5w — the render cache ✅
+
+Composited frames kept, and a range rendered ahead of being played.
+[ADR-013](adr/0013-render-cache-invalidates-by-recipe.md).
+
+**A cached frame carries the recipe it was made from.** Every alternative is a
+form of bookkeeping — each operation declaring which frames it dirtied — that
+has to be right in every operation ever written, and is silent when it is not.
+Instead the frame stores a hash of everything that decides what the sequence
+looks like at that instant, and a lookup that finds a different hash is a miss.
+Nothing has to be told that anything changed.
+
+**The hash is built from what the project file records, by the encoder that
+writes it.** This is not a detail. A hand-written list of the fields a render
+depends on fails the same way dependency tracking does: a field gets added,
+serialized and rendered, the list is not updated, and from then on the cache
+serves frames from before the change with nothing to point at. Running
+`io::fingerprint` through the real encoder means a field that survives a save
+is in the recipe the moment it is written.
+
+**Only what is drawn at that instant counts.** A clip somewhere else on the
+timeline is not in the recipe, so moving it invalidates nothing — which is the
+difference between caching a timeline and caching a project. The self-test
+checks both halves: a grade under the bar takes the bar away where it reaches,
+and leaves the two hundred frames it does not reach alone.
+
+**It caches the CPU compositor, which is the one that needs it.** The GPU path
+is already real time. What is not is the whole-frame CPU composite that an
+adjustment layer forces (Phase 5v), and that is exactly the case somebody
+cannot play back. The cache is opt-in and export does not take it: an export
+visits every frame once and would fill a gigabyte with frames nothing will ask
+for again, evicting the ones the editor is using while it runs.
+
+**Memoisation alone is not enough, so there is a pre-render.** Remembering a
+frame helps the *second* pass over a range, and the first pass is the one
+somebody is sitting through. "Render the visible range" fills the cache ahead
+of time, with a progress dialog that cancels — and a cancelled render is a
+partial one, not a wasted one; the frames it managed stay.
+
+**The visible range, not the whole sequence.** What somebody wants rendered is
+what they are about to watch, and rendering everything on a long timeline is a
+decision to wait for frames nobody asked about. The range is chosen by
+scrolling and zooming, which they are doing anyway.
+
+**The bar is sampled, and it is one colour.** It is drawn a pixel at a time and
+read at a glance, so checking more instants than it has pixels costs a hash per
+frame over the whole timeline on every repaint and shows nothing extra. Green
+and nothing else: a bar with three colours in it makes three claims, and only
+one of them — "this will play" — is one that can be made honestly.
+
+The end-to-end self-test pre-renders through the real window, plays twenty
+frames through the real monitor and requires them to come back from the cache
+(19 hits, 0 misses), then grades the layer and requires the bar to retreat
+exactly as far as the grade reaches. With the cache lookup disabled it reports
+0 hits and fails.
+
+**Not done: a disk cache.** Surviving a restart means choosing an intermediate
+codec, managing a directory and deciding when to collect it — none of which is
+needed to make a graded stack play back, which was the problem in front of us.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

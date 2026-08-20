@@ -6,12 +6,14 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/Waveform.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/time/RationalTime.h"
+#include "zaro/core/time/TimeRange.h"
 #include "zaro/ui/TimelineLayout.h"
 
 namespace zaro::app {
@@ -50,6 +52,17 @@ public:
     /// a given time lands. Used by the edit self-test to aim at a clip edge.
     [[nodiscard]] const ui::TimelineLayout& layout() const noexcept { return layout_; }
 
+    /// The stretches of the timeline that are pre-rendered, drawn as a bar
+    /// along the bottom of the ruler.
+    ///
+    /// Pushed in rather than queried: working out what is cached costs a hash
+    /// per sampled frame, and a repaint happens on every scrub. The owner
+    /// recomputes when something could have changed it; the bar only draws.
+    void setCachedSpans(std::vector<time::TimeRange> spans);
+    [[nodiscard]] const std::vector<time::TimeRange>& cachedSpans() const noexcept {
+        return cachedSpans_;
+    }
+
     /// Row geometry for a track, for the same reason.
     [[nodiscard]] std::optional<ui::TimelineLayout::Row> rowFor(model::TrackId track) const;
 
@@ -59,6 +72,10 @@ signals:
     void edited();
     /// What is selected now. An invalid clip id means nothing is.
     void selectionChanged(zaro::model::TrackId track, zaro::model::ClipId clip);
+    /// The visible span of time changed -- scrolled, zoomed or resized.
+    /// Anything that summarises the *view* rather than the model, such as the
+    /// cache bar, is recomputed from here rather than on every repaint.
+    void viewChanged();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -72,6 +89,8 @@ protected:
 private:
     [[nodiscard]] const model::Sequence* sequence() const;
     void paintRuler(QPainter& painter);
+    void paintCacheBar(QPainter& painter);
+    std::vector<time::TimeRange> cachedSpans_;
     void paintTracks(QPainter& painter);
     void paintClips(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintKeyframes(QPainter& painter, const model::Clip& clip, const QRectF& body);

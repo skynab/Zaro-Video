@@ -25,6 +25,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
@@ -50,6 +51,7 @@
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
+#include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/Scopes.h"
 #include "zaro/core/time/Timecode.h"
@@ -156,6 +158,12 @@ public:
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
 
+        auto* renderButton = new QPushButton("Render…", this);
+        renderButton->setToolTip("Pre-render the visible range so it plays back");
+        renderButton->setMinimumWidth(renderButton->sizeHint().width());
+        transportRow->addWidget(renderButton);
+        connect(renderButton, &QPushButton::clicked, this, [this] { renderMenu(); });
+
         auto* captionsButton = new QPushButton("Captions…", this);
         captionsButton->setToolTip("Import, export or burn in subtitles");
         captionsButton->setMinimumWidth(captionsButton->sizeHint().width());
@@ -246,6 +254,7 @@ public:
                     stop();
                     setPosition(position);
                 });
+        connect(timeline_, &app::TimelineWidget::viewChanged, this, [this] { updateCacheBar(); });
         connect(timeline_, &app::TimelineWidget::edited, this, [this] {
             // Undo can change a clip's parameters as well as its position, so
             // the panel has to re-read rather than trust what it last wrote.
@@ -256,6 +265,10 @@ public:
             scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
             monitor_->update();
             refresh();
+            // An edit invalidates whatever it shows on, so the bar has to be
+            // re-read rather than left claiming a range that no longer renders
+            // to what is cached.
+            updateCacheBar();
         });
 
         connect(playButton_, &QPushButton::clicked, this, [this] { togglePlay(); });
@@ -304,6 +317,7 @@ public:
     void rebindSequence() {
         monitor_->setSource(liveSequence(), media_.get());
         monitor_->setNesting(&project_, media_.get());
+        monitor_->setRenderCache(&renderCache_);
         monitor_->setTextRasterizer(&text_);
         timeline_->setProject(&project_, sequenceId_, &commands_);
         monitor_->update();
@@ -360,6 +374,60 @@ public:
     }
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
+    [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Recompute what the cache bar shows.
+    ///
+    /// Sampled at one point per pixel of the timeline's width: the bar cannot
+    /// show more than that, and checking every frame of a long sequence would
+    /// hash the whole timeline on every repaint.
+    void updateCacheBar() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
+        timeline_->setCachedSpans(
+            render::cachedSpans(renderCache_, &project_, *sequence, visible, timeline_->width()));
+    }
+
+    /// The work behind the menu entry, separated from the menu so that it can
+    /// be driven without one.
+    void renderVisibleRange() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || media_ == nullptr) {
+            return;
+        }
+        const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
+        if (visible.isEmpty()) {
+            return;
+        }
+
+        QProgressDialog progress("Rendering…", "Cancel", 0,
+                                 static_cast<int>(visible.duration().frames()), this);
+        progress.setWindowModality(Qt::WindowModal);
+        // A pre-render of a few frames is not worth a dialog appearing and
+        // vanishing; one of a few hundred is.
+        progress.setMinimumDuration(400);
+
+        render::RenderGraph graph{*media_};
+        graph.setProject(&project_);
+        graph.setTextRasterizer(&text_);
+        graph.setRenderCache(&renderCache_);
+        auto stats = render::prerender(graph, renderCache_, &project_, *sequence, visible,
+                                       [&progress](std::int32_t done, std::int32_t total) {
+                                           progress.setMaximum(total);
+                                           progress.setValue(done);
+                                           QCoreApplication::processEvents();
+                                           return !progress.wasCanceled();
+                                       });
+        progress.reset();
+        if (!stats) {
+            QMessageBox::warning(this, "Render", QString::fromStdString(stats.error().toString()));
+            return;
+        }
+        updateCacheBar();
+    }
 
     Status openMedia() {
         auto opened = platform::ffmpeg::ProjectMediaSource::open(project_);
@@ -370,6 +438,7 @@ public:
         monitor_->setSource(liveSequence(), media_.get());
         monitor_->setTextRasterizer(&text_);
         monitor_->setNesting(&project_, media_.get());
+        monitor_->setRenderCache(&renderCache_);
         timeline_->setProject(&project_, liveSequence()->id(), &commands_);
         effects_->setProject(&project_, liveSequence()->id(), &commands_);
         mixer_->setProject(&project_, liveSequence()->id(), &commands_);
@@ -853,6 +922,42 @@ private:
         }
     }
 
+    /// Pre-render, so a stack the CPU has to composite plays back.
+    ///
+    /// The visible range rather than the whole sequence: what somebody wants
+    /// rendered is what they are about to watch, and "render everything" on a
+    /// long timeline is a decision to wait for frames nobody asked about. The
+    /// range is chosen by scrolling and zooming, which they are doing anyway.
+    void renderMenu() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || media_ == nullptr) {
+            return;
+        }
+        const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
+
+        QMenu menu;
+        QAction* render = menu.addAction(
+            QString("Render the visible range (%1 frames)").arg(visible.duration().frames()));
+        render->setEnabled(!visible.isEmpty());
+        QAction* clear = menu.addAction("Clear the render cache");
+        menu.addSeparator();
+        menu.addAction(QString("%1 frames cached, %2 MB")
+                           .arg(renderCache_.count())
+                           .arg(renderCache_.byteSize() / (1024 * 1024)))
+            ->setEnabled(false);
+
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == clear) {
+            renderCache_.clear();
+            updateCacheBar();
+            return;
+        }
+        if (chosen != render) {
+            return;
+        }
+        renderVisibleRange();
+    }
+
     /// Measure the programme, and offer to normalise it.
     ///
     /// The measurement is of the whole sequence through the real mix, so it
@@ -1021,6 +1126,10 @@ private:
     /// dialog all draw the same titles.
     platform::qtext::QtTextRasterizer text_;
     std::unique_ptr<platform::sdl::AudioSink> sink_;
+    /// Composited frames, shared between the preview's CPU fallback and the
+    /// pre-render. One cache: a frame rendered by the button is the frame the
+    /// monitor asks for a moment later, and two caches would render it twice.
+    render::RenderCache renderCache_;
 
     app::ProgramMonitor* monitor_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
@@ -2851,6 +2960,124 @@ int main(int argc, char** argv) {
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // The render cache, through the real window.
+        //
+        // The cache only ever answers the CPU compositor, so this needs a
+        // sequence the preview cannot draw on the GPU -- which is exactly what
+        // an adjustment layer is. Rendered ahead, then played: what is checked
+        // is that the frames the monitor asks for come back from the cache
+        // rather than being composited again, and that an edit under them stops
+        // that happening.
+        {
+            const auto cacheSequenceId = window.project().activeSequence();
+            if (window.project().findSequence(cacheSequenceId)->videoTracks().size() < 2) {
+                auto added = zaro::edit::makeAddTrack(window.project(), cacheSequenceId,
+                                                      zaro::model::TrackKind::Video, "V2");
+                if (!added) {
+                    std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*added));
+            }
+            const auto cacheRate = window.project().findSequence(cacheSequenceId)->frameRate();
+            const auto cacheTrackId =
+                window.project().findSequence(cacheSequenceId)->videoTracks()[1].id();
+
+            auto layer = zaro::edit::makeAddAdjustment(
+                window.project(), {cacheSequenceId, cacheTrackId},
+                zaro::time::TimeRange{zaro::time::RationalTime{0, cacheRate},
+                                      zaro::time::RationalTime{40, cacheRate}});
+            if (!layer) {
+                std::fprintf(stderr, "  FAIL: %s\n", layer.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*layer));
+            const auto cacheLayerId = window.project()
+                                          .findSequence(cacheSequenceId)
+                                          ->findTrack(cacheTrackId)
+                                          ->clips()
+                                          .front()
+                                          .id;
+
+            window.timeline()->zoomToFit();
+            QApplication::processEvents();
+            const auto covers = [](const std::vector<zaro::time::TimeRange>& spans,
+                                   std::int64_t frame) {
+                for (const zaro::time::TimeRange& span : spans) {
+                    if (frame >= span.start().frames() && frame < span.endExclusive().frames()) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            window.renderCache().clear();
+            window.renderVisibleRange();
+            const std::size_t cached = window.renderCache().count();
+            const std::size_t spans = window.timeline()->cachedSpans().size();
+            if (cached == 0 || spans == 0 || !covers(window.timeline()->cachedSpans(), 10)) {
+                std::fprintf(stderr, "  FAIL: pre-rendering cached %zu frames in %zu spans\n",
+                             cached, spans);
+                return 1;
+            }
+
+            // Play it. Every frame the monitor draws over this range should
+            // already be in the cache.
+            window.renderCache().resetStatistics();
+            for (std::int64_t frame = 0; frame < 20; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, cacheRate});
+                QApplication::processEvents();
+            }
+            const auto hits = window.renderCache().hits();
+            const auto misses = window.renderCache().misses();
+            std::printf(
+                "  render cache: %zu frames pre-rendered, %llu hits and %llu misses "
+                "playing them back\n",
+                cached, static_cast<unsigned long long>(hits),
+                static_cast<unsigned long long>(misses));
+            if (hits == 0 || misses > hits) {
+                std::fprintf(stderr, "  FAIL: the preview did not read from the render cache\n");
+                return 1;
+            }
+
+            // And an edit under the bar takes it away. Not "eventually", and
+            // not by anyone remembering to say so: the frame is made of
+            // something that has changed, so it stops being a frame.
+            zaro::model::ColorCorrection darker;
+            darker.exposure = -2.0;
+            auto graded = zaro::edit::makeSetColorCorrection(
+                window.project(), {cacheSequenceId, cacheTrackId}, cacheLayerId, darker);
+            if (!graded) {
+                std::fprintf(stderr, "  FAIL: %s\n", graded.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*graded));
+            // What the timeline's `edited` signal calls. Driven directly here
+            // because this edit was made against the model rather than through
+            // the widget that emits it.
+            window.updateCacheBar();
+            QApplication::processEvents();
+            if (covers(window.timeline()->cachedSpans(), 10)) {
+                std::fprintf(stderr, "  FAIL: the cache bar survived an edit under it\n");
+                return 1;
+            }
+            // And only where the edit reaches: the layer stops at frame 40, so
+            // the rest of the timeline is still rendered. A cache that threw
+            // everything away on every edit would pass the check above and be
+            // useless.
+            if (!covers(window.timeline()->cachedSpans(), 200)) {
+                std::fprintf(stderr, "  FAIL: an edit over 40 frames cleared the whole bar\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
             window.monitor()->update();
             QApplication::processEvents();
         }

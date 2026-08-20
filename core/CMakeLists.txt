@@ -28,6 +28,7 @@ add_library(zaro_core
     src/render/Loudness.cpp
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp
+    src/render/RenderCache.cpp
     src/render/Compositing.cpp
     src/render/CurveTable.cpp
     src/render/Grade.cpp

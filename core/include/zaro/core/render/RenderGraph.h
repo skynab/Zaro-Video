@@ -8,6 +8,8 @@
 
 namespace zaro::render {
 
+class RenderCache;
+
 /// Resolves a sequence to a picture at an instant.
 ///
 /// `composite` is pure: the same sequence and the same time always produce the
@@ -55,6 +57,19 @@ public:
 
     [[nodiscard]] std::int32_t lastSkippedTextCount() const noexcept { return skippedText_; }
 
+    /// Memoise composited frames here.
+    ///
+    /// Opt-in, and off for export on purpose: an export visits every frame once
+    /// and would fill a gigabyte of cache with frames nothing will ask for
+    /// again, evicting the ones the editor is using while it runs.
+    ///
+    /// Only whole sequences are cached, never the inner composite of a nested
+    /// clip -- the outer frame's recipe already covers everything inside it, so
+    /// caching both would store the same pixels twice and invalidate them
+    /// together anyway.
+    void setRenderCache(RenderCache* cache) { cache_ = cache; }
+    [[nodiscard]] RenderCache* renderCache() const noexcept { return cache_; }
+
 private:
     /// Baked tone curves, kept between frames: building one is thousands of
     /// spline evaluations, and a grade that is not being edited changes on no
@@ -90,6 +105,7 @@ private:
     media::TransferFunction transfer_{media::TransferFunction::BT709};
 
     FrameSource* source_;
+    RenderCache* cache_{nullptr};
     std::int32_t lastClipCount_{0};
 };
 

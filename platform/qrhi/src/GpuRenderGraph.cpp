@@ -69,6 +69,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
             nested_->setProject(project_);
             nested_->setTextRasterizer(text_);
+            nested_->setRenderCache(cache_);
         }
         auto frame = nested_->composite(sequence, at);
         if (!frame) {
@@ -132,6 +133,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
                 nested_->setProject(project_);
                 nested_->setTextRasterizer(text_);
+                nested_->setRenderCache(cache_);
             }
             auto frame = nested_->composite(*inner, clip->sourceTimeAt(at));
             if (!frame) {

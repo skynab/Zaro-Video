@@ -64,6 +64,7 @@ void ProgramMonitor::ensureGraph() {
         graph_->setTextRasterizer(text_);
         graph_->setProject(project_);
         graph_->setNestedSource(nestedSource_);
+        graph_->setRenderCache(cache_);
     }
 }
 
@@ -96,6 +97,13 @@ void ProgramMonitor::setNesting(const model::Project* project, render::FrameSour
     // Rebuilt on the next render, which is where the graph is made anyway.
     graph_.reset();
     update();
+}
+
+void ProgramMonitor::setRenderCache(render::RenderCache* cache) {
+    cache_ = cache;
+    if (graph_ != nullptr) {
+        graph_->setRenderCache(cache);
+    }
 }
 
 void ProgramMonitor::setTextRasterizer(render::TextRasterizer* rasterizer) {

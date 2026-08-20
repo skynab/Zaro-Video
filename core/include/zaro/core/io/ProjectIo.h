@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -39,5 +40,26 @@ struct LoadedProject {
     const model::Project& project, const std::shared_ptr<const UnknownFields>& unknown = nullptr);
 [[nodiscard]] Status saveProject(const model::Project& project, const std::string& path,
                                  const std::shared_ptr<const UnknownFields>& unknown = nullptr);
+
+/// A hash of everything about a thing that a project file records about it.
+///
+/// Two clips with the same fingerprint produce the same picture; two that
+/// differ in any way the file records differ here too. That is the whole
+/// guarantee, and it is why these live beside the writer rather than beside
+/// the renderer: they run the *same* encoder the file does, so a field added
+/// to `Clip` and written to disk is in the fingerprint the moment it is
+/// written, with nothing to remember to update.
+///
+/// The alternative -- a hand-written list of the fields that matter to a
+/// render -- fails silently and late: the field is added, the fingerprint does
+/// not change, and the render cache serves a frame from before the change.
+/// Nobody would look for that in the cache.
+///
+/// The value is stable within a build and is not written to disk. It is a
+/// change detector, not an identifier.
+[[nodiscard]] std::uint64_t fingerprint(const model::Clip& clip);
+[[nodiscard]] std::uint64_t fingerprint(const model::Transition& transition);
+[[nodiscard]] std::uint64_t fingerprint(const model::MediaRef& media);
+[[nodiscard]] std::uint64_t fingerprint(const model::CaptionTrack& captions);
 
 }  // namespace zaro::io
