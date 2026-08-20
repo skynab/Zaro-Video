@@ -10,10 +10,12 @@ add_executable(zaro-preview
     TimelineWidget.h
     CurveEditor.cpp
     HueBand.cpp
+    MixerPanel.cpp
     EffectControls.cpp
     ScopesPanel.cpp
     CurveEditor.h
     HueBand.h
+    MixerPanel.h
     EffectControls.h
     ScopesPanel.h
     ExportDialog.cpp

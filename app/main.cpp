@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -52,6 +53,7 @@
 #include "CurveEditor.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
+#include "MixerPanel.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
 #include "ScopesPanel.h"
@@ -91,6 +93,7 @@ public:
         timeline_ = new app::TimelineWidget(this);
         effects_ = new app::EffectControls(this);
         scopes_ = new app::ScopesPanel(this);
+        mixer_ = new app::MixerPanel(this);
         effects_->setMinimumWidth(250);
         effects_->setMaximumWidth(330);
 
@@ -127,8 +130,17 @@ public:
         auto* rightColumn = new QSplitter(Qt::Vertical, this);
         rightColumn->addWidget(effects_);
         rightColumn->addWidget(scopes_);
-        rightColumn->setStretchFactor(0, 2);
+        rightColumn->addWidget(mixer_);
+        rightColumn->setStretchFactor(0, 3);
         rightColumn->setStretchFactor(1, 1);
+        rightColumn->setStretchFactor(2, 1);
+        // Floors, so no panel can be squeezed to a sliver by its neighbours. A
+        // scope four pixels tall or a mixer with no meter is worse than one
+        // that pushes the window wider: it looks like a broken panel rather
+        // than a small one.
+        effects_->setMinimumHeight(220);
+        scopes_->setMinimumHeight(150);
+        mixer_->setMinimumHeight(190);
         topSplitter_->addWidget(rightColumn);
         topSplitter_->setStretchFactor(1, 1);
         topSplitter_->setStretchFactor(2, 2);
@@ -161,6 +173,13 @@ public:
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
         connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { measureScopes(); });
+        connect(mixer_, &app::MixerPanel::edited, this, [this] {
+            // Mute and solo change the picture as well as the sound: a muted
+            // video track stops being composited.
+            monitor_->update();
+            timeline_->update();
+            measureScopes();
+        });
         connect(effects_, &app::EffectControls::keyframesChanged, this,
                 [this] { timeline_->update(); });
         connect(effects_, &app::EffectControls::edited, this, [this] {
@@ -181,6 +200,7 @@ public:
             // Undo can change a clip's parameters as well as its position, so
             // the panel has to re-read rather than trust what it last wrote.
             effects_->refresh();
+            mixer_->refresh();
             // An edit can change the duration, and can change what is under the
             // playhead, so both the scrubber and the picture need refreshing.
             scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
@@ -195,6 +215,14 @@ public:
             stop();
             setPosition(time::RationalTime{value, sequence_->frameRate()});
         });
+
+        // Meters at twenty a second. Faster is invisible on a meter with a peak
+        // hold, and each tick is a mix of a short block when the transport is
+        // stopped.
+        meterTimer_ = new QTimer(this);
+        meterTimer_->setInterval(50);
+        connect(meterTimer_, &QTimer::timeout, this, [this] { updateMeters(); });
+        meterTimer_->start();
 
         clockTimer_ = new QTimer(this);
         // Faster than any display refresh, so the playhead is never waiting on
@@ -214,6 +242,38 @@ public:
     [[nodiscard]] app::SourceMonitor* sourceMonitor() const { return source_; }
     [[nodiscard]] app::EffectControls* effects() const { return effects_; }
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
+    [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
+
+    /// Feed the mixer's meters.
+    ///
+    /// While playing they come from the thread that is actually producing the
+    /// audio, so they show what is being heard. Stopped, a short block is mixed
+    /// at the playhead: a mixer whose meters die whenever the transport stops
+    /// cannot be used to set a level, which is most of what a mixer is for.
+    void updateMeters() {
+        if (mixer_ == nullptr || sequence_ == nullptr || !mixer_->isVisible()) {
+            return;
+        }
+        if (playing_) {
+            render::AudioGraph::Meters copy;
+            {
+                const std::lock_guard<std::mutex> guard{meterMutex_};
+                copy = latestMeters_;
+            }
+            mixer_->setMeters(copy);
+            return;
+        }
+        if (media_ == nullptr) {
+            return;
+        }
+        render::AudioGraph meterMix{*media_};
+        const auto& audioRate = sequence_->audioSampleRate();
+        constexpr std::int64_t kBlock = 1024;
+        if (meterMix.mix(*sequence_, position_.rescaledTo(audioRate), kBlock, 2)) {
+            mixer_->setMeters(meterMix.meters());
+        }
+    }
+
     [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
     [[nodiscard]] model::Project& project() { return project_; }
 
@@ -239,6 +299,7 @@ public:
         monitor_->setSource(sequence_, media_.get());
         timeline_->setProject(&project_, sequence_->id(), &commands_);
         effects_->setProject(&project_, sequence_->id(), &commands_);
+        mixer_->setProject(&project_, sequence_->id(), &commands_);
         bin_->setProject(&project_, sequence_->id(), &commands_);
         source_->setProvider(media_.get());
         startWaveforms();
@@ -563,6 +624,14 @@ private:
                     const auto from = anchorPosition_.rescaledTo(audioRate) +
                                       time::RationalTime{audioWritten_ - anchorClock_, audioRate};
                     if (auto mixed = mixer.mix(*sequence_, from, block, kChannels)) {
+                        {
+                            // Copied under a lock for the UI to read. This
+                            // thread already allocates a buffer per block, so
+                            // it is not a realtime context -- the realtime path
+                            // is the device callback draining the ring.
+                            const std::lock_guard<std::mutex> guard{meterMutex_};
+                            latestMeters_ = mixer.meters();
+                        }
                         for (std::int64_t i = 0; i < mixed->sampleCount(); ++i) {
                             for (std::int32_t c = 0; c < kChannels; ++c) {
                                 interleaved[static_cast<std::size_t>(i * kChannels + c)] =
@@ -656,6 +725,10 @@ private:
     app::TimelineWidget* timeline_{nullptr};
     app::EffectControls* effects_{nullptr};
     app::ScopesPanel* scopes_{nullptr};
+    app::MixerPanel* mixer_{nullptr};
+    std::mutex meterMutex_;
+    render::AudioGraph::Meters latestMeters_;
+    QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
@@ -1118,6 +1191,81 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // The mixer: solo, and the meters. Solo is a rule about the whole
+        // sequence rather than a property of one track, so the check is that
+        // soloing one track silences another.
+        {
+            auto* audioTrack = window.project()
+                                   .findSequence(sequence.id())
+                                   ->tracksMutable(zaro::model::TrackKind::Audio)
+                                   .data();
+            if (audioTrack == nullptr) {
+                std::fprintf(stderr, "  FAIL: no audio track to mix\n");
+                return 1;
+            }
+            window.mixer()->refresh();
+            QApplication::processEvents();
+
+            auto* meter = window.mixer()->findChild<app::LevelMeter*>(
+                QString{"mixer-meter-"} + QString::number(audioTrack->id().value()));
+            auto* master = window.mixer()->findChild<app::LevelMeter*>("mixer-master-meter");
+            if (meter == nullptr || master == nullptr) {
+                std::fprintf(stderr, "  FAIL: the mixer has no meters\n");
+                return 1;
+            }
+
+            // Somewhere with sound on it.
+            window.setPosition(zaro::time::RationalTime{12, sequence.frameRate()});
+            QApplication::processEvents();
+            window.updateMeters();
+            const float heard = meter->hold();
+            const float masterHeard = master->hold();
+
+            // Solo a *video* track: the audio track is not soloed, so it falls
+            // silent even though nobody muted it.
+            auto* videoSolo = window.project()
+                                  .findSequence(sequence.id())
+                                  ->tracksMutable(zaro::model::TrackKind::Video)
+                                  .data();
+            zaro::edit::TrackState soloed;
+            soloed.soloed = true;
+            auto built = zaro::edit::makeSetTrackState(window.project(), sequence.id(),
+                                                       videoSolo->id(), soloed);
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            window.mixer()->refresh();
+            meter->resetHold();
+            master->resetHold();
+            window.updateMeters();
+            const float silenced = meter->hold();
+
+            std::printf(
+                "  mixer meters: %.3f heard, %.3f once something else is soloed "
+                "(master %.3f)\n",
+                static_cast<double>(heard), static_cast<double>(silenced),
+                static_cast<double>(masterHeard));
+            if (!(heard > 0.01F)) {
+                std::fprintf(stderr, "  FAIL: the meters read nothing on a clip with sound\n");
+                return 1;
+            }
+            if (!(masterHeard > 0.01F)) {
+                std::fprintf(stderr, "  FAIL: the master meter reads nothing\n");
+                return 1;
+            }
+            if (!(silenced < heard * 0.05F)) {
+                std::fprintf(stderr, "  FAIL: soloing another track did not silence this one\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.mixer()->refresh();
+        }
+
         // A look LUT, loaded from a real file through the model the panel
         // writes to. The parser and the baked cube are tested headlessly and
         // the two render paths are compared; what is left is whether a LUT set
@@ -1132,8 +1280,13 @@ int main(int argc, char** argv) {
             };
             // A dark frame: this look lifts black by 0.15, which a black frame
             // shows and a white one cannot.
+            // Both extremes of the fixture. The bright one is the reference the
+            // lift is judged against: an absolute threshold would be measuring
+            // how much of the monitor the letterbox covers, which moves
+            // whenever a panel is added -- it has already been wrong twice.
             std::int64_t darkFrame = 0;
             double darkness = 1e9;
+            double brightest = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
                 QApplication::processEvents();
@@ -1142,6 +1295,7 @@ int main(int argc, char** argv) {
                     darkness = gray;
                     darkFrame = frame;
                 }
+                brightest = std::max(brightest, gray);
             }
             window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
             QApplication::processEvents();
@@ -1172,11 +1326,17 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
             const double off = meanGray(window.monitor()->grabFramebuffer());
 
-            std::printf("  look LUT: %.1f before, %.1f applied, %.1f at zero amount\n", plainDark,
-                        lifted, off);
-            // The fixture lifts black to a bright grey, so this is not a
-            // marginal difference: it is most of the way to white.
-            if (!(lifted > plainDark + 100.0)) {
+            std::printf(
+                "  look LUT: %.1f before, %.1f applied, %.1f at zero amount "
+                "(a white frame reads %.1f)\n",
+                plainDark, lifted, off, brightest);
+            // The fixture lifts black to three quarters of white, so the lifted
+            // frame should read most of what a white frame reads -- stated
+            // against that frame rather than against a number.
+            // A third of a white frame, not half: the measured ratio is about
+            // 0.57, and a threshold sitting just under the value it checks is
+            // a test that will fail for a reason nobody wants to investigate.
+            if (!(lifted > brightest * 0.3) || !(lifted > plainDark + 1.0)) {
                 std::fprintf(stderr, "  FAIL: the look LUT did not reach the picture\n");
                 return 1;
             }
@@ -1335,8 +1495,13 @@ int main(int argc, char** argv) {
             // a *dark* frame: this fixture is flashes on black, its lit frames
             // are saturated white, and lifting the black point cannot change
             // white at all. On a black frame the same lift moves every pixel.
+            // Both extremes of the fixture. The bright one is the reference the
+            // lift is judged against: an absolute threshold would be measuring
+            // how much of the monitor the letterbox covers, which moves
+            // whenever a panel is added -- it has already been wrong twice.
             std::int64_t darkFrame = 0;
             double darkness = 1e9;
+            double brightest = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
                 QApplication::processEvents();
@@ -1345,6 +1510,7 @@ int main(int argc, char** argv) {
                     darkness = gray;
                     darkFrame = frame;
                 }
+                brightest = std::max(brightest, gray);
             }
             window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
             for (int i = 0; i < 3; ++i) {

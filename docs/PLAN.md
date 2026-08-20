@@ -1057,6 +1057,59 @@ same bargain the media references already make.
 
 ---
 
+#### Phase 5j — the audio track mixer ✅
+
+A strip per audio track — name, meter, mute, solo, gain and pan — with a master
+meter beside them.
+
+**Solo is a property of the sequence, not of a track.** Muting a track silences
+that track; soloing one silences every track that is *not* soloed. Whether an
+ordinary track is audible therefore depends on whether anything else is soloed,
+which a track cannot answer alone — so `Sequence::isAudible` is where the rule
+lives, and all three render graphs ask it rather than checking `isMuted`. **Mute
+wins over solo**: soloing a track someone has muted and hearing it anyway would
+make mute mean nothing.
+
+**Meters are measured on the way through the mix**, per track post-fader, plus a
+master measured on the sum — the only figure that accounts for two tracks adding
+up past full scale. Peak rather than RMS: a mixer's meter answers "is this about
+to clip", and RMS can sit comfortably while individual samples are over. A
+loudness meter is a different instrument and belongs with the loudness work.
+
+**The meter scale is in decibels.** A linear meter spends four fifths of its
+height on the top two stops and says nothing at all about a dialogue track
+sitting at −20 dB, which is where dialogue sits.
+
+**The peak hold falls at a fixed rate rather than following the signal.** The
+thing a meter is for is catching the transient that went over, and a transient
+is by definition brief — a hold that dropped straight to the current level would
+only ever show the current level.
+
+**Meters keep working when the transport is stopped.** While playing they come
+from the thread producing the audio, so they show what is being heard; stopped,
+a short block is mixed at the playhead. A mixer whose meters die when playback
+stops cannot be used to set a level, which is most of what a mixer is for.
+
+**Strips are rebuilt only when the set of tracks changes.** Tearing them down on
+every refresh would drop whatever the pointer was holding, and a fader that lets
+go halfway through a drag is unusable.
+
+A track silenced by someone else's solo is shown dimmed rather than marked
+muted: it is not muted, and saying so is a lie the user would then try to undo.
+
+**The layout needed floors.** Three panels in one column squeezed Effect
+Controls to a sliver — a scope four pixels tall looks like a broken panel rather
+than a small one — so each has a minimum height.
+
+**And a fourth absolute pixel threshold went.** Adding those minimum heights
+changed the monitor's size, which changed how much of it the letterbox covers,
+which dropped the LUT self-test's reading from 135.6 to 99.7 against a hard
+`+100`. It is stated against a white frame of the same fixture now. Every
+absolute brightness threshold in this self-test has eventually been wrong; the
+relative ones never have.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

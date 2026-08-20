@@ -359,3 +359,96 @@ TEST_CASE("Automation does not depend on the audio device's block size",
         }
     }
 }
+
+TEST_CASE("Solo silences everything that is not soloed", "[render][audio][mixer]") {
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+
+    const auto a2 = f.project.ids().next<model::TrackTag>();
+    f.sequence().addTrack(a2, model::TrackKind::Audio, "A2");
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(a2), f.clip(0, 100, 500))));
+
+    // Two tracks of the same signal: twice the level.
+    auto both = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(both);
+    CHECK(both->channel(0)[0] == Approx(2.0F).margin(1e-4));
+
+    f.sequence().findTrack(f.a1)->setSoloed(true);
+    auto onlyA1 = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(onlyA1);
+    CHECK(onlyA1->channel(0)[0] == Approx(1.0F).margin(1e-4));
+
+    // Soloing the second as well brings it back: solo is a set, not a switch.
+    f.sequence().findTrack(a2)->setSoloed(true);
+    auto bothSoloed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(bothSoloed);
+    CHECK(bothSoloed->channel(0)[0] == Approx(2.0F).margin(1e-4));
+}
+
+TEST_CASE("Mute wins over solo", "[render][audio][mixer]") {
+    // Soloing a track someone has muted and hearing it anyway would make mute
+    // mean nothing.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    f.sequence().findTrack(f.a1)->setMuted(true);
+    f.sequence().findTrack(f.a1)->setSoloed(true);
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+    CHECK(mixed->channel(0)[0] == Approx(0.0F).margin(1e-6));
+}
+
+TEST_CASE("Meters read the peak of each track and of the sum", "[render][audio][mixer]") {
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 0.5F, 2);
+    render::AudioGraph graph{source};
+
+    const auto a2 = f.project.ids().next<model::TrackTag>();
+    f.sequence().addTrack(a2, model::TrackKind::Audio, "A2");
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(a2), f.clip(0, 100, 500))));
+    // One track pulled down, so the two do not read the same.
+    f.sequence().findTrack(a2)->setGainDb(-6.0);
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+
+    const render::AudioGraph::Meters& meters = graph.meters();
+    CHECK(meters.peakFor(f.a1) == Approx(0.5F).margin(1e-4));
+    CHECK(meters.peakFor(a2) == Approx(0.5F * render::gainFromDb(-6.0)).margin(1e-4));
+
+    // The master accounts for the two adding up, which is the whole reason it
+    // is measured on the sum rather than taken as the loudest track.
+    CHECK(meters.masterPeak() > meters.peakFor(f.a1));
+    CHECK(meters.masterPeak() == Approx(0.5F + (0.5F * render::gainFromDb(-6.0))).margin(1e-4));
+
+    // A silent track reads zero rather than not appearing at all: a strip with
+    // no meter looks broken, and "silent" is a reading.
+    f.sequence().findTrack(a2)->setMuted(true);
+    REQUIRE(graph.mix(f.sequence(), samples(0), 480));
+    CHECK(graph.meters().peakFor(a2) == Approx(0.0F));
+}
+
+TEST_CASE("Meters follow the picture, not the whole clip", "[render][audio][mixer]") {
+    // Measured per block, so a meter reflects the moment the playhead is at
+    // rather than the loudest thing anywhere in the timeline.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 25, 500))));
+
+    REQUIRE(graph.mix(f.sequence(), samples(0), 480));
+    CHECK(graph.meters().peakFor(f.a1) == Approx(1.0F).margin(1e-4));
+
+    // Past the end of the clip there is nothing to hear.
+    REQUIRE(graph.mix(f.sequence(), samples(kSamplesPerFrame * 30), 480));
+    CHECK(graph.meters().peakFor(f.a1) == Approx(0.0F));
+}

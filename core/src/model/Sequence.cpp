@@ -92,4 +92,24 @@ time::RationalTime Sequence::duration() const {
     return longest;
 }
 
+bool Sequence::hasSolo() const {
+    for (const auto* list : {&videoTracks_, &audioTracks_}) {
+        for (const Track& track : *list) {
+            if (track.isSoloed()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool Sequence::isAudible(const Track& track) const {
+    if (track.isMuted()) {
+        // Mute wins over solo. Soloing a track someone has muted and hearing it
+        // anyway would make mute mean nothing.
+        return false;
+    }
+    return track.isSoloed() || !hasSolo();
+}
+
 }  // namespace zaro::model

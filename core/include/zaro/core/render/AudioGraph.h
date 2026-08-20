@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <map>
+#include <vector>
+
 #include "zaro/core/media/AudioBuffer.h"
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/FrameSource.h"
@@ -24,9 +28,38 @@ public:
 
     [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
 
+    /// The loudest sample in the last mix, per track and overall.
+    ///
+    /// Peak rather than RMS: a mixer's meter exists to answer "is this about to
+    /// clip", and RMS answers a different question — it can sit comfortably
+    /// while individual samples are over. A loudness meter is a separate
+    /// instrument and belongs with the loudness work, not here.
+    ///
+    /// Measured on the way through rather than by scanning the result: the
+    /// samples are already in registers, and a second pass over every block
+    /// would cost more than the mixing does.
+    struct Meters {
+        /// Per track, keyed by id. Post-fader: what the track contributes, not
+        /// what its clips hold.
+        std::map<std::uint64_t, float> tracks;
+        /// The summed output, per channel.
+        std::vector<float> master;
+
+        [[nodiscard]] float peakFor(model::TrackId track) const {
+            const auto found = tracks.find(track.value());
+            return found == tracks.end() ? 0.0F : found->second;
+        }
+        [[nodiscard]] float masterPeak() const {
+            return master.empty() ? 0.0F : *std::max_element(master.begin(), master.end());
+        }
+    };
+
+    [[nodiscard]] const Meters& meters() const noexcept { return meters_; }
+
 private:
     AudioSource* source_;
     std::int32_t lastClipCount_{0};
+    Meters meters_;
 };
 
 /// Decibels to a linear factor. -inf and anything below the floor become

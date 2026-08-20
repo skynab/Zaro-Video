@@ -41,6 +41,8 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
     const time::Rational& rate = sequence.audioSampleRate();
     media::AudioBuffer mixed{channelCount, sampleCount, rate};
     lastClipCount_ = 0;
+    meters_.tracks.clear();
+    meters_.master.assign(static_cast<std::size_t>(channelCount), 0.0F);
     if (sampleCount == 0) {
         return mixed;
     }
@@ -52,9 +54,13 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
     media::AudioBuffer scratch;
 
     for (const model::Track& track : sequence.audioTracks()) {
-        if (track.isMuted()) {
+        if (!sequence.isAudible(track)) {
             continue;
         }
+        // Measured per track by summing that track's clips into the mix and
+        // watching what it added. A meter that showed the running total would
+        // read the same on every track, which is the sum, not the track.
+        float trackPeak = 0.0F;
         const float trackGain = gainFromDb(track.gainDb());
         // The track bus is already stereo, so its pan control is a balance.
         float trackLeft = 1.0F;
@@ -151,7 +157,9 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 float* out = mixed.channel(channel);
                 if (!automated) {
                     for (std::int64_t i = 0; i < available; ++i) {
-                        out[offsetInBlock + i] += in[i] * gain;
+                        const float value = in[i] * gain;
+                        trackPeak = std::max(trackPeak, std::fabs(value));
+                        out[offsetInBlock + i] += value;
                     }
                     continue;
                 }
@@ -162,11 +170,25 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 for (std::int64_t i = 0; i < available; ++i) {
                     const auto at = static_cast<std::size_t>(i);
                     const float placed = channelCount == 1 ? 1.0F : side[at];
-                    out[offsetInBlock + i] += in[i] * clipGains[at] * placed * busGain;
+                    const float value = in[i] * clipGains[at] * placed * busGain;
+                    trackPeak = std::max(trackPeak, std::fabs(value));
+                    out[offsetInBlock + i] += value;
                 }
             }
             ++lastClipCount_;
         }
+        meters_.tracks[track.id().value()] = trackPeak;
+    }
+
+    // The master, measured on the summed result: it is the only figure that has
+    // to account for two tracks adding up past full scale.
+    for (std::int32_t channel = 0; channel < channelCount; ++channel) {
+        const float* samples = mixed.channel(channel);
+        float peak = 0.0F;
+        for (std::int64_t i = 0; i < sampleCount; ++i) {
+            peak = std::max(peak, std::fabs(samples[i]));
+        }
+        meters_.master[static_cast<std::size_t>(channel)] = peak;
     }
     return mixed;
 }

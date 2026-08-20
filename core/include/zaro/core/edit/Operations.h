@@ -312,6 +312,21 @@ enum class PlaceMode {
 
 // --- Structure --------------------------------------------------------------
 
+/// What a mixer strip controls.
+struct TrackState {
+    bool muted{false};
+    bool soloed{false};
+    double gainDb{0.0};
+    double pan{0.0};
+};
+
+/// Set a track's mixer state. One operation rather than four, because a strip
+/// is one thing and undoing a fader move should not also require undoing the
+/// mute that was pressed with it.
+[[nodiscard]] Result<CommandPtr> makeSetTrackState(model::Project& project,
+                                                   model::SequenceId sequence, model::TrackId track,
+                                                   const TrackState& state);
+
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,
                                               model::TrackKind kind, std::string name);
 

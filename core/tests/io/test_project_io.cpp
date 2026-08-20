@@ -268,6 +268,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
 
     model::Track& video = sequence.tracksMutable(model::TrackKind::Video).front();
     video.setMuted(true);
+    video.setSoloed(true);
     video.setLocked(true);
     video.setGainDb(-2.25);
     video.setPan(-0.4);
@@ -415,6 +416,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedVideo->kind() == model::TrackKind::Video);
     CHECK(loadedVideo->isMuted());
     CHECK(loadedVideo->isLocked());
+    CHECK(loadedVideo->isSoloed());
     CHECK(loadedVideo->gainDb() == -2.25);
     CHECK(loadedVideo->pan() == -0.4);
 

@@ -55,6 +55,16 @@ public:
     [[nodiscard]] const Marker* markerBefore(const time::RationalTime& t) const;
 
     [[nodiscard]] Track* findTrack(TrackId id);
+    /// Whether anything on this track should be heard or seen.
+    ///
+    /// Solo is a property of the sequence: a track is audible if it is not muted
+    /// and either nothing is soloed or it is one of the soloed ones. Asking a
+    /// track on its own gives the wrong answer for every track in a sequence
+    /// where something else is soloed, which is why this lives here.
+    [[nodiscard]] bool isAudible(const Track& track) const;
+    /// Whether any track of either kind is soloed.
+    [[nodiscard]] bool hasSolo() const;
+
     [[nodiscard]] const Track* findTrack(TrackId id) const;
 
     TrackId addTrack(TrackId id, TrackKind kind, std::string name);

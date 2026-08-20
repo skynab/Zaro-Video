@@ -28,7 +28,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
     // Bottom-up. Index 0 is V1, the lowest track, and each later track
     // composites over what is already there.
     for (const model::Track& track : sequence.videoTracks()) {
-        if (track.isMuted()) {
+        if (!sequence.isAudible(track)) {
             continue;
         }
         // A transition shows both of its clips at once, reading each into the

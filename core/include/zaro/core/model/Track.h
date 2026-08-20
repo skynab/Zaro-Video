@@ -38,6 +38,17 @@ public:
 
     [[nodiscard]] bool isMuted() const noexcept { return muted_; }
     void setMuted(bool value) noexcept { muted_ = value; }
+    /// Solo is not the opposite of mute.
+    ///
+    /// Muting a track silences that track. Soloing one silences every track
+    /// that is *not* soloed, which is a property of the sequence rather than of
+    /// the track — so whether a soloed track is audible depends on nothing, and
+    /// whether an ordinary track is audible depends on whether anything else is
+    /// soloed. `Sequence::isAudible` is where that rule lives; a track cannot
+    /// answer it alone.
+    [[nodiscard]] bool isSoloed() const noexcept { return soloed_; }
+    void setSoloed(bool value) noexcept { soloed_ = value; }
+
     [[nodiscard]] bool isLocked() const noexcept { return locked_; }
     void setLocked(bool value) noexcept { locked_ = value; }
 
@@ -126,6 +137,7 @@ private:
     /// On by default: tracks following a ripple is the behaviour that keeps a
     /// cut in sync, and it should have to be turned off deliberately.
     bool syncLocked_{true};
+    bool soloed_{false};
     double gainDb_{0.0};
     double pan_{0.0};
 };

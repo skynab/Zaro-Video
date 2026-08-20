@@ -1750,6 +1750,34 @@ Result<CommandPtr> makeImportMedia(Project& project, model::MediaRef media) {
 
 // --- Structure --------------------------------------------------------------
 
+Result<CommandPtr> makeSetTrackState(Project& project, model::SequenceId sequenceId,
+                                     TrackId trackId, const TrackState& state) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (sequence->findTrack(trackId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such track in this sequence"};
+    }
+    if (!std::isfinite(state.gainDb) || !std::isfinite(state.pan)) {
+        return Error{ErrorCode::InvalidData, "gain and pan have to be real numbers"};
+    }
+    const double pan = std::clamp(state.pan, -1.0, 1.0);
+    // Keyed by track, so a fader drag is one undo step and the strip next to it
+    // is a separate one.
+    return makeCommand(sequenceId, "Adjust track", "track:" + std::to_string(trackId.value()),
+                       [trackId, state, pan](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           if (track == nullptr) {
+                               return;
+                           }
+                           track->setMuted(state.muted);
+                           track->setSoloed(state.soloed);
+                           track->setGainDb(state.gainDb);
+                           track->setPan(pan);
+                       });
+}
+
 Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,
                                 model::TrackKind kind, std::string name) {
     if (project.findSequence(sequenceId) == nullptr) {

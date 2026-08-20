@@ -438,6 +438,11 @@ json encode(const model::Track& track) {
     if (!transitions.empty()) {
         out["transitions"] = std::move(transitions);
     }
+    if (track.isSoloed()) {
+        // Only when set: solo is a transient state on most projects, and a
+        // "soloed": false on every track is noise in a file people read.
+        out["soloed"] = true;
+    }
     if (track.gainDb() != 0.0) {
         out["gainDb"] = track.gainDb();
     }
@@ -587,6 +592,7 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     }
     model::Track track{id, kind, node.value("name", std::string{})};
     track.setMuted(node.value("muted", false));
+    track.setSoloed(node.value("soloed", false));
     track.setLocked(node.value("locked", false));
     track.setGainDb(node.value("gainDb", 0.0));
     track.setPan(node.value("pan", 0.0));
