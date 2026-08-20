@@ -25,6 +25,7 @@ add_executable(zaro_core_tests
     model/test_animation.cpp
     model/test_track.cpp
     edit/test_command_stack.cpp
+    edit/test_nesting.cpp
     edit/test_operations.cpp
     edit/test_snapping.cpp
     edit/test_fuzz.cpp

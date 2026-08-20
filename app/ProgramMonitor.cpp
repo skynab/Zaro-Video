@@ -62,6 +62,8 @@ void ProgramMonitor::ensureGraph() {
     if (!graph_ && compositor_ && provider_ != nullptr) {
         graph_ = std::make_unique<platform::qrhi::GpuRenderGraph>(*compositor_, *provider_);
         graph_->setTextRasterizer(text_);
+        graph_->setProject(project_);
+        graph_->setNestedSource(nestedSource_);
     }
 }
 
@@ -86,6 +88,14 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     }
     lastError_.clear();
     ++framesRendered_;
+}
+
+void ProgramMonitor::setNesting(const model::Project* project, render::FrameSource* source) {
+    project_ = project;
+    nestedSource_ = source;
+    // Rebuilt on the next render, which is where the graph is made anyway.
+    graph_.reset();
+    update();
 }
 
 void ProgramMonitor::setTextRasterizer(render::TextRasterizer* rasterizer) {

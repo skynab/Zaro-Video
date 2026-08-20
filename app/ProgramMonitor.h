@@ -32,6 +32,9 @@ public:
     /// built lazily when the GPU device is ready.
     void setTextRasterizer(render::TextRasterizer* rasterizer);
 
+    /// What nested clips are resolved against, and what composites them.
+    void setNesting(const model::Project* project, render::FrameSource* source);
+
     void setPosition(const time::RationalTime& position);
     [[nodiscard]] const time::RationalTime& position() const noexcept { return position_; }
 
@@ -50,6 +53,8 @@ private:
 
     render::SourceFrameProvider* provider_{nullptr};
     render::TextRasterizer* text_{nullptr};
+    const model::Project* project_{nullptr};
+    render::FrameSource* nestedSource_{nullptr};
     time::RationalTime position_{};
 
     std::unique_ptr<platform::qrhi::GpuCompositor> compositor_;

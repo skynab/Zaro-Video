@@ -1,5 +1,8 @@
 #include "zaro/core/model/Project.h"
 
+#include <set>
+#include <vector>
+
 #include "zaro/core/Check.h"
 
 namespace zaro::model {
@@ -44,6 +47,45 @@ SequenceId Project::addSequence(Sequence sequence) {
         activeSequence_ = id;
     }
     return id;
+}
+
+bool Project::nestingWouldCycle(SequenceId outer, SequenceId inner) const {
+    if (!outer.isValid() || !inner.isValid()) {
+        return false;
+    }
+    if (outer == inner) {
+        return true;
+    }
+
+    // Walk what `inner` already contains. If `outer` is anywhere in there,
+    // putting `inner` inside it closes the loop.
+    std::vector<SequenceId> pending{inner};
+    std::set<std::uint64_t> seen;
+    while (!pending.empty()) {
+        const SequenceId current = pending.back();
+        pending.pop_back();
+        if (!seen.insert(current.value()).second) {
+            continue;  // already walked; a diamond is not a cycle
+        }
+        const Sequence* sequence = findSequence(current);
+        if (sequence == nullptr) {
+            continue;
+        }
+        for (const auto* list : {&sequence->videoTracks(), &sequence->audioTracks()}) {
+            for (const Track& track : *list) {
+                for (const Clip& clip : track.clips()) {
+                    if (!clip.nested.isValid()) {
+                        continue;
+                    }
+                    if (clip.nested == outer) {
+                        return true;
+                    }
+                    pending.push_back(clip.nested);
+                }
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace zaro::model

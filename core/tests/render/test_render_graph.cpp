@@ -562,3 +562,87 @@ TEST_CASE("A reversed clip composites its frames backwards", "[render][graph][sp
     const float last = graph.composite(f.sequence(), f.at(24))->at(8, 8).r;
     CHECK(first > last);
 }
+
+TEST_CASE("A nested sequence composites as a clip", "[render][graph][nest]") {
+    Fixture f;
+    f.sequence().setSize(32, 32);
+    SolidFrameSource source{32, 32};
+    source.define(f.longMedia, opaque(1.0F, 0.0F, 0.0F));
+    render::RenderGraph graph{source};
+    graph.setProject(&f.project);
+
+    // An inner sequence with a red clip on it.
+    model::Sequence inner{f.project.ids().next<model::SequenceTag>(), "inner", time::rates::fps25};
+    inner.setSize(32, 32);
+    const model::SequenceId innerId = inner.id();
+    const auto innerTrack = f.project.ids().next<model::TrackTag>();
+    inner.addTrack(innerTrack, model::TrackKind::Video, "V1");
+    f.project.addSequence(std::move(inner));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, {innerId, innerTrack}, f.clip(0, 50, 500))));
+
+    // And an outer clip that is the whole of it.
+    model::Clip nest = f.clip(0, 50, 0);
+    nest.nested = innerId;
+    nest.sourceRange = f.range(0, 50);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), nest)));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(16, 16).r == Approx(1.0F));
+    CHECK(frame->at(16, 16).a == Approx(1.0F));
+    // One clip on this sequence, whatever the nested one contains.
+    CHECK(graph.lastClipCount() == 1);
+}
+
+TEST_CASE("A nested clip obeys the transform and the grade", "[render][graph][nest]") {
+    // The reason a nest is a clip rather than a special case: everything that
+    // works on a clip works on it, and none of that code was told about nesting.
+    Fixture f;
+    f.sequence().setSize(32, 32);
+    SolidFrameSource source{32, 32};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+    graph.setProject(&f.project);
+
+    model::Sequence inner{f.project.ids().next<model::SequenceTag>(), "inner", time::rates::fps25};
+    inner.setSize(32, 32);
+    const model::SequenceId innerId = inner.id();
+    const auto innerTrack = f.project.ids().next<model::TrackTag>();
+    inner.addTrack(innerTrack, model::TrackKind::Video, "V1");
+    f.project.addSequence(std::move(inner));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, {innerId, innerTrack}, f.clip(0, 50, 500))));
+
+    model::Clip nest = f.clip(0, 50, 0);
+    nest.nested = innerId;
+    nest.sourceRange = f.range(0, 50);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), nest)));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    model::ColorCorrection darker;
+    darker.exposure = -2.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v1), id, darker)));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(16, 16).r == Approx(0.25F).margin(0.01));
+}
+
+TEST_CASE("A nested clip with no project resolves to nothing", "[render][graph][nest]") {
+    // A graph that was never given a project renders everything else rather
+    // than failing: that is what the headless tests do, and a missing sequence
+    // is a hole rather than a stalled render.
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    render::RenderGraph graph{source};
+
+    model::Clip nest = f.clip(0, 50, 0);
+    nest.nested = model::SequenceId{999};
+    nest.sourceRange = f.range(0, 50);
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), nest)));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(8, 8).a == Approx(0.0F));
+    CHECK(graph.lastClipCount() == 0);
+}

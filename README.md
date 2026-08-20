@@ -57,7 +57,8 @@ headless: there is no window yet.
 | 5q | Track EQ and compression, before the fader | **done** |
 | 5r | Loudness to EBU R128, with normalisation | **done** |
 | 5s | Proxies: attach, toggle, and never export them | **done** |
-| 5t | §7 remainder: multicam, nesting, render cache | next |
+| 5t | Nesting: a sequence as a clip, cycles refused | **done** |
+| 5u | §7 remainder: multicam, render cache, adjustment layers | next |
 
 ## Building
 

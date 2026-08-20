@@ -1,8 +1,11 @@
 #pragma once
 
+#include <memory>
+
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/TextRasterizer.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 
@@ -22,6 +25,18 @@ namespace zaro::platform::qrhi {
 /// with a flag.
 class GpuRenderGraph {
 public:
+    /// Nested sequences are composited on the CPU and uploaded.
+    ///
+    /// A nest would otherwise need the compositor to render into a texture and
+    /// then read from it, which means a second target to ping-pong against --
+    /// real plumbing for a case that is rare in a preview and never on the path
+    /// that delivers. The export renderer is the CPU one anyway, so this is the
+    /// slow path being slow rather than a second implementation.
+    void setNestedSource(render::FrameSource* source) { nestedSource_ = source; }
+
+    /// The project nested clips are resolved against.
+    void setProject(const model::Project* project) { project_ = project; }
+
     /// How to draw text. Set by whoever owns a font engine.
     void setTextRasterizer(render::TextRasterizer* rasterizer) { text_ = rasterizer; }
 
@@ -49,10 +64,18 @@ private:
 
     /// graph keeps them: building one is thousands of spline evaluations.
 
+    /// Draw a clip whose picture is already an image -- a generated shape, or a
+    /// nested sequence composited on the CPU.
+    bool drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
+                       const model::Transform& transform, const time::RationalTime& at);
+
     bool drawClip(const model::Clip& clip, const media::VideoFrame& frame,
                   const model::Transform& transform, const time::RationalTime& at);
 
     render::RgbaImage generated_;
+    const model::Project* project_{nullptr};
+    render::FrameSource* nestedSource_{nullptr};
+    std::unique_ptr<render::RenderGraph> nested_;
     render::TextRasterizer* text_{nullptr};
     render::CurveTableCache curves_;
     render::LutCache luts_;

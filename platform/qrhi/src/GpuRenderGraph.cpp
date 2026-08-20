@@ -11,6 +11,20 @@ namespace zaro::platform::qrhi {
 /// A single place, for the same reason the CPU graph has one: the three call
 /// sites below each used to compute the grade for themselves and they drifted
 /// apart, leaving one half of a transition without its tone curves.
+bool GpuRenderGraph::drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
+                                   const model::Transform& transform,
+                                   const time::RationalTime& at) {
+    const render::SecondaryConstants secondary =
+        render::secondaryConstantsFor(clip.secondary, transfer_);
+    const render::LutTable* lut =
+        clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
+    return compositor_
+        ->draw(image, transform, clip.blend, render::gradeConstantsFor(clip.colorAt(at)),
+               &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
+               static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr)
+        .ok();
+}
+
 bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& frame,
                               const model::Transform& transform, const time::RationalTime& at) {
     const render::SecondaryConstants secondary =
@@ -69,6 +83,29 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             continue;
         }
 
+        if (clip->nested.isValid()) {
+            if (nestedSource_ == nullptr || project_ == nullptr) {
+                continue;
+            }
+            const model::Sequence* inner = project_->findSequence(clip->nested);
+            if (inner == nullptr) {
+                continue;
+            }
+            if (nested_ == nullptr) {
+                nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
+                nested_->setProject(project_);
+                nested_->setTextRasterizer(text_);
+            }
+            auto frame = nested_->composite(*inner, clip->sourceTimeAt(at));
+            if (!frame) {
+                continue;
+            }
+            if (drawClipImage(*clip, *frame, clip->transformAt(at), at)) {
+                ++lastClipCount_;
+            }
+            continue;
+        }
+
         if (clip->graphic.isSet()) {
             // Rasterised on the CPU and uploaded through the compositor's
             // existing RGBA path. A shader for shapes would be faster, and
@@ -86,15 +123,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             } else {
                 render::drawShape(clip->graphic, generated_);
             }
-            const render::SecondaryConstants secondary =
-                render::secondaryConstantsFor(clip->secondary, transfer_);
-            const render::LutTable* lut =
-                clip->lut.isSet() ? luts_.tableFor(clip->lut.path, transfer_) : nullptr;
-            if (compositor_->draw(generated_, clip->transformAt(at), clip->blend,
-                                  render::gradeConstantsFor(clip->colorAt(at)),
-                                  &curves_.tableFor(clip->id.value(), clip->curves, transfer_),
-                                  &secondary, lut, static_cast<float>(clip->lut.amount),
-                                  clip->mask.isSet() ? &clip->mask : nullptr)) {
+            if (drawClipImage(*clip, generated_, clip->transformAt(at), at)) {
                 ++lastClipCount_;
             }
             continue;

@@ -42,6 +42,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
 
     const time::Rational& rate = sequence.audioSampleRate();
     media::AudioBuffer mixed{channelCount, sampleCount, rate};
+    const std::int32_t outerClips = lastClipCount_;
     lastClipCount_ = 0;
     meters_.tracks.clear();
     meters_.reduction.clear();
@@ -93,6 +94,36 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             const std::int64_t offsetInBlock = overlap->start().frames() - blockStart.frames();
             const std::int64_t wanted = overlap->duration().frames();
             if (wanted <= 0) {
+                continue;
+            }
+
+            if (clip.nested.isValid()) {
+                // A nested sequence's own mix, laid into this track's bus. The
+                // depth guard is the same backstop the picture has: cycles are
+                // refused at the edit, and this catches a project that arrived
+                // from somewhere else.
+                constexpr std::int32_t kMaxDepth = 8;
+                const model::Sequence* inner =
+                    project_ != nullptr ? project_->findSequence(clip.nested) : nullptr;
+                if (inner == nullptr || depth_ >= kMaxDepth) {
+                    continue;
+                }
+                ++depth_;
+                auto nested =
+                    mix(*inner, clip.sourceTimeAt(overlap->start()), wanted, channelCount);
+                --depth_;
+                if (!nested) {
+                    continue;
+                }
+                const float nestedGain = gainFromDb(clip.gainDb);
+                for (std::int32_t channel = 0; channel < channelCount; ++channel) {
+                    const float* in = nested->channel(channel);
+                    float* out = bus.channel(channel);
+                    for (std::int64_t i = 0; i < wanted; ++i) {
+                        out[offsetInBlock + i] += in[i] * nestedGain;
+                    }
+                }
+                ++lastClipCount_;
                 continue;
             }
 
@@ -264,6 +295,10 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             peak = std::max(peak, std::fabs(samples[i]));
         }
         meters_.master[static_cast<std::size_t>(channel)] = peak;
+    }
+    if (depth_ > 0) {
+        // A nested mix must not wipe the tally the level above is building.
+        lastClipCount_ = outerClips;
     }
     return mixed;
 }

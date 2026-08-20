@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "zaro/core/media/AudioBuffer.h"
+#include "zaro/core/model/Project.h"
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/AudioProcessor.h"
 #include "zaro/core/render/FrameSource.h"
@@ -29,6 +30,10 @@ public:
                                                  std::int32_t channelCount = 2);
 
     [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
+
+    /// The project a nested clip's sequence is looked up in. Without it a
+    /// nested clip contributes silence, the same way it draws nothing.
+    void setProject(const model::Project* project) { project_ = project; }
 
     /// The loudest sample in the last mix, per track and overall.
     ///
@@ -93,6 +98,8 @@ public:
 
 private:
     AudioSource* source_;
+    const model::Project* project_{nullptr};
+    std::int32_t depth_{0};
     std::int32_t lastClipCount_{0};
     Meters meters_;
     /// One processing chain per track, kept between blocks because a filter's

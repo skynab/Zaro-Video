@@ -176,6 +176,17 @@ enum class PlaceMode {
                                                  model::SequenceId sequence,
                                                  const model::CaptionTrack& captions);
 
+/// Put one sequence on another's timeline.
+///
+/// Refused if it would make a cycle: a sequence containing itself, directly or
+/// through any chain of nests, is a render that never finishes. Checked here
+/// rather than guarded against while rendering, because a depth limit turns an
+/// impossible project into a merely wrong one and explains nothing to whoever
+/// made it.
+[[nodiscard]] Result<CommandPtr> makeNestSequence(model::Project& project, const EditTarget& target,
+                                                  model::SequenceId nested,
+                                                  const time::RationalTime& at);
+
 /// Place a generated shape on a track, at a time, for a duration.
 ///
 /// A graphic has no media, so it has no source range to speak of -- but a clip

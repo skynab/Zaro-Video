@@ -372,6 +372,9 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.nested.isValid()) {
+        out["nested"] = clip.nested.value();
+    }
     if (clip.reversed) {
         out["reversed"] = true;
     }
@@ -682,6 +685,7 @@ Result<model::Clip> decodeClip(const json& node) {
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
     }
+    clip.nested = model::SequenceId{node.value("nested", std::uint64_t{0})};
     clip.reversed = node.value("reversed", false);
     if (node.contains("mask") && node.at("mask").is_object()) {
         const json& mask = node.at("mask");

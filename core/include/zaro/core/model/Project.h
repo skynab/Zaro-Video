@@ -65,6 +65,15 @@ public:
     /// Mutable access, for the few things that change a media reference in
     /// place -- attaching a proxy, relinking a moved file. Not for editing:
     /// anything that changes the cut goes through a command.
+    /// Whether putting `inner` inside `outer` would make a cycle.
+    ///
+    /// A sequence containing itself, directly or through any chain of nests, is
+    /// not a picture -- it is a render that never finishes. This is checked
+    /// before the edit rather than guarded against during the render, because a
+    /// depth limit turns an impossible project into a merely wrong one, and the
+    /// person who made it gets no explanation either way.
+    [[nodiscard]] bool nestingWouldCycle(SequenceId outer, SequenceId inner) const;
+
     [[nodiscard]] std::vector<MediaRef>& mediaMutable() noexcept { return media_; }
     [[nodiscard]] const std::vector<Sequence>& sequences() const noexcept { return sequences_; }
 

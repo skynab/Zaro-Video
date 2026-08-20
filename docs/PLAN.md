@@ -1490,6 +1490,45 @@ the original, 0.1 through the proxy.
 
 ---
 
+#### Phase 5t — nesting ✅
+
+A sequence used as a clip, on both render paths and in the audio mix.
+
+**A nest is a clip, not a special case.** Its source range is a range of the
+inner sequence's own timeline, so every trim, retime, reverse, grade, mask and
+keyframe already works on it — and none of that code was told nesting exists. A
+test grades a nested clip two stops down and gets a quarter of the light.
+
+**Cycles are refused at the edit, not guarded against at the render.** A
+sequence containing itself is a render that never finishes. A depth limit would
+turn an impossible project into a merely wrong one and explain nothing to
+whoever made it, so `nestingWouldCycle` walks the whole chain — A inside B
+inside C is fine until somebody puts A inside C — and the operation refuses. The
+same sequence used twice is a diamond, not a loop, and is allowed. A depth limit
+does exist, as a backstop for a project that arrived from an OTIO file or a
+hand-edited save.
+
+**The GPU preview composites a nest on the CPU and uploads it**, the same
+decision as the shapes. Doing it on the GPU means rendering into a texture and
+sampling it back, which needs a second target to ping-pong against — real
+plumbing for a case that is rare in a preview and never on the path that
+delivers, since export is the CPU renderer anyway.
+
+**Recursion had to stop clobbering the counters.** `compositeInto` resets the
+clip tally, so a nested call wiped the one the level above was building. Saved
+across the recursion: a nested sequence contributes one clip to the outer count
+however many it contains.
+
+**Two latent bugs, both about pointers into a growing vector.** Adding a
+sequence reallocates the project's `std::vector<Sequence>`, and both the window
+and the monitor held raw pointers into it. The window looks its sequence up by
+id now; the monitor is re-seated through one place that the application and the
+self-test both use. Neither was reachable before, because nothing created a
+sequence at runtime — making one to nest is exactly that. It presented as a zero
+denominator deep inside rational arithmetic, which is a long way from the cause.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

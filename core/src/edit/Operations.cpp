@@ -1381,6 +1381,38 @@ Result<CommandPtr> makeSetCaptions(Project& project, model::SequenceId sequenceI
                        [captions](Sequence& sequence) { sequence.captions() = captions; });
 }
 
+Result<CommandPtr> makeNestSequence(Project& project, const EditTarget& target,
+                                    model::SequenceId nestedId, const time::RationalTime& at) {
+    const Sequence* inner = project.findSequence(nestedId);
+    if (inner == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (project.nestingWouldCycle(target.sequence, nestedId)) {
+        return Error{ErrorCode::InvalidData, "that would put a sequence inside itself"};
+    }
+    if (inner->duration().frames() <= 0) {
+        return Error{ErrorCode::InvalidData, "that sequence is empty"};
+    }
+
+    const Sequence* outer = project.findSequence(target.sequence);
+    if (outer == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+
+    Clip clip;
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.nested = nestedId;
+    clip.name = inner->name();
+    // The whole of it, from its own start: a nested clip's source range is a
+    // range of the inner sequence's timeline, so this is the same shape of
+    // thing as a clip covering the whole of a file.
+    const time::RationalTime duration = inner->duration().rescaledTo(outer->frameRate());
+    clip.sourceRange =
+        time::TimeRange{time::RationalTime{0, inner->frameRate()}, inner->duration()};
+    clip.timelineRange = time::TimeRange{at.rescaledTo(outer->frameRate()), duration};
+    return makeOverwrite(project, target, clip);
+}
+
 Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
                                   const model::Graphic& graphic, const time::TimeRange& range) {
     if (range.isEmpty()) {

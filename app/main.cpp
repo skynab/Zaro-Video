@@ -79,7 +79,7 @@ class PreviewWindow : public QWidget {
 public:
     PreviewWindow(model::Project project, io::LoadedProject loaded)
         : project_{std::move(project)}, loaded_{std::move(loaded)} {
-        sequence_ = project_.findSequence(project_.activeSequence());
+        sequenceId_ = project_.activeSequence();
 
         monitor_ = new app::ProgramMonitor(this);
         monitor_->setMinimumSize(480, 270);
@@ -129,7 +129,7 @@ public:
         otioButton->setMinimumWidth(otioButton->sizeHint().width());
         transportRow->addWidget(otioButton);
         connect(otioButton, &QPushButton::clicked, this, [this] {
-            if (sequence_ == nullptr) {
+            if (liveSequence() == nullptr) {
                 return;
             }
             const QString path = QFileDialog::getSaveFileName(
@@ -137,7 +137,7 @@ public:
             if (path.isEmpty()) {
                 return;
             }
-            if (Status saved = io::saveOtio(project_, sequence_->id(), path.toStdString());
+            if (Status saved = io::saveOtio(project_, liveSequence()->id(), path.toStdString());
                 !saved) {
                 QMessageBox::warning(this, "OpenTimelineIO",
                                      QString::fromStdString(saved.error().toString()));
@@ -205,7 +205,7 @@ public:
         connect(source_, &app::SourceMonitor::overwriteRequested, this,
                 [this] { placeFromSource(edit::PlaceMode::Overwrite); });
         connect(bin_, &app::ProjectBin::edited, this, [this] {
-            scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+            scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
             timeline_->update();
             monitor_->update();
             refresh();
@@ -253,7 +253,7 @@ public:
             mixer_->refresh();
             // An edit can change the duration, and can change what is under the
             // playhead, so both the scrubber and the picture need refreshing.
-            scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+            scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
             monitor_->update();
             refresh();
         });
@@ -263,7 +263,7 @@ public:
             // Scrubbing stops playback: the playhead is being driven by hand,
             // and having the clock fight it is what makes scrubbing feel loose.
             stop();
-            setPosition(time::RationalTime{value, sequence_->frameRate()});
+            setPosition(time::RationalTime{value, liveSequence()->frameRate()});
         });
 
         // Meters at twenty a second. Faster is invisible on a meter with a peak
@@ -296,6 +296,19 @@ public:
     [[nodiscard]] render::AudioSource& media() { return *media_; }
     [[nodiscard]] Status reopenMedia() { return openMedia(); }
 
+    /// Re-seat everything that holds a pointer to the active sequence.
+    ///
+    /// Adding a sequence reallocates the project's vector of them, so anything
+    /// holding a pointer into it is looking at freed memory. This window looks
+    /// its own up by id; the monitor is handed one, so it has to be told again.
+    void rebindSequence() {
+        monitor_->setSource(liveSequence(), media_.get());
+        monitor_->setNesting(&project_, media_.get());
+        monitor_->setTextRasterizer(&text_);
+        timeline_->setProject(&project_, sequenceId_, &commands_);
+        monitor_->update();
+    }
+
     /// Feed the mixer's meters.
     ///
     /// While playing they come from the thread that is actually producing the
@@ -303,7 +316,7 @@ public:
     /// at the playhead: a mixer whose meters die whenever the transport stops
     /// cannot be used to set a level, which is most of what a mixer is for.
     void updateMeters() {
-        if (mixer_ == nullptr || sequence_ == nullptr || !mixer_->isVisible()) {
+        if (mixer_ == nullptr || liveSequence() == nullptr || !mixer_->isVisible()) {
             return;
         }
         if (playing_) {
@@ -319,14 +332,14 @@ public:
             return;
         }
         render::AudioGraph meterMix{*media_};
-        const auto& audioRate = sequence_->audioSampleRate();
+        const auto& audioRate = liveSequence()->audioSampleRate();
         constexpr std::int64_t kBlock = 1024;
-        if (meterMix.mix(*sequence_, position_.rescaledTo(audioRate), kBlock, 2)) {
+        if (meterMix.mix(*liveSequence(), position_.rescaledTo(audioRate), kBlock, 2)) {
             mixer_->setMeters(meterMix.meters());
         }
     }
 
-    [[nodiscard]] const model::Sequence* sequence() const { return sequence_; }
+    [[nodiscard]] const model::Sequence* sequence() const { return liveSequence(); }
     [[nodiscard]] model::Project& project() { return project_; }
 
     /// Block until the background peak generation has finished and its results
@@ -340,6 +353,12 @@ public:
         // on screen until it has been given a chance to run.
         QApplication::processEvents();
     }
+    /// The active sequence, looked up each time. A handful of sequences and a
+    /// linear scan: cheaper than any of the ways of getting this wrong.
+    [[nodiscard]] const model::Sequence* liveSequence() const {
+        return project_.findSequence(sequenceId_);
+    }
+
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
 
     Status openMedia() {
@@ -348,23 +367,25 @@ public:
             return opened.error();
         }
         media_ = std::move(*opened);
-        monitor_->setSource(sequence_, media_.get());
+        monitor_->setSource(liveSequence(), media_.get());
         monitor_->setTextRasterizer(&text_);
-        timeline_->setProject(&project_, sequence_->id(), &commands_);
-        effects_->setProject(&project_, sequence_->id(), &commands_);
-        mixer_->setProject(&project_, sequence_->id(), &commands_);
-        bin_->setProject(&project_, sequence_->id(), &commands_);
+        monitor_->setNesting(&project_, media_.get());
+        timeline_->setProject(&project_, liveSequence()->id(), &commands_);
+        effects_->setProject(&project_, liveSequence()->id(), &commands_);
+        mixer_->setProject(&project_, liveSequence()->id(), &commands_);
+        bin_->setProject(&project_, liveSequence()->id(), &commands_);
         source_->setProvider(media_.get());
         startWaveforms();
-        scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+        scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
         refresh();
         return {};
     }
 
     void setPosition(const time::RationalTime& position) {
-        const std::int64_t last = std::max<std::int64_t>(0, sequence_->duration().frames() - 1);
+        const std::int64_t last =
+            std::max<std::int64_t>(0, liveSequence()->duration().frames() - 1);
         const std::int64_t clamped = std::clamp<std::int64_t>(position.frames(), 0, last);
-        position_ = time::RationalTime{clamped, sequence_->frameRate()};
+        position_ = time::RationalTime{clamped, liveSequence()->frameRate()};
         monitor_->setPosition(position_);
         timeline_->setPlayhead(position_);
         // The panel shows values at the playhead and writes keyframes there, so
@@ -376,7 +397,7 @@ public:
 
     void step(std::int64_t frames) {
         stop();
-        setPosition(position_ + time::RationalTime{frames, sequence_->frameRate()});
+        setPosition(position_ + time::RationalTime{frames, liveSequence()->frameRate()});
     }
 
 protected:
@@ -433,17 +454,17 @@ protected:
                 return;
             case Qt::Key_Home:
                 stop();
-                setPosition(time::RationalTime{0, sequence_->frameRate()});
+                setPosition(time::RationalTime{0, liveSequence()->frameRate()});
                 return;
             case Qt::Key_End:
                 stop();
-                setPosition(sequence_->duration());
+                setPosition(liveSequence()->duration());
                 return;
             case Qt::Key_E:
                 if (event->modifiers().testFlag(Qt::ControlModifier) ||
                     event->modifiers().testFlag(Qt::MetaModifier)) {
                     stop();
-                    app::ExportDialog dialog{project_, sequence_->id(), this};
+                    app::ExportDialog dialog{project_, liveSequence()->id(), this};
                     dialog.exec();
                     return;
                 }
@@ -502,13 +523,13 @@ private:
     }
 
     void doNextMarker() {
-        if (const model::Marker* marker = sequence_->markerAfter(position_)) {
+        if (const model::Marker* marker = liveSequence()->markerAfter(position_)) {
             stop();
             setPosition(marker->range.start());
         }
     }
     void doPreviousMarker() {
-        if (const model::Marker* marker = sequence_->markerBefore(position_)) {
+        if (const model::Marker* marker = liveSequence()->markerBefore(position_)) {
             stop();
             setPosition(marker->range.start());
         }
@@ -527,19 +548,19 @@ private:
         if (!range || !source_->media().isValid()) {
             return;
         }
-        const auto& videoTracks = sequence_->videoTracks();
+        const auto& videoTracks = liveSequence()->videoTracks();
         if (videoTracks.empty()) {
             return;
         }
         auto built =
-            edit::makePlaceFromSource(project_, {sequence_->id(), videoTracks.front().id()},
+            edit::makePlaceFromSource(project_, {liveSequence()->id(), videoTracks.front().id()},
                                       source_->media(), *range, position_, mode);
         if (!built) {
             return;
         }
         commands_.execute(project_, std::move(*built));
         commands_.breakMerge();
-        scrubber_->setRange(0, static_cast<int>(sequence_->duration().frames()));
+        scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
         timeline_->update();
         monitor_->update();
         refresh();
@@ -571,7 +592,7 @@ private:
     }
 
     void startClock() {
-        const time::Rational& audioRate = sequence_->audioSampleRate();
+        const time::Rational& audioRate = liveSequence()->audioSampleRate();
         if (!sink_) {
             auto opened = platform::sdl::AudioSink::open(audioRate, 2);
             if (opened) {
@@ -672,7 +693,7 @@ private:
         // first moment after a jump is ducked by whatever was loud wherever the
         // playhead was before.
         mixer.resetProcessing();
-        const time::Rational& audioRate = sequence_->audioSampleRate();
+        const time::Rational& audioRate = liveSequence()->audioSampleRate();
         constexpr std::int32_t kChannels = 2;
 
         while (audioRunning_.load(std::memory_order_relaxed)) {
@@ -689,7 +710,7 @@ private:
                 if (transport_.speed() == time::Rational::fromInt(1)) {
                     const auto from = anchorPosition_.rescaledTo(audioRate) +
                                       time::RationalTime{audioWritten_ - anchorClock_, audioRate};
-                    if (auto mixed = mixer.mix(*sequence_, from, block, kChannels)) {
+                    if (auto mixed = mixer.mix(*liveSequence(), from, block, kChannels)) {
                         {
                             // Copied under a lock for the UI to read. This
                             // thread already allocates a buffer per block, so
@@ -716,18 +737,18 @@ private:
         if (!playing_) {
             return;
         }
-        const time::Rational& audioRate = sequence_->audioSampleRate();
+        const time::Rational& audioRate = liveSequence()->audioSampleRate();
         const std::int64_t clock = sink_ ? sink_->clockFrames() : 0;
 
         // Position is an exact rational function of elapsed audio, floored to
         // the frame the playhead is inside -- the same arithmetic the scheduler
         // uses, and for the same reason.
         const time::Rational elapsed = time::Rational{clock - anchorClock_, 1} / audioRate;
-        const time::Rational advanced = elapsed * transport_.speed() * sequence_->frameRate();
-        const auto position =
-            anchorPosition_ + time::RationalTime{advanced.floorToInt(), sequence_->frameRate()};
+        const time::Rational advanced = elapsed * transport_.speed() * liveSequence()->frameRate();
+        const auto position = anchorPosition_ + time::RationalTime{advanced.floorToInt(),
+                                                                   liveSequence()->frameRate()};
 
-        if (position.frames() >= sequence_->duration().frames() || position.frames() < 0) {
+        if (position.frames() >= liveSequence()->duration().frames() || position.frames() < 0) {
             stop();
             return;
         }
@@ -747,7 +768,7 @@ private:
     /// number a grade is judged against, and it does not make playback pay for
     /// a readback it otherwise does not need.
     void measureScopes() {
-        if (scopes_ == nullptr || media_ == nullptr || sequence_ == nullptr) {
+        if (scopes_ == nullptr || media_ == nullptr || liveSequence() == nullptr) {
             return;
         }
         if (playing_ || !scopes_->wantsMeasurement()) {
@@ -755,7 +776,8 @@ private:
         }
         render::RenderGraph graph{*media_};
         graph.setTextRasterizer(&text_);
-        auto frame = graph.composite(*sequence_, position_);
+        graph.setProject(&project_);
+        auto frame = graph.composite(*liveSequence(), position_);
         if (!frame) {
             scopes_->clear();
             return;
@@ -838,13 +860,13 @@ private:
     /// than a meter that runs continuously. Loudness is a delivery check, done
     /// once near the end, not something to watch while cutting.
     void loudnessMenu() {
-        if (sequence_ == nullptr || media_ == nullptr) {
+        if (liveSequence() == nullptr || media_ == nullptr) {
             return;
         }
         render::AudioGraph mixer{*media_};
-        const time::TimeRange whole{time::RationalTime{0, sequence_->frameRate()},
-                                    sequence_->duration()};
-        auto measured = mixer.measureLoudness(*sequence_, whole);
+        const time::TimeRange whole{time::RationalTime{0, liveSequence()->frameRate()},
+                                    liveSequence()->duration()};
+        auto measured = mixer.measureLoudness(*liveSequence(), whole);
         if (!measured) {
             QMessageBox::warning(this, "Loudness",
                                  QString::fromStdString(measured.error().toString()));
@@ -874,14 +896,14 @@ private:
         // Applied to every audio track's fader rather than to a master gain,
         // which does not exist: the balance between tracks is a decision
         // somebody made, and moving them all by the same amount keeps it.
-        for (const model::Track& track : sequence_->audioTracks()) {
+        for (const model::Track& track : liveSequence()->audioTracks()) {
             edit::TrackState state;
             state.muted = track.isMuted();
             state.soloed = track.isSoloed();
             state.gainDb = track.gainDb() + gain;
             state.pan = track.pan();
             if (auto built =
-                    edit::makeSetTrackState(project_, sequence_->id(), track.id(), state)) {
+                    edit::makeSetTrackState(project_, liveSequence()->id(), track.id(), state)) {
                 commands_.execute(project_, std::move(*built));
             }
         }
@@ -895,7 +917,7 @@ private:
     /// and otherwise left alone, and a permanent panel for three actions would
     /// take room from the ones used constantly.
     void captionsMenu() {
-        if (sequence_ == nullptr) {
+        if (liveSequence() == nullptr) {
             return;
         }
         QMenu menu;
@@ -904,9 +926,9 @@ private:
         menu.addSeparator();
         QAction* burnAction = menu.addAction("Burn in");
         burnAction->setCheckable(true);
-        burnAction->setChecked(sequence_->captions().isBurnedIn());
+        burnAction->setChecked(liveSequence()->captions().isBurnedIn());
 
-        const std::size_t count = sequence_->captions().size();
+        const std::size_t count = liveSequence()->captions().size();
         exportAction->setEnabled(count > 0);
         burnAction->setEnabled(count > 0);
         menu.addSeparator();
@@ -932,8 +954,8 @@ private:
             // the file: importing a new script should not silently turn burn-in
             // off or lose a typeface somebody chose.
             model::CaptionTrack merged = *loaded;
-            merged.setStyle(sequence_->captions().style());
-            merged.setBurnedIn(sequence_->captions().isBurnedIn());
+            merged.setStyle(liveSequence()->captions().style());
+            merged.setBurnedIn(liveSequence()->captions().isBurnedIn());
             applyCaptions(merged);
             return;
         }
@@ -944,7 +966,8 @@ private:
                 return;
             }
             const auto format = io::formatForPath(path.toStdString());
-            if (Status saved = io::saveSubtitles(sequence_->captions(), path.toStdString(), format);
+            if (Status saved =
+                    io::saveSubtitles(liveSequence()->captions(), path.toStdString(), format);
                 !saved) {
                 QMessageBox::warning(this, "Subtitles",
                                      QString::fromStdString(saved.error().toString()));
@@ -952,14 +975,14 @@ private:
             return;
         }
         if (chosen == burnAction) {
-            model::CaptionTrack changed = sequence_->captions();
+            model::CaptionTrack changed = liveSequence()->captions();
             changed.setBurnedIn(burnAction->isChecked());
             applyCaptions(changed);
         }
     }
 
     void applyCaptions(const model::CaptionTrack& captions) {
-        auto built = edit::makeSetCaptions(project_, sequence_->id(), captions);
+        auto built = edit::makeSetCaptions(project_, liveSequence()->id(), captions);
         if (!built) {
             return;
         }
@@ -971,12 +994,12 @@ private:
     }
 
     void refresh() {
-        if (sequence_ == nullptr) {
+        if (liveSequence() == nullptr) {
             return;
         }
-        const bool dropFrame = time::supportsDropFrame(sequence_->frameRate());
+        const bool dropFrame = time::supportsDropFrame(liveSequence()->frameRate());
         const time::Timecode code =
-            time::timecodeFromFrames(position_.frames(), sequence_->frameRate(), dropFrame);
+            time::timecodeFromFrames(position_.frames(), liveSequence()->frameRate(), dropFrame);
         timecode_->setText(QString::fromStdString(code.toString()));
         if (!scrubber_->isSliderDown()) {
             scrubber_->setValue(static_cast<int>(position_.frames()));
@@ -985,7 +1008,14 @@ private:
 
     model::Project project_;
     io::LoadedProject loaded_;
-    const model::Sequence* sequence_{nullptr};
+    /// The active sequence, by id rather than by pointer.
+    ///
+    /// A pointer into the project's vector of sequences is valid until one is
+    /// added, and adding one is now an ordinary thing to do -- making a
+    /// sequence to nest is how nesting starts. The dangling pointer presented
+    /// as a zero denominator deep inside rational arithmetic, which is a long
+    /// way from the cause.
+    model::SequenceId sequenceId_;
     std::unique_ptr<platform::ffmpeg::ProjectMediaSource> media_;
     /// One font engine for the window: the preview, the scopes and the export
     /// dialog all draw the same titles.
@@ -2665,6 +2695,95 @@ int main(int argc, char** argv) {
             }
 
             window.commands().undo(window.project());
+        }
+
+        // Last on purpose. Adding a sequence reallocates the project's
+        // vector of them, so the reference this function has held since the
+        // top dangles from here on -- and everything else is done by now.
+        // A nested sequence, through the real preview. The recursion and the
+        // cycle refusal are tested headlessly; what those cannot show is
+        // whether a nest reaches the screen, which on the GPU path means a CPU
+        // composite and an upload rather than the ordinary route.
+        {
+            // Captured by value first: adding a sequence reallocates the
+            // project's vector, and the reference this self-test has been
+            // holding since the top would dangle. It did, and the first run
+            // aborted inside rational arithmetic reading the wreckage.
+            const auto outerId = sequence.id();
+            const auto outerRate = sequence.frameRate();
+            const auto outerTrackId = videoTrack.id();
+
+            // An inner sequence holding a white rectangle over its whole
+            // length, so what it contributes is unmistakable.
+            zaro::model::Sequence inner{window.project().ids().next<zaro::model::SequenceTag>(),
+                                        "nested", outerRate};
+            inner.setSize(window.sequence()->width(), window.sequence()->height());
+            const auto innerId = inner.id();
+            const auto innerTrack = window.project().ids().next<zaro::model::TrackTag>();
+            inner.addTrack(innerTrack, zaro::model::TrackKind::Video, "V1");
+            window.project().addSequence(std::move(inner));
+            window.rebindSequence();
+
+            zaro::model::Graphic block;
+            block.kind = zaro::model::GraphicKind::Rectangle;
+            block.width = 4000.0;
+            block.height = 4000.0;
+            auto filled = zaro::edit::makeAddGraphic(
+                window.project(), {innerId, innerTrack}, block,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, outerRate},
+                                      zaro::time::RationalTime{40, outerRate}});
+            if (!filled) {
+                std::fprintf(stderr, "  FAIL: %s\n", filled.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*filled));
+
+            std::int64_t darkFrame = 0;
+            double darkest = 1e9;
+            for (std::int64_t frame = 0; frame < 35; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, outerRate});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{darkFrame, outerRate});
+            QApplication::processEvents();
+            const double without = meanGray(window.monitor()->grabFramebuffer());
+
+            auto nested =
+                zaro::edit::makeNestSequence(window.project(), {outerId, outerTrackId}, innerId,
+                                             zaro::time::RationalTime{0, outerRate});
+            if (!nested) {
+                std::fprintf(stderr, "  FAIL: %s\n", nested.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*nested));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double withNest = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  nesting: %.1f with a nested sequence, %.1f without\n", withNest,
+                        without);
+            if (!(withNest > without + 50.0)) {
+                std::fprintf(stderr, "  FAIL: the nested sequence did not reach the preview\n");
+                return 1;
+            }
+
+            // And a sequence still cannot contain itself.
+            if (zaro::edit::makeNestSequence(window.project(), {outerId, outerTrackId}, outerId,
+                                             zaro::time::RationalTime{0, outerRate})) {
+                std::fprintf(stderr, "  FAIL: a sequence was allowed inside itself\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
         }
 
         std::printf("  ok\n");

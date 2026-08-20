@@ -28,6 +28,51 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
                     static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr);
 }
 
+bool RenderGraph::compositeNested(const model::Clip& clip, RgbaImage& out,
+                                  const time::RationalTime& at) {
+    if (project_ == nullptr) {
+        return false;
+    }
+    const model::Sequence* inner = project_->findSequence(clip.nested);
+    if (inner == nullptr) {
+        return false;
+    }
+    // A backstop, not the defence. Cycles are refused when the edit is made
+    // (Project::nestingWouldCycle); this is here so that a project which
+    // arrived from somewhere else -- an OTIO file, a hand-edited save -- cannot
+    // take the renderer down with it.
+    constexpr std::int32_t kMaxDepth = 8;
+    if (depth_ >= kMaxDepth) {
+        return false;
+    }
+
+    if (static_cast<std::size_t>(depth_) >= nestedBuffers_.size()) {
+        nestedBuffers_.resize(static_cast<std::size_t>(depth_) + 1);
+    }
+    RgbaImage& buffer = nestedBuffers_[static_cast<std::size_t>(depth_)];
+
+    // compositeInto resets the counters, and the recursive call would therefore
+    // wipe the tally the level above is still building. Saved across it: the
+    // outer count is what the outer sequence drew, and a nested sequence
+    // contributes one clip to it however many it contains.
+    const std::int32_t outerClips = lastClipCount_;
+    const std::int32_t outerSkipped = skippedText_;
+
+    ++depth_;
+    const Status composed = compositeInto(*inner, clip.sourceTimeAt(at), buffer);
+    --depth_;
+
+    const std::int32_t nestedSkipped = skippedText_;
+    lastClipCount_ = outerClips;
+    skippedText_ = outerSkipped + nestedSkipped;
+    if (!composed) {
+        return false;
+    }
+
+    drawClip(clip, buffer, out, clip.transformAt(at), at);
+    return true;
+}
+
 Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,
                                   RgbaImage& out) {
     if (sequence.width() <= 0 || sequence.height() <= 0) {
@@ -87,6 +132,14 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
 
         const model::Clip* clip = track.clipAt(at);
         if (clip == nullptr || !clip->enabled) {
+            continue;
+        }
+
+        if (clip->nested.isValid()) {
+            if (!compositeNested(*clip, out, at)) {
+                continue;
+            }
+            ++lastClipCount_;
             continue;
         }
 

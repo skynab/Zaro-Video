@@ -43,7 +43,9 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
     std::int64_t skippedText = 0;
     render::RenderGraph video{source};
     video.setTextRasterizer(text);
+    video.setProject(&forDelivery);
     render::AudioGraph audio{source};
+    audio.setProject(&forDelivery);
 
     EncodeSettings settings;
     settings.path = request.outputPath;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "zaro/core/model/Project.h"
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/Compositing.h"
 #include "zaro/core/render/FrameSource.h"
@@ -45,6 +46,13 @@ public:
 
     void setTextRasterizer(TextRasterizer* rasterizer) { text_ = rasterizer; }
 
+    /// The project a nested clip's sequence is looked up in.
+    ///
+    /// Without it a nested clip has an id and nothing to resolve it against, so
+    /// it draws nothing. A graph that was never given a project renders
+    /// everything else, which is what the headless tests do.
+    void setProject(const model::Project* project) { project_ = project; }
+
     [[nodiscard]] std::int32_t lastSkippedTextCount() const noexcept { return skippedText_; }
 
 private:
@@ -53,10 +61,19 @@ private:
     /// frames at all.
     void drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
                   const model::Transform& transform, const time::RationalTime& at);
+    /// Composite a nested sequence and draw it. False when it cannot be
+    /// resolved, which the caller treats as a clip that drew nothing.
+    [[nodiscard]] bool compositeNested(const model::Clip& clip, RgbaImage& out,
+                                       const time::RationalTime& at);
 
     /// Scratch for generated clips, kept between frames so a shape layer does
     /// not allocate a frame-sized buffer on every frame.
     RgbaImage generated_;
+    const model::Project* project_{nullptr};
+    /// Scratch per nesting level, so a nested composite does not overwrite the
+    /// buffer the level above it is still drawing from.
+    std::vector<RgbaImage> nestedBuffers_;
+    std::int32_t depth_{0};
     TextRasterizer* text_{nullptr};
     std::int32_t skippedText_{0};
 

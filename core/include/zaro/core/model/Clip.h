@@ -61,6 +61,14 @@ struct Clip {
     /// the clip is placed in the frame.
     ColorCorrection color;
 
+    /// Another sequence, used as a clip.
+    ///
+    /// When set, `source` is ignored and the clip is whatever that sequence
+    /// composites to. Its `sourceRange` is a range of the nested sequence's own
+    /// timeline, which means every trim, retime and reverse already works on a
+    /// nested clip without knowing it is one.
+    SequenceId nested;
+
     /// A generated picture instead of a read one. When set, `source` is
     /// ignored: the clip has no media, and everything else about it -- trims,
     /// transforms, grades, keyframes, links -- works unchanged.
