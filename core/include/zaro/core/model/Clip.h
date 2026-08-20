@@ -61,6 +61,15 @@ struct Clip {
     /// the clip is placed in the frame.
     ColorCorrection color;
 
+    /// A clip that grades everything beneath it instead of drawing anything.
+    ///
+    /// It has no picture of its own: its grade, curves, secondary, LUT, mask
+    /// and opacity apply to whatever the tracks below have already composited.
+    /// That is the whole feature -- one correction over a run of shots, held in
+    /// one place, rather than pasted onto each of them and re-pasted whenever
+    /// it changes.
+    bool adjustment{false};
+
     /// One camera in a multicam clip.
     ///
     /// The offset is what syncs it: angles rarely start rolling together, so

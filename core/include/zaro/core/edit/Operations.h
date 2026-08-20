@@ -176,6 +176,14 @@ enum class PlaceMode {
                                                  model::SequenceId sequence,
                                                  const model::CaptionTrack& captions);
 
+/// Place an adjustment layer: a clip that grades everything beneath it.
+///
+/// It has no media, so it needs no source to be found or opened -- which is
+/// why it can be made from nothing but a track and a range.
+[[nodiscard]] Result<CommandPtr> makeAddAdjustment(model::Project& project,
+                                                   const EditTarget& target,
+                                                   const time::TimeRange& range);
+
 // --- Multicam ---------------------------------------------------------------
 
 /// Place a multicam clip: several angles, one of them live.

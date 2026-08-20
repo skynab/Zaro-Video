@@ -28,6 +28,62 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
                     static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr);
 }
 
+void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
+                                  const time::RationalTime& at) {
+    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at));
+    const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
+    const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
+    const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
+    if (grade.isIdentity() && table.isIdentity() && !secondary.isActive() && lut == nullptr) {
+        return;
+    }
+
+    const model::Transform transform = clip.transformAt(at);
+    const auto opacity = static_cast<float>(std::clamp(transform.opacity, 0.0, 1.0));
+    if (opacity <= 0.0F) {
+        return;
+    }
+
+    // In place, over what is already there. An adjustment layer is not drawn
+    // and then composited -- it changes what has been composited, which is why
+    // it cannot be expressed as a clip that draws something.
+    for (std::int32_t y = 0; y < out.height(); ++y) {
+        Rgba* row = out.row(y);
+        for (std::int32_t x = 0; x < out.width(); ++x) {
+            Rgba& pixel = row[x];
+            if (pixel.a <= 0.0001F) {
+                continue;  // nothing underneath to adjust
+            }
+            float coverage = opacity;
+            if (clip.mask.isSet()) {
+                coverage *= maskCoverage(clip.mask, out.width(), out.height(), x, y);
+            }
+            if (coverage <= 0.0F) {
+                continue;
+            }
+
+            const float inverse = 1.0F / pixel.a;
+            float r = pixel.r * inverse;
+            float g = pixel.g * inverse;
+            float b = pixel.b * inverse;
+            const float wasR = r;
+            const float wasG = g;
+            const float wasB = b;
+            gradePixel(grade, r, g, b, &table, &secondary, lut,
+                       static_cast<float>(clip.lut.amount));
+            // Blended by opacity and mask rather than switched, so a partly
+            // opaque adjustment is a partial correction -- which is how the
+            // control reads.
+            r = wasR + ((r - wasR) * coverage);
+            g = wasG + ((g - wasG) * coverage);
+            b = wasB + ((b - wasB) * coverage);
+            pixel.r = r * pixel.a;
+            pixel.g = g * pixel.a;
+            pixel.b = b * pixel.a;
+        }
+    }
+}
+
 bool RenderGraph::compositeNested(const model::Clip& clip, RgbaImage& out,
                                   const time::RationalTime& at) {
     if (project_ == nullptr) {
@@ -132,6 +188,12 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
 
         const model::Clip* clip = track.clipAt(at);
         if (clip == nullptr || !clip->enabled) {
+            continue;
+        }
+
+        if (clip->adjustment) {
+            applyAdjustment(*clip, out, at);
+            ++lastClipCount_;
             continue;
         }
 

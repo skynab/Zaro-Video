@@ -372,6 +372,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
             clip.angles = {first, second};
             clip.activeAngle = 1;
         }
+        clip.adjustment = true;
         clip.reversed = true;
         clip.mask.shape = model::MaskShape::Ellipse;
         clip.mask.width = 640.5;
@@ -551,6 +552,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->reversed);
     CHECK(loadedClip->angles == first.angles);
     CHECK(loadedClip->activeAngle == 1);
+    CHECK(loadedClip->adjustment);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

@@ -38,8 +38,45 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
         .ok();
 }
 
+bool GpuRenderGraph::hasAdjustment(const model::Sequence& sequence, const time::RationalTime& at) {
+    for (const model::Track& track : sequence.videoTracks()) {
+        if (!sequence.isAudible(track)) {
+            continue;
+        }
+        const model::Clip* clip = track.clipAt(at);
+        if (clip != nullptr && clip->enabled && clip->adjustment) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::RationalTime& at) {
     lastClipCount_ = 0;
+
+    // An adjustment layer changes what has already been composited, and this
+    // compositor queues every draw into one pass -- so there is no point at
+    // which the accumulated frame can be read back and corrected. Rather than
+    // restructure that into ping-pong passes for a case that is rare in a
+    // preview and never on the path that delivers, the whole frame is
+    // composited on the CPU and uploaded.
+    //
+    // The result is not merely close to the export: it is the same code. The
+    // cost is a slow frame wherever an adjustment layer is, and that is a
+    // trade worth stating rather than hiding.
+    if (hasAdjustment(sequence, at) && nestedSource_ != nullptr) {
+        if (nested_ == nullptr) {
+            nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
+            nested_->setProject(project_);
+            nested_->setTextRasterizer(text_);
+        }
+        auto frame = nested_->composite(sequence, at);
+        if (!frame) {
+            return frame.error();
+        }
+        lastClipCount_ = nested_->lastClipCount();
+        return compositor_->draw(*frame, model::Transform{}, model::BlendMode::Normal);
+    }
 
     // Bottom-up. Index 0 is V1, the lowest track, and each later track
     // composites over what is already there.

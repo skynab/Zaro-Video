@@ -65,6 +65,8 @@ private:
     /// resolved, which the caller treats as a clip that drew nothing.
     [[nodiscard]] bool compositeNested(const model::Clip& clip, RgbaImage& out,
                                        const time::RationalTime& at);
+    /// Grade what has already been composited, in place.
+    void applyAdjustment(const model::Clip& clip, RgbaImage& out, const time::RationalTime& at);
 
     /// Scratch for generated clips, kept between frames so a shape layer does
     /// not allocate a frame-sized buffer on every frame.

@@ -1381,6 +1381,23 @@ Result<CommandPtr> makeSetCaptions(Project& project, model::SequenceId sequenceI
                        [captions](Sequence& sequence) { sequence.captions() = captions; });
 }
 
+Result<CommandPtr> makeAddAdjustment(Project& project, const EditTarget& target,
+                                     const time::TimeRange& range) {
+    if (range.isEmpty()) {
+        return Error{ErrorCode::InvalidData, "an adjustment layer needs a duration"};
+    }
+    Clip clip;
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.adjustment = true;
+    clip.name = "adjustment";
+    clip.timelineRange = range;
+    // Its own length, so trims have something to work against, the same as a
+    // generated shape.
+    clip.sourceRange =
+        time::TimeRange{time::RationalTime{0, range.start().rate()}, range.duration()};
+    return makeOverwrite(project, target, clip);
+}
+
 Result<CommandPtr> makeMulticam(Project& project, const EditTarget& target,
                                 const std::vector<Clip::Angle>& angles,
                                 const time::TimeRange& range) {

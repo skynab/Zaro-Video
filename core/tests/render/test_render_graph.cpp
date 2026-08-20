@@ -646,3 +646,99 @@ TEST_CASE("A nested clip with no project resolves to nothing", "[render][graph][
     CHECK(frame->at(8, 8).a == Approx(0.0F));
     CHECK(graph.lastClipCount() == 0);
 }
+
+TEST_CASE("An adjustment layer grades what is beneath it", "[render][graph][adjustment]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+
+    // A white clip on V1, and an adjustment above it on V2.
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    CHECK(graph.composite(f.sequence(), f.at(10))->at(8, 8).r == Approx(1.0F));
+
+    REQUIRE(f.run(edit::makeAddAdjustment(f.project, f.on(f.v2), f.range(0, 50))));
+    const model::ClipId id = f.track(f.v2).clips().front().id;
+    model::ColorCorrection darker;
+    darker.exposure = -2.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v2), id, darker)));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(8, 8).r == Approx(0.25F).margin(0.01));
+    // It did not draw anything of its own: the alpha is still the clip's.
+    CHECK(frame->at(8, 8).a == Approx(1.0F));
+}
+
+TEST_CASE("An adjustment layer leaves what it does not cover", "[render][graph][adjustment]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 100, 500))));
+    REQUIRE(f.run(edit::makeAddAdjustment(f.project, f.on(f.v2), f.range(0, 20))));
+    const model::ClipId id = f.track(f.v2).clips().front().id;
+
+    model::ColorCorrection darker;
+    darker.exposure = -3.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v2), id, darker)));
+
+    // Inside its range it corrects; past its out point the picture is itself.
+    CHECK(graph.composite(f.sequence(), f.at(10))->at(8, 8).r < 0.2F);
+    CHECK(graph.composite(f.sequence(), f.at(50))->at(8, 8).r == Approx(1.0F));
+}
+
+TEST_CASE("An adjustment layer's opacity and mask limit it", "[render][graph][adjustment]") {
+    // Blended rather than switched, so a partly opaque adjustment is a partial
+    // correction -- which is how the control reads.
+    Fixture f;
+    f.sequence().setSize(32, 32);
+    SolidFrameSource source{32, 32};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeAddAdjustment(f.project, f.on(f.v2), f.range(0, 50))));
+    const model::ClipId id = f.track(f.v2).clips().front().id;
+
+    model::ColorCorrection black;
+    black.exposure = -8.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v2), id, black)));
+
+    model::Transform half;
+    half.opacity = 0.5;
+    REQUIRE(f.run(edit::makeSetTransform(f.project, f.on(f.v2), id, half)));
+    // Half of the way from white to nearly nothing.
+    CHECK(graph.composite(f.sequence(), f.at(10))->at(16, 16).r == Approx(0.5F).margin(0.02));
+
+    // A mask limits it to a region, and outside that the picture is untouched.
+    model::Mask mask;
+    mask.shape = model::MaskShape::Rectangle;
+    mask.width = 8;
+    mask.height = 8;
+    REQUIRE(f.run(edit::makeSetMask(f.project, f.on(f.v2), id, mask)));
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(16, 16).r == Approx(0.5F).margin(0.02));
+    CHECK(frame->at(2, 2).r == Approx(1.0F));
+}
+
+TEST_CASE("An adjustment layer over nothing does nothing", "[render][graph][adjustment]") {
+    // There is no picture underneath to correct, and inventing one would mean a
+    // black rectangle appearing wherever somebody put a layer early.
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    render::RenderGraph graph{source};
+    REQUIRE(f.run(edit::makeAddAdjustment(f.project, f.on(f.v2), f.range(0, 50))));
+    const model::ClipId id = f.track(f.v2).clips().front().id;
+    model::ColorCorrection darker;
+    darker.exposure = -4.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v2), id, darker)));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(frame->at(8, 8).a == Approx(0.0F));
+    CHECK(frame->at(8, 8).r == Approx(0.0F));
+}

@@ -1568,6 +1568,58 @@ operations take the offsets they are given and do not guess.
 
 ---
 
+#### Phase 5v — adjustment layers ✅
+
+A clip that carries no picture of its own and grades everything composited
+beneath it, for the length it covers and only where it covers.
+
+**An adjustment layer is a clip, not a track property.** It trims, ripples,
+moves between tracks, takes a mask and takes keyframes, because it is the same
+`Clip` every other operation already knows how to edit — one flag, `adjustment`,
+changes what compositing does with it. A property of the track would have needed
+its own duration, its own trimming and its own undo, all of it duplicating what
+clips do.
+
+**It grades what is already there, in place.** The compositor reaches the layer
+with the frame beneath it fully assembled, so the grade runs over that buffer
+rather than over a source that no longer exists separately. Pixels that are
+still transparent are skipped: there is nothing under them to grade, and
+grading nothing produces a coloured haze over the empty parts of the frame.
+
+**Opacity and the mask limit it the same way they limit a picture.** The graded
+result is blended back over the ungraded frame by opacity × mask coverage, which
+makes a half-opacity adjustment layer mean *half the grade* — the reading anyone
+would expect — and makes a masked one a power window over the whole stack for
+free.
+
+**The GPU path hands the whole frame to the CPU compositor.** Grading what has
+already been drawn means reading back the render target and writing it again,
+which on QRhi is a ping-pong between two textures and a restructure of the draw
+loop. Rather than build that now and have preview diverge from export while it
+settled, a sequence containing an adjustment layer composites entirely on the
+CPU and uploads the result. It is slower, and it is the same code that exports,
+so what is on screen is what is written to the file. The fast path is a
+performance change, not a correctness one, and can land later without anything
+above it moving.
+
+**Identity is checked before any work.** A layer with no grade, no curves, no
+qualifier and no LUT returns immediately, so an empty adjustment layer costs one
+comparison rather than a pass over every pixel.
+
+The self-test places one over the picture through the real preview and reads two
+stops of difference off the actual frame; it also had to create the track it
+sits on, which reallocated the sequence's track vector and dangled a reference
+the later blocks were still using — the same shape of bug as Phase 5t, and the
+reason the blocks after it now resolve ids through the project rather than hold
+references across edits.
+
+**Not done: the render cache, and sync detection from Phase 5u.** Caching
+rendered ranges to disk so playback of a graded stack runs in real time is the
+next phase; it is a storage and invalidation problem rather than a rendering
+one, and adjustment layers are exactly the case that makes it worth having.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

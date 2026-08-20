@@ -372,6 +372,9 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.adjustment) {
+        out["adjustment"] = true;
+    }
     if (clip.isMulticam()) {
         json angles = json::array();
         for (const model::Clip::Angle& angle : clip.angles) {
@@ -699,6 +702,7 @@ Result<model::Clip> decodeClip(const json& node) {
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
     }
+    clip.adjustment = node.value("adjustment", false);
     if (node.contains("angles") && node.at("angles").is_array()) {
         for (const json& entry : node.at("angles")) {
             if (!entry.is_object() || !entry.contains("offset")) {

@@ -2774,6 +2774,87 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Second to last: this adds a track, and adding one reallocates the
+        // sequence's vector of them -- so the reference this function has
+        // held since the top must be finished with by now.
+        // An adjustment layer, through the real preview. This is the one
+        // feature where the GPU path deliberately hands the whole frame to the
+        // CPU compositor, so what this checks is that the fallback is wired and
+        // that what it produces reaches the screen.
+        {
+            const auto adjustSequenceId = sequence.id();
+            // This fixture has one video track, and an adjustment layer needs
+            // something to sit above.
+            if (window.project().findSequence(adjustSequenceId)->videoTracks().size() < 2) {
+                auto added = zaro::edit::makeAddTrack(window.project(), adjustSequenceId,
+                                                      zaro::model::TrackKind::Video, "V2");
+                if (!added) {
+                    std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*added));
+            }
+            const auto aboveId =
+                window.project().findSequence(adjustSequenceId)->videoTracks()[1].id();
+
+            std::int64_t brightestFrame = 0;
+            double brightest = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray > brightest) {
+                    brightest = gray;
+                    brightestFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{brightestFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double plain = meanGray(window.monitor()->grabFramebuffer());
+
+            auto built = zaro::edit::makeAddAdjustment(
+                window.project(), {adjustSequenceId, aboveId},
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{60, sequence.frameRate()}});
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            const auto layerId = window.project()
+                                     .findSequence(adjustSequenceId)
+                                     ->findTrack(aboveId)
+                                     ->clips()
+                                     .front()
+                                     .id;
+
+            zaro::model::ColorCorrection darker;
+            darker.exposure = -2.0;
+            auto graded = zaro::edit::makeSetColorCorrection(
+                window.project(), {adjustSequenceId, aboveId}, layerId, darker);
+            if (!graded) {
+                std::fprintf(stderr, "  FAIL: %s\n", graded.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*graded));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double adjusted = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  adjustment layer: %.1f plain, %.1f two stops down from above\n", plain,
+                        adjusted);
+            if (!(adjusted < plain * 0.5)) {
+                std::fprintf(stderr, "  FAIL: the adjustment layer did not reach the preview\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Last on purpose. Adding a sequence reallocates the project's
         // vector of them, so the reference this function has held since the
         // top dangles from here on -- and everything else is done by now.
@@ -2786,9 +2867,10 @@ int main(int argc, char** argv) {
             // project's vector, and the reference this self-test has been
             // holding since the top would dangle. It did, and the first run
             // aborted inside rational arithmetic reading the wreckage.
-            const auto outerId = sequence.id();
-            const auto outerRate = sequence.frameRate();
-            const auto outerTrackId = videoTrack.id();
+            const auto outerId = window.project().activeSequence();
+            const auto outerRate = window.project().findSequence(outerId)->frameRate();
+            const auto outerTrackId =
+                window.project().findSequence(outerId)->videoTracks().front().id();
 
             // An inner sequence holding a white rectangle over its whole
             // length, so what it contributes is unmistakable.
