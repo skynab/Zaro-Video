@@ -186,6 +186,18 @@ enum class PlaceMode {
                                                 const model::Graphic& graphic,
                                                 const time::TimeRange& range);
 
+// --- Retiming ---------------------------------------------------------------
+
+/// Change how fast a clip plays.
+///
+/// The source range is what it is: a retime changes how long the clip occupies
+/// the timeline, not which frames it covers. `ripple` moves everything after it
+/// so the cut stays closed — without that, speeding a clip up leaves a hole and
+/// slowing it down runs over its neighbour.
+[[nodiscard]] Result<CommandPtr> makeSetSpeed(model::Project& project, const EditTarget& target,
+                                              model::ClipId clip, double speed, bool reversed,
+                                              bool ripple = true);
+
 /// Set a clip's mask: where on the screen it shows through.
 [[nodiscard]] Result<CommandPtr> makeSetMask(model::Project& project, const EditTarget& target,
                                              model::ClipId clip, const model::Mask& mask);

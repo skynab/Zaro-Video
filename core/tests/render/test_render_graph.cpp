@@ -463,3 +463,102 @@ TEST_CASE("A graphic obeys the transform, the grade and the fade", "[render][gra
     CHECK(shifted->at(48, 32).a > 0.4F);
     CHECK(shifted->at(32, 32).a == Approx(0.0F).margin(0.01));
 }
+
+TEST_CASE("Speed is the ratio between a clip's two ranges", "[render][graph][speed]") {
+    // Not a stored number. Every trim and every retime already maintains the
+    // ranges, and a `speed` field would be a second source of truth that the
+    // first disagreement would leave playing at one rate and laid out at
+    // another.
+    Fixture f;
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.sourceRange = f.range(500, 50);  // fifty frames of source in twenty-five
+    CHECK(clip.speed() == Approx(2.0));
+
+    clip.sourceRange = f.range(500, 25);
+    CHECK(clip.speed() == Approx(1.0));
+
+    clip.timelineRange = f.range(0, 50);
+    CHECK(clip.speed() == Approx(0.5));
+}
+
+TEST_CASE("A retimed clip reads its source faster", "[render][graph][speed]") {
+    Fixture f;
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.sourceRange = f.range(500, 50);
+
+    // Halfway along the clip is halfway through the source it covers.
+    CHECK(clip.sourceTimeAt(f.at(0)).frames() == 500);
+    CHECK(clip.sourceTimeAt(f.at(12)).frames() == Approx(524).margin(1));
+    CHECK(clip.sourceTimeAt(f.at(24)).frames() == Approx(548).margin(1));
+}
+
+TEST_CASE("A reversed clip plays its last frame first", "[render][graph][speed]") {
+    Fixture f;
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.reversed = true;
+
+    // The out point is exclusive, so the first frame shown is the one before
+    // it -- reading the out point itself would be reading the frame after the
+    // clip.
+    CHECK(clip.sourceTimeAt(f.at(0)).frames() == 524);
+    CHECK(clip.sourceTimeAt(f.at(24)).frames() == Approx(500).margin(1));
+
+    // And the two mappings stay inverses of each other, which is what keeps a
+    // keyframe on the frame it was set on.
+    for (std::int64_t frame = 0; frame < 25; ++frame) {
+        const auto source = clip.sourceTimeAt(f.at(frame));
+        CHECK(std::llabs(clip.timelineTimeOf(source).frames() - frame) <= 1);
+    }
+}
+
+TEST_CASE("Retiming a clip ripples what follows", "[render][graph][speed]") {
+    // Without it, speeding a clip up leaves a hole and slowing it down runs
+    // over its neighbour.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 900))));
+    const model::ClipId first = f.track(f.v1).clips().front().id;
+
+    REQUIRE(f.run(edit::makeSetSpeed(f.project, f.on(f.v1), first, 2.0, false)));
+    const model::Track& track = f.track(f.v1);
+    REQUIRE(track.clips().size() == 2);
+    CHECK(track.clips()[0].duration().frames() == 25);
+    CHECK(track.clips()[0].speed() == Approx(2.0));
+    // The cut stays closed.
+    CHECK(track.clips()[1].start().frames() == 25);
+
+    // The source range is untouched: a retime changes how long the clip
+    // occupies the timeline, not which frames it covers.
+    CHECK(track.clips()[0].sourceRange.duration().frames() == 50);
+}
+
+TEST_CASE("Speed has to be a positive number", "[render][graph][speed]") {
+    // Direction is the reversed flag: a speed of -2 and a reversed speed of 2
+    // would be two ways to say one thing, and the pair would disagree.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    CHECK_FALSE(edit::makeSetSpeed(f.project, f.on(f.v1), id, -2.0, false));
+    CHECK_FALSE(edit::makeSetSpeed(f.project, f.on(f.v1), id, 0.0, false));
+    // Fast enough to leave nothing behind is refused rather than silently
+    // producing a clip of no length.
+    CHECK_FALSE(edit::makeSetSpeed(f.project, f.on(f.v1), id, 10000.0, false));
+}
+
+TEST_CASE("A reversed clip composites its frames backwards", "[render][graph][speed]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    SolidFrameSource source{16, 16};
+    // A source whose colour says which frame it is.
+    source.defineRamp(f.longMedia);
+    render::RenderGraph graph{source};
+
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.reversed = true;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), clip)));
+
+    const float first = graph.composite(f.sequence(), f.at(0))->at(8, 8).r;
+    const float last = graph.composite(f.sequence(), f.at(24))->at(8, 8).r;
+    CHECK(first > last);
+}

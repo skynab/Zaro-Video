@@ -452,3 +452,53 @@ TEST_CASE("Meters follow the picture, not the whole clip", "[render][audio][mixe
     REQUIRE(graph.mix(f.sequence(), samples(kSamplesPerFrame * 30), 480));
     CHECK(graph.meters().peakFor(f.a1) == Approx(0.0F));
 }
+
+TEST_CASE("A retimed clip's audio is retimed with it", "[render][audio][speed]") {
+    // Without this the picture retimes and the sound does not, which is drift
+    // that grows for as long as the clip lasts -- the exact failure the whole
+    // rational-time discipline exists to avoid.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.sourceRange = f.range(500, 50);  // twice as fast
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), clip)));
+    REQUIRE(f.track(f.a1).clips().front().speed() == Approx(2.0));
+
+    // The clip is half as long on the timeline, so it fills half of what it
+    // used to and there is silence after it.
+    auto during = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(during);
+    CHECK(during->channel(0)[0] == Approx(1.0F).margin(1e-4));
+
+    auto after = graph.mix(f.sequence(), samples(kSamplesPerFrame * 30), 480);
+    REQUIRE(after);
+    CHECK(after->channel(0)[0] == Approx(0.0F).margin(1e-6));
+
+    // And it is still there right up to its new out point.
+    auto justInside = graph.mix(f.sequence(), samples(kSamplesPerFrame * 24), 480);
+    REQUIRE(justInside);
+    CHECK(justInside->channel(0)[0] == Approx(1.0F).margin(1e-4));
+}
+
+TEST_CASE("A reversed clip still produces sound", "[render][audio][speed]") {
+    // The read runs backwards through the source, which is easy to get wrong in
+    // a way that reads past the start and returns silence.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 0.8F, 2);
+    render::AudioGraph graph{source};
+
+    model::Clip clip = f.clip(0, 25, 500);
+    clip.reversed = true;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), clip)));
+
+    for (const std::int64_t frame : {0, 5, 12, 24}) {
+        auto mixed = graph.mix(f.sequence(), samples(kSamplesPerFrame * frame), 480);
+        REQUIRE(mixed);
+        INFO("frame " << frame);
+        CHECK(mixed->channel(0)[0] == Approx(0.8F).margin(1e-3));
+    }
+}

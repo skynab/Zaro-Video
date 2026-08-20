@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <map>
+#include <set>
 #include <vector>
 
 #include "zaro/core/render/FrameSource.h"
@@ -21,6 +22,10 @@ public:
         colours_[media.value()] = colour;
     }
 
+    /// A source whose brightness says which frame it is, so a test can tell
+    /// which frame was actually fetched rather than only that one was.
+    void defineRamp(model::MediaRefId media) { ramps_.insert(media.value()); }
+
     /// Requests are recorded so tests can assert *which* source time was asked
     /// for -- the mapping from timeline to source is as easy to get wrong as
     /// the pixels, and much harder to see.
@@ -29,11 +34,16 @@ public:
     Result<const render::RgbaImage*> imageFor(model::MediaRefId media,
                                               const time::RationalTime& sourceTime) override {
         requests_.push_back(sourceTime);
+        current_ = render::RgbaImage{width_, height_};
+        if (ramps_.count(media.value()) != 0) {
+            const auto level = static_cast<float>(sourceTime.frames()) / 1000.0F;
+            current_.fill(render::Rgba{level, level, level, 1.0F});
+            return &current_;
+        }
         const auto found = colours_.find(media.value());
         if (found == colours_.end()) {
             return Error{ErrorCode::NotFound, "no such media in this test source"};
         }
-        current_ = render::RgbaImage{width_, height_};
         current_.fill(found->second);
         return &current_;
     }
@@ -42,6 +52,7 @@ private:
     std::int32_t width_;
     std::int32_t height_;
     std::map<std::uint64_t, render::Rgba> colours_;
+    std::set<std::uint64_t> ramps_;
     render::RgbaImage current_;
     std::vector<time::RationalTime> requests_;
 };

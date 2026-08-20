@@ -69,6 +69,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
 
         // Reused across clips so an automated mix does not allocate per block.
         // Sized to the block, never to the whole clip.
+        std::vector<float> resampled;
         std::vector<float> clipGains;
         std::vector<float> leftPan;
         std::vector<float> rightPan;
@@ -90,12 +91,61 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             }
 
             const time::RationalTime sourceStart = clip.sourceTimeAt(overlap->start());
-            if (Status status = source_->read(clip.source, sourceStart, wanted, rate, scratch);
+            // A retimed clip covers more (or less) source than it occupies on
+            // the timeline, so it has to read that much and resample. Without
+            // this the picture retimes and the sound does not, which is drift
+            // that grows for as long as the clip lasts.
+            const double speed = clip.speed();
+            const bool retimed = clip.reversed || std::fabs(speed - 1.0) > 1e-9;
+            const std::int64_t toRead =
+                retimed ? std::max<std::int64_t>(
+                              2, static_cast<std::int64_t>(std::ceil(wanted * speed)) + 2)
+                        : wanted;
+            const time::RationalTime readFrom =
+                clip.reversed
+                    ? clip.sourceTimeAt(overlap->endExclusive() - time::RationalTime{1, rate})
+                    : sourceStart;
+            if (Status status = source_->read(clip.source, readFrom, toRead, rate, scratch);
                 !status) {
                 // A clip whose audio cannot be read is silence, not a failed
                 // render. The same reasoning as a missing picture: a hole is
                 // diagnosable, a stalled export is not.
                 continue;
+            }
+
+            if (retimed) {
+                // Linear interpolation, and the pitch moves with the speed --
+                // which is what a plain speed change does everywhere. Holding
+                // pitch is a different feature with a different name, and
+                // pretending this one does it would be worse than not having
+                // it.
+                resampled.resize(static_cast<std::size_t>(wanted) *
+                                 static_cast<std::size_t>(scratch.channelCount()));
+                const std::int64_t haveSamples = scratch.sampleCount();
+                for (std::int32_t channel = 0; channel < scratch.channelCount(); ++channel) {
+                    const float* in = scratch.channel(channel);
+                    for (std::int64_t i = 0; i < wanted; ++i) {
+                        const double position = clip.reversed
+                                                    ? (static_cast<double>(wanted - 1 - i) * speed)
+                                                    : (static_cast<double>(i) * speed);
+                        const auto low = static_cast<std::int64_t>(position);
+                        const std::int64_t high = std::min(low + 1, haveSamples - 1);
+                        const auto fraction =
+                            static_cast<float>(position - static_cast<double>(low));
+                        const float a = low < haveSamples && low >= 0 ? in[low] : 0.0F;
+                        const float b = high >= 0 && high < haveSamples ? in[high] : 0.0F;
+                        resampled[(static_cast<std::size_t>(channel) *
+                                   static_cast<std::size_t>(wanted)) +
+                                  static_cast<std::size_t>(i)] = a + ((b - a) * fraction);
+                    }
+                }
+                media::AudioBuffer retimedBuffer{scratch.channelCount(), wanted, rate};
+                for (std::int32_t channel = 0; channel < scratch.channelCount(); ++channel) {
+                    std::copy_n(resampled.data() + (static_cast<std::size_t>(channel) *
+                                                    static_cast<std::size_t>(wanted)),
+                                static_cast<std::size_t>(wanted), retimedBuffer.channel(channel));
+                }
+                scratch = std::move(retimedBuffer);
             }
 
             const std::int64_t available = std::min<std::int64_t>(wanted, scratch.sampleCount());

@@ -66,6 +66,20 @@ struct Clip {
     /// transforms, grades, keyframes, links -- works unchanged.
     Graphic graphic;
 
+    /// Play the clip backwards.
+    ///
+    /// A flag rather than a negative speed, because speed is not stored: it is
+    /// the ratio between the two ranges, which every trim and every retime
+    /// already maintains. Adding a `speed` field would be a second source of
+    /// truth about timing, and the first time the two disagreed the clip would
+    /// play at one rate and be laid out at another. Direction is the one thing
+    /// two positive ranges cannot express, so it is the one thing stored.
+    bool reversed{false};
+
+    /// How fast this clip plays, derived from its ranges. 2 is twice as fast,
+    /// 0.5 half. Always positive; `reversed` says which way.
+    [[nodiscard]] double speed() const;
+
     /// Where on the screen this clip shows through. In output coordinates, so
     /// it stays put when the clip moves.
     Mask mask;

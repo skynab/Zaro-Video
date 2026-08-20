@@ -4,17 +4,37 @@
 
 namespace zaro::model {
 
+double Clip::speed() const {
+    if (timelineRange.duration().toSeconds().isZero()) {
+        return 1.0;
+    }
+    return (sourceRange.duration().toSeconds() / timelineRange.duration().toSeconds()).toDouble();
+}
+
 time::RationalTime Clip::sourceTimeAt(const time::RationalTime& timelineTime) const {
     ZARO_CHECK(!timelineRange.isEmpty(), "sourceTimeAt on a zero-length clip");
 
     const time::RationalTime offset = timelineTime - timelineRange.start();
-    if (timelineRange.duration() == sourceRange.duration()) {
-        // The common case: same rate, normal speed. Stay in integer frames
-        // rather than round-tripping through a ratio that can only lose.
+    if (!reversed && timelineRange.duration() == sourceRange.duration()) {
+        // The common case: same rate, normal speed, forwards. Stay in integer
+        // frames rather than round-tripping through a ratio that can only lose.
         return sourceRange.start() + offset.rescaledTo(sourceRange.start().rate());
     }
 
-    const time::Rational fraction = offset.toSeconds() / timelineRange.duration().toSeconds();
+    time::Rational fraction = offset.toSeconds() / timelineRange.duration().toSeconds();
+    if (reversed) {
+        // The last frame first. Measured from one frame inside the end, not
+        // from the end itself: the out point is exclusive, and reading it would
+        // be reading the frame after the clip.
+        fraction = time::Rational::fromInt(1) - fraction;
+        const time::Rational lastFrame =
+            time::RationalTime{1, sourceRange.start().rate()}.toSeconds() /
+            sourceRange.duration().toSeconds();
+        fraction = fraction - lastFrame;
+        if (fraction.isNegative()) {
+            fraction = time::Rational{};
+        }
+    }
     const time::Rational into = sourceRange.duration().toSeconds() * fraction;
     return sourceRange.start() + time::RationalTime::fromSeconds(into, sourceRange.start().rate());
 }
@@ -23,6 +43,13 @@ time::RationalTime Clip::timelineTimeOf(const time::RationalTime& sourceTime) co
     ZARO_CHECK(!sourceRange.isEmpty(), "timelineTimeOf on a zero-length clip");
 
     const time::RationalTime offset = sourceTime - sourceRange.start();
+    if (reversed) {
+        const time::Rational fraction =
+            time::Rational::fromInt(1) - (offset.toSeconds() / sourceRange.duration().toSeconds());
+        const time::Rational into = timelineRange.duration().toSeconds() * fraction;
+        return timelineRange.start() +
+               time::RationalTime::fromSeconds(into, timelineRange.start().rate());
+    }
     if (timelineRange.duration() == sourceRange.duration()) {
         // Same rate and normal speed: stay in integer frames rather than
         // round-tripping through a ratio that can only lose.
@@ -40,12 +67,21 @@ double Clip::sourceSecondsAt(const time::RationalTime& timelineTime) const {
 
     const double offset = (timelineTime - timelineRange.start()).toSecondsDouble();
     const double sourceStart = sourceRange.start().toSecondsDouble();
+    const double sourceLength = sourceRange.duration().toSecondsDouble();
+    if (reversed) {
+        // Keyframes are glued to the picture, so a reversed clip's animation
+        // runs backwards with it. Anything else would leave a fade landing on a
+        // different frame than it was set on, which is exactly what storing
+        // keyframes in source time exists to prevent.
+        const double timelineLength = timelineRange.duration().toSecondsDouble();
+        const double into = timelineLength > 0.0 ? (1.0 - (offset / timelineLength)) : 0.0;
+        return sourceStart + (into * sourceLength);
+    }
     if (timelineRange.duration() == sourceRange.duration()) {
         return sourceStart + offset;
     }
-    const double speed =
-        sourceRange.duration().toSecondsDouble() / timelineRange.duration().toSecondsDouble();
-    return sourceStart + (offset * speed);
+    const double rate = sourceLength / timelineRange.duration().toSecondsDouble();
+    return sourceStart + (offset * rate);
 }
 
 Transform Clip::transformAt(const time::RationalTime& timelineTime) const {

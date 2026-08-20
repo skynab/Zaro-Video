@@ -53,7 +53,8 @@ headless: there is no window yet.
 | 5m | Captions: SubRip and WebVTT, burn-in | **done** |
 | 5n | OpenTimelineIO interchange, `zaro-otio` | **done** |
 | 5o | Masks: shape mattes with feather and invert | **done** |
-| 5p | §7 remainder: proxies, multicam, speed | next |
+| 5p | Speed and reverse, with retimed audio | **done** |
+| 5q | §7 remainder: proxies, multicam, nesting | next |
 
 ## Building
 

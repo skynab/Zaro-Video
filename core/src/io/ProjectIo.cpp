@@ -372,6 +372,9 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.reversed) {
+        out["reversed"] = true;
+    }
     if (clip.mask.isSet()) {
         const model::Mask defaults;
         json mask{{"shape", model::toString(clip.mask.shape)}};
@@ -660,6 +663,7 @@ Result<model::Clip> decodeClip(const json& node) {
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
     }
+    clip.reversed = node.value("reversed", false);
     if (node.contains("mask") && node.at("mask").is_object()) {
         const json& mask = node.at("mask");
         model::Mask& into = clip.mask;

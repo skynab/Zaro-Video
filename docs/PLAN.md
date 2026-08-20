@@ -1317,6 +1317,47 @@ than merely differing from it.
 
 ---
 
+#### Phase 5p — speed and reverse ✅
+
+Clip speed and reverse playback, on both render paths, with the audio retimed to
+match. `sourceTimeAt` was called "the hook a speed or time-remap curve replaces
+later" back in Phase 2; this is that.
+
+**Speed is not stored.** It is the ratio between a clip's two ranges, which
+every trim and every retime already maintains. A `speed` field would be a second
+source of truth about timing, and the first time the two disagreed the clip
+would play at one rate and be laid out at another. Direction is the one thing
+two positive ranges cannot express, so `reversed` is the one thing stored — and
+for the same reason a negative speed is refused rather than accepted as a second
+way to say it.
+
+**A reversed clip starts one frame inside its out point.** The out point is
+exclusive; reading it would be reading the frame after the clip.
+
+**Keyframes reverse with the picture.** `sourceSecondsAt` runs backwards too, so
+a fade set on a frame still lands on that frame when the clip is flipped — which
+is the whole reason keyframes are in source time
+([ADR-008](adr/0008-keyframes-in-source-time.md)).
+
+**The audio is resampled**, because a retimed clip covers more or less source
+than it occupies. Without that the picture retimes and the sound does not, and
+the gap grows for as long as the clip lasts — precisely the drift the rational
+time discipline exists to prevent. The pitch moves with the speed, which is what
+a plain speed change does everywhere; holding pitch is a different feature with
+a different name, and pretending this one does it would be worse than not having
+it.
+
+**A retime ripples.** Speeding a clip up otherwise leaves a hole and slowing it
+down runs over its neighbour. The source range is untouched: a retime changes
+how long a clip occupies the timeline, not which frames it covers.
+
+The test source gained a ramp mode — a picture whose brightness says which frame
+it is — so a test can check *which* frame was fetched rather than only that one
+was. That is what makes the reverse test meaningful rather than a check that
+something was drawn.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

@@ -1400,6 +1400,53 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makeSetSpeed(Project& project, const EditTarget& target, ClipId clipId,
+                                double speed, bool reversed, bool ripple) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    if (!std::isfinite(speed) || speed <= 0.0) {
+        // Direction is the `reversed` flag, not a negative number: a speed of
+        // -2 and a reversed speed of 2 would be two ways to say one thing, and
+        // the pair would eventually disagree.
+        return Error{ErrorCode::InvalidData, "speed has to be a positive number"};
+    }
+
+    const time::Rational& rate = existing.timelineRange.start().rate();
+    const time::Rational seconds =
+        existing.sourceRange.duration().toSeconds() / time::Rational::approximate(speed);
+    const time::RationalTime duration = time::RationalTime::fromSeconds(seconds, rate);
+    if (duration.frames() <= 0) {
+        return Error{ErrorCode::InvalidData, "that speed leaves the clip with no length"};
+    }
+
+    Clip retimed = existing;
+    retimed.reversed = reversed;
+    retimed.timelineRange = time::TimeRange{existing.timelineRange.start(), duration};
+
+    const time::RationalTime shift = duration - existing.timelineRange.duration();
+    return makeCommand(
+        target.sequence, "Change speed", "speed:" + idText(clipId),
+        [clipId, retimed, shift, ripple, trackId = target.track](Sequence& sequence) {
+            Track* track = sequence.findTrack(trackId);
+            if (track == nullptr) {
+                return;
+            }
+            std::vector<Clip> clips = track->clips();
+            for (Clip& clip : clips) {
+                if (clip.id == clipId) {
+                    clip = retimed;
+                } else if (ripple && clip.start() >= retimed.timelineRange.start() &&
+                           clip.id != clipId) {
+                    clip.timelineRange = time::TimeRange{clip.start() + shift, clip.duration()};
+                }
+            }
+            track->setClips(std::move(clips));
+        });
+}
+
 Result<CommandPtr> makeSetMask(Project& project, const EditTarget& target, ClipId clipId,
                                const model::Mask& mask) {
     for (const double value :
