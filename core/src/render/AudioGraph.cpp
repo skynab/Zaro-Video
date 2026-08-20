@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "zaro/core/render/Loudness.h"
+
 namespace zaro::render {
 
 float gainFromDb(double decibels) noexcept {
@@ -264,6 +266,43 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
         meters_.master[static_cast<std::size_t>(channel)] = peak;
     }
     return mixed;
+}
+
+Result<AudioGraph::LoudnessResult> AudioGraph::measureLoudness(const model::Sequence& sequence,
+                                                               const time::TimeRange& range,
+                                                               std::int32_t channelCount) {
+    const time::Rational& rate = sequence.audioSampleRate();
+    const time::TimeRange span = range.rescaledTo(rate);
+    if (span.duration().frames() <= 0) {
+        return Error{ErrorCode::InvalidData, "there is nothing in that range to measure"};
+    }
+
+    LoudnessMeter meter;
+    meter.configure(rate.toDouble(), channelCount);
+    // From silence: the chain's state at the start of a measurement should be
+    // whatever it would be if playback had started there, not left over from
+    // wherever it last ran.
+    resetProcessing();
+
+    constexpr std::int64_t kBlock = 4096;
+    std::vector<const float*> channels(static_cast<std::size_t>(channelCount));
+    for (std::int64_t done = 0; done < span.duration().frames(); done += kBlock) {
+        const std::int64_t count = std::min(kBlock, span.duration().frames() - done);
+        auto mixed =
+            mix(sequence, span.start() + time::RationalTime{done, rate}, count, channelCount);
+        if (!mixed) {
+            return mixed.error();
+        }
+        for (std::int32_t channel = 0; channel < channelCount; ++channel) {
+            channels[static_cast<std::size_t>(channel)] = mixed->channel(channel);
+        }
+        meter.feed(channels.data(), channelCount, mixed->sampleCount());
+    }
+
+    LoudnessResult result;
+    result.integratedLufs = meter.integratedLufs();
+    result.samplePeakDbfs = meter.samplePeakDbfs();
+    return result;
 }
 
 void AudioGraph::resetProcessing() {

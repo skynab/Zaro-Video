@@ -502,3 +502,58 @@ TEST_CASE("A reversed clip still produces sound", "[render][audio][speed]") {
         CHECK(mixed->channel(0)[0] == Approx(0.8F).margin(1e-3));
     }
 }
+
+TEST_CASE("A sequence is measured through the mix it will deliver", "[render][audio][loudness]") {
+    // Faders, pans, automation, the processing chain and every clip gain are
+    // all in it. Measuring the clips instead would give a number about the
+    // material rather than about the programme.
+    Fixture f;
+    ConstantAudioSource source;
+    // A constant is a rectangle rather than a tone, but its level is exactly
+    // known, which is what makes the arithmetic below checkable.
+    source.define(f.longMedia, 0.1F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 250, 500))));
+
+    const time::TimeRange span{f.at(0), f.at(200)};
+    auto measured = graph.measureLoudness(f.sequence(), span);
+    REQUIRE(measured);
+    const double plain = measured->integratedLufs;
+    CHECK(plain > render::LoudnessMeter::kSilence);
+    CHECK(measured->samplePeakDbfs == Approx(-20.0).margin(0.5));
+
+    // Pulling the fader down six decibels moves the measurement by six.
+    f.sequence().findTrack(f.a1)->setGainDb(-6.0);
+    auto quieter = graph.measureLoudness(f.sequence(), span);
+    REQUIRE(quieter);
+    CHECK(quieter->integratedLufs == Approx(plain - 6.0).margin(0.2));
+
+    // And the gain that would reach a target is the difference.
+    CHECK(quieter->gainToReach(-23.0) == Approx(-23.0 - quieter->integratedLufs).margin(1e-6));
+}
+
+TEST_CASE("Silence has no gain that would make it loud", "[render][audio][loudness]") {
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 0.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 250, 500))));
+
+    auto measured = graph.measureLoudness(f.sequence(), time::TimeRange{f.at(0), f.at(200)});
+    REQUIRE(measured);
+    CHECK(measured->integratedLufs == Approx(render::LoudnessMeter::kSilence));
+    // Not an enormous number: there is no amount of gain that makes silence
+    // reach a target, and offering one would be a button that ruins a mix.
+    CHECK(measured->gainToReach(-23.0) == Approx(0.0));
+}
+
+TEST_CASE("An empty range is refused rather than measured as silence",
+          "[render][audio][loudness]") {
+    // Those are different answers: one is "this programme is quiet" and the
+    // other is "you asked about nothing".
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 0.5F, 2);
+    render::AudioGraph graph{source};
+    CHECK_FALSE(graph.measureLoudness(f.sequence(), time::TimeRange{f.at(10), f.at(0)}));
+}

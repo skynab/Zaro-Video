@@ -19,6 +19,15 @@ public:
     void setHighPass(double frequencyHz, double sampleRate, double q = 0.7071);
     void setLowPass(double frequencyHz, double sampleRate, double q = 0.7071);
     void setPeaking(double frequencyHz, double sampleRate, double gainDb, double q);
+    /// A shelf lifting everything above the corner. Needed by the loudness
+    /// meter: BS.1770's first K-weighting stage is exactly this filter, with
+    /// the standard's own corner, Q and gain.
+    void setHighShelf(double frequencyHz, double sampleRate, double gainDb, double q);
+
+    /// Set the coefficients directly, for a filter whose design is specified
+    /// somewhere other than here — BS.1770's K-weighting, whose derivation is
+    /// its own and does not come out of the cookbook forms above.
+    void setCoefficients(double b0, double b1, double b2, double a1, double a2);
 
     [[nodiscard]] float process(float sample);
     /// Forget the past. A filter's delay line is the last two samples it saw,

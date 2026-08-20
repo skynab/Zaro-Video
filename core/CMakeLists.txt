@@ -25,6 +25,7 @@ add_library(zaro_core
     src/playback/Transport.cpp
     src/render/AudioGraph.cpp
     src/render/AudioProcessor.cpp
+    src/render/Loudness.cpp
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp
     src/render/Compositing.cpp

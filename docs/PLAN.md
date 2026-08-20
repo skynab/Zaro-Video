@@ -1405,6 +1405,51 @@ arbitrary instant.
 
 ---
 
+#### Phase 5r — loudness (EBU R128) ✅
+
+Integrated, short-term and momentary loudness to ITU-R BS.1770, measured through
+the real mix, with a normalise action that lands a programme on −23 LUFS.
+
+**The measurement a delivery specification is written in.** A peak meter says
+whether a mix will clip; this says whether it is as loud as the broadcaster
+asked for, which is the question that gets a programme rejected.
+
+**The published K-weighting parameters are not cookbook parameters**, and that
+cost a bug worth keeping in the record. A corner of 1681.97 Hz, a Q of 0.70717
+and a gain of 3.9998 dB look exactly like the arguments to an RBJ high-shelf —
+they are not. Building one that way gives a filter 0.2 dB low at a kilohertz,
+which failed the standard's own calibration case: a 1 kHz sine at −23 dBFS came
+out at −23.25 LUFS. The standard's derivation reproduces its published
+coefficients exactly, and the filters are built from it now, at whatever sample
+rate the sequence runs at rather than only at 48 kHz.
+
+**The gating is not a detail.** Without it a programme with quiet passages
+measures quieter than it sounds, so everyone pushes the loud parts up to
+compensate — the loudness war moving rather than ending. A test puts six seconds
+of silence in the middle of a programme and requires the answer not to change.
+
+**The reading does not depend on how the audio is fed**, checked at block sizes
+from 64 to 48000 — the same reasoning as the per-sample automation in 5a.
+
+**Sample peak, and it says so.** True peak needs oversampling to catch
+inter-sample peaks; claiming it without would be a number that passes a check
+the delivered file fails.
+
+**Measured through the mix that will be delivered** — faders, pans, automation,
+the processing chain and every clip gain included. Measuring the clips would
+give a number about the material rather than about the programme. Normalising
+moves every audio fader by the same amount rather than a master gain that does
+not exist: the balance between tracks is a decision somebody made.
+
+**Silence has no gain that would make it loud**, so the offer is zero rather
+than an enormous number, and an empty range is refused rather than reported as
+silence — those are different answers.
+
+The self-test measures the fixture at −14.9 LUFS, applies −8.1 dB, and measures
+−23.0.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

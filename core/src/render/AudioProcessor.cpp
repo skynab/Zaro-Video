@@ -101,6 +101,37 @@ void Biquad::setPeaking(double frequencyHz, double sampleRate, double gainDb, do
     reset();
 }
 
+void Biquad::setHighShelf(double frequencyHz, double sampleRate, double gainDb, double q) {
+    if (frequencyHz < kNegligibleHz || frequencyHz >= sampleRate * 0.5) {
+        setBypass();
+        return;
+    }
+    const double amplitude = std::pow(10.0, gainDb / 40.0);
+    const double w0 = 2.0 * kPi * frequencyHz / sampleRate;
+    const double cosine = std::cos(w0);
+    const double alpha = std::sin(w0) / (2.0 * q);
+    const double twoRootAAlpha = 2.0 * std::sqrt(amplitude) * alpha;
+
+    const double a0 = (amplitude + 1.0) - ((amplitude - 1.0) * cosine) + twoRootAAlpha;
+    b0_ = (amplitude * ((amplitude + 1.0) + ((amplitude - 1.0) * cosine) + twoRootAAlpha)) / a0;
+    b1_ = (-2.0 * amplitude * ((amplitude - 1.0) + ((amplitude + 1.0) * cosine))) / a0;
+    b2_ = (amplitude * ((amplitude + 1.0) + ((amplitude - 1.0) * cosine) - twoRootAAlpha)) / a0;
+    a1_ = (2.0 * ((amplitude - 1.0) - ((amplitude + 1.0) * cosine))) / a0;
+    a2_ = ((amplitude + 1.0) - ((amplitude - 1.0) * cosine) - twoRootAAlpha) / a0;
+    bypass_ = false;
+    reset();
+}
+
+void Biquad::setCoefficients(double b0, double b1, double b2, double a1, double a2) {
+    b0_ = b0;
+    b1_ = b1;
+    b2_ = b2;
+    a1_ = a1;
+    a2_ = a2;
+    bypass_ = false;
+    reset();
+}
+
 float Biquad::process(float sample) {
     if (bypass_) {
         return sample;

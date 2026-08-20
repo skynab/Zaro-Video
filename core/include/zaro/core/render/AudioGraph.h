@@ -8,6 +8,7 @@
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/AudioProcessor.h"
 #include "zaro/core/render/FrameSource.h"
+#include "zaro/core/render/Loudness.h"
 
 namespace zaro::render {
 
@@ -68,6 +69,27 @@ public:
     /// the playhead to another and the first second after a jump is ducked for
     /// no reason. Anything that moves the playhead calls this.
     void resetProcessing();
+
+    /// What a sequence measures, over a range.
+    struct LoudnessResult {
+        double integratedLufs{LoudnessMeter::kSilence};
+        double samplePeakDbfs{-180.0};
+        /// What to add to hit a target, in decibels. Zero for silence, which
+        /// has no gain that would make it loud.
+        [[nodiscard]] double gainToReach(double targetLufs) const {
+            return integratedLufs <= LoudnessMeter::kSilence ? 0.0 : targetLufs - integratedLufs;
+        }
+    };
+
+    /// Measure a sequence by mixing it.
+    ///
+    /// Through the real mix, so what is measured is what will be delivered:
+    /// faders, pans, automation, the processing chain and every clip gain are
+    /// all in it. Measuring the clips instead would give a number about the
+    /// material rather than about the programme.
+    [[nodiscard]] Result<LoudnessResult> measureLoudness(const model::Sequence& sequence,
+                                                         const time::TimeRange& range,
+                                                         std::int32_t channelCount = 2);
 
 private:
     AudioSource* source_;

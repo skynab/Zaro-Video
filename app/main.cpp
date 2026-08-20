@@ -143,6 +143,12 @@ public:
             }
         });
 
+        auto* loudnessButton = new QPushButton("Loudness…", this);
+        loudnessButton->setToolTip("Measure the sequence and normalise to a target");
+        loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
+        transportRow->addWidget(loudnessButton);
+        connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
+
         auto* captionsButton = new QPushButton("Captions…", this);
         captionsButton->setToolTip("Import, export or burn in subtitles");
         captionsButton->setMinimumWidth(captionsButton->sizeHint().width());
@@ -745,6 +751,64 @@ private:
         // between scrubs.
         options.rowStride = 2;
         scopes_->setScopes(render::measure(*frame, options));
+    }
+
+    /// Measure the programme, and offer to normalise it.
+    ///
+    /// The measurement is of the whole sequence through the real mix, so it
+    /// takes a moment on a long one — which is why it is a menu action rather
+    /// than a meter that runs continuously. Loudness is a delivery check, done
+    /// once near the end, not something to watch while cutting.
+    void loudnessMenu() {
+        if (sequence_ == nullptr || media_ == nullptr) {
+            return;
+        }
+        render::AudioGraph mixer{*media_};
+        const time::TimeRange whole{time::RationalTime{0, sequence_->frameRate()},
+                                    sequence_->duration()};
+        auto measured = mixer.measureLoudness(*sequence_, whole);
+        if (!measured) {
+            QMessageBox::warning(this, "Loudness",
+                                 QString::fromStdString(measured.error().toString()));
+            return;
+        }
+
+        constexpr double kTarget = -23.0;  // EBU R128
+        const double gain = measured->gainToReach(kTarget);
+
+        QMenu menu;
+        menu.addAction(QString("Integrated: %1 LUFS").arg(measured->integratedLufs, 0, 'f', 1))
+            ->setEnabled(false);
+        menu.addAction(QString("Sample peak: %1 dBFS").arg(measured->samplePeakDbfs, 0, 'f', 1))
+            ->setEnabled(false);
+        menu.addSeparator();
+        QAction* normalise = menu.addAction(QString("Normalise to %1 LUFS (%2%3 dB)")
+                                                .arg(kTarget, 0, 'f', 0)
+                                                .arg(gain >= 0.0 ? "+" : "")
+                                                .arg(gain, 0, 'f', 1));
+        // Nothing to do to silence, and nothing worth doing for a tenth of a
+        // decibel.
+        normalise->setEnabled(std::fabs(gain) > 0.1);
+
+        if (menu.exec(QCursor::pos()) != normalise) {
+            return;
+        }
+        // Applied to every audio track's fader rather than to a master gain,
+        // which does not exist: the balance between tracks is a decision
+        // somebody made, and moving them all by the same amount keeps it.
+        for (const model::Track& track : sequence_->audioTracks()) {
+            edit::TrackState state;
+            state.muted = track.isMuted();
+            state.soloed = track.isSoloed();
+            state.gainDb = track.gainDb() + gain;
+            state.pan = track.pan();
+            if (auto built =
+                    edit::makeSetTrackState(project_, sequence_->id(), track.id(), state)) {
+                commands_.execute(project_, std::move(*built));
+            }
+        }
+        commands_.breakMerge();
+        mixer_->refresh();
     }
 
     /// Import, export and burn-in, from one menu.
@@ -1380,6 +1444,57 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Loudness, measured through the real mix and then normalised. The
+        // meter is tested headlessly against the standard's calibration case;
+        // what that cannot show is whether measuring a sequence and acting on
+        // the answer actually moves the programme.
+        {
+            zaro::render::AudioGraph loudnessMix{window.media()};
+            const zaro::time::TimeRange whole{zaro::time::RationalTime{0, sequence.frameRate()},
+                                              window.sequence()->duration()};
+            auto wasAt = loudnessMix.measureLoudness(*window.sequence(), whole);
+            if (!wasAt) {
+                std::fprintf(stderr, "  FAIL: %s\n", wasAt.error().toString().c_str());
+                return 1;
+            }
+            if (!(wasAt->integratedLufs > zaro::render::LoudnessMeter::kSilence)) {
+                std::fprintf(stderr, "  FAIL: the sequence measured as silence\n");
+                return 1;
+            }
+
+            constexpr double kTarget = -23.0;
+            const double gain = wasAt->gainToReach(kTarget);
+            const auto audioTrack =
+                window.project().findSequence(sequence.id())->audioTracks().front();
+            zaro::edit::TrackState state;
+            state.gainDb = audioTrack.gainDb() + gain;
+            auto built = zaro::edit::makeSetTrackState(window.project(), sequence.id(),
+                                                       audioTrack.id(), state);
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+
+            zaro::render::AudioGraph afterMix{window.media()};
+            auto now = afterMix.measureLoudness(*window.sequence(), whole);
+            if (!now) {
+                std::fprintf(stderr, "  FAIL: %s\n", now.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  loudness: %.1f LUFS, %+.1f dB applied, now %.1f LUFS\n",
+                        wasAt->integratedLufs, gain, now->integratedLufs);
+            if (std::fabs(now->integratedLufs - kTarget) > 0.5) {
+                std::fprintf(stderr, "  FAIL: normalising did not land on the target\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.mixer()->refresh();
         }
 
         // The processing chain, through the mixer. The filters and the
