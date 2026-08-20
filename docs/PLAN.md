@@ -1682,6 +1682,68 @@ needed to make a graded stack play back, which was the problem in front of us.
 
 ---
 
+#### Phase 5x — sync detection ✅
+
+The offsets Phase 5u took as given, worked out from the material.
+
+**Two methods, because a shoot is either jam-synced or it is not.** Timecode is
+subtraction: the same clock written into every file, and the offsets fall out
+with nothing to be confident about. What is left when it is absent is
+correlating the sound, which is a measurement with an error bar. There is no
+useful middle case to design for, and pretending there is would mean one code
+path that is worse at both.
+
+**A camera with no timecode is not a low-confidence answer, it is a camera this
+method cannot do.** Reporting a plausible wrong offset is the failure that
+shows up three cuts later as "something feels off"; reporting "cam C has no
+source timecode" is a sentence somebody can act on. So the result is per angle,
+with an offset or a reason, and the angles that could be synced are — a shoot
+where one camera was not jammed is the normal case, and refusing the other
+three because of it would be worse than saying which one is left.
+
+**By ear is two passes, not one.** A correlation at sample resolution over a
+thirty-second search range is hundreds of billions of operations. One over a
+loudness envelope is millions — but its answer is only as good as its block,
+and a tenth of a frame out is exactly the sync error nobody finds later,
+because it looks right on most cuts. So the envelope finds roughly where, and a
+short correlation of the raw samples around that answer finds exactly where.
+The tests require the offset to be found *to the sample*, at four different
+delays including a negative one.
+
+**The refinement listens where there is something to hear.** Its window is
+centred on the loudest part of the overlap rather than on the middle, because a
+second of room tone correlates with any other second of room tone and would
+confidently return the coarse answer unchanged.
+
+**Normalised correlation, not a dot product.** Two cameras at different
+distances from the same clap record the same shape at different levels, and it
+is the shape that says where they line up. A test grades one angle down to a
+twentieth and still requires the exact offset.
+
+**Silence says so.** A signal with no variation correlates with nothing; the
+answer is a reason, not a confident zero that reads as "they were already in
+sync".
+
+**Angles are mixed to mono before comparing.** A camera with a dead left input
+and a camera with a dead right one recorded the same room, and comparing one
+channel each would fail to notice.
+
+**Applying the offsets is one command.** Undoing a sync halfway would leave a
+clip where two cameras agree and two do not, which is worse than either state.
+
+The self-test picks a multicam clip in the real window, asks for a timecode
+sync, and requires the offset to land on the clip and to come back whole on
+undo. Its second angle starts with a deliberately wrong offset, so a sync that
+does nothing cannot pass — and with the subtraction removed it reports +0.00s
+and fails.
+
+**Not done: syncing by marker or by in point.** Both need somewhere to hang a
+per-file marker, and nothing in the model has one yet; inventing it for a
+feature nothing else uses would be a field that exists to be read by one
+function.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

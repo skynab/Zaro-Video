@@ -16,6 +16,7 @@ add_library(zaro_core
     src/edit/CommandStack.cpp
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
+    src/edit/Sync.cpp
     src/io/CubeLut.cpp
     src/io/OtioIo.cpp
     src/io/SubtitleIo.cpp
@@ -50,6 +51,7 @@ add_library(zaro_core
     src/model/ToneCurve.cpp
     src/model/Track.cpp
     src/model/Transition.cpp
+    src/media/AudioAlign.cpp
     src/media/AudioBuffer.cpp
     src/media/ColorInfo.cpp
     src/media/PixelFormat.cpp

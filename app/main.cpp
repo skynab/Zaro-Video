@@ -46,6 +46,7 @@
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/edit/Sync.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/SubtitleIo.h"
@@ -158,6 +159,12 @@ public:
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
 
+        auto* multicamButton = new QPushButton("Multicam…", this);
+        multicamButton->setToolTip("Work out the offsets between a clip's angles");
+        multicamButton->setMinimumWidth(multicamButton->sizeHint().width());
+        transportRow->addWidget(multicamButton);
+        connect(multicamButton, &QPushButton::clicked, this, [this] { multicamMenu(); });
+
         auto* renderButton = new QPushButton("Render…", this);
         renderButton->setToolTip("Pre-render the visible range so it plays back");
         renderButton->setMinimumWidth(renderButton->sizeHint().width());
@@ -230,6 +237,13 @@ public:
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
+        // Kept here too: syncing acts on the clip somebody has picked, and the
+        // timeline is where picking happens.
+        connect(timeline_, &app::TimelineWidget::selectionChanged, this,
+                [this](model::TrackId track, model::ClipId clip) {
+                    selectedTrack_ = track;
+                    selectedClip_ = clip;
+                });
         connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { measureScopes(); });
         connect(mixer_, &app::MixerPanel::edited, this, [this] {
             // Mute and solo change the picture as well as the sound: a muted
@@ -375,6 +389,72 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// The work behind the menu, separated so it can be driven without one.
+    ///
+    /// Reports what it could not do rather than silently doing less: a camera
+    /// left unsynced is a cut that lands wrong later, and the moment to find
+    /// out is now.
+    void syncAngles(bool byEar) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        const model::Track* track = sequence->findTrack(selectedTrack_);
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || !clip->isMulticam()) {
+            return;
+        }
+
+        auto synced = byEar ? edit::syncByAudio(project_, *clip, *media_)
+                            : edit::syncByTimecode(project_, *clip);
+        if (!synced) {
+            QMessageBox::warning(this, "Multicam",
+                                 QString::fromStdString(synced.error().toString()));
+            return;
+        }
+
+        std::vector<std::pair<std::int32_t, time::RationalTime>> offsets;
+        QStringList skipped;
+        for (const edit::AngleSync& entry : *synced) {
+            if (entry.offset.has_value()) {
+                offsets.emplace_back(entry.angle, *entry.offset);
+                continue;
+            }
+            const std::string& name = clip->angles[static_cast<std::size_t>(entry.angle)].name;
+            skipped.append(QString("%1: %2")
+                               .arg(QString::fromStdString(name))
+                               .arg(QString::fromStdString(entry.reason)));
+        }
+
+        if (!offsets.empty()) {
+            auto built = edit::makeSetAngleOffsets(project_, {sequence->id(), selectedTrack_},
+                                                   selectedClip_, offsets);
+            if (!built) {
+                QMessageBox::warning(this, "Multicam",
+                                     QString::fromStdString(built.error().toString()));
+                return;
+            }
+            commands_.execute(project_, std::move(*built));
+            commands_.breakMerge();
+            monitor_->update();
+            timeline_->update();
+            updateCacheBar();
+        }
+        lastSyncCount_ = static_cast<std::int32_t>(offsets.size());
+        lastSyncSkipped_ = static_cast<std::int32_t>(skipped.size());
+
+        if (!skipped.isEmpty()) {
+            QMessageBox::information(this, "Multicam",
+                                     QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
+                                         .arg(offsets.size())
+                                         .arg(clip->angles.size())
+                                         .arg(skipped.join("\n")));
+        }
+    }
+
+    [[nodiscard]] std::int32_t lastSyncCount() const noexcept { return lastSyncCount_; }
+    [[nodiscard]] std::int32_t lastSyncSkipped() const noexcept { return lastSyncSkipped_; }
 
     /// Recompute what the cache bar shows.
     ///
@@ -922,6 +1002,37 @@ private:
         }
     }
 
+    /// Work out the offsets between a multicam clip's angles.
+    ///
+    /// Two methods, because a shoot is either jam-synced or it is not, and
+    /// there is no useful middle: timecode is exact when it is there, and by
+    /// ear is what is left when it is not.
+    void multicamMenu() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        const model::Track* track = sequence->findTrack(selectedTrack_);
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+
+        QMenu menu;
+        QAction* byTimecode = menu.addAction("Sync angles by timecode");
+        QAction* byAudio = menu.addAction("Sync angles by audio");
+        const bool multicam = clip != nullptr && clip->isMulticam();
+        byTimecode->setEnabled(multicam);
+        byAudio->setEnabled(multicam && media_ != nullptr);
+        if (!multicam) {
+            menu.addSeparator();
+            menu.addAction("Select a multicam clip first")->setEnabled(false);
+        }
+
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == nullptr || !multicam) {
+            return;
+        }
+        syncAngles(chosen == byAudio);
+    }
+
     /// Pre-render, so a stack the CPU has to composite plays back.
     ///
     /// The visible range rather than the whole sequence: what somebody wants
@@ -1130,6 +1241,12 @@ private:
     /// pre-render. One cache: a frame rendered by the button is the frame the
     /// monitor asks for a moment later, and two caches would render it twice.
     render::RenderCache renderCache_;
+    /// What the timeline last said was picked. Multicam syncing acts on one
+    /// clip, and this is which one.
+    model::TrackId selectedTrack_;
+    model::ClipId selectedClip_;
+    std::int32_t lastSyncCount_{0};
+    std::int32_t lastSyncSkipped_{0};
 
     app::ProgramMonitor* monitor_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
@@ -2886,6 +3003,127 @@ int main(int argc, char** argv) {
         // Second to last: this adds a track, and adding one reallocates the
         // sequence's vector of them -- so the reference this function has
         // held since the top must be finished with by now.
+        // Syncing multicam angles, through the real window.
+        //
+        // Timecode rather than by ear: the arithmetic of both is tested
+        // headlessly, and what this has to show is that picking a clip, asking
+        // for a sync and having the offsets land on it works end to end. By
+        // ear would also mean reading a minute of audio from a ten-second
+        // fixture, which is a test of silence handling, not of syncing.
+        {
+            const auto syncSequenceId = window.project().activeSequence();
+            const auto syncTrackId =
+                window.project().findSequence(syncSequenceId)->videoTracks().front().id();
+            const auto syncRate = window.project().findSequence(syncSequenceId)->frameRate();
+
+            // A second reference to the same file stands in for a second
+            // camera: what is being checked is the sync, not the footage. Two
+            // references so that each can carry its own start timecode, which
+            // is what a second camera would have.
+            zaro::model::MediaRef cameraB = window.project().media().front();
+            cameraB.id = window.project().ids().next<zaro::model::MediaRefTag>();
+            cameraB.name = "cam-b";
+            const auto cameraBId = window.project().addMedia(cameraB);
+
+            const auto stamp = [&](zaro::model::MediaRefId id, const char* text) {
+                for (zaro::model::MediaRef& media : window.project().mediaMutable()) {
+                    if (media.id == id && !media.info.videoStreams.empty()) {
+                        media.info.videoStreams.front().startTimecode =
+                            zaro::time::parseTimecode(text);
+                    }
+                }
+            };
+            stamp(window.project().media().front().id, "01:00:00:00");
+            // Rolled two seconds later on the same clock.
+            stamp(cameraBId, "01:00:02:00");
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            zaro::model::Clip::Angle angleA;
+            angleA.media = window.project().media().front().id;
+            angleA.name = "A";
+            zaro::model::Clip::Angle angleB;
+            angleB.media = cameraBId;
+            // Deliberately wrong to begin with, so that a sync which does
+            // nothing at all cannot pass.
+            angleB.offset = zaro::time::RationalTime{99, syncRate};
+            angleB.name = "B";
+
+            auto placed = zaro::edit::makeMulticam(
+                window.project(), {syncSequenceId, syncTrackId}, {angleA, angleB},
+                zaro::time::TimeRange{zaro::time::RationalTime{0, syncRate},
+                                      zaro::time::RationalTime{60, syncRate}});
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+
+            const auto syncClipId = window.project()
+                                        .findSequence(syncSequenceId)
+                                        ->findTrack(syncTrackId)
+                                        ->clips()
+                                        .front()
+                                        .id;
+            timeline->selectOnlyForTest(syncTrackId, syncClipId);
+            QApplication::processEvents();
+
+            window.syncAngles(/*byEar=*/false);
+            QApplication::processEvents();
+
+            const auto* syncedClip = window.project()
+                                         .findSequence(syncSequenceId)
+                                         ->findTrack(syncTrackId)
+                                         ->find(syncClipId);
+            if (syncedClip == nullptr) {
+                std::fprintf(stderr, "  FAIL: the multicam clip went missing\n");
+                return 1;
+            }
+            const double offsetSeconds = syncedClip->angles[1].offset.toSeconds().toDouble();
+            std::printf("  multicam sync: %d angles synced, %d skipped, camera B at %+.2fs\n",
+                        window.lastSyncCount(), window.lastSyncSkipped(), offsetSeconds);
+            if (window.lastSyncCount() != 2 || window.lastSyncSkipped() != 0) {
+                std::fprintf(stderr, "  FAIL: the sync did not reach both angles\n");
+                return 1;
+            }
+            // Two seconds later on the clock means reading two seconds *less*
+            // far into that camera's own material for the same moment.
+            if (std::abs(offsetSeconds + 2.0) > 0.05) {
+                std::fprintf(stderr, "  FAIL: camera B was put at %+.2fs, not -2.00s\n",
+                             offsetSeconds);
+                return 1;
+            }
+
+            // And it is one undoable step: the wrong offset comes back whole.
+            window.commands().undo(window.project());
+            const auto* undone = window.project()
+                                     .findSequence(syncSequenceId)
+                                     ->findTrack(syncTrackId)
+                                     ->find(syncClipId);
+            if (undone == nullptr || undone->angles[1].offset.frames() != 99) {
+                std::fprintf(stderr, "  FAIL: undoing the sync did not restore the offset\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            // Put the project back as it was found. Adding a media reference is
+            // not a command, so nothing above undoes it, and the blocks that
+            // follow are entitled to the project they were written against.
+            window.project().mediaMutable().pop_back();
+            window.project().mediaMutable().front().info.videoStreams.front().startTimecode =
+                std::nullopt;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // An adjustment layer, through the real preview. This is the one
         // feature where the GPU path deliberately hands the whole frame to the
         // CPU compositor, so what this checks is that the fallback is wired and

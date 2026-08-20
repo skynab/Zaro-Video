@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "zaro/core/Error.h"
@@ -204,6 +205,17 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSwitchAngle(model::Project& project, const EditTarget& target,
                                                  model::ClipId clip, std::int32_t angle,
                                                  const time::RationalTime& at);
+
+/// Write worked-out offsets back onto a multicam clip's angles.
+///
+/// One command for all of them, because syncing is one decision: undoing it
+/// halfway would leave a clip where two cameras agree and two do not, which is
+/// worse than either state. Angles not named in `offsets` keep the offset they
+/// have -- that is how a sync that could only do three of four cameras leaves
+/// the fourth as it found it.
+[[nodiscard]] Result<CommandPtr> makeSetAngleOffsets(
+    model::Project& project, const EditTarget& target, model::ClipId clip,
+    const std::vector<std::pair<std::int32_t, time::RationalTime>>& offsets);
 
 /// Put one sequence on another's timeline.
 ///

@@ -1427,6 +1427,37 @@ Result<CommandPtr> makeMulticam(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makeSetAngleOffsets(
+    Project& project, const EditTarget& target, ClipId clipId,
+    const std::vector<std::pair<std::int32_t, time::RationalTime>>& offsets) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    if (!existing.isMulticam()) {
+        return Error{ErrorCode::InvalidData, "that clip has no angles"};
+    }
+    if (offsets.empty()) {
+        return Error{ErrorCode::InvalidData, "there are no offsets to set"};
+    }
+    for (const auto& [angle, offset] : offsets) {
+        if (angle < 0 || angle >= static_cast<std::int32_t>(existing.angles.size())) {
+            return Error{ErrorCode::InvalidData, "there is no such angle"};
+        }
+        if (offset.rate().den() == 0 || offset.rate().num() <= 0) {
+            return Error{ErrorCode::InvalidData, "an offset has to be a time"};
+        }
+    }
+
+    return modifyClip(project, target, clipId, "Sync angles", "angles:" + idText(clipId),
+                      [offsets](Clip& clip) {
+                          for (const auto& [angle, offset] : offsets) {
+                              clip.angles[static_cast<std::size_t>(angle)].offset = offset;
+                          }
+                      });
+}
+
 Result<CommandPtr> makeSwitchAngle(Project& project, const EditTarget& target, ClipId clipId,
                                    std::int32_t angle, const time::RationalTime& at) {
     auto found = lookupClip(project, target, clipId);

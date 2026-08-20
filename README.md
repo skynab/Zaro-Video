@@ -61,7 +61,7 @@ headless: there is no window yet.
 | 5u | Multicam: angles, offsets, switching as a cut | **done** |
 | 5v | Adjustment layers, grading a stack from above | **done** |
 | 5w | Render cache: pre-render a range, play it back | **done** |
-| 5x | Sync detection for multicam angles | next |
+| 5x | Sync detection: by timecode and by ear | **done** |
 
 ## Building
 
