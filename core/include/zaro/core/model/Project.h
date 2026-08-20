@@ -17,6 +17,15 @@ namespace zaro::model {
 struct MediaRef {
     MediaRefId id;
     std::string path;
+
+    /// A smaller copy of the same material, for editing.
+    ///
+    /// Attached rather than generated: making one is a transcode, and a
+    /// transcode belongs to whatever tool the footage came out of. What matters
+    /// here is that the two files describe the same thing -- same duration,
+    /// same rate -- so that swapping between them moves no edit. A proxy of a
+    /// different length would silently retime the cut.
+    std::string proxyPath;
     std::string contentHash;
     std::string name;
     media::MediaInfo info;
@@ -32,9 +41,31 @@ struct MediaRef {
 
 class Project {
 public:
+    /// Whether to read proxies where a clip's media has one.
+    ///
+    /// A property of the project rather than of a clip: nobody wants some shots
+    /// on proxies and some not, and the whole reason to be on proxies is that
+    /// the machine cannot keep up with the originals.
+    ///
+    /// **Export ignores this.** Delivering the small copies because somebody
+    /// left a toggle on is a mistake with no warning attached and no way back
+    /// once the file has gone out.
+    [[nodiscard]] bool usingProxies() const noexcept { return useProxies_; }
+    void setUsingProxies(bool value) noexcept { useProxies_ = value; }
+
+    /// The file to read for this media: its proxy when one is attached and
+    /// proxies are on, its own path otherwise.
+    [[nodiscard]] const std::string& resolvedPath(const MediaRef& media) const {
+        return useProxies_ && !media.proxyPath.empty() ? media.proxyPath : media.path;
+    }
+
     Project() = default;
 
     [[nodiscard]] const std::vector<MediaRef>& media() const noexcept { return media_; }
+    /// Mutable access, for the few things that change a media reference in
+    /// place -- attaching a proxy, relinking a moved file. Not for editing:
+    /// anything that changes the cut goes through a command.
+    [[nodiscard]] std::vector<MediaRef>& mediaMutable() noexcept { return media_; }
     [[nodiscard]] const std::vector<Sequence>& sequences() const noexcept { return sequences_; }
 
     [[nodiscard]] const MediaRef* findMedia(MediaRefId id) const;
@@ -63,6 +94,7 @@ public:
 
 private:
     std::vector<MediaRef> media_;
+    bool useProxies_{false};
     std::vector<Sequence> sequences_;
     SequenceId activeSequence_;
     IdGenerator ids_;

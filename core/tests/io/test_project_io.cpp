@@ -238,6 +238,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     ref.id = project.ids().next<model::MediaRefTag>();
     ref.path = "/media/take-01.mov";
     ref.contentHash = "deadbeefcafe0001";
+    ref.proxyPath = "/media/proxies/take-01_proxy.mov";
     ref.name = "take-01.mov";
     ref.info.duration = time::Rational{1001 * 240, 30000};
     {
@@ -253,6 +254,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         ref.info.audioStreams.push_back(audio);
     }
     const model::MediaRefId mediaId = project.addMedia(ref);
+    project.setUsingProxies(true);
 
     model::Sequence sequence{project.ids().next<model::SequenceTag>(), "Reel 3 — final",
                              time::rates::fps23_976};
@@ -494,6 +496,10 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     // long before this point, and comparing with a moved-from object compares
     // nothing.
     CHECK(loadedSequence->captions() == project.findSequence(sequenceId)->captions());
+    REQUIRE(back.media().size() == 1);
+    CHECK(back.media().front().proxyPath == "/media/proxies/take-01_proxy.mov");
+    CHECK(back.usingProxies());
+
     CHECK(loadedSequence->captions().isBurnedIn());
     REQUIRE(loadedSequence->captions().size() == 2);
     CHECK(loadedSequence->captions().captions()[0].text == "First caption\nsecond line");

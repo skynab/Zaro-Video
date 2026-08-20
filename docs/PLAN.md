@@ -1450,6 +1450,46 @@ The self-test measures the fixture at −14.9 LUFS, applies −8.1 dB, and measu
 
 ---
 
+#### Phase 5s — proxies ✅
+
+A smaller copy attached to a media reference, a project-wide toggle, and an
+export that ignores it.
+
+**Attached, not generated.** Making a proxy is a transcode, and a transcode
+belongs to whatever tool the footage came out of. What this has to get right is
+the swap, and the swap is where the bugs were.
+
+**The toggle belongs to the project, not to a clip.** Nobody wants some shots on
+proxies and some not, and the whole reason to be on proxies is that the machine
+cannot keep up with the originals.
+
+**Export ignores it.** Delivering the small copies because somebody left a
+toggle on is a mistake with no warning attached and no way back once the file
+has gone out, so the render takes a copy of the project with proxies off rather
+than trusting the state it was handed.
+
+**Paths are resolved once, when the media source opens.** A source deciding per
+read would have to be told when the toggle moved, and the decoders it had
+already opened would still be on the old files. Switching therefore means
+reopening — which is what found two real bugs:
+
+- **Reopening the media aborted the application.** `startWaveforms` assigned
+  over a `std::thread` that was still joinable, which is an immediate
+  `std::terminate`. It presented exactly that way: switching proxies on killed
+  the app instantly.
+- **The monitor froze after any re-open.** `setSource` drops the render graph —
+  the old one holds the old provider — but only `initialize` ever rebuilt it,
+  and that runs once. Every re-open left the picture stuck on the last frame
+  drawn. The graph is rebuilt whenever it is missing now. This would have hit
+  relinking and opening a second project too; proxies are merely what reached it
+  first.
+
+The test fixture is a proxy that is inverted as well as smaller, so which file
+was read is unmistakable rather than a matter of judging sharpness: 246.2 from
+the original, 0.1 through the proxy.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

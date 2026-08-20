@@ -41,7 +41,10 @@ Result<std::unique_ptr<ProjectMediaSource>> ProjectMediaSource::open(const model
     auto source = std::unique_ptr<ProjectMediaSource>(new ProjectMediaSource());
     source->state_ = std::make_unique<State>(cacheBudgetBytes);
     for (const model::MediaRef& ref : project.media()) {
-        source->state_->paths[ref.id.value()] = ref.path;
+        // Resolved once, here. A source that decided per read would have to be
+        // told when the toggle moved, and the decoders it already opened would
+        // still be on the old files.
+        source->state_->paths[ref.id.value()] = project.resolvedPath(ref);
     }
     return source;
 }

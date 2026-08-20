@@ -50,7 +50,16 @@ void ProgramMonitor::initialize(QRhiCommandBuffer* commandBuffer) {
         compositor_ = std::move(*created);
         lastError_.clear();
     }
-    if (!graph_ && provider_ != nullptr) {
+    ensureGraph();
+}
+
+void ProgramMonitor::ensureGraph() {
+    // Rebuilt whenever it is missing, not only at start-up. `setSource` drops
+    // it -- the old one holds the old provider -- and if only `initialize`
+    // could put it back, every re-open would leave the monitor frozen on
+    // whatever frame it last drew. Switching to proxies is a re-open, which is
+    // how this surfaced.
+    if (!graph_ && compositor_ && provider_ != nullptr) {
         graph_ = std::make_unique<platform::qrhi::GpuRenderGraph>(*compositor_, *provider_);
         graph_->setTextRasterizer(text_);
     }
@@ -60,6 +69,7 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     if (!compositor_) {
         return;
     }
+    ensureGraph();
     if (sequence_ == nullptr || !graph_) {
         // Nothing loaded: leave the monitor black rather than showing whatever
         // was on screen before.

@@ -36,6 +36,7 @@
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -142,6 +143,12 @@ public:
                                      QString::fromStdString(saved.error().toString()));
             }
         });
+
+        auto* proxyButton = new QPushButton("Proxies…", this);
+        proxyButton->setToolTip("Attach smaller copies for editing");
+        proxyButton->setMinimumWidth(proxyButton->sizeHint().width());
+        transportRow->addWidget(proxyButton);
+        connect(proxyButton, &QPushButton::clicked, this, [this] { proxyMenu(); });
 
         auto* loudnessButton = new QPushButton("Loudness…", this);
         loudnessButton->setToolTip("Measure the sequence and normalise to a target");
@@ -287,6 +294,7 @@ public:
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
     [[nodiscard]] render::AudioSource& media() { return *media_; }
+    [[nodiscard]] Status reopenMedia() { return openMedia(); }
 
     /// Feed the mixer's meters.
     ///
@@ -606,6 +614,14 @@ private:
     /// takes seconds, and a project that freezes while it opens is worse than
     /// one whose waveforms arrive a moment late.
     void startWaveforms() {
+        // A scan may already be running -- reopening the media does this, which
+        // is what switching to proxies does. Assigning over a joinable thread
+        // is an immediate std::terminate, and that is exactly how it presented:
+        // the application aborted the moment proxies were switched on.
+        if (waveformThread_.joinable()) {
+            waveformThread_.join();
+        }
+
         const std::filesystem::path cacheDirectory =
             std::filesystem::temp_directory_path() / "zaro" / "waveforms";
 
@@ -751,6 +767,68 @@ private:
         // between scrubs.
         options.rowStride = 2;
         scopes_->setScopes(render::measure(*frame, options));
+    }
+
+    /// Attach proxies, and switch between them and the originals.
+    ///
+    /// Attaching rather than generating: making a proxy is a transcode, and a
+    /// transcode belongs to whatever tool the footage came out of. What this
+    /// has to get right is the swap.
+    void proxyMenu() {
+        QMenu menu;
+        QAction* toggle = menu.addAction("Use proxies");
+        toggle->setCheckable(true);
+        toggle->setChecked(project_.usingProxies());
+
+        std::size_t proxied = 0;
+        for (const model::MediaRef& media : project_.media()) {
+            proxied += media.proxyPath.empty() ? 0 : 1;
+        }
+        toggle->setEnabled(proxied > 0);
+        menu.addSeparator();
+        menu.addAction(QString("%1 of %2 have proxies").arg(proxied).arg(project_.media().size()))
+            ->setEnabled(false);
+        menu.addSeparator();
+
+        // One entry per media reference, so a file can be given its proxy
+        // without a second panel to manage.
+        std::map<QAction*, model::MediaRefId> attach;
+        for (const model::MediaRef& media : project_.media()) {
+            QAction* action = menu.addAction(
+                QString("Attach proxy for %1…").arg(QString::fromStdString(media.name)));
+            attach.emplace(action, media.id);
+        }
+
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == nullptr) {
+            return;
+        }
+        if (chosen == toggle) {
+            project_.setUsingProxies(toggle->isChecked());
+            // The media source resolved its paths when it opened, so switching
+            // means reopening. Cheaper than deciding per read, and it is the
+            // only moment the decision changes.
+            if (Status reopened = openMedia(); !reopened) {
+                QMessageBox::warning(this, "Proxies",
+                                     QString::fromStdString(reopened.error().toString()));
+            }
+            monitor_->update();
+            refresh();
+            return;
+        }
+        const auto found = attach.find(chosen);
+        if (found == attach.end()) {
+            return;
+        }
+        const QString path = QFileDialog::getOpenFileName(this, "Choose a proxy file");
+        if (path.isEmpty()) {
+            return;
+        }
+        for (model::MediaRef& media : project_.mediaMutable()) {
+            if (media.id == found->second) {
+                media.proxyPath = path.toStdString();
+            }
+        }
     }
 
     /// Measure the programme, and offer to normalise it.
@@ -1441,6 +1519,61 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Proxies: the swap, and the promise that export ignores it. The proxy
+        // fixture is inverted as well as smaller, so which file was read is
+        // unmistakable rather than a matter of judging sharpness.
+        {
+            for (auto& media : window.project().mediaMutable()) {
+                media.proxyPath =
+                    "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
+                    "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/proxy.mov";
+            }
+
+            std::int64_t brightFrame = 0;
+            double brightness = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray > brightness) {
+                    brightness = gray;
+                    brightFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{brightFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double fromOriginal = meanGray(window.monitor()->grabFramebuffer());
+
+            window.project().setUsingProxies(true);
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double viaProxy = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  proxies: %.1f from the original, %.1f from an inverted proxy\n",
+                        fromOriginal, viaProxy);
+            if (!(std::fabs(fromOriginal - viaProxy) > 40.0)) {
+                std::fprintf(stderr, "  FAIL: switching to proxies did not change what was read\n");
+                return 1;
+            }
+
+            // Back to the originals, which is also what export uses whatever
+            // this toggle says.
+            window.project().setUsingProxies(false);
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            for (auto& media : window.project().mediaMutable()) {
+                media.proxyPath.clear();
             }
             window.monitor()->update();
             QApplication::processEvents();

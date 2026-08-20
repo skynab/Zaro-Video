@@ -28,7 +28,13 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
         return Error{ErrorCode::InvalidData, "there is nothing in that range to render"};
     }
 
-    auto sourceOpened = ProjectMediaSource::open(project, request.cacheBudgetBytes);
+    // Always the originals. Delivering the small copies because somebody left a
+    // toggle on is a mistake with no warning attached and no way back once the
+    // file has gone out, so export takes a copy of the project with proxies off
+    // rather than trusting whatever state it was handed.
+    model::Project forDelivery = project;
+    forDelivery.setUsingProxies(false);
+    auto sourceOpened = ProjectMediaSource::open(forDelivery, request.cacheBudgetBytes);
     if (!sourceOpened) {
         return sourceOpened.error();
     }

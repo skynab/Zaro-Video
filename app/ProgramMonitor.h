@@ -46,6 +46,8 @@ protected:
 
 private:
     const model::Sequence* sequence_{nullptr};
+    void ensureGraph();
+
     render::SourceFrameProvider* provider_{nullptr};
     render::TextRasterizer* text_{nullptr};
     time::RationalTime position_{};

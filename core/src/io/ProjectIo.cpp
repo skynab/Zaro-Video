@@ -637,11 +637,15 @@ json encode(const model::MediaRef& ref) {
         cached["audioSampleRate"] = encode(audio->sampleRate);
         cached["audioChannels"] = audio->channelCount;
     }
-    return json{{"id", ref.id.value()},
-                {"path", ref.path},
-                {"contentHash", ref.contentHash},
-                {"name", ref.name},
-                {"cachedInfo", std::move(cached)}};
+    json out{{"id", ref.id.value()},
+             {"path", ref.path},
+             {"contentHash", ref.contentHash},
+             {"name", ref.name},
+             {"cachedInfo", std::move(cached)}};
+    if (!ref.proxyPath.empty()) {
+        out["proxyPath"] = ref.proxyPath;
+    }
+    return out;
 }
 
 // --- Decoding ---------------------------------------------------------------
@@ -889,6 +893,7 @@ Result<model::MediaRef> decodeMedia(const json& node) {
         return Error{ErrorCode::InvalidData, "a media reference has no id"};
     }
     ref.path = node.value("path", std::string{});
+    ref.proxyPath = node.value("proxyPath", std::string{});
     ref.contentHash = node.value("contentHash", std::string{});
     ref.name = node.value("name", std::string{});
 
@@ -1016,6 +1021,11 @@ Result<std::string> saveProjectToString(const model::Project& project,
                   {"activeSequence", project.activeSequence().value()},
                   {"media", std::move(media)},
                   {"sequences", std::move(sequences)}};
+    if (project.usingProxies()) {
+        // Only when on. A project that has never seen a proxy should not carry
+        // a line saying so.
+        document["useProxies"] = true;
+    }
 
     if (unknown != nullptr) {
         mergePreserved(document, unknown->document());
@@ -1077,6 +1087,7 @@ Result<LoadedProject> loadProjectFromString(const std::string& text) {
         sequences.push_back(std::move(*sequence));
     }
 
+    loaded.project.setUsingProxies(document.value("useProxies", false));
     loaded.project.setMedia(std::move(media));
     loaded.project.setSequences(std::move(sequences));
     loaded.project.setActiveSequence(
