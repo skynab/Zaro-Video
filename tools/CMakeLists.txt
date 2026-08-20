@@ -19,6 +19,10 @@ add_executable(zaro-render zaro-render/main.cpp)
 target_link_libraries(zaro-render
     PRIVATE zaro::platform_ffmpeg zaro::platform_qtext Qt6::Gui zaro::warnings)
 
+# Interchange needs no media and no toolkit: it is a file conversion.
+add_executable(zaro-otio zaro-otio/main.cpp)
+target_link_libraries(zaro-otio PRIVATE zaro::core zaro::warnings)
+
 add_executable(zaro-play zaro-play/main.cpp)
 target_link_libraries(zaro-play
     PRIVATE zaro::platform_ffmpeg zaro::platform_sdl zaro::platform_qrhi zaro::warnings)

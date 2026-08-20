@@ -43,6 +43,7 @@
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
@@ -117,6 +118,30 @@ public:
         // The transport belongs under the program monitor, not at the bottom of
         // the window: it controls the picture above it, and putting the timeline
         // between them makes that relationship harder to see.
+        // Export only, from the window. Importing an OTIO file produces a
+        // project of its own, and replacing the open one needs a "save first?"
+        // that does not exist yet -- so that direction lives in zaro-otio,
+        // where there is nothing to lose.
+        auto* otioButton = new QPushButton("Export OTIO…", this);
+        otioButton->setToolTip("Write this sequence as an OpenTimelineIO file");
+        otioButton->setMinimumWidth(otioButton->sizeHint().width());
+        transportRow->addWidget(otioButton);
+        connect(otioButton, &QPushButton::clicked, this, [this] {
+            if (sequence_ == nullptr) {
+                return;
+            }
+            const QString path = QFileDialog::getSaveFileName(
+                this, "Export OpenTimelineIO", "timeline.otio", "OpenTimelineIO (*.otio)");
+            if (path.isEmpty()) {
+                return;
+            }
+            if (Status saved = io::saveOtio(project_, sequence_->id(), path.toStdString());
+                !saved) {
+                QMessageBox::warning(this, "OpenTimelineIO",
+                                     QString::fromStdString(saved.error().toString()));
+            }
+        });
+
         auto* captionsButton = new QPushButton("Captions…", this);
         captionsButton->setToolTip("Import, export or burn in subtitles");
         captionsButton->setMinimumWidth(captionsButton->sizeHint().width());
@@ -1514,12 +1539,24 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            // Somewhere with sound on it.
-            window.setPosition(zaro::time::RationalTime{12, sequence.frameRate()});
-            QApplication::processEvents();
-            window.updateMeters();
-            const float heard = meter->hold();
-            const float masterHeard = master->hold();
+            // This fixture's audio is clicks a second apart, so most positions
+            // are silence -- and a peak hold is designed to keep showing the
+            // last loud thing, so reading it at one arbitrary position gives
+            // either the click or whatever was held from somewhere else. Scan
+            // instead, and take the loudest.
+            const auto loudest = [&](app::LevelMeter* which) {
+                float peak = 0.0F;
+                for (std::int64_t frame = 0; frame < 60; ++frame) {
+                    which->resetHold();
+                    window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                    QApplication::processEvents();
+                    window.updateMeters();
+                    peak = std::max(peak, which->hold());
+                }
+                return peak;
+            };
+            const float heard = loudest(meter);
+            const float masterHeard = loudest(master);
 
             // Solo a *video* track: the audio track is not soloed, so it falls
             // silent even though nobody muted it.
@@ -1537,10 +1574,7 @@ int main(int argc, char** argv) {
             }
             window.commands().execute(window.project(), std::move(*built));
             window.mixer()->refresh();
-            meter->resetHold();
-            master->resetHold();
-            window.updateMeters();
-            const float silenced = meter->hold();
+            const float silenced = loudest(meter);
 
             std::printf(
                 "  mixer meters: %.3f heard, %.3f once something else is soloed "

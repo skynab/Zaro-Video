@@ -1240,6 +1240,49 @@ frame. Both said "no difference" while the code was right.
 
 ---
 
+#### Phase 5n — OpenTimelineIO ✅
+
+Read and write OTIO, a `zaro-otio` conversion tool, and export from the window.
+§7.7 called this the highest-leverage item in the inventory and it is: an edit
+can leave here and come back, or arrive from a system that has never heard of
+this one.
+
+**An OTIO track is a sequence, not a set of placed clips.** Position is implied
+by order and duration, and a hole is a `Gap` — an object, not an absence.
+Everything else follows: writing emits the gaps, reading accumulates durations
+back into positions, and a test checks that a clip at frame 40 comes back at
+frame 40 rather than at zero.
+
+**Broadcast rates are snapped back on the way in.** OTIO writes rates as
+doubles, so 24000/1001 becomes 23.976023976023978, and reading that as a ratio
+gives something nobody means — a sequence that drifts against every other tool
+by a fraction of a frame per hour. A rate within a hair of a standard becomes
+the exact rational for it.
+
+**The timeline's rate is carried by its start time**, because OTIO states it
+nowhere else. That took a bug to notice: a sequence's start time defaults to a
+24fps zero, so a 25fps timeline was being written as 24 and read back as 24. It
+is rescaled into the sequence's own rate now, always.
+
+**An unknown item still advances the cursor.** A Stack or a Transition inside a
+track is skipped rather than guessed at — but its duration counts, or everything
+after it lands early.
+
+**Importing produces a project of its own.** An OTIO file names media by URL,
+and matching those against media already open is a different decision from
+reading the file. That is also why import lives in `zaro-otio` and not in the
+window: replacing the open project needs a "save first?" that does not exist
+yet, and the tool has nothing to lose.
+
+**A flaky self-test, and the flake was informative.** The mixer check read the
+meter at one arbitrary position. This fixture's audio is clicks a second apart,
+so most positions are silence — and a peak hold is *designed* to keep showing
+the last loud thing, so the test was reading a value held over from wherever the
+playhead had been earlier. It scans for the loudest position now, and four
+consecutive runs agree.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

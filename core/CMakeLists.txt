@@ -17,6 +17,7 @@ add_library(zaro_core
     src/edit/Operations.cpp
     src/edit/Snapping.cpp
     src/io/CubeLut.cpp
+    src/io/OtioIo.cpp
     src/io/SubtitleIo.cpp
     src/io/ProjectIo.cpp
     src/playback/AudioRingBuffer.cpp
