@@ -1878,6 +1878,31 @@ Result<CommandPtr> makeSetTrackState(Project& project, model::SequenceId sequenc
                        });
 }
 
+Result<CommandPtr> makeSetTrackProcessing(Project& project, model::SequenceId sequenceId,
+                                          TrackId trackId, const model::AudioEq& eq,
+                                          const model::Compressor& compressor) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr || sequence->findTrack(trackId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such track in this sequence"};
+    }
+    for (const double value :
+         {eq.highPassHz, eq.lowPassHz, eq.peakHz, eq.peakGainDb, eq.peakQ, compressor.thresholdDb,
+          compressor.ratio, compressor.attackMs, compressor.releaseMs, compressor.makeupDb}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "processing settings have to be real numbers"};
+        }
+    }
+    return makeCommand(sequenceId, "Adjust processing",
+                       "processing:" + std::to_string(trackId.value()),
+                       [trackId, eq, compressor](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           if (track != nullptr) {
+                               track->setEq(eq);
+                               track->setCompressor(compressor);
+                           }
+                       });
+}
+
 Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,
                                 model::TrackKind kind, std::string name) {
     if (project.findSequence(sequenceId) == nullptr) {

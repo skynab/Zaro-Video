@@ -69,9 +69,13 @@ private:
         QCheckBox* mute{nullptr};
         QCheckBox* solo{nullptr};
         LevelMeter* meter{nullptr};
+        QCheckBox* eq{nullptr};
+        QCheckBox* compress{nullptr};
+        QLabel* reduction{nullptr};
     };
 
     void push(const Strip& strip);
+    void pushChain(const Strip& strip, bool eqOn, bool compressOn);
 
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;

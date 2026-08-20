@@ -496,6 +496,21 @@ json encode(const model::Track& track) {
     if (!transitions.empty()) {
         out["transitions"] = std::move(transitions);
     }
+    if (track.eq().enabled) {
+        const model::AudioEq& eq = track.eq();
+        out["eq"] =
+            json{{"enabled", true},     {"highPassHz", eq.highPassHz}, {"lowPassHz", eq.lowPassHz},
+                 {"peakHz", eq.peakHz}, {"peakGainDb", eq.peakGainDb}, {"peakQ", eq.peakQ}};
+    }
+    if (track.compressor().enabled) {
+        const model::Compressor& compressor = track.compressor();
+        out["compressor"] = json{{"enabled", true},
+                                 {"thresholdDb", compressor.thresholdDb},
+                                 {"ratio", compressor.ratio},
+                                 {"attackMs", compressor.attackMs},
+                                 {"releaseMs", compressor.releaseMs},
+                                 {"makeupDb", compressor.makeupDb}};
+    }
     if (track.isSoloed()) {
         // Only when set: solo is a transient state on most projects, and a
         // "soloed": false on every track is noise in a file people read.
@@ -727,6 +742,28 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     model::Track track{id, kind, node.value("name", std::string{})};
     track.setMuted(node.value("muted", false));
     track.setSoloed(node.value("soloed", false));
+    if (node.contains("eq") && node.at("eq").is_object()) {
+        const json& eqNode = node.at("eq");
+        model::AudioEq eq;
+        eq.enabled = eqNode.value("enabled", false);
+        eq.highPassHz = eqNode.value("highPassHz", eq.highPassHz);
+        eq.lowPassHz = eqNode.value("lowPassHz", eq.lowPassHz);
+        eq.peakHz = eqNode.value("peakHz", eq.peakHz);
+        eq.peakGainDb = eqNode.value("peakGainDb", eq.peakGainDb);
+        eq.peakQ = eqNode.value("peakQ", eq.peakQ);
+        track.setEq(eq);
+    }
+    if (node.contains("compressor") && node.at("compressor").is_object()) {
+        const json& compressorNode = node.at("compressor");
+        model::Compressor compressor;
+        compressor.enabled = compressorNode.value("enabled", false);
+        compressor.thresholdDb = compressorNode.value("thresholdDb", compressor.thresholdDb);
+        compressor.ratio = compressorNode.value("ratio", compressor.ratio);
+        compressor.attackMs = compressorNode.value("attackMs", compressor.attackMs);
+        compressor.releaseMs = compressorNode.value("releaseMs", compressor.releaseMs);
+        compressor.makeupDb = compressorNode.value("makeupDb", compressor.makeupDb);
+        track.setCompressor(compressor);
+    }
     track.setLocked(node.value("locked", false));
     track.setGainDb(node.value("gainDb", 0.0));
     track.setPan(node.value("pan", 0.0));

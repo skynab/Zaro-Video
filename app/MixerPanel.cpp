@@ -156,6 +156,15 @@ void MixerPanel::refresh() {
                 strip.mute = new QCheckBox("M", strips_);
                 strip.solo = new QCheckBox("S", strips_);
                 strip.meter = new LevelMeter(strips_);
+                // The chain, on and off. Its settings live in the project and
+                // are reachable from a file; a strip with eleven more spin
+                // boxes on it would be a strip nobody can read a level from,
+                // which is what a mixer is chiefly for.
+                strip.eq = new QCheckBox("EQ", strips_);
+                strip.eq->setToolTip("High pass, low pass and one bell");
+                strip.compress = new QCheckBox("Comp", strips_);
+                strip.reduction = new QLabel("0.0 dB", strips_);
+                strip.reduction->setToolTip("Gain reduction");
                 strip.meter->setObjectName(QString{"mixer-meter-"} +
                                            QString::number(track.id().value()));
 
@@ -170,6 +179,9 @@ void MixerPanel::refresh() {
                 buttonRow->addWidget(strip.mute);
                 buttonRow->addWidget(strip.solo);
                 layout->addWidget(buttons);
+                layout->addWidget(strip.eq);
+                layout->addWidget(strip.compress);
+                layout->addWidget(strip.reduction);
                 layout->addWidget(strip.gain);
                 layout->addWidget(strip.pan);
                 row->addWidget(column);
@@ -184,6 +196,12 @@ void MixerPanel::refresh() {
                     if (commands_ != nullptr) {
                         commands_->breakMerge();
                     }
+                });
+                connect(strip.eq, &QCheckBox::toggled, this, [this, captured](bool on) {
+                    pushChain(captured, on, captured.compress->isChecked());
+                });
+                connect(strip.compress, &QCheckBox::toggled, this, [this, captured](bool on) {
+                    pushChain(captured, captured.eq->isChecked(), on);
                 });
                 connect(strip.solo, &QCheckBox::toggled, this, [this, captured] {
                     push(captured);
@@ -210,6 +228,8 @@ void MixerPanel::refresh() {
         strip.name->setText(QString::fromStdString(track->name()));
         strip.gain->setValue(track->gainDb());
         strip.pan->setValue(track->pan());
+        strip.eq->setChecked(track->eq().enabled);
+        strip.compress->setChecked(track->compressor().enabled);
         strip.mute->setChecked(track->isMuted());
         strip.solo->setChecked(track->isSoloed());
         // A track silenced by someone else's solo is shown dimmed rather than
@@ -223,8 +243,36 @@ void MixerPanel::refresh() {
 void MixerPanel::setMeters(const render::AudioGraph::Meters& meters) {
     for (const Strip& strip : strip_) {
         strip.meter->setLevel(meters.peakFor(strip.track));
+        const auto found = meters.reduction.find(strip.track.value());
+        const float reduction = found == meters.reduction.end() ? 0.0F : found->second;
+        strip.reduction->setText(QString::number(static_cast<double>(reduction), 'f', 1) + " dB");
     }
     master_->setLevel(meters.masterPeak());
+}
+
+void MixerPanel::pushChain(const Strip& strip, bool eqOn, bool compressOn) {
+    if (updating_ || commands_ == nullptr || project_ == nullptr) {
+        return;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    const model::Track* track = sequence != nullptr ? sequence->findTrack(strip.track) : nullptr;
+    if (track == nullptr) {
+        return;
+    }
+    // The settings themselves are left alone: switching the chain off and on
+    // again should give back what was there, not a default.
+    model::AudioEq eq = track->eq();
+    eq.enabled = eqOn;
+    model::Compressor compressor = track->compressor();
+    compressor.enabled = compressOn;
+
+    auto built = edit::makeSetTrackProcessing(*project_, sequenceId_, strip.track, eq, compressor);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
 }
 
 void MixerPanel::push(const Strip& strip) {

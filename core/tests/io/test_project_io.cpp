@@ -303,6 +303,25 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     video.setPan(-0.4);
 
     model::Track& audio = sequence.tracksMutable(model::TrackKind::Audio).front();
+    {
+        model::AudioEq eq;
+        eq.enabled = true;
+        eq.highPassHz = 82.5;
+        eq.lowPassHz = 14250.0;
+        eq.peakHz = 2350.0;
+        eq.peakGainDb = -4.25;
+        eq.peakQ = 1.75;
+        audio.setEq(eq);
+
+        model::Compressor compressor;
+        compressor.enabled = true;
+        compressor.thresholdDb = -14.5;
+        compressor.ratio = 3.75;
+        compressor.attackMs = 7.25;
+        compressor.releaseMs = 185.0;
+        compressor.makeupDb = 2.25;
+        audio.setCompressor(compressor);
+    }
     audio.setGainDb(7.5);
     audio.setPan(0.9);
 
@@ -486,6 +505,9 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     const model::Track* loadedAudio = loadedSequence->findTrack(audioTrackId);
     REQUIRE(loadedAudio != nullptr);
     CHECK(loadedAudio->kind() == model::TrackKind::Audio);
+    CHECK(loadedAudio->eq() == project.findSequence(sequenceId)->audioTracks().front().eq());
+    CHECK(loadedAudio->compressor() ==
+          project.findSequence(sequenceId)->audioTracks().front().compressor());
     CHECK(loadedAudio->gainDb() == 7.5);
     CHECK(loadedAudio->pan() == 0.9);
 

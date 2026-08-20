@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "zaro/core/model/AudioProcessing.h"
 #include "zaro/core/model/Clip.h"
 #include "zaro/core/model/Transition.h"
 
@@ -62,6 +63,15 @@ public:
     void setSyncLocked(bool value) noexcept { syncLocked_ = value; }
 
     /// Track gain in decibels and pan from -1 to +1, applied after clip gain.
+    /// The track's processing chain. Applied to the summed clips, before the
+    /// fader — which is where an insert goes on every console ever built, and
+    /// means pulling the fader down turns down what the compressor did rather
+    /// than changing what it does.
+    [[nodiscard]] const AudioEq& eq() const noexcept { return eq_; }
+    void setEq(const AudioEq& value) { eq_ = value; }
+    [[nodiscard]] const Compressor& compressor() const noexcept { return compressor_; }
+    void setCompressor(const Compressor& value) { compressor_ = value; }
+
     [[nodiscard]] double gainDb() const noexcept { return gainDb_; }
     void setGainDb(double value) noexcept { gainDb_ = value; }
     [[nodiscard]] double pan() const noexcept { return pan_; }
@@ -138,6 +148,8 @@ private:
     /// cut in sync, and it should have to be turned off deliberately.
     bool syncLocked_{true};
     bool soloed_{false};
+    AudioEq eq_;
+    Compressor compressor_;
     double gainDb_{0.0};
     double pan_{0.0};
 };

@@ -6,6 +6,7 @@
 
 #include "zaro/core/media/AudioBuffer.h"
 #include "zaro/core/model/Sequence.h"
+#include "zaro/core/render/AudioProcessor.h"
 #include "zaro/core/render/FrameSource.h"
 
 namespace zaro::render {
@@ -44,6 +45,9 @@ public:
         std::map<std::uint64_t, float> tracks;
         /// The summed output, per channel.
         std::vector<float> master;
+        /// How much the compressor pulled each track down, in decibels. Never
+        /// positive, and zero where nothing is compressing.
+        std::map<std::uint64_t, float> reduction;
 
         [[nodiscard]] float peakFor(model::TrackId track) const {
             const auto found = tracks.find(track.value());
@@ -56,10 +60,23 @@ public:
 
     [[nodiscard]] const Meters& meters() const noexcept { return meters_; }
 
+    /// Forget every filter's delay line and every compressor's envelope.
+    ///
+    /// **Processing has state, so mixing is no longer a pure function of
+    /// time.** That is the point of a compressor — but it means a seek has to
+    /// reset the chain, or the envelope from one part of the timeline follows
+    /// the playhead to another and the first second after a jump is ducked for
+    /// no reason. Anything that moves the playhead calls this.
+    void resetProcessing();
+
 private:
     AudioSource* source_;
     std::int32_t lastClipCount_{0};
     Meters meters_;
+    /// One processing chain per track, kept between blocks because a filter's
+    /// delay line and a compressor's envelope are exactly the state that makes
+    /// them work.
+    std::map<std::uint64_t, TrackProcessor> processors_;
 };
 
 /// Decibels to a linear factor. -inf and anything below the floor become

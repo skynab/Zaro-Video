@@ -24,6 +24,7 @@ add_library(zaro_core
     src/playback/PlaybackScheduler.cpp
     src/playback/Transport.cpp
     src/render/AudioGraph.cpp
+    src/render/AudioProcessor.cpp
     src/render/ColorPipeline.cpp
     src/render/FrameCache.cpp
     src/render/Compositing.cpp

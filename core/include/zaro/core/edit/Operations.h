@@ -368,6 +368,13 @@ struct TrackState {
                                                    model::SequenceId sequence, model::TrackId track,
                                                    const TrackState& state);
 
+/// A track's processing chain.
+[[nodiscard]] Result<CommandPtr> makeSetTrackProcessing(model::Project& project,
+                                                        model::SequenceId sequence,
+                                                        model::TrackId track,
+                                                        const model::AudioEq& eq,
+                                                        const model::Compressor& compressor);
+
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,
                                               model::TrackKind kind, std::string name);
 

@@ -280,6 +280,7 @@ public:
     [[nodiscard]] app::EffectControls* effects() const { return effects_; }
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
+    [[nodiscard]] render::AudioSource& media() { return *media_; }
 
     /// Feed the mixer's meters.
     ///
@@ -644,6 +645,11 @@ private:
 
     void pumpAudio() {
         render::AudioGraph mixer{*media_};
+        // A compressor's envelope and a filter's delay line are state, so
+        // starting playback somewhere new has to begin from silence -- else the
+        // first moment after a jump is ducked by whatever was loud wherever the
+        // playhead was before.
+        mixer.resetProcessing();
         const time::Rational& audioRate = sequence_->audioSampleRate();
         constexpr std::int32_t kChannels = 2;
 
@@ -1374,6 +1380,68 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // The processing chain, through the mixer. The filters and the
+        // compressor are tested headlessly against known responses; what that
+        // cannot show is whether the strip's buttons reach the mix.
+        {
+            const auto audioTrackId =
+                window.project().findSequence(sequence.id())->audioTracks().front().id();
+            auto* eqBox = window.mixer()->findChild<QCheckBox*>();
+            if (eqBox == nullptr) {
+                std::fprintf(stderr, "  FAIL: the mixer strip has no controls\n");
+                return 1;
+            }
+
+            // A hard low pass: the fixture's audio is clicks, which are almost
+            // entirely high frequency, so removing the top takes most of it.
+            zaro::model::AudioEq eq;
+            eq.enabled = true;
+            eq.lowPassHz = 300.0;
+            auto built = zaro::edit::makeSetTrackProcessing(
+                window.project(), sequence.id(), audioTrackId, eq, zaro::model::Compressor{});
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+
+            const auto loudestNow = [&]() {
+                zaro::render::AudioGraph probe{window.media()};
+                float peak = 0.0F;
+                const auto& audioRate = sequence.audioSampleRate();
+                for (std::int64_t frame = 0; frame < 60; ++frame) {
+                    probe.resetProcessing();
+                    const zaro::time::RationalTime at{frame, sequence.frameRate()};
+                    if (auto mixed =
+                            probe.mix(*window.sequence(), at.rescaledTo(audioRate), 2048, 2)) {
+                        for (std::int64_t i = 0; i < mixed->sampleCount(); ++i) {
+                            peak = std::max(peak, std::fabs(mixed->channel(0)[i]));
+                        }
+                    }
+                }
+                return peak;
+            };
+
+            const float plain = loudestNow();
+            window.commands().execute(window.project(), std::move(*built));
+            const float filtered = loudestNow();
+
+            std::printf("  audio processing: %.3f plain, %.3f through a 300 Hz low pass\n",
+                        static_cast<double>(plain), static_cast<double>(filtered));
+            if (!(plain > 0.05F)) {
+                std::fprintf(stderr, "  FAIL: nothing to filter\n");
+                return 1;
+            }
+            if (!(filtered < plain * 0.5F)) {
+                std::fprintf(stderr, "  FAIL: the low pass did not reach the mix\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.mixer()->refresh();
         }
 
         // A mask, through the panel and the real GPU compositor. The geometry

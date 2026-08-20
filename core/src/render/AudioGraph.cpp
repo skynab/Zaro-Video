@@ -42,6 +42,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
     media::AudioBuffer mixed{channelCount, sampleCount, rate};
     lastClipCount_ = 0;
     meters_.tracks.clear();
+    meters_.reduction.clear();
     meters_.master.assign(static_cast<std::size_t>(channelCount), 0.0F);
     if (sampleCount == 0) {
         return mixed;
@@ -57,11 +58,14 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
         if (!sequence.isAudible(track)) {
             continue;
         }
-        // Measured per track by summing that track's clips into the mix and
-        // watching what it added. A meter that showed the running total would
-        // read the same on every track, which is the sum, not the track.
         float trackPeak = 0.0F;
         const float trackGain = gainFromDb(track.gainDb());
+
+        // The track's own bus. Clips sum into this, the processing chain runs
+        // on it, and only then does the fader apply -- which is where an insert
+        // goes on every console ever built, and means pulling the fader down
+        // turns down what the compressor did rather than changing what it does.
+        media::AudioBuffer bus{channelCount, sampleCount, rate};
         // The track bus is already stereo, so its pan control is a balance.
         float trackLeft = 1.0F;
         float trackRight = 1.0F;
@@ -198,34 +202,53 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 // sides. Anything wider is folded by taking the first channels,
                 // which is a placeholder until real channel mapping arrives.
                 const std::int32_t from = std::min(channel, sourceChannels - 1);
-                const float pan = channelCount == 1 ? 1.0F
-                                                    : (channel == 0 ? clipLeft * trackLeft
-                                                                    : clipRight * trackRight);
-                const float gain = clipGain * trackGain * pan;
+                // Clip gain and pan only. The track's fader and balance come
+                // after the processing, below.
+                const float pan = channelCount == 1 ? 1.0F : (channel == 0 ? clipLeft : clipRight);
+                const float gain = clipGain * pan;
 
                 const float* in = scratch.channel(from);
-                float* out = mixed.channel(channel);
+                float* out = bus.channel(channel);
                 if (!automated) {
                     for (std::int64_t i = 0; i < available; ++i) {
-                        const float value = in[i] * gain;
-                        trackPeak = std::max(trackPeak, std::fabs(value));
-                        out[offsetInBlock + i] += value;
+                        out[offsetInBlock + i] += in[i] * gain;
                     }
                     continue;
                 }
-                const float busGain =
-                    trackGain *
-                    (channelCount == 1 ? 1.0F : (channel == 0 ? trackLeft : trackRight));
                 const std::vector<float>& side = channel == 0 ? leftPan : rightPan;
                 for (std::int64_t i = 0; i < available; ++i) {
                     const auto at = static_cast<std::size_t>(i);
                     const float placed = channelCount == 1 ? 1.0F : side[at];
-                    const float value = in[i] * clipGains[at] * placed * busGain;
-                    trackPeak = std::max(trackPeak, std::fabs(value));
-                    out[offsetInBlock + i] += value;
+                    out[offsetInBlock + i] += in[i] * clipGains[at] * placed;
                 }
             }
             ++lastClipCount_;
+        }
+
+        // Processing, then the fader. The chain keeps state between blocks, so
+        // it is kept per track rather than rebuilt: a filter that forgot its
+        // last two samples every block would ring at every boundary.
+        TrackProcessor& chain = processors_[track.id().value()];
+        chain.configure(track.eq(), track.compressor(), rate.toDouble(), channelCount);
+        std::vector<float*> busChannels(static_cast<std::size_t>(channelCount));
+        for (std::int32_t channel = 0; channel < channelCount; ++channel) {
+            busChannels[static_cast<std::size_t>(channel)] = bus.channel(channel);
+        }
+        chain.process(busChannels.data(), channelCount, sampleCount);
+        meters_.reduction[track.id().value()] = chain.lastReductionDb();
+
+        for (std::int32_t channel = 0; channel < channelCount; ++channel) {
+            const float busGain =
+                trackGain * (channelCount == 1 ? 1.0F : (channel == 0 ? trackLeft : trackRight));
+            const float* in = bus.channel(channel);
+            float* out = mixed.channel(channel);
+            for (std::int64_t i = 0; i < sampleCount; ++i) {
+                const float value = in[i] * busGain;
+                // Measured post-fader: what the track contributes, which is
+                // what a strip's meter is for.
+                trackPeak = std::max(trackPeak, std::fabs(value));
+                out[i] += value;
+            }
         }
         meters_.tracks[track.id().value()] = trackPeak;
     }
@@ -241,6 +264,12 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
         meters_.master[static_cast<std::size_t>(channel)] = peak;
     }
     return mixed;
+}
+
+void AudioGraph::resetProcessing() {
+    for (auto& [id, processor] : processors_) {
+        processor.reset();
+    }
 }
 
 }  // namespace zaro::render

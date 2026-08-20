@@ -54,7 +54,8 @@ headless: there is no window yet.
 | 5n | OpenTimelineIO interchange, `zaro-otio` | **done** |
 | 5o | Masks: shape mattes with feather and invert | **done** |
 | 5p | Speed and reverse, with retimed audio | **done** |
-| 5q | §7 remainder: proxies, multicam, nesting | next |
+| 5q | Track EQ and compression, before the fader | **done** |
+| 5r | §7 remainder: proxies, multicam, nesting | next |
 
 ## Building
 

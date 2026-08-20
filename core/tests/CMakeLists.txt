@@ -48,6 +48,7 @@ add_executable(zaro_core_tests
     render/test_shapes.cpp
     render/test_text.cpp
     render/test_audio_graph.cpp
+    render/test_audio_processing.cpp
 )
 
 target_link_libraries(zaro_core_tests

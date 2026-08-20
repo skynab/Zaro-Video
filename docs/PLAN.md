@@ -1358,6 +1358,53 @@ something was drawn.
 
 ---
 
+#### Phase 5q — track EQ and compression ✅
+
+A three-section equaliser and a compressor on every audio track, inserted before
+the fader, with the strip's controls in the mixer.
+
+**Before the fader, which is where an insert goes on every console ever built.**
+Pulling the fader down then turns down what the compressor did rather than
+changing what it does. That needed the mix restructuring: clips now sum into a
+per-track bus, the chain runs on the bus, and only then does the fader apply.
+The track meter moved with it and is measured post-fader, which is what a strip's
+meter is for.
+
+**Processing has state, so mixing is no longer a pure function of time.** A
+filter's delay line and a compressor's envelope both depend on what came
+immediately before — that is the point of them — but it means a seek has to
+reset the chain, or the envelope from one part of the timeline follows the
+playhead to another and the first moment after a jump is ducked for no reason.
+`resetProcessing` is that reset and playback calls it.
+
+**One detector across all channels.** Compressing each side separately makes the
+stereo image wander whenever one of them alone is loud, which is what makes a
+mix sound unstable rather than controlled. A test drives one side hard and the
+other quietly and requires their ratio to survive.
+
+**Three EQ sections, not eight.** A dialogue track needs the rumble out, the
+hiss off, and one bell for whatever the room did. A parametric with eight bands
+is a different tool and mostly a way to make a track worse more precisely.
+
+**A section set to nothing is a bypass, not a near-bypass.** Three sections that
+each nearly do nothing still colour a track that was supposed to be untouched,
+so zero frequencies and zero gains take the filter out of the path entirely.
+
+**A limiter is the compressor with a ratio nobody argues with.** Having both
+boxes would mean explaining which runs first.
+
+Coefficients are the RBJ cookbook's, so a filter set to 80 Hz here is the same
+filter as 80 Hz anywhere else. The tests measure actual responses — 3 dB down at
+the corner, 6 dB of bell being a factor of two, a 4:1 ratio turning 20 dB over
+into 5 — rather than checking that numbers were stored.
+
+One test of mine was wrong before it was right: it asserted a 20 ms attack had
+audibly engaged after 1 ms, which it has not and should not. It checks the shape
+of the attack now — that the reduction deepens over time — rather than one
+arbitrary instant.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly
