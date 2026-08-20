@@ -1360,3 +1360,127 @@ TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
         CHECK(difference.mean < 0.002F);
     }
 }
+
+TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]") {
+    // The one effect that changes *alpha* rather than colour, so a disagreement
+    // between the two paths shows up as an edge that is soft in preview and
+    // hard in the export -- or the other way round, which is worse because the
+    // export is the one nobody watches all the way through.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::Keyer keyer;
+    };
+    std::vector<Case> cases;
+    {
+        model::Keyer green;
+        green.kind = model::KeyKind::Chroma;
+        green.red = 0.05;
+        green.green = 0.85;
+        green.blue = 0.1;
+        green.tolerance = 0.12;
+        green.softness = 0.08;
+        green.spill = 1.0;
+        cases.push_back({"green screen", green});
+
+        model::Keyer blue = green;
+        blue.red = 0.05;
+        blue.green = 0.1;
+        blue.blue = 0.85;
+        blue.spill = 0.5;
+        cases.push_back({"blue screen, half spill", blue});
+
+        model::Keyer wide = green;
+        wide.tolerance = 0.30;
+        wide.softness = 0.35;
+        wide.spill = 0.0;
+        cases.push_back({"a wide, soft key", wide});
+
+        model::Keyer luma;
+        luma.kind = model::KeyKind::Luma;
+        luma.lumaLow = 0.0;
+        luma.lumaHigh = 0.35;
+        luma.lumaSoftness = 0.12;
+        cases.push_back({"drop the shadows", luma});
+
+        model::Keyer matte = green;
+        matte.showMatte = true;
+        cases.push_back({"matte view", matte});
+    }
+
+    // Every hue, a spread of saturations, and brightnesses from shadow to above
+    // white, so the chromaticity divide is exercised near zero as well as in
+    // the middle.
+    RgbaImage source{48, 48};
+    for (std::int32_t y = 0; y < 48; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 48; ++x) {
+            const float hue = (static_cast<float>(x) / 48.0F) * 6.0F;
+            const auto sector = static_cast<int>(hue) % 6;
+            const float f = hue - std::floor(hue);
+            const float level = 0.001F + ((static_cast<float>(y) / 47.0F) * 1.2F);
+            const float dull = static_cast<float>(y % 3) * 0.25F;
+            float r = 0.0F;
+            float g = 0.0F;
+            float b = 0.0F;
+            switch (sector) {
+                case 0:
+                    r = 1.0F;
+                    g = f;
+                    break;
+                case 1:
+                    r = 1.0F - f;
+                    g = 1.0F;
+                    break;
+                case 2:
+                    g = 1.0F;
+                    b = f;
+                    break;
+                case 3:
+                    g = 1.0F - f;
+                    b = 1.0F;
+                    break;
+                case 4:
+                    r = f;
+                    b = 1.0F;
+                    break;
+                default:
+                    r = 1.0F;
+                    b = 1.0F - f;
+                    break;
+            }
+            row[x] =
+                Rgba{((r * (1.0F - dull)) + dull) * level, ((g * (1.0F - dull)) + dull) * level,
+                     ((b * (1.0F - dull)) + dull) * level, 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const auto keyer =
+            render::keyerConstantsFor(testCase.keyer, media::TransferFunction::BT709);
+        REQUIRE(keyer.isActive());
+        const render::GradeConstants neutral;
+
+        RgbaImage cpuOut{48, 48};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
+                                nullptr, nullptr, 1.0F, nullptr, &keyer);
+
+        REQUIRE(compositor->beginFrame(48, 48).ok());
+        REQUIRE(compositor
+                    ->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, nullptr,
+                           nullptr, 1.0F, nullptr, &keyer)
+                    .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.002F);
+    }
+}

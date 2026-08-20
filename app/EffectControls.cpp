@@ -12,6 +12,7 @@
 #include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/model/ColorCorrection.h"
@@ -278,6 +279,48 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     connect(maskShape_, &QComboBox::currentIndexChanged, this, [this] { pushMask(); });
     connect(maskInverted_, &QCheckBox::toggled, this, [this] { pushMask(); });
 
+    // The keyer: what of this clip is transparent. Its own group rather than a
+    // corner of the secondary, because it looks like a qualifier and answers a
+    // different question -- one is "which pixels to correct", the other is
+    // "which pixels are there at all".
+    keyKind_ = new QComboBox(this);
+    keyKind_->setObjectName("key-kind");
+    keyKind_->addItem("none", static_cast<int>(model::KeyKind::None));
+    keyKind_->addItem("colour", static_cast<int>(model::KeyKind::Chroma));
+    keyKind_->addItem("brightness", static_cast<int>(model::KeyKind::Luma));
+    keyRed_ = makeSpin(0.0, 1.0, 0.05, 3);
+    keyGreen_ = makeSpin(0.0, 1.0, 0.05, 3);
+    keyBlue_ = makeSpin(0.0, 1.0, 0.05, 3);
+    keyTolerance_ = makeSpin(0.0, 1.0, 0.01, 3);
+    keySoftness_ = makeSpin(0.0, 1.0, 0.01, 3);
+    keySpill_ = makeSpin(0.0, 1.0, 0.05, 2);
+    keySpill_->setObjectName("key-spill");
+    keyLumaLow_ = makeSpin(0.0, 1.0, 0.01, 3);
+    keyLumaHigh_ = makeSpin(0.0, 1.0, 0.01, 3);
+    keyShowMatte_ = new QCheckBox("Show the matte", this);
+    keyShowMatte_->setObjectName("key-matte");
+
+    auto* keyBox = new QGroupBox("Key", this);
+    auto* keyForm = new QFormLayout(keyBox);
+    keyForm->addRow("Key", keyKind_);
+    keyForm->addRow("Red", keyRed_);
+    keyForm->addRow("Green", keyGreen_);
+    keyForm->addRow("Blue", keyBlue_);
+    keyForm->addRow("Tolerance", keyTolerance_);
+    keyForm->addRow("Softness", keySoftness_);
+    keyForm->addRow("Spill", keySpill_);
+    keyForm->addRow("Dark from", keyLumaLow_);
+    keyForm->addRow("Dark to", keyLumaHigh_);
+    keyForm->addRow(keyShowMatte_);
+    keyGroup_ = keyBox;
+
+    for (QDoubleSpinBox* spin : {keyRed_, keyGreen_, keyBlue_, keyTolerance_, keySoftness_,
+                                 keySpill_, keyLumaLow_, keyLumaHigh_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushKeyer(); });
+    }
+    connect(keyKind_, &QComboBox::currentIndexChanged, this, [this] { pushKeyer(); });
+    connect(keyShowMatte_, &QCheckBox::toggled, this, [this] { pushKeyer(); });
+
     // A generated shape. Shown only for a clip that is one: the controls are
     // meaningless on a clip with media, and a panel full of inert fields is
     // worse than one that says nothing.
@@ -332,6 +375,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(maskBox);
     layout->addWidget(colour);
     layout->addWidget(secondary);
+    layout->addWidget(keyBox);
     layout->addWidget(audio);
     layout->addStretch(1);
 
@@ -411,6 +455,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     maskGroup_->setEnabled(enabled);
     colorGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
+    keyGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
 }
 
@@ -439,6 +484,8 @@ void EffectControls::applyToWidgets() {
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
         timeRemap_->setChecked(false);
+        keyKind_->setCurrentIndex(keyKind_->findData(static_cast<int>(model::KeyKind::None)));
+        keyShowMatte_->setChecked(false);
         graphicGroup_->setVisible(false);
         maskGroup_->setVisible(false);
         curves_->setCurves(model::ToneCurves{});
@@ -482,6 +529,7 @@ void EffectControls::applyToWidgets() {
     videoGroup_->setVisible(isVideo);
     colorGroup_->setVisible(isVideo);
     secondaryGroup_->setVisible(isVideo);
+    keyGroup_->setVisible(isVideo);
     audioGroup_->setVisible(!isVideo);
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
@@ -535,6 +583,30 @@ void EffectControls::applyToWidgets() {
     lutAmount_->setValue(clip->lut.amount);
     lutAmount_->setEnabled(!path.isEmpty());
     lutClear_->setEnabled(!path.isEmpty());
+
+    const model::Keyer& key = clip->keyer;
+    keyKind_->setCurrentIndex(keyKind_->findData(static_cast<int>(key.kind)));
+    keyRed_->setValue(key.red);
+    keyGreen_->setValue(key.green);
+    keyBlue_->setValue(key.blue);
+    keyTolerance_->setValue(key.tolerance);
+    keySoftness_->setValue(key.softness);
+    keySpill_->setValue(key.spill);
+    keyLumaLow_->setValue(key.lumaLow);
+    keyLumaHigh_->setValue(key.lumaHigh);
+    keyShowMatte_->setChecked(key.showMatte);
+    // A colour key's controls are meaningless on a brightness key and the other
+    // way round. Disabled rather than hidden: the panel keeps its shape, so
+    // switching kinds does not make everything below jump.
+    const bool chroma = key.kind == model::KeyKind::Chroma;
+    const bool luma = key.kind == model::KeyKind::Luma;
+    for (QDoubleSpinBox* spin :
+         {keyRed_, keyGreen_, keyBlue_, keyTolerance_, keySoftness_, keySpill_}) {
+        spin->setEnabled(chroma);
+    }
+    keyLumaLow_->setEnabled(luma);
+    keyLumaHigh_->setEnabled(luma);
+    keyShowMatte_->setEnabled(key.isSet());
 
     timeRemap_->setChecked(clip->isTimeRemapped());
     // Freezing a clip that is already frozen is a no-op the operation refuses,
@@ -836,6 +908,34 @@ model::Secondary EffectControls::secondaryFromWidgets() const {
     out.correction.exposure = keyExposure_->value();
     out.correction.saturation = keySaturation_->value();
     return out;
+}
+
+void EffectControls::pushKeyer() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    model::Keyer keyer;
+    keyer.kind = static_cast<model::KeyKind>(keyKind_->currentData().toInt());
+    keyer.red = keyRed_->value();
+    keyer.green = keyGreen_->value();
+    keyer.blue = keyBlue_->value();
+    keyer.tolerance = keyTolerance_->value();
+    keyer.softness = keySoftness_->value();
+    keyer.spill = keySpill_->value();
+    keyer.lumaLow = keyLumaLow_->value();
+    // A window that ends before it starts is refused by the operation, which
+    // would leave the panel showing a value the clip does not have. Dragging
+    // the bottom past the top pushes the top instead.
+    keyer.lumaHigh = std::max(keyLumaHigh_->value(), keyer.lumaLow);
+    keyer.showMatte = keyShowMatte_->isChecked();
+
+    auto built = edit::makeSetKeyer(*project_, {sequenceId_, track_}, clip_, keyer);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    applyToWidgets();
+    emit edited();
 }
 
 void EffectControls::pushMask() {

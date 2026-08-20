@@ -3,6 +3,7 @@
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/Keyer.h"
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {
@@ -23,7 +24,8 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination,
                      model::BlendMode blend = model::BlendMode::Normal,
                      const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr,
                      const SecondaryConstants* secondary = nullptr, const LutTable* lut = nullptr,
-                     float lutAmount = 1.0F, const model::Mask* mask = nullptr);
+                     float lutAmount = 1.0F, const model::Mask* mask = nullptr,
+                     const KeyerConstants* keyer = nullptr);
 
 /// Composite `source` over `destination` with no geometry -- the common case,
 /// and much faster than going through the sampler.
@@ -31,6 +33,7 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity = 
               model::BlendMode blend = model::BlendMode::Normal,
               const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr,
               const SecondaryConstants* secondary = nullptr, const LutTable* lut = nullptr,
-              float lutAmount = 1.0F, const model::Mask* mask = nullptr);
+              float lutAmount = 1.0F, const model::Mask* mask = nullptr,
+              const KeyerConstants* keyer = nullptr);
 
 }  // namespace zaro::render

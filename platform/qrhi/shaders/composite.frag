@@ -39,6 +39,12 @@ layout(std140, binding = 0) uniform Block {
     vec4 maskBox;     // xy: half size, zw: centre
     vec4 maskEdge;    // x: corner radius, y: feather, z: shape (1 rect, 2 ellipse),
                       // w: inverted
+    // The keyer: which pixels of this clip are transparent. Read before the
+    // grade, on the colour the camera saw.
+    vec4 keyColour;   // rgb: key chromaticity, w: kind (0 none, 1 chroma, 2 luma)
+    vec4 keyEdge;     // x: tolerance, y: outer, z: spill amount, w: spill channel
+    vec4 keyLuma;     // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
+    vec4 keyFlags;    // x: show the matte
 } ubuf;
 
 
@@ -179,6 +185,43 @@ vec3 applyGrade(vec3 colour)
     return colour;
 }
 
+// Must agree with render::keyMatte. Below this total intensity a pixel has no
+// reliable colour, and is kept: black in front of a green screen is a subject.
+const float kIntensityFloor = 1e-4;
+
+float keyMatte(vec3 colour)
+{
+    if (ubuf.keyColour.w > 1.5) {
+        float luma = dot(colour, kLumaWeights);
+        float inside = rampUp(luma, ubuf.keyLuma.y, ubuf.keyLuma.x) *
+                       rampDown(luma, ubuf.keyLuma.z, ubuf.keyLuma.w);
+        return clamp(1.0 - inside, 0.0, 1.0);
+    }
+
+    float sum = colour.r + colour.g + colour.b;
+    if (sum <= kIntensityFloor) {
+        return 1.0;
+    }
+    vec3 d = (colour / sum) - ubuf.keyColour.rgb;
+    return rampUp(length(d), ubuf.keyEdge.x, ubuf.keyEdge.y);
+}
+
+// Must agree with render::suppressSpill.
+vec3 suppressSpill(vec3 colour)
+{
+    if (ubuf.keyColour.w > 1.5 || ubuf.keyEdge.z <= 0.0) {
+        return colour;
+    }
+    int index = int(ubuf.keyEdge.w + 0.5);
+    float dominant = colour[index];
+    float ceiling = (colour[(index + 1) % 3] + colour[(index + 2) % 3]) * 0.5;
+    if (dominant <= ceiling) {
+        return colour;
+    }
+    colour[index] = dominant + ((ceiling - dominant) * ubuf.keyEdge.z);
+    return colour;
+}
+
 // Must agree with render::maskCoverage. The same signed distances the shape
 // rasteriser uses, so a mask and a shape of the same size cover the same pixels.
 float maskCoverage(vec2 offset)
@@ -225,11 +268,29 @@ void main()
 
     vec4 sampled = texture(source, texCoord);
 
-    // Graded un-premultiplied: a correction must not depend on how faded the
-    // clip is, or a grade would change through a dissolve.
+    // Keyed and graded un-premultiplied: neither must depend on how faded the
+    // clip is, or a grade would change through a dissolve and a matte would
+    // move with it.
     if (sampled.a > 0.0001) {
         vec3 straight = sampled.rgb / sampled.a;
-        sampled.rgb = applyGrade(straight) * sampled.a;
+        float alpha = sampled.a;
+        if (ubuf.keyColour.w > 0.5) {
+            float matte = keyMatte(straight);
+            if (ubuf.keyFlags.x > 0.5) {
+                // The matte itself, kept opaque, so a hole in it shows as grey
+                // rather than as a hole.
+                fragColor = vec4(vec3(matte) * alpha, alpha) * ubuf.params.x *
+                            maskCoverage(framePosition);
+                return;
+            }
+            straight = suppressSpill(straight);
+            alpha *= matte;
+            if (alpha <= 0.0001) {
+                fragColor = vec4(0.0);
+                return;
+            }
+        }
+        sampled = vec4(applyGrade(straight) * alpha, alpha);
     }
 
     // Values are premultiplied, so opacity scales colour and coverage together

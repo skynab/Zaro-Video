@@ -155,6 +155,19 @@ private:
     QCheckBox* timeRemap_{nullptr};
     QPushButton* freeze_{nullptr};
 
+    QComboBox* keyKind_{nullptr};
+    QDoubleSpinBox* keyRed_{nullptr};
+    QDoubleSpinBox* keyGreen_{nullptr};
+    QDoubleSpinBox* keyBlue_{nullptr};
+    QDoubleSpinBox* keyTolerance_{nullptr};
+    QDoubleSpinBox* keySoftness_{nullptr};
+    QDoubleSpinBox* keySpill_{nullptr};
+    QDoubleSpinBox* keyLumaLow_{nullptr};
+    QDoubleSpinBox* keyLumaHigh_{nullptr};
+    QCheckBox* keyShowMatte_{nullptr};
+    QWidget* keyGroup_{nullptr};
+    void pushKeyer();
+
     QCheckBox* qualifierOn_{nullptr};
     QCheckBox* showMask_{nullptr};
     HueBand* hueBand_{nullptr};

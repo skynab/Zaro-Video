@@ -22,8 +22,10 @@ constexpr std::array<float, 12> kQuad{
 };
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
-// mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32;
+// mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade,
+// five for the secondary, one for the look, two for the mask, four for the key.
+constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16);
+constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
 ///
@@ -104,7 +106,7 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
     return texture;
 }
 
-void writeGrade(std::array<float, 60>& uniformData, const render::GradeConstants& grade,
+void writeGrade(std::array<float, kUniformFloats>& uniformData, const render::GradeConstants& grade,
                 bool curved, const render::SecondaryConstants* secondary) {
     uniformData[20] = grade.balance.r;
     uniformData[21] = grade.balance.g;
@@ -147,7 +149,33 @@ void writeGrade(std::array<float, 60>& uniformData, const render::GradeConstants
     uniformData[47] = window.lumaOuterHigh;
 }
 
-void writeLook(std::array<float, 60>& uniformData, const render::LutTable* lut, float amount) {
+void writeKeyer(std::array<float, kUniformFloats>& uniformData,
+                const render::KeyerConstants* keyer) {
+    // Written unconditionally, like the secondary above and for the same
+    // reason: a call site that forgot would leave a kind of zero, which keys
+    // nothing and looks exactly like a feature that is switched off.
+    const bool keying = keyer != nullptr && keyer->isActive();
+    if (!keying) {
+        uniformData[63] = 0.0F;  // no key
+        return;
+    }
+    uniformData[60] = keyer->keyR;
+    uniformData[61] = keyer->keyG;
+    uniformData[62] = keyer->keyB;
+    uniformData[63] = keyer->kind == model::KeyKind::Luma ? 2.0F : 1.0F;
+    uniformData[64] = keyer->tolerance;
+    uniformData[65] = keyer->outer;
+    uniformData[66] = keyer->spill;
+    uniformData[67] = static_cast<float>(keyer->spillChannel);
+    uniformData[68] = keyer->lumaInnerLow;
+    uniformData[69] = keyer->lumaOuterLow;
+    uniformData[70] = keyer->lumaInnerHigh;
+    uniformData[71] = keyer->lumaOuterHigh;
+    uniformData[72] = keyer->showMatte ? 1.0F : 0.0F;
+}
+
+void writeLook(std::array<float, kUniformFloats>& uniformData, const render::LutTable* lut,
+               float amount) {
     const bool looked = lut != nullptr && lut->isValid() && amount > 0.0F;
     uniformData[48] = looked ? amount : 0.0F;
     uniformData[49] = looked ? lut->axisMax() : 1.0F;
@@ -157,7 +185,8 @@ void writeLook(std::array<float, 60>& uniformData, const render::LutTable* lut, 
     uniformData[51] = static_cast<float>(render::LutTable::kSize);
 }
 
-void writeMask(std::array<float, 60>& uniformData, const model::Mask* mask, QSize frame) {
+void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask* mask,
+               QSize frame) {
     // The frame size travels with every draw: the vertex shader needs it to
     // turn a clip position back into output pixels, which is the space a mask
     // is written in.
@@ -543,7 +572,8 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            BlendMode blend, const render::GradeConstants& grade,
                            const render::CurveTable* curves,
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
-                           float lutAmount, const model::Mask* mask) {
+                           float lutAmount, const model::Mask* mask,
+                           const render::KeyerConstants* keyer) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -637,7 +667,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 60> uniformData{};
+    std::array<float, kUniformFloats> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -646,6 +676,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
+    writeKeyer(uniformData, keyer);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -825,7 +856,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::CurveTable* curves,
                                  const render::SecondaryConstants* secondary,
                                  const render::LutTable* lut, float lutAmount,
-                                 const model::Mask* mask) {
+                                 const model::Mask* mask, const render::KeyerConstants* keyer) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1091,7 +1122,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 60> uniformData{};
+    std::array<float, kUniformFloats> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1100,6 +1131,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
+    writeKeyer(uniformData, keyer);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -1214,7 +1246,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     matrix.scale(scaleX, scaleY * flip);
 
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
-    std::array<float, 60> uniformData{};
+    std::array<float, kUniformFloats> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1225,6 +1257,9 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     writeGrade(uniformData, render::GradeConstants{}, false, nullptr);
     writeLook(uniformData, nullptr, 0.0F);
     writeMask(uniformData, nullptr, state.size);
+    // Nor keying: the frame being presented has already had every clip's key
+    // applied to it, and a second one would cut holes in the composite.
+    writeKeyer(uniformData, nullptr);
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

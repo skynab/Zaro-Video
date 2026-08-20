@@ -305,6 +305,10 @@ enum class PlaceMode {
                                                    const EditTarget& target, model::ClipId clip,
                                                    const model::ToneCurves& curves);
 
+/// The keyer: what of the clip is transparent.
+[[nodiscard]] Result<CommandPtr> makeSetKeyer(model::Project& project, const EditTarget& target,
+                                              model::ClipId clip, const model::Keyer& keyer);
+
 /// Primary colour correction: white balance, exposure, contrast, saturation.
 [[nodiscard]] Result<CommandPtr> makeSetColorCorrection(model::Project& project,
                                                         const EditTarget& target,

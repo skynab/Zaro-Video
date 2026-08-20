@@ -45,13 +45,20 @@ Rgba scaled(const Rgba& pixel, float factor) {
     return Rgba{pixel.r * factor, pixel.g * factor, pixel.b * factor, pixel.a * factor};
 }
 
-/// Grade a premultiplied pixel: divide alpha out, correct, multiply back.
+/// Everything one clip does to one pixel: key it, then grade it.
 ///
-/// Grading the premultiplied values directly would make the correction depend
-/// on how transparent the pixel is, so a clip would grade differently in the
-/// middle of a dissolve than either side of it.
-Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* curves,
-            const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
+/// Un-premultiplied throughout, and multiplied back at the end. Grading the
+/// premultiplied values directly would make the correction depend on how
+/// transparent the pixel is, so a clip would grade differently in the middle of
+/// a dissolve than either side of it -- and a key would find a different colour
+/// there too.
+///
+/// The key runs first, and on the ungraded colour. A key is a measurement of
+/// what the camera saw; running it after a grade would mean every adjustment to
+/// the look silently moved the edges of the matte.
+Rgba shaded(const Rgba& pixel, const GradeConstants* grade, const CurveTable* curves,
+            const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
+            const KeyerConstants* keyer) {
     if (pixel.a <= 0.0001F) {
         return pixel;
     }
@@ -59,8 +66,26 @@ Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* cu
     float r = pixel.r * inverse;
     float g = pixel.g * inverse;
     float b = pixel.b * inverse;
-    gradePixel(grade, r, g, b, curves, secondary, lut, lutAmount);
-    return Rgba{r * pixel.a, g * pixel.a, b * pixel.a, pixel.a};
+
+    float alpha = pixel.a;
+    if (keyer != nullptr && keyer->isActive()) {
+        const float matte = keyMatte(*keyer, r, g, b);
+        if (keyer->showMatte) {
+            // The matte itself, opaque, so a hole in it is visible against
+            // whatever is underneath rather than being one.
+            return Rgba{matte * pixel.a, matte * pixel.a, matte * pixel.a, pixel.a};
+        }
+        suppressSpill(*keyer, r, g, b);
+        alpha *= matte;
+        if (alpha <= 0.0001F) {
+            return Rgba{0.0F, 0.0F, 0.0F, 0.0F};
+        }
+    }
+
+    if (grade != nullptr) {
+        gradePixel(*grade, r, g, b, curves, secondary, lut, lutAmount);
+    }
+    return Rgba{r * alpha, g * alpha, b * alpha, alpha};
 }
 
 }  // namespace
@@ -68,7 +93,7 @@ Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* cu
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend,
               const GradeConstants* grade, const CurveTable* curves,
               const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-              const model::Mask* mask) {
+              const model::Mask* mask, const KeyerConstants* keyer) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
@@ -86,8 +111,11 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
         for (std::int32_t x = 0; x < width; ++x) {
             // Opacity scales a premultiplied pixel uniformly, colour and
             // coverage together; that is what keeps a fade linear.
+            const bool keying = keyer != nullptr && keyer->isActive();
             const Rgba corrected =
-                grade != nullptr ? graded(in[x], *grade, curves, secondary, lut, lutAmount) : in[x];
+                grade != nullptr || keying
+                    ? shaded(in[x], grade, curves, secondary, lut, lutAmount, keyer)
+                    : in[x];
             // Applied here rather than to the source: a mask is in output
             // coordinates, because where a clip shows through is a fact about
             // the screen and not about the picture being drawn.
@@ -104,13 +132,14 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
 void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Transform& transform,
                      BlendMode blend, const GradeConstants* grade, const CurveTable* curves,
                      const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-                     const model::Mask* mask) {
+                     const model::Mask* mask, const KeyerConstants* keyer) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
     if (transform.isIdentity() && source.width() == destination.width() &&
         source.height() == destination.height()) {
-        drawOver(source, destination, 1.0, blend, grade, curves, secondary, lut, lutAmount, mask);
+        drawOver(source, destination, 1.0, blend, grade, curves, secondary, lut, lutAmount, mask,
+                 keyer);
         return;
     }
 
@@ -155,8 +184,13 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
             if (sample.a <= 0.0F && sample.r == 0.0F && sample.g == 0.0F && sample.b == 0.0F) {
                 continue;
             }
-            if (grade != nullptr) {
-                sample = graded(sample, *grade, curves, secondary, lut, lutAmount);
+            if (grade != nullptr || (keyer != nullptr && keyer->isActive())) {
+                // Keyed after the sample rather than before it, which is what
+                // the shader does -- it keys what comes back from the texture
+                // unit. Keying first would mean a scaled clip was keyed at a
+                // different resolution than it is drawn at, and the two paths
+                // would disagree along every edge.
+                sample = shaded(sample, grade, curves, secondary, lut, lutAmount, keyer);
             }
             float coverage = opacity;
             if (mask != nullptr && mask->isSet()) {

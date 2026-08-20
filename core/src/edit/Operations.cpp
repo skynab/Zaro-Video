@@ -1739,6 +1739,21 @@ Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId
                       "lut:" + idText(clipId), [lut](Clip& clip) { clip.lut = lut; });
 }
 
+Result<CommandPtr> makeSetKeyer(Project& project, const EditTarget& target, ClipId clipId,
+                                const model::Keyer& keyer) {
+    for (const double value : {keyer.red, keyer.green, keyer.blue, keyer.tolerance, keyer.softness,
+                               keyer.lumaLow, keyer.lumaHigh, keyer.lumaSoftness, keyer.spill}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a key has to be real numbers"};
+        }
+    }
+    if (keyer.lumaHigh < keyer.lumaLow) {
+        return Error{ErrorCode::InvalidData, "the luma key's window ends before it starts"};
+    }
+    return modifyClip(project, target, clipId, keyer.isSet() ? "Set key" : "Clear key",
+                      "keyer:" + idText(clipId), [keyer](Clip& clip) { clip.keyer = keyer; });
+}
+
 Result<CommandPtr> makeSetSecondary(Project& project, const EditTarget& target, ClipId clipId,
                                     const model::Secondary& secondary) {
     const model::HslQualifier& window = secondary.qualifier;

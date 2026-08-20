@@ -1,6 +1,7 @@
 #include "zaro/core/render/RenderGraph.h"
 
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/Keyer.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/TextRasterizer.h"
@@ -20,13 +21,16 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
+    const KeyerConstants keyer = keyerConstantsFor(clip.keyer, transfer_);
     // A mask alone is reason enough to take the slow path: it changes which
-    // pixels are drawn even when nothing about their colour does.
+    // pixels are drawn even when nothing about their colour does. So is a key,
+    // which changes whether they are drawn at all.
     const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive() ||
-                        lut != nullptr || clip.mask.isSet();
+                        lut != nullptr || clip.mask.isSet() || keyer.isActive();
     drawTransformed(image, out, transform, clip.blend, active ? &grade : nullptr,
                     active ? &table : nullptr, active ? &secondary : nullptr, lut,
-                    static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr);
+                    static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr,
+                    keyer.isActive() ? &keyer : nullptr);
 }
 
 void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,

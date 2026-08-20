@@ -7,6 +7,7 @@
 #include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/model/Ids.h"
+#include "zaro/core/model/Keyer.h"
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/model/Secondary.h"
 #include "zaro/core/model/ToneCurve.h"
@@ -148,6 +149,13 @@ struct Clip {
     /// One rather than a list, for now — the machinery is the same either way,
     /// and a list with no UI to manage it is a list nobody can reach.
     Secondary secondary;
+
+    /// What of this clip is transparent, so a clip under it shows through.
+    ///
+    /// Read before the grade: a key measures what the camera saw, and running
+    /// it afterwards would mean every adjustment to the look silently moved the
+    /// edges of the matte.
+    Keyer keyer;
 
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;

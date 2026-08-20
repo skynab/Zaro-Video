@@ -37,6 +37,16 @@ struct QualifierConstants {
 [[nodiscard]] QualifierConstants qualifierConstantsFor(const model::HslQualifier& qualifier,
                                                        media::TransferFunction transfer);
 
+/// Smoothstep, the shape every soft edge in the renderer uses.
+///
+/// One shape everywhere means a mask has no seam where one axis takes over
+/// from another, and a key's edge looks like a qualifier's.
+[[nodiscard]] float smoothly(float t);
+/// 0 below `outer`, 1 above `inner`, smooth between. `outer <= inner`.
+[[nodiscard]] float rampUp(float value, float outer, float inner);
+/// 1 below `inner`, 0 above `outer`, smooth between. `inner <= outer`.
+[[nodiscard]] float rampDown(float value, float inner, float outer);
+
 /// Hue in degrees and saturation in 0..1, from linear RGB.
 ///
 /// Scene-referred, deliberately: hue and saturation of light are properties of

@@ -9,6 +9,7 @@
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/Keyer.h"
 #include "zaro/core/render/RgbaImage.h"
 
 // Forward declared rather than included: QRhi is private Qt API, and pulling it
@@ -65,7 +66,8 @@ public:
                               const render::CurveTable* curves = nullptr,
                               const render::SecondaryConstants* secondary = nullptr,
                               const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
-                              const model::Mask* mask = nullptr);
+                              const model::Mask* mask = nullptr,
+                              const render::KeyerConstants* keyer = nullptr);
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -81,7 +83,8 @@ public:
                                     const render::CurveTable* curves = nullptr,
                                     const render::SecondaryConstants* secondary = nullptr,
                                     const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
-                                    const model::Mask* mask = nullptr);
+                                    const model::Mask* mask = nullptr,
+                                    const render::KeyerConstants* keyer = nullptr);
 
     /// Finish, and bring the result back to the CPU.
     ///

@@ -45,6 +45,7 @@ add_executable(zaro_core_tests
     render/test_color_pipeline.cpp
     render/test_frame_cache.cpp
     render/test_compositing.cpp
+    render/test_keyer.cpp
     render/test_render_cache.cpp
     render/test_render_graph.cpp
     render/test_curves.cpp

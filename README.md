@@ -63,6 +63,7 @@ headless: there is no window yet.
 | 5w | Render cache: pre-render a range, play it back | **done** |
 | 5x | Sync detection: by timecode and by ear | **done** |
 | 5y | Time remapping and freeze frames | **done** |
+| 5z | Chroma and luma keying, with spill suppression | **done** |
 
 ## Building
 

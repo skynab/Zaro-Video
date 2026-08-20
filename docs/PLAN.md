@@ -1801,6 +1801,78 @@ first.
 
 ---
 
+#### Phase 5z — keying ✅
+
+Making part of a clip transparent, so what is under it shows through.
+
+**Distance from a colour, not a region of colour space.** This looks like the
+HSL qualifier from Phase 5g and answers a different question. A qualifier
+describes an area — these hues, this much saturation, these tones — because
+grading a *kind* of thing is what secondaries are for. A key starts with an
+eyedropper on one pixel of a screen, and "everything within this much of that"
+is what somebody means by it. Expressing that as three windows turns one number
+into six and gives a box where a ball is wanted, so a screen with a warm corner
+keys too much or too little depending which face of the box it crosses.
+
+**The distance is measured in chromaticity.** Brightness is divided out before
+comparing, so a shadow on the screen is the same colour as the lit part of it.
+A distance on the raw values instead keys the top of an unevenly lit screen and
+leaves the bottom — which is every screen. There is a test for exactly that: the
+same colour at a quarter of the brightness has to key identically.
+
+**Black in front of the screen is a subject, not a hole.** Near zero there is no
+reliable colour to measure, and dividing by it turns sensor noise into a hue.
+Below an intensity floor the pixel is kept.
+
+**Spill suppression, and openly a heuristic.** A key removes the screen; it does
+not remove the green bouncing off it onto somebody's shoulder, and that
+difference is what separates a composite from a cut-out. The dominant channel of
+the key is clamped towards the mean of the other two, blended by an amount.
+Separating the light that bounced from the light that belongs to the subject
+properly would need to know what the subject would have looked like, which is
+the one thing nobody has. What this does instead is the operation that removes
+fringing on real footage, cheap enough to run per pixel on both paths — and it
+never *adds* spill, because taking out more than there is tints the subject
+magenta, which is the classic over-suppressed composite.
+
+**The key runs before the grade, on the ungraded colour.** A key is a
+measurement of what the camera saw. Running it afterwards would mean every
+adjustment to the look silently moved the edges of the matte.
+
+**And after the sample, not before it.** The shader keys what comes back from
+the texture unit, so the CPU does too; keying first would mean a scaled clip was
+keyed at a different resolution than it is drawn at, and the two paths would
+disagree along every edge.
+
+**A matte view, for the same reason the qualifier has one.** Judging a key by
+looking at the composite is guesswork, and the holes that matter are the ones
+too faint to see against whatever happens to be underneath. It is drawn opaque,
+so a hole in the matte shows as grey rather than as a hole. Like the qualifier's
+mask view it is deliberately not saved: it is how somebody is working right now,
+not something about the cut.
+
+This is the first effect that changes *alpha* rather than colour, so a
+disagreement between the two paths shows up as an edge that is soft in preview
+and hard in the export — or the other way round, which is worse, because the
+export is the one nobody watches all the way through. The golden-frame test
+covers five keys, including a blue screen and the matte view, and passed against
+the CPU reference first time. The self-test puts a green rectangle over the
+picture in the real preview, keys it out through the panel's own combo box, and
+requires the picture underneath to come back — then switches the key off and
+requires the green to return, so what was measured was the key and not the clip
+vanishing for some other reason. With the shader's key uniform forced off it
+reports the screen still covering the frame and fails.
+
+**Not done: an eyedropper.** Picking the key colour off the picture is the
+control this obviously wants, and it needs the monitor to hand back the pixel
+under a click — a small piece of plumbing that does not exist yet. The numbers
+are typed in the meantime.
+
+**Not done: matte choking, blur and edge detail.** Those are operations on a
+matte once it exists, and the matte has to be right first.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

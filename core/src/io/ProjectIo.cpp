@@ -158,6 +158,65 @@ model::ColorCorrection decodeColor(const json& node) {
     return out;
 }
 
+json encode(const model::Keyer& keyer) {
+    const model::Keyer neutral;
+    if (keyer == neutral) {
+        return json::object();
+    }
+    json out = json::object();
+    const auto put = [&out](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            out[key] = value;
+        }
+    };
+    switch (keyer.kind) {
+        case model::KeyKind::None:
+            break;
+        case model::KeyKind::Chroma:
+            out["kind"] = "chroma";
+            break;
+        case model::KeyKind::Luma:
+            out["kind"] = "luma";
+            break;
+    }
+    put("red", keyer.red, neutral.red);
+    put("green", keyer.green, neutral.green);
+    put("blue", keyer.blue, neutral.blue);
+    put("tolerance", keyer.tolerance, neutral.tolerance);
+    put("softness", keyer.softness, neutral.softness);
+    put("lumaLow", keyer.lumaLow, neutral.lumaLow);
+    put("lumaHigh", keyer.lumaHigh, neutral.lumaHigh);
+    put("lumaSoftness", keyer.lumaSoftness, neutral.lumaSoftness);
+    put("spill", keyer.spill, neutral.spill);
+    // Deliberately not saved, for the same reason the qualifier's mask view is
+    // not: looking at the matte is how somebody is working right now, and
+    // reopening a project into a black-and-white silhouette would be baffling.
+    return out;
+}
+
+model::Keyer decodeKeyer(const json& node) {
+    model::Keyer out;
+    if (!node.is_object()) {
+        return out;
+    }
+    const std::string kind = node.value("kind", std::string{});
+    if (kind == "chroma") {
+        out.kind = model::KeyKind::Chroma;
+    } else if (kind == "luma") {
+        out.kind = model::KeyKind::Luma;
+    }
+    out.red = node.value("red", out.red);
+    out.green = node.value("green", out.green);
+    out.blue = node.value("blue", out.blue);
+    out.tolerance = node.value("tolerance", out.tolerance);
+    out.softness = node.value("softness", out.softness);
+    out.lumaLow = node.value("lumaLow", out.lumaLow);
+    out.lumaHigh = node.value("lumaHigh", out.lumaHigh);
+    out.lumaSoftness = node.value("lumaSoftness", out.lumaSoftness);
+    out.spill = node.value("spill", out.spill);
+    return out;
+}
+
 json encode(const model::Secondary& secondary) {
     const model::Secondary neutral;
     if (secondary == neutral) {
@@ -459,6 +518,9 @@ json encode(const model::Clip& clip) {
     }
     if (json secondary = encode(clip.secondary); !secondary.empty()) {
         out["secondary"] = std::move(secondary);
+    }
+    if (json keyer = encode(clip.keyer); !keyer.empty()) {
+        out["keyer"] = std::move(keyer);
     }
     if (json curves = encode(clip.curves); !curves.empty()) {
         out["curves"] = std::move(curves);
@@ -767,6 +829,9 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     if (node.contains("secondary")) {
         clip.secondary = decodeSecondary(node.at("secondary"));
+    }
+    if (node.contains("keyer")) {
+        clip.keyer = decodeKeyer(node.at("keyer"));
     }
     if (node.contains("curves")) {
         clip.curves = decodeCurves(node.at("curves"));

@@ -12,8 +12,8 @@ constexpr float kLumaR = 0.2126F;
 constexpr float kLumaG = 0.7152F;
 constexpr float kLumaB = 0.0722F;
 
-/// Smoothstep, the shape every soft edge here uses. One shape for all three
-/// windows means a mask has no seam where one axis takes over from another.
+}  // namespace
+
 float smoothly(float t) {
     const float clamped = std::clamp(t, 0.0F, 1.0F);
     return clamped * clamped * (3.0F - (2.0F * clamped));
@@ -34,6 +34,8 @@ float rampDown(float value, float inner, float outer) {
     }
     return smoothly((outer - value) / (outer - inner));
 }
+
+namespace {
 
 /// The shorter way round the hue circle, in degrees.
 ///

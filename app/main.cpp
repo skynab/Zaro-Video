@@ -1867,6 +1867,100 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Keying, through the real GPU compositor and the real panel.
+        //
+        // A green rectangle stands in for a green screen: what is being checked
+        // is that a key reaches the picture and takes alpha with it, not that
+        // the maths is right -- that is checked headlessly and against the CPU
+        // reference frame by frame.
+        {
+            const auto keySequenceId = window.project().activeSequence();
+            const auto& keyTracks = window.project().findSequence(keySequenceId)->videoTracks();
+            const auto keyTop = keyTracks.size() > 1 ? keyTracks[1].id() : keyTracks.front().id();
+
+            std::int64_t keyFrame = 0;
+            double beneath = 1e9;
+            for (std::int64_t frame = 0; frame < 35; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < beneath) {
+                    beneath = gray;
+                    keyFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{keyFrame, sequence.frameRate()});
+            QApplication::processEvents();
+
+            zaro::model::Graphic screen;
+            screen.kind = zaro::model::GraphicKind::Rectangle;
+            screen.width = 4000.0;  // larger than the frame, so it fills it
+            screen.height = 4000.0;
+            screen.red = 0.0;
+            screen.green = 1.0;
+            screen.blue = 0.0;
+            auto placed = zaro::edit::makeAddGraphic(
+                window.project(), {keySequenceId, keyTop}, screen,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{40, sequence.frameRate()}});
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            const auto screenClipId =
+                window.project().findSequence(keySequenceId)->findTrack(keyTop)->clips().front().id;
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double covered = meanGray(window.monitor()->grabFramebuffer());
+            if (!(covered > beneath + 50.0)) {
+                std::fprintf(stderr, "  FAIL: the green screen did not reach the preview\n");
+                return 1;
+            }
+
+            // Set the key through the panel, the way somebody would.
+            timeline->selectOnlyForTest(keyTop, screenClipId);
+            window.effects()->setSelection(keyTop, screenClipId);
+            QApplication::processEvents();
+
+            auto* kind = window.effects()->findChild<QComboBox*>("key-kind");
+            auto* spill = window.effects()->findChild<QDoubleSpinBox*>("key-spill");
+            if (kind == nullptr || spill == nullptr) {
+                std::fprintf(stderr, "  FAIL: the key controls are not in the panel\n");
+                return 1;
+            }
+            kind->setCurrentIndex(kind->findData(static_cast<int>(zaro::model::KeyKind::Chroma)));
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double keyed = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  chroma key: %.1f behind the screen, %.1f with it, %.1f keyed\n", beneath,
+                        covered, keyed);
+            if (!(keyed < beneath + 10.0)) {
+                std::fprintf(stderr, "  FAIL: the key did not reach the picture\n");
+                return 1;
+            }
+
+            // And switching it off brings the screen back, so what was measured
+            // was the key rather than the clip disappearing for some other
+            // reason.
+            kind->setCurrentIndex(kind->findData(static_cast<int>(zaro::model::KeyKind::None)));
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            if (!(meanGray(window.monitor()->grabFramebuffer()) > beneath + 50.0)) {
+                std::fprintf(stderr, "  FAIL: clearing the key did not bring the screen back\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Proxies: the swap, and the promise that export ignores it. The proxy
         // fixture is inverted as well as smaller, so which file was read is
         // unmistakable rather than a matter of judging sharpness.
