@@ -5,6 +5,7 @@
 #include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/model/Graphic.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/model/Secondary.h"
 #include "zaro/core/model/ToneCurve.h"
@@ -58,6 +59,11 @@ struct Clip {
     /// Primary colour correction, applied in the linear working space before
     /// the clip is placed in the frame.
     ColorCorrection color;
+
+    /// A generated picture instead of a read one. When set, `source` is
+    /// ignored: the clip has no media, and everything else about it -- trims,
+    /// transforms, grades, keyframes, links -- works unchanged.
+    Graphic graphic;
 
     /// A look LUT, applied after the primary correction and before the curves:
     /// a LUT is a look put on a balanced picture, and the curves are the

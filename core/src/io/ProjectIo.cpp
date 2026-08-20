@@ -372,6 +372,26 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.graphic.isSet()) {
+        const model::Graphic defaults;
+        json graphic{{"kind", model::toString(clip.graphic.kind)}};
+        const auto put = [&graphic](const char* key, double value, double fallback) {
+            if (value != fallback) {
+                graphic[key] = value;
+            }
+        };
+        put("width", clip.graphic.width, defaults.width);
+        put("height", clip.graphic.height, defaults.height);
+        put("centreX", clip.graphic.centreX, defaults.centreX);
+        put("centreY", clip.graphic.centreY, defaults.centreY);
+        put("cornerRadius", clip.graphic.cornerRadius, defaults.cornerRadius);
+        put("feather", clip.graphic.feather, defaults.feather);
+        put("red", clip.graphic.red, defaults.red);
+        put("green", clip.graphic.green, defaults.green);
+        put("blue", clip.graphic.blue, defaults.blue);
+        put("alpha", clip.graphic.alpha, defaults.alpha);
+        out["graphic"] = std::move(graphic);
+    }
     if (clip.lut.isSet() || !clip.lut.path.empty()) {
         json lut{{"path", clip.lut.path}};
         if (clip.lut.amount != 1.0) {
@@ -563,6 +583,22 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("graphic") && node.at("graphic").is_object()) {
+        const json& graphic = node.at("graphic");
+        model::Graphic& into = clip.graphic;
+        into.kind =
+            model::graphicKindFromString(graphic.value("kind", std::string{"none"}).c_str());
+        into.width = graphic.value("width", into.width);
+        into.height = graphic.value("height", into.height);
+        into.centreX = graphic.value("centreX", into.centreX);
+        into.centreY = graphic.value("centreY", into.centreY);
+        into.cornerRadius = graphic.value("cornerRadius", into.cornerRadius);
+        into.feather = graphic.value("feather", into.feather);
+        into.red = graphic.value("red", into.red);
+        into.green = graphic.value("green", into.green);
+        into.blue = graphic.value("blue", into.blue);
+        into.alpha = graphic.value("alpha", into.alpha);
     }
     if (node.contains("lut") && node.at("lut").is_object()) {
         clip.lut.path = node.at("lut").value("path", std::string{});

@@ -165,6 +165,20 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetBlendMode(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::BlendMode blend);
 
+/// Place a generated shape on a track, at a time, for a duration.
+///
+/// A graphic has no media, so it has no source range to speak of -- but a clip
+/// does, and every operation that trims or retimes one uses it. It gets a
+/// source range identical to its timeline range, which makes a graphic behave
+/// like a piece of media that happens to be exactly as long as it needs to be.
+[[nodiscard]] Result<CommandPtr> makeAddGraphic(model::Project& project, const EditTarget& target,
+                                                const model::Graphic& graphic,
+                                                const time::TimeRange& range);
+
+/// Change a graphic's shape, size, colour or feather.
+[[nodiscard]] Result<CommandPtr> makeSetGraphic(model::Project& project, const EditTarget& target,
+                                                model::ClipId clip, const model::Graphic& graphic);
+
 /// The look LUT: which file, and how much of it.
 [[nodiscard]] Result<CommandPtr> makeSetLut(model::Project& project, const EditTarget& target,
                                             model::ClipId clip, const model::LutRef& lut);

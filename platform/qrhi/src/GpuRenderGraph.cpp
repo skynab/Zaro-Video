@@ -1,6 +1,7 @@
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/ShapeRaster.h"
 
 namespace zaro::platform::qrhi {
 
@@ -64,6 +65,30 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
 
         const model::Clip* clip = track.clipAt(at);
         if (clip == nullptr || !clip->enabled) {
+            continue;
+        }
+
+        if (clip->graphic.isSet()) {
+            // Rasterised on the CPU and uploaded through the compositor's
+            // existing RGBA path. A shader for shapes would be faster, and
+            // would be a second implementation of the geometry to keep in step
+            // with the first -- for a buffer that only changes when somebody
+            // edits the shape.
+            if (generated_.width() != sequence.width() ||
+                generated_.height() != sequence.height()) {
+                generated_ = render::RgbaImage{sequence.width(), sequence.height()};
+            }
+            render::drawShape(clip->graphic, generated_);
+            const render::SecondaryConstants secondary =
+                render::secondaryConstantsFor(clip->secondary, transfer_);
+            const render::LutTable* lut =
+                clip->lut.isSet() ? luts_.tableFor(clip->lut.path, transfer_) : nullptr;
+            if (compositor_->draw(generated_, clip->transformAt(at), clip->blend,
+                                  render::gradeConstantsFor(clip->colorAt(at)),
+                                  &curves_.tableFor(clip->id.value(), clip->curves, transfer_),
+                                  &secondary, lut, static_cast<float>(clip->lut.amount))) {
+                ++lastClipCount_;
+            }
             continue;
         }
 

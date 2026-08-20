@@ -397,3 +397,69 @@ TEST_CASE("A secondary corrects only what its qualifier selects", "[render][grap
     CHECK(mask->at(8, 8).g == Approx(mask->at(8, 8).r));
     CHECK(mask->at(8, 8).b == Approx(mask->at(8, 8).r));
 }
+
+TEST_CASE("A graphic clip composites without any media", "[render][graph][shape]") {
+    Fixture f;
+    f.sequence().setSize(64, 64);
+    // A source that would fail if asked: a graphic must never reach it.
+    SolidFrameSource source{64, 64};
+    render::RenderGraph graph{source};
+
+    model::Graphic shape;
+    shape.kind = model::GraphicKind::Rectangle;
+    shape.width = 20;
+    shape.height = 20;
+    shape.red = 1.0;
+    shape.green = 0.0;
+    shape.blue = 0.0;
+    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v1), shape, f.range(0, 50))));
+
+    const auto frame = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(frame);
+    CHECK(graph.lastClipCount() == 1);
+    CHECK(frame->at(32, 32).r == Approx(1.0F));
+    CHECK(frame->at(32, 32).a == Approx(1.0F));
+    // And nothing outside it, since the rest of a graphic clip is transparent.
+    CHECK(frame->at(2, 2).a == Approx(0.0F));
+}
+
+TEST_CASE("A graphic obeys the transform, the grade and the fade", "[render][graph][shape]") {
+    // The reason a graphic is a clip rather than a separate kind of thing: all
+    // of this already works, and none of it had to be taught about shapes.
+    Fixture f;
+    f.sequence().setSize(64, 64);
+    SolidFrameSource source{64, 64};
+    render::RenderGraph graph{source};
+
+    model::Graphic shape;
+    shape.kind = model::GraphicKind::Rectangle;
+    shape.width = 20;
+    shape.height = 20;
+    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v1), shape, f.range(0, 50))));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    // Half opacity.
+    model::Transform faded;
+    faded.opacity = 0.5;
+    REQUIRE(f.run(edit::makeSetTransform(f.project, f.on(f.v1), id, faded)));
+    CHECK(graph.composite(f.sequence(), f.at(10))->at(32, 32).a == Approx(0.5F));
+
+    // Two stops down, on top of that.
+    model::ColorCorrection darker;
+    darker.exposure = -2.0;
+    REQUIRE(f.run(edit::makeSetColorCorrection(f.project, f.on(f.v1), id, darker)));
+    const auto graded = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(graded);
+    // Alpha is coverage and exposure does not touch it; the colour is a quarter.
+    CHECK(graded->at(32, 32).a == Approx(0.5F));
+    CHECK(graded->at(32, 32).r / graded->at(32, 32).a == Approx(0.25F).margin(1e-4));
+
+    // And moving it moves the shape.
+    model::Transform moved = faded;
+    moved.positionX = 16.0;
+    REQUIRE(f.run(edit::makeSetTransform(f.project, f.on(f.v1), id, moved)));
+    const auto shifted = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(shifted);
+    CHECK(shifted->at(48, 32).a > 0.4F);
+    CHECK(shifted->at(32, 32).a == Approx(0.0F).margin(0.01));
+}

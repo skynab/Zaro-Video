@@ -202,6 +202,41 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         hueCentre_->setValue(centre);  // which pushes on its own
     });
 
+    // A generated shape. Shown only for a clip that is one: the controls are
+    // meaningless on a clip with media, and a panel full of inert fields is
+    // worse than one that says nothing.
+    shapeKind_ = new QComboBox(this);
+    shapeKind_->setObjectName("shape-kind");
+    for (const model::GraphicKind kind :
+         {model::GraphicKind::Rectangle, model::GraphicKind::Ellipse}) {
+        shapeKind_->addItem(QString::fromUtf8(model::toString(kind)), static_cast<int>(kind));
+    }
+    shapeWidth_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
+    shapeHeight_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
+    shapeCorner_ = makeSpin(0.0, 5000.0, 5.0, 1, " px");
+    shapeFeather_ = makeSpin(0.0, 2000.0, 2.0, 1, " px");
+    shapeRed_ = makeSpin(0.0, 1.0, 0.05, 3);
+    shapeGreen_ = makeSpin(0.0, 1.0, 0.05, 3);
+    shapeBlue_ = makeSpin(0.0, 1.0, 0.05, 3);
+
+    auto* graphic = new QGroupBox("Shape", this);
+    auto* graphicForm = new QFormLayout(graphic);
+    graphicForm->addRow("Kind", shapeKind_);
+    graphicForm->addRow("Width", shapeWidth_);
+    graphicForm->addRow("Height", shapeHeight_);
+    graphicForm->addRow("Corner", shapeCorner_);
+    graphicForm->addRow("Feather", shapeFeather_);
+    graphicForm->addRow("Red", shapeRed_);
+    graphicForm->addRow("Green", shapeGreen_);
+    graphicForm->addRow("Blue", shapeBlue_);
+    graphicGroup_ = graphic;
+
+    for (QDoubleSpinBox* spin : {shapeWidth_, shapeHeight_, shapeCorner_, shapeFeather_, shapeRed_,
+                                 shapeGreen_, shapeBlue_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushGraphic(); });
+    }
+    connect(shapeKind_, &QComboBox::currentIndexChanged, this, [this] { pushGraphic(); });
+
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
     addRow(audioForm, "Gain", model::Param::GainDb, gain_);
@@ -217,6 +252,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(title_);
     layout->addWidget(enabled_);
     layout->addWidget(motion);
+    layout->addWidget(graphic);
     layout->addWidget(colour);
     layout->addWidget(secondary);
     layout->addWidget(audio);
@@ -294,6 +330,7 @@ const model::Clip* EffectControls::selectedClip() const {
 void EffectControls::setEditingEnabled(bool enabled) {
     enabled_->setEnabled(enabled);
     videoGroup_->setEnabled(enabled);
+    graphicGroup_->setEnabled(enabled);
     colorGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
@@ -323,6 +360,7 @@ void EffectControls::applyToWidgets() {
         anchorY_->setValue(identity.anchorY);
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
+        graphicGroup_->setVisible(false);
         curves_->setCurves(model::ToneCurves{});
         lutName_->setText("No LUT");
         lutAmount_->setValue(1.0);
@@ -386,6 +424,18 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
+    graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
+    if (clip->graphic.isSet()) {
+        shapeKind_->setCurrentIndex(shapeKind_->findData(static_cast<int>(clip->graphic.kind)));
+        shapeWidth_->setValue(clip->graphic.width);
+        shapeHeight_->setValue(clip->graphic.height);
+        shapeCorner_->setValue(clip->graphic.cornerRadius);
+        shapeFeather_->setValue(clip->graphic.feather);
+        shapeRed_->setValue(clip->graphic.red);
+        shapeGreen_->setValue(clip->graphic.green);
+        shapeBlue_->setValue(clip->graphic.blue);
+    }
+
     curves_->setCurves(clip->curves);
     // The file name, not the path: the path is usually longer than the panel
     // and its useful end is the last part anyway.
@@ -691,6 +741,32 @@ model::Secondary EffectControls::secondaryFromWidgets() const {
     out.correction.exposure = keyExposure_->value();
     out.correction.saturation = keySaturation_->value();
     return out;
+}
+
+void EffectControls::pushGraphic() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr || !clip->graphic.isSet()) {
+        return;
+    }
+    model::Graphic graphic = clip->graphic;
+    graphic.kind = static_cast<model::GraphicKind>(shapeKind_->currentData().toInt());
+    graphic.width = shapeWidth_->value();
+    graphic.height = shapeHeight_->value();
+    graphic.cornerRadius = shapeCorner_->value();
+    graphic.feather = shapeFeather_->value();
+    graphic.red = shapeRed_->value();
+    graphic.green = shapeGreen_->value();
+    graphic.blue = shapeBlue_->value();
+
+    auto built = edit::makeSetGraphic(*project_, {sequenceId_, track_}, clip_, graphic);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
 }
 
 void EffectControls::pushLut(const model::LutRef& lut) {

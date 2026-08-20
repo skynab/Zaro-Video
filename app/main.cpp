@@ -1191,6 +1191,68 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // A generated shape, created and then edited through the panel, and
+        // measured through the real GPU compositor. A shape is drawn on the CPU
+        // and uploaded, so this also checks that path is reachable at all.
+        {
+            const auto videoTrackId = videoTrack.id();
+
+            // The darkest frame is chosen *before* the shape is added: with a
+            // white rectangle covering the frame every position reads the same,
+            // and the search would settle on whichever came first -- which on
+            // this fixture is a flash frame that is white anyway.
+            std::int64_t darkFrame = 0;
+            double darkest = 1e9;
+            for (std::int64_t frame = 0; frame < 35; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double without = meanGray(window.monitor()->grabFramebuffer());
+
+            zaro::model::Graphic shape;
+            shape.kind = zaro::model::GraphicKind::Rectangle;
+            shape.width = 4000.0;  // larger than the frame, so it fills it
+            shape.height = 4000.0;
+            shape.red = 1.0;
+            shape.green = 1.0;
+            shape.blue = 1.0;
+
+            const auto& videoTracks = window.project().findSequence(sequence.id())->videoTracks();
+            const auto topTrack = videoTracks.size() > 1 ? videoTracks[1].id() : videoTrackId;
+            auto built = zaro::edit::makeAddGraphic(
+                window.project(), {sequence.id(), topTrack}, shape,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{40, sequence.frameRate()}});
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double withShape = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  shape layer: %.1f with a white rectangle, %.1f without\n", withShape,
+                        without);
+            if (!(withShape > without + 50.0)) {
+                std::fprintf(stderr, "  FAIL: the shape layer did not reach the preview\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // The mixer: solo, and the meters. Solo is a rule about the whole
         // sequence rather than a property of one track, so the check is that
         // soloing one track silences another.

@@ -1110,6 +1110,49 @@ relative ones never have.
 
 ---
 
+#### Phase 5k — shape layers ✅ **shapes, not yet text**
+
+Generated clips: a rectangle or an ellipse, with size, position, corner radius,
+feather and colour, on both render paths.
+
+**A graphic is a clip, not a second kind of thing on a track.** It is trimmed,
+moved, faded, graded, keyframed and linked exactly like any other clip, and
+every one of those operations already works. A separate type would mean either
+duplicating all of them or discovering, one at a time, which ones it had been
+left out of. A test puts a fade, a grade and a move on a shape and checks all
+three, and none of that code was taught about shapes.
+
+**Shapes are positioned in the same coordinates `Transform` uses** — output
+pixels from the centre of the frame — so a shape and a clip mean the same thing
+by "forty pixels right", and the motion controls work on a graphic with nothing
+special-cased.
+
+**The edge is a signed distance, not an inside/outside test.** The distance
+gives antialiasing and feather from the same arithmetic: coverage is a ramp
+across it, and the only difference between the two is how wide the ramp is. The
+ramp has a one-pixel floor, so a hard-edged shape is still antialiased — a
+stair-stepped edge is the first thing anyone notices about a generated graphic.
+
+**The GPU path rasterises on the CPU and uploads** through the compositor's
+existing RGBA path. A shader would be faster and would be a second
+implementation of the geometry to keep in step with the first, for a buffer that
+changes only when somebody edits the shape.
+
+**The self-test had its steps in the wrong order** and said so: it looked for
+the darkest frame *after* adding a white rectangle that covers the frame, so
+every position read the same and it settled on frame zero — which on this
+fixture is a flash frame that is white anyway. Measured before, the same shape
+reads 176.5 against 0.0.
+
+**Not done: text.** Text needs a font engine, and `core/` links neither Qt nor
+FFmpeg by design — so a text layer needs a rasteriser in `platform/` behind a
+core interface, and the export tool needs to link it too. That is a real piece
+of plumbing rather than an afternoon, and shapes stand on their own in the
+meantime: colour mattes, lower-third backgrounds and mattes for the qualifier
+all work now.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

@@ -310,6 +310,17 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.curves.red.set(model::CurvePoint{0.75, 0.8});
         clip.curves.blue.set(model::CurvePoint{0.1, 0.0});
         clip.curves.blue.set(model::CurvePoint{0.9, 1.0});
+        clip.graphic.kind = model::GraphicKind::Ellipse;
+        clip.graphic.width = 512.5;
+        clip.graphic.height = 288.25;
+        clip.graphic.centreX = -64.75;
+        clip.graphic.centreY = 32.125;
+        clip.graphic.cornerRadius = 18.5;
+        clip.graphic.feather = 6.25;
+        clip.graphic.red = 0.125;
+        clip.graphic.green = 0.875;
+        clip.graphic.blue = 0.375;
+        clip.graphic.alpha = 0.625;
         clip.lut.path = "/looks/kodak-2383.cube";
         clip.lut.amount = 0.625;
         clip.secondary.qualifier.enabled = true;
@@ -443,6 +454,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->curves == first.curves);
     CHECK(loadedClip->secondary == first.secondary);
     CHECK(loadedClip->lut == first.lut);
+    CHECK(loadedClip->graphic == first.graphic);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

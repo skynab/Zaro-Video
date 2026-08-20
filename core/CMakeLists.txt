@@ -29,11 +29,13 @@ add_library(zaro_core
     src/render/Grade.cpp
     src/render/LutTable.cpp
     src/render/Qualifier.cpp
+    src/render/ShapeRaster.cpp
     src/render/RenderGraph.cpp
     src/render/Scopes.cpp
     src/render/RgbaImage.cpp
     src/model/Animation.cpp
     src/model/Clip.cpp
+    src/model/Graphic.cpp
     src/model/ClipEffects.cpp
     src/model/Project.cpp
     src/model/Sequence.cpp

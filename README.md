@@ -48,7 +48,8 @@ headless: there is no window yet.
 | 5h | Qualifier UI: hue band, windows, mask toggle | **done** |
 | 5i | Look LUTs: .cube reader, baked cube, both paths | **done** |
 | 5j | Audio track mixer: strips, solo, metering | **done** |
-| 5k | Essential Graphics: text and shape layers | next |
+| 5k | Shape layers: generated rectangles and ellipses | **done** |
+| 5l | Text layers, then captions | next |
 
 ## Building
 

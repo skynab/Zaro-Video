@@ -1372,6 +1372,38 @@ Result<CommandPtr> makeSetBlendMode(Project& project, const EditTarget& target, 
                       "blend:" + idText(clipId), [blend](Clip& clip) { clip.blend = blend; });
 }
 
+Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
+                                  const model::Graphic& graphic, const time::TimeRange& range) {
+    if (range.isEmpty()) {
+        return Error{ErrorCode::InvalidData, "a graphic needs a duration"};
+    }
+    if (!graphic.isSet()) {
+        return Error{ErrorCode::InvalidData, "that is not a graphic"};
+    }
+    Clip clip;
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.graphic = graphic;
+    clip.name = model::toString(graphic.kind);
+    clip.timelineRange = range;
+    // Its own length, so a trim has something to trim against.
+    clip.sourceRange =
+        time::TimeRange{time::RationalTime{0, range.start().rate()}, range.duration()};
+    return makeOverwrite(project, target, clip);
+}
+
+Result<CommandPtr> makeSetGraphic(Project& project, const EditTarget& target, ClipId clipId,
+                                  const model::Graphic& graphic) {
+    for (const double value :
+         {graphic.width, graphic.height, graphic.centreX, graphic.centreY, graphic.cornerRadius,
+          graphic.feather, graphic.red, graphic.green, graphic.blue, graphic.alpha}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a graphic has to be real numbers"};
+        }
+    }
+    return modifyClip(project, target, clipId, "Adjust graphic", "graphic:" + idText(clipId),
+                      [graphic](Clip& clip) { clip.graphic = graphic; });
+}
+
 Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId clipId,
                               const model::LutRef& lut) {
     if (!std::isfinite(lut.amount)) {

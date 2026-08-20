@@ -48,6 +48,7 @@ private:
     bool drawClip(const model::Clip& clip, const media::VideoFrame& frame,
                   const model::Transform& transform, const time::RationalTime& at);
 
+    render::RgbaImage generated_;
     render::CurveTableCache curves_;
     render::LutCache luts_;
 

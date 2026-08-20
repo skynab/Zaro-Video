@@ -1,6 +1,7 @@
 #include "zaro/core/render/RenderGraph.h"
 
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/ShapeRaster.h"
 
 namespace zaro::render {
 
@@ -82,6 +83,19 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
 
         const model::Clip* clip = track.clipAt(at);
         if (clip == nullptr || !clip->enabled) {
+            continue;
+        }
+
+        if (clip->graphic.isSet()) {
+            // Generated rather than read. Drawn at the sequence's size, so the
+            // transform that follows means the same thing it does for a clip
+            // whose media happens to be that size.
+            if (generated_.width() != out.width() || generated_.height() != out.height()) {
+                generated_ = RgbaImage{out.width(), out.height()};
+            }
+            drawShape(clip->graphic, generated_);
+            drawClip(*clip, generated_, out, clip->transformAt(at), at);
+            ++lastClipCount_;
             continue;
         }
 

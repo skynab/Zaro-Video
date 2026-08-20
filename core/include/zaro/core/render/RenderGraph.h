@@ -37,6 +37,10 @@ private:
     void drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
                   const model::Transform& transform, const time::RationalTime& at);
 
+    /// Scratch for generated clips, kept between frames so a shape layer does
+    /// not allocate a frame-sized buffer on every frame.
+    RgbaImage generated_;
+
     CurveTableCache curves_;
     /// Baked look LUTs, keyed by path, so two clips sharing a look share one
     /// cube and a missing file is not re-opened every frame.

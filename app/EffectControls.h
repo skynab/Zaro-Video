@@ -87,6 +87,7 @@ private:
     void pushCurves(const model::ToneCurves& curves, bool committed);
     void pushSecondary();
     void pushLut(const model::LutRef& lut);
+    void pushGraphic();
     /// The secondary as the widgets currently describe it.
     [[nodiscard]] model::Secondary secondaryFromWidgets() const;
     void applyToWidgets();
@@ -125,6 +126,15 @@ private:
     QWidget* videoGroup_{nullptr};
     QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
+    QWidget* graphicGroup_{nullptr};
+    QComboBox* shapeKind_{nullptr};
+    QDoubleSpinBox* shapeWidth_{nullptr};
+    QDoubleSpinBox* shapeHeight_{nullptr};
+    QDoubleSpinBox* shapeCorner_{nullptr};
+    QDoubleSpinBox* shapeFeather_{nullptr};
+    QDoubleSpinBox* shapeRed_{nullptr};
+    QDoubleSpinBox* shapeGreen_{nullptr};
+    QDoubleSpinBox* shapeBlue_{nullptr};
     QWidget* secondaryGroup_{nullptr};
     QPushButton* lutLoad_{nullptr};
     QPushButton* lutClear_{nullptr};
