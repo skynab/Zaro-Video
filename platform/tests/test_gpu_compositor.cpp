@@ -13,6 +13,7 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/VideoFrame.h"
+#include "zaro/core/model/Mask.h"
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Compositing.h"
 #include "zaro/core/render/RenderGraph.h"
@@ -1297,5 +1298,65 @@ TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]"
                            << difference.worstY << ", mean " << difference.mean);
         CHECK(difference.worst < 0.02F);
         CHECK(difference.mean < 0.004F);
+    }
+}
+
+TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
+    // The mask geometry is written twice -- a signed distance cannot be baked
+    // into a table the way a curve can, since it depends on where the fragment
+    // lands. So it gets the same treatment as the qualifier: compared directly,
+    // over enough cases that a disagreement in any part shows up.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::Mask mask;
+    };
+    const auto make = [](model::MaskShape shape, double w, double h, double cx, double cy,
+                         double corner, double feather, bool inverted) {
+        model::Mask mask;
+        mask.shape = shape;
+        mask.width = w;
+        mask.height = h;
+        mask.centreX = cx;
+        mask.centreY = cy;
+        mask.cornerRadius = corner;
+        mask.feather = feather;
+        mask.inverted = inverted;
+        return mask;
+    };
+    const Case cases[] = {
+        {"centred rectangle", make(model::MaskShape::Rectangle, 30, 20, 0, 0, 0, 0, false)},
+        {"offset rectangle", make(model::MaskShape::Rectangle, 24, 24, 10, -8, 0, 0, false)},
+        {"rounded", make(model::MaskShape::Rectangle, 36, 28, 0, 0, 8, 0, false)},
+        {"feathered", make(model::MaskShape::Rectangle, 30, 20, 0, 0, 0, 9, false)},
+        {"ellipse", make(model::MaskShape::Ellipse, 40, 24, -4, 6, 0, 0, false)},
+        {"inverted ellipse", make(model::MaskShape::Ellipse, 30, 30, 0, 0, 0, 5, true)},
+    };
+
+    RgbaImage source{64, 64};
+    source.fill(Rgba{0.7F, 0.5F, 0.3F, 1.0F});
+
+    for (const Case& testCase : cases) {
+        RgbaImage cpuOut{64, 64};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, nullptr, nullptr,
+                                nullptr, nullptr, 1.0F, &testCase.mask);
+
+        REQUIRE(compositor->beginFrame(64, 64).ok());
+        REQUIRE(compositor
+                    ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
+                           nullptr, nullptr, nullptr, 1.0F, &testCase.mask)
+                    .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.002F);
     }
 }

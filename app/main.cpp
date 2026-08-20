@@ -13,6 +13,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFont>
@@ -1371,6 +1372,88 @@ int main(int argc, char** argv) {
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // A mask, through the panel and the real GPU compositor. The geometry
+        // is compared against the CPU headlessly; what that cannot show is
+        // whether these controls reach the picture.
+        {
+            auto* shapeBox = window.effects()->findChild<QComboBox*>("mask-shape");
+            auto* inverted = window.effects()->findChild<QCheckBox*>("mask-inverted");
+            if (shapeBox == nullptr || inverted == nullptr) {
+                std::fprintf(stderr, "  FAIL: the mask controls are missing\n");
+                return 1;
+            }
+            window.effects()->setSelection(videoTrack.id(), original.id);
+            QApplication::processEvents();
+
+            // A lit frame, so a mask that hides most of it is unmistakable.
+            std::int64_t litFrame = 0;
+            double litness = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
+                QApplication::processEvents();
+                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                if (gray > litness) {
+                    litness = gray;
+                    litFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
+            QApplication::processEvents();
+            const double whole = meanGray(window.monitor()->grabFramebuffer());
+
+            // A small ellipse: most of the picture goes.
+            zaro::model::Mask mask;
+            mask.shape = zaro::model::MaskShape::Ellipse;
+            mask.width = 60.0;
+            mask.height = 60.0;
+            auto built = zaro::edit::makeSetMask(window.project(), {sequence.id(), videoTrack.id()},
+                                                 original.id, mask);
+            if (!built) {
+                std::fprintf(stderr, "  FAIL: %s\n", built.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*built));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double throughMask = meanGray(window.monitor()->grabFramebuffer());
+
+            // Inverted, the same mask keeps everything it was hiding.
+            mask.inverted = true;
+            auto flipped = zaro::edit::makeSetMask(
+                window.project(), {sequence.id(), videoTrack.id()}, original.id, mask);
+            window.commands().execute(window.project(), std::move(*flipped));
+            window.monitor()->update();
+            QApplication::processEvents();
+            const double outside = meanGray(window.monitor()->grabFramebuffer());
+
+            std::printf("  mask: %.1f whole, %.1f through a small ellipse, %.1f inverted\n", whole,
+                        throughMask, outside);
+            if (!(throughMask < whole * 0.5)) {
+                std::fprintf(stderr, "  FAIL: the mask did not hide anything\n");
+                return 1;
+            }
+            if (!(outside > throughMask * 2.0)) {
+                std::fprintf(stderr, "  FAIL: inverting the mask did not swap what it keeps\n");
+                return 1;
+            }
+            // The two halves have to add up to the whole, since one keeps
+            // exactly what the other discards.
+            if (std::fabs((throughMask + outside) - whole) > whole * 0.05) {
+                std::fprintf(stderr,
+                             "  FAIL: a mask and its inverse do not add up to the picture "
+                             "(%.1f + %.1f against %.1f)\n",
+                             throughMask, outside, whole);
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.effects()->refresh();
             window.monitor()->update();
             QApplication::processEvents();
         }

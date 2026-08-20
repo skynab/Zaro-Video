@@ -20,7 +20,7 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
     return compositor_
         ->drawSource(frame, transform, render::gradeConstantsFor(clip.colorAt(at)), clip.blend,
                      &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
-                     static_cast<float>(clip.lut.amount))
+                     static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr)
         .ok();
 }
 
@@ -93,7 +93,8 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             if (compositor_->draw(generated_, clip->transformAt(at), clip->blend,
                                   render::gradeConstantsFor(clip->colorAt(at)),
                                   &curves_.tableFor(clip->id.value(), clip->curves, transfer_),
-                                  &secondary, lut, static_cast<float>(clip->lut.amount))) {
+                                  &secondary, lut, static_cast<float>(clip->lut.amount),
+                                  clip->mask.isSet() ? &clip->mask : nullptr)) {
                 ++lastClipCount_;
             }
             continue;

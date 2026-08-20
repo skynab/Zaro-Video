@@ -52,7 +52,8 @@ headless: there is no window yet.
 | 5l | Text layers: Qt font engine behind a core interface | **done** |
 | 5m | Captions: SubRip and WebVTT, burn-in | **done** |
 | 5n | OpenTimelineIO interchange, `zaro-otio` | **done** |
-| 5o | §7 remainder: masks, proxies, multicam | next |
+| 5o | Masks: shape mattes with feather and invert | **done** |
+| 5p | §7 remainder: proxies, multicam, speed | next |
 
 ## Building
 

@@ -1,6 +1,7 @@
 #version 440
 
 layout(location = 0) in vec2 texCoord;
+layout(location = 1) in vec2 framePosition;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -20,7 +21,7 @@ layout(binding = 3) uniform sampler3D lutTable;
 
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
-    vec4 params;  // x: opacity
+    vec4 params;  // x: opacity, z: frame width, w: frame height
     // Primary colour correction, precomputed on the CPU so this shader does
     // not re-derive what a temperature of -20 means. Two implementations of
     // that question are two answers, and preview would disagree with export by
@@ -34,7 +35,13 @@ layout(std140, binding = 0) uniform Block {
     vec4 satWindow;   // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
     vec4 lumaWindow;  // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
     vec4 look;        // x: amount, y: axis maximum, z: active, w: cube size
+    // A mask, in output pixels from the centre of the frame.
+    vec4 maskBox;     // xy: half size, zw: centre
+    vec4 maskEdge;    // x: corner radius, y: feather, z: shape (1 rect, 2 ellipse),
+                      // w: inverted
 } ubuf;
+
+
 
 const float kMiddleGrey = 0.18;
 const vec3 kLumaWeights = vec3(0.2126, 0.7152, 0.0722);
@@ -172,6 +179,40 @@ vec3 applyGrade(vec3 colour)
     return colour;
 }
 
+// Must agree with render::maskCoverage. The same signed distances the shape
+// rasteriser uses, so a mask and a shape of the same size cover the same pixels.
+float maskCoverage(vec2 offset)
+{
+    if (ubuf.maskEdge.z < 0.5) {
+        return 1.0;
+    }
+    vec2 half_ = ubuf.maskBox.xy;
+    if (half_.x <= 0.0 || half_.y <= 0.0) {
+        return ubuf.maskEdge.w > 0.5 ? 1.0 : 0.0;
+    }
+    vec2 d = offset - ubuf.maskBox.zw;
+
+    float distance;
+    if (ubuf.maskEdge.z > 1.5) {
+        vec2 n = d / half_;
+        float value = length(n);
+        if (value == 0.0) {
+            distance = -min(half_.x, half_.y);
+        } else {
+            float gradient = length(n / half_);
+            distance = (value - 1.0) / gradient;
+        }
+    } else {
+        float r = clamp(ubuf.maskEdge.x, 0.0, min(half_.x, half_.y));
+        vec2 q = abs(d) - (half_ - vec2(r));
+        distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    }
+
+    float ramp = max(1.0, ubuf.maskEdge.y);
+    float coverage = clamp(0.5 - (distance / ramp), 0.0, 1.0);
+    return ubuf.maskEdge.w > 0.5 ? 1.0 - coverage : coverage;
+}
+
 void main()
 {
     // Outside the source is transparent, not the clamped edge pixel. Clamping
@@ -193,5 +234,5 @@ void main()
 
     // Values are premultiplied, so opacity scales colour and coverage together
     // and a fade stays linear.
-    fragColor = sampled * ubuf.params.x;
+    fragColor = sampled * ubuf.params.x * maskCoverage(framePosition);
 }

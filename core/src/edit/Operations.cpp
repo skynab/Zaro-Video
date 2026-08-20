@@ -1400,6 +1400,18 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makeSetMask(Project& project, const EditTarget& target, ClipId clipId,
+                               const model::Mask& mask) {
+    for (const double value :
+         {mask.width, mask.height, mask.centreX, mask.centreY, mask.cornerRadius, mask.feather}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a mask has to be real numbers"};
+        }
+    }
+    return modifyClip(project, target, clipId, "Adjust mask", "mask:" + idText(clipId),
+                      [mask](Clip& clip) { clip.mask = mask; });
+}
+
 Result<CommandPtr> makeSetGraphic(Project& project, const EditTarget& target, ClipId clipId,
                                   const model::Graphic& graphic) {
     for (const double value :

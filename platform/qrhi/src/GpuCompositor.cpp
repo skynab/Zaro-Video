@@ -23,7 +23,7 @@ constexpr std::array<float, 12> kQuad{
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16;
+constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32;
 
 /// Write a grade into the composite shader's uniform block.
 ///
@@ -104,7 +104,7 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
     return texture;
 }
 
-void writeGrade(std::array<float, 52>& uniformData, const render::GradeConstants& grade,
+void writeGrade(std::array<float, 60>& uniformData, const render::GradeConstants& grade,
                 bool curved, const render::SecondaryConstants* secondary) {
     uniformData[20] = grade.balance.r;
     uniformData[21] = grade.balance.g;
@@ -147,7 +147,7 @@ void writeGrade(std::array<float, 52>& uniformData, const render::GradeConstants
     uniformData[47] = window.lumaOuterHigh;
 }
 
-void writeLook(std::array<float, 52>& uniformData, const render::LutTable* lut, float amount) {
+void writeLook(std::array<float, 60>& uniformData, const render::LutTable* lut, float amount) {
     const bool looked = lut != nullptr && lut->isValid() && amount > 0.0F;
     uniformData[48] = looked ? amount : 0.0F;
     uniformData[49] = looked ? lut->axisMax() : 1.0F;
@@ -155,6 +155,27 @@ void writeLook(std::array<float, 52>& uniformData, const render::LutTable* lut, 
     // The size travels with the cube rather than being written out in the
     // shader, so the two cannot disagree about how big it is.
     uniformData[51] = static_cast<float>(render::LutTable::kSize);
+}
+
+void writeMask(std::array<float, 60>& uniformData, const model::Mask* mask, QSize frame) {
+    // The frame size travels with every draw: the vertex shader needs it to
+    // turn a clip position back into output pixels, which is the space a mask
+    // is written in.
+    uniformData[18] = static_cast<float>(frame.width());
+    uniformData[19] = static_cast<float>(frame.height());
+    if (mask == nullptr || !mask->isSet()) {
+        uniformData[54] = 0.0F;  // no shape
+        return;
+    }
+    uniformData[52] = static_cast<float>(mask->width * 0.5);
+    uniformData[53] = static_cast<float>(mask->height * 0.5);
+    // Slots 54 and 55 are the centre; the shape flag lives in the next vector.
+    uniformData[54] = static_cast<float>(mask->centreX);
+    uniformData[55] = static_cast<float>(mask->centreY);
+    uniformData[56] = static_cast<float>(mask->cornerRadius);
+    uniformData[57] = static_cast<float>(mask->feather);
+    uniformData[58] = mask->shape == model::MaskShape::Ellipse ? 2.0F : 1.0F;
+    uniformData[59] = mask->inverted ? 1.0F : 0.0F;
 }
 /// The YUV shader adds two more vec4s of colour parameters.
 constexpr int kYuvUniformBytes = 64 + 16 * 3;
@@ -522,7 +543,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            BlendMode blend, const render::GradeConstants& grade,
                            const render::CurveTable* curves,
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
-                           float lutAmount) {
+                           float lutAmount, const model::Mask* mask) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -616,7 +637,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 52> uniformData{};
+    std::array<float, 60> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -624,6 +645,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     uniformData[16] = static_cast<float>(transform.opacity);
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
+    writeMask(uniformData, mask, state.size);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -802,7 +824,8 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::GradeConstants& grade, BlendMode blend,
                                  const render::CurveTable* curves,
                                  const render::SecondaryConstants* secondary,
-                                 const render::LutTable* lut, float lutAmount) {
+                                 const render::LutTable* lut, float lutAmount,
+                                 const model::Mask* mask) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1068,7 +1091,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot create resource bindings"};
     }
 
-    std::array<float, 52> uniformData{};
+    std::array<float, 60> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1076,6 +1099,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     uniformData[16] = static_cast<float>(transform.opacity);
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
+    writeMask(uniformData, mask, state.size);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -1190,7 +1214,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     matrix.scale(scaleX, scaleY * flip);
 
     QRhiResourceUpdateBatch* batch = state.rhi->nextResourceUpdateBatch();
-    std::array<float, 52> uniformData{};
+    std::array<float, 60> uniformData{};
     const float* matrixData = matrix.constData();
     for (int i = 0; i < 16; ++i) {
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
@@ -1200,6 +1224,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     // apply every clip's correction a second time, to the whole frame.
     writeGrade(uniformData, render::GradeConstants{}, false, nullptr);
     writeLook(uniformData, nullptr, 0.0F);
+    writeMask(uniformData, nullptr, state.size);
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

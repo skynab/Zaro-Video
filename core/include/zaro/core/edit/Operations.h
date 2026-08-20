@@ -186,6 +186,10 @@ enum class PlaceMode {
                                                 const model::Graphic& graphic,
                                                 const time::TimeRange& range);
 
+/// Set a clip's mask: where on the screen it shows through.
+[[nodiscard]] Result<CommandPtr> makeSetMask(model::Project& project, const EditTarget& target,
+                                             model::ClipId clip, const model::Mask& mask);
+
 /// Change a graphic's shape, size, colour or feather.
 [[nodiscard]] Result<CommandPtr> makeSetGraphic(model::Project& project, const EditTarget& target,
                                                 model::ClipId clip, const model::Graphic& graphic);

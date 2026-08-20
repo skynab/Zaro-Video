@@ -1283,6 +1283,40 @@ consecutive runs agree.
 
 ---
 
+#### Phase 5o — masks ✅
+
+A rectangle or ellipse that limits where a clip shows through, with corner
+radius, feather and invert, on both render paths.
+
+**A mask is in output coordinates, not the clip's.** It stays put when the clip
+moves — which is what makes it a window onto the screen rather than a crop. A
+test moves a clip twenty pixels right and checks the mask has not gone with it;
+those are different tools and conflating them would leave neither working.
+
+**Invert is a flag, not a second mask.** A vignette and a spotlight are the same
+shape with this flipped, and drawing the complement by hand is how people end up
+with two masks that have to be kept agreeing. A test walks the frame and
+requires a mask and its inverse to sum to exactly one everywhere.
+
+**Masks and shapes share their geometry.** A mask and a generated shape of the
+same size cover the same pixels, checked pixel by pixel — which is what anyone
+would assume on seeing the two controls side by side.
+
+**The one place it had to be written twice is the shader.** A signed distance
+depends on where the fragment lands, so it cannot be baked into a table the way
+a curve can. It gets the qualifier's treatment: six cases compared directly
+against the CPU, and the frame position is derived from the clip position in the
+vertex shader rather than passed separately, so it cannot disagree with where
+the quad actually goes. The y-flip in that derivation was right first time, and
+the test was verified to fail when it is removed.
+
+The self-test measures a mask, its inverse, and the whole picture: 6.5 through a
+small ellipse, 170.0 inverted, 176.5 whole. The first two adding to the third is
+the assertion worth having — it says the two halves partition the frame rather
+than merely differing from it.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

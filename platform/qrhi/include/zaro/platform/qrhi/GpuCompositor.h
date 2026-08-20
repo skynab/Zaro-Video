@@ -6,6 +6,7 @@
 #include "zaro/core/Error.h"
 #include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/model/ClipEffects.h"
+#include "zaro/core/model/Mask.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/RgbaImage.h"
@@ -63,7 +64,8 @@ public:
                               const render::GradeConstants& grade = {},
                               const render::CurveTable* curves = nullptr,
                               const render::SecondaryConstants* secondary = nullptr,
-                              const render::LutTable* lut = nullptr, float lutAmount = 1.0F);
+                              const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
+                              const model::Mask* mask = nullptr);
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -78,7 +80,8 @@ public:
                                     model::BlendMode blend = model::BlendMode::Normal,
                                     const render::CurveTable* curves = nullptr,
                                     const render::SecondaryConstants* secondary = nullptr,
-                                    const render::LutTable* lut = nullptr, float lutAmount = 1.0F);
+                                    const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
+                                    const model::Mask* mask = nullptr);
 
     /// Finish, and bring the result back to the CPU.
     ///

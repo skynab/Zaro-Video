@@ -339,6 +339,14 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
         clip.curves.red.set(model::CurvePoint{0.75, 0.8});
         clip.curves.blue.set(model::CurvePoint{0.1, 0.0});
         clip.curves.blue.set(model::CurvePoint{0.9, 1.0});
+        clip.mask.shape = model::MaskShape::Ellipse;
+        clip.mask.width = 640.5;
+        clip.mask.height = 360.25;
+        clip.mask.centreX = -32.125;
+        clip.mask.centreY = 48.75;
+        clip.mask.cornerRadius = 22.5;
+        clip.mask.feather = 14.25;
+        clip.mask.inverted = true;
         clip.graphic.kind = model::GraphicKind::Ellipse;
         clip.graphic.width = 512.5;
         clip.graphic.height = 288.25;
@@ -498,6 +506,7 @@ TEST_CASE("Every serializable field survives, set to a non-default value", "[io]
     CHECK(loadedClip->secondary == first.secondary);
     CHECK(loadedClip->lut == first.lut);
     CHECK(loadedClip->graphic == first.graphic);
+    CHECK(loadedClip->mask == first.mask);
 
     // Transition, every field.
     REQUIRE(loadedVideo->transitions().size() == 1);

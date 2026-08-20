@@ -7,6 +7,7 @@
 #include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/model/Ids.h"
+#include "zaro/core/model/Mask.h"
 #include "zaro/core/model/Secondary.h"
 #include "zaro/core/model/ToneCurve.h"
 #include "zaro/core/time/TimeRange.h"
@@ -64,6 +65,10 @@ struct Clip {
     /// ignored: the clip has no media, and everything else about it -- trims,
     /// transforms, grades, keyframes, links -- works unchanged.
     Graphic graphic;
+
+    /// Where on the screen this clip shows through. In output coordinates, so
+    /// it stays put when the clip moves.
+    Mask mask;
 
     /// A look LUT, applied after the primary correction and before the curves:
     /// a LUT is a look put on a balanced picture, and the curves are the

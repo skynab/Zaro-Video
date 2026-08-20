@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "zaro/core/render/ShapeRaster.h"
+
 namespace zaro::render {
 namespace {
 
@@ -65,7 +67,8 @@ Rgba graded(const Rgba& pixel, const GradeConstants& grade, const CurveTable* cu
 
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend,
               const GradeConstants* grade, const CurveTable* curves,
-              const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
+              const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
+              const model::Mask* mask) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
@@ -85,21 +88,29 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
             // coverage together; that is what keeps a fade linear.
             const Rgba corrected =
                 grade != nullptr ? graded(in[x], *grade, curves, secondary, lut, lutAmount) : in[x];
-            out[x] =
-                blendPixel(alpha == 1.0F ? corrected : scaled(corrected, alpha), out[x], blend);
+            // Applied here rather than to the source: a mask is in output
+            // coordinates, because where a clip shows through is a fact about
+            // the screen and not about the picture being drawn.
+            float coverage = alpha;
+            if (mask != nullptr && mask->isSet()) {
+                coverage *= maskCoverage(*mask, destination.width(), destination.height(), x, y);
+            }
+            out[x] = blendPixel(coverage == 1.0F ? corrected : scaled(corrected, coverage), out[x],
+                                blend);
         }
     }
 }
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Transform& transform,
                      BlendMode blend, const GradeConstants* grade, const CurveTable* curves,
-                     const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
+                     const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
+                     const model::Mask* mask) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
     if (transform.isIdentity() && source.width() == destination.width() &&
         source.height() == destination.height()) {
-        drawOver(source, destination, 1.0, blend, grade, curves, secondary, lut, lutAmount);
+        drawOver(source, destination, 1.0, blend, grade, curves, secondary, lut, lutAmount, mask);
         return;
     }
 
@@ -147,7 +158,15 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
             if (grade != nullptr) {
                 sample = graded(sample, *grade, curves, secondary, lut, lutAmount);
             }
-            out[x] = blendPixel(opacity == 1.0F ? sample : scaled(sample, opacity), out[x], blend);
+            float coverage = opacity;
+            if (mask != nullptr && mask->isSet()) {
+                coverage *= maskCoverage(*mask, destination.width(), destination.height(), x, y);
+            }
+            if (coverage <= 0.0F) {
+                continue;
+            }
+            out[x] =
+                blendPixel(coverage == 1.0F ? sample : scaled(sample, coverage), out[x], blend);
         }
     }
 }

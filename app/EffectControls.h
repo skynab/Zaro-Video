@@ -88,6 +88,7 @@ private:
     void pushSecondary();
     void pushLut(const model::LutRef& lut);
     void pushGraphic();
+    void pushMask();
     /// The secondary as the widgets currently describe it.
     [[nodiscard]] model::Secondary secondaryFromWidgets() const;
     void applyToWidgets();
@@ -126,6 +127,15 @@ private:
     QWidget* videoGroup_{nullptr};
     QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
+    QWidget* maskGroup_{nullptr};
+    QComboBox* maskShape_{nullptr};
+    QDoubleSpinBox* maskWidth_{nullptr};
+    QDoubleSpinBox* maskHeight_{nullptr};
+    QDoubleSpinBox* maskX_{nullptr};
+    QDoubleSpinBox* maskY_{nullptr};
+    QDoubleSpinBox* maskCorner_{nullptr};
+    QDoubleSpinBox* maskFeather_{nullptr};
+    QCheckBox* maskInverted_{nullptr};
     QWidget* graphicGroup_{nullptr};
     QComboBox* shapeKind_{nullptr};
     QDoubleSpinBox* shapeWidth_{nullptr};

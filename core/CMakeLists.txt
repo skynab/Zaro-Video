@@ -40,6 +40,7 @@ add_library(zaro_core
     src/model/Caption.cpp
     src/model/Clip.cpp
     src/model/Graphic.cpp
+    src/model/Mask.cpp
     src/model/ClipEffects.cpp
     src/model/Project.cpp
     src/model/Sequence.cpp

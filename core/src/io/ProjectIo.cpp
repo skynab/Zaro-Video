@@ -372,6 +372,25 @@ json encode(const model::Clip& clip) {
     if (json color = encode(clip.color); !color.empty()) {
         out["color"] = std::move(color);
     }
+    if (clip.mask.isSet()) {
+        const model::Mask defaults;
+        json mask{{"shape", model::toString(clip.mask.shape)}};
+        const auto put = [&mask](const char* key, double value, double fallback) {
+            if (value != fallback) {
+                mask[key] = value;
+            }
+        };
+        put("width", clip.mask.width, defaults.width);
+        put("height", clip.mask.height, defaults.height);
+        put("centreX", clip.mask.centreX, defaults.centreX);
+        put("centreY", clip.mask.centreY, defaults.centreY);
+        put("cornerRadius", clip.mask.cornerRadius, defaults.cornerRadius);
+        put("feather", clip.mask.feather, defaults.feather);
+        if (clip.mask.inverted) {
+            mask["inverted"] = true;
+        }
+        out["mask"] = std::move(mask);
+    }
     if (clip.graphic.isSet()) {
         const model::Graphic defaults;
         json graphic{{"kind", model::toString(clip.graphic.kind)}};
@@ -640,6 +659,18 @@ Result<model::Clip> decodeClip(const json& node) {
     clip.pan = node.value("pan", 0.0);
     if (node.contains("color")) {
         clip.color = decodeColor(node.at("color"));
+    }
+    if (node.contains("mask") && node.at("mask").is_object()) {
+        const json& mask = node.at("mask");
+        model::Mask& into = clip.mask;
+        into.shape = model::maskShapeFromString(mask.value("shape", std::string{"none"}).c_str());
+        into.width = mask.value("width", into.width);
+        into.height = mask.value("height", into.height);
+        into.centreX = mask.value("centreX", into.centreX);
+        into.centreY = mask.value("centreY", into.centreY);
+        into.cornerRadius = mask.value("cornerRadius", into.cornerRadius);
+        into.feather = mask.value("feather", into.feather);
+        into.inverted = mask.value("inverted", false);
     }
     if (node.contains("graphic") && node.at("graphic").is_object()) {
         const json& graphic = node.at("graphic");

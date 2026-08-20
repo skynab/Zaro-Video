@@ -74,6 +74,28 @@ float shapeCoverage(const model::Graphic& graphic, std::int32_t width, std::int3
     return static_cast<float>(std::clamp(coverage, 0.0, 1.0));
 }
 
+float maskCoverage(const model::Mask& mask, std::int32_t width, std::int32_t height, double x,
+                   double y) {
+    if (!mask.isSet() || width <= 0 || height <= 0) {
+        return 1.0F;  // no mask lets everything through
+    }
+    const double dx = (x + 0.5) - (width * 0.5) - mask.centreX;
+    const double dy = (y + 0.5) - (height * 0.5) - mask.centreY;
+    const double halfWidth = mask.width * 0.5;
+    const double halfHeight = mask.height * 0.5;
+    if (halfWidth <= 0.0 || halfHeight <= 0.0) {
+        return mask.inverted ? 1.0F : 0.0F;
+    }
+
+    const double distance =
+        mask.shape == model::MaskShape::Ellipse
+            ? ellipseDistance(dx, dy, halfWidth, halfHeight)
+            : roundedRectDistance(dx, dy, halfWidth, halfHeight, mask.cornerRadius);
+    const double ramp = std::max(1.0, mask.feather);
+    const double coverage = std::clamp(0.5 - (distance / ramp), 0.0, 1.0);
+    return static_cast<float>(mask.inverted ? 1.0 - coverage : coverage);
+}
+
 void drawShape(const model::Graphic& graphic, RgbaImage& out) {
     if (!out.isValid()) {
         return;

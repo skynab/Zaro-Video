@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zaro/core/model/Graphic.h"
+#include "zaro/core/model/Mask.h"
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {
@@ -23,5 +24,13 @@ void drawShape(const model::Graphic& graphic, RgbaImage& out);
 /// inferring it from pixels that have also been through premultiplication.
 [[nodiscard]] float shapeCoverage(const model::Graphic& graphic, std::int32_t width,
                                   std::int32_t height, double x, double y);
+
+/// How much of the pixel at (x, y) a mask lets through, 0 to 1.
+///
+/// The same geometry the shape rasteriser uses, so a mask and a shape of the
+/// same size cover exactly the same pixels — which is what anyone would assume
+/// on seeing the two controls side by side.
+[[nodiscard]] float maskCoverage(const model::Mask& mask, std::int32_t width, std::int32_t height,
+                                 double x, double y);
 
 }  // namespace zaro::render

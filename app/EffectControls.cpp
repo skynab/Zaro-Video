@@ -202,6 +202,40 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         hueCentre_->setValue(centre);  // which pushes on its own
     });
 
+    // A mask: where on the screen this clip shows through.
+    maskShape_ = new QComboBox(this);
+    maskShape_->setObjectName("mask-shape");
+    maskShape_->addItem("none", static_cast<int>(model::MaskShape::None));
+    maskShape_->addItem("rectangle", static_cast<int>(model::MaskShape::Rectangle));
+    maskShape_->addItem("ellipse", static_cast<int>(model::MaskShape::Ellipse));
+    maskWidth_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
+    maskHeight_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
+    maskX_ = makeSpin(-20000.0, 20000.0, 10.0, 1, " px");
+    maskY_ = makeSpin(-20000.0, 20000.0, 10.0, 1, " px");
+    maskCorner_ = makeSpin(0.0, 5000.0, 5.0, 1, " px");
+    maskFeather_ = makeSpin(0.0, 2000.0, 2.0, 1, " px");
+    maskInverted_ = new QCheckBox("Inverted", this);
+    maskInverted_->setObjectName("mask-inverted");
+
+    auto* maskBox = new QGroupBox("Mask", this);
+    auto* maskForm = new QFormLayout(maskBox);
+    maskForm->addRow("Shape", maskShape_);
+    maskForm->addRow("Width", maskWidth_);
+    maskForm->addRow("Height", maskHeight_);
+    maskForm->addRow("Centre X", maskX_);
+    maskForm->addRow("Centre Y", maskY_);
+    maskForm->addRow("Corner", maskCorner_);
+    maskForm->addRow("Feather", maskFeather_);
+    maskForm->addRow(maskInverted_);
+    maskGroup_ = maskBox;
+
+    for (QDoubleSpinBox* spin :
+         {maskWidth_, maskHeight_, maskX_, maskY_, maskCorner_, maskFeather_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushMask(); });
+    }
+    connect(maskShape_, &QComboBox::currentIndexChanged, this, [this] { pushMask(); });
+    connect(maskInverted_, &QCheckBox::toggled, this, [this] { pushMask(); });
+
     // A generated shape. Shown only for a clip that is one: the controls are
     // meaningless on a clip with media, and a panel full of inert fields is
     // worse than one that says nothing.
@@ -253,6 +287,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(enabled_);
     layout->addWidget(motion);
     layout->addWidget(graphic);
+    layout->addWidget(maskBox);
     layout->addWidget(colour);
     layout->addWidget(secondary);
     layout->addWidget(audio);
@@ -331,6 +366,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     enabled_->setEnabled(enabled);
     videoGroup_->setEnabled(enabled);
     graphicGroup_->setEnabled(enabled);
+    maskGroup_->setEnabled(enabled);
     colorGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
@@ -361,6 +397,7 @@ void EffectControls::applyToWidgets() {
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
         graphicGroup_->setVisible(false);
+        maskGroup_->setVisible(false);
         curves_->setCurves(model::ToneCurves{});
         lutName_->setText("No LUT");
         lutAmount_->setValue(1.0);
@@ -424,6 +461,16 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
+    maskGroup_->setVisible(isVideo);
+    maskShape_->setCurrentIndex(maskShape_->findData(static_cast<int>(clip->mask.shape)));
+    maskWidth_->setValue(clip->mask.width);
+    maskHeight_->setValue(clip->mask.height);
+    maskX_->setValue(clip->mask.centreX);
+    maskY_->setValue(clip->mask.centreY);
+    maskCorner_->setValue(clip->mask.cornerRadius);
+    maskFeather_->setValue(clip->mask.feather);
+    maskInverted_->setChecked(clip->mask.inverted);
+
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {
         shapeKind_->setCurrentIndex(shapeKind_->findData(static_cast<int>(clip->graphic.kind)));
@@ -741,6 +788,28 @@ model::Secondary EffectControls::secondaryFromWidgets() const {
     out.correction.exposure = keyExposure_->value();
     out.correction.saturation = keySaturation_->value();
     return out;
+}
+
+void EffectControls::pushMask() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    model::Mask mask;
+    mask.shape = static_cast<model::MaskShape>(maskShape_->currentData().toInt());
+    mask.width = maskWidth_->value();
+    mask.height = maskHeight_->value();
+    mask.centreX = maskX_->value();
+    mask.centreY = maskY_->value();
+    mask.cornerRadius = maskCorner_->value();
+    mask.feather = maskFeather_->value();
+    mask.inverted = maskInverted_->isChecked();
+
+    auto built = edit::makeSetMask(*project_, {sequenceId_, track_}, clip_, mask);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
 }
 
 void EffectControls::pushGraphic() {

@@ -3,12 +3,23 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/edit/Operations.h"
+#include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/ShapeRaster.h"
+
+#include "ModelFixtures.h"
+#include "TestSources.h"
 
 using namespace zaro;
 using Catch::Approx;
+using zaro::testing::Fixture;
+using zaro::testing::SolidFrameSource;
 
 namespace {
+
+render::Rgba opaque(float r, float g, float b) {
+    return render::Rgba{r, g, b, 1.0F};
+}
 
 model::Graphic rectangle(double width, double height) {
     model::Graphic out;
@@ -183,4 +194,92 @@ TEST_CASE("Graphic kinds round trip through their names", "[render][shape]") {
     }
     CHECK(model::graphicKindFromString("somethingElse") == model::GraphicKind::None);
     CHECK(model::graphicKindFromString(nullptr) == model::GraphicKind::None);
+}
+
+TEST_CASE("A mask lets everything through when there is none", "[render][mask]") {
+    const model::Mask none;
+    CHECK_FALSE(none.isSet());
+    CHECK(render::maskCoverage(none, 64, 64, 0, 0) == Approx(1.0F));
+    CHECK(render::maskCoverage(none, 64, 64, 32, 32) == Approx(1.0F));
+}
+
+TEST_CASE("A mask and a shape of the same size cover the same pixels", "[render][mask]") {
+    // They share the geometry, which is what makes the two controls mean the
+    // same thing when someone sees them side by side.
+    model::Graphic shape;
+    shape.kind = model::GraphicKind::Ellipse;
+    shape.width = 40;
+    shape.height = 24;
+    shape.centreX = 6;
+    shape.centreY = -4;
+
+    model::Mask mask;
+    mask.shape = model::MaskShape::Ellipse;
+    mask.width = shape.width;
+    mask.height = shape.height;
+    mask.centreX = shape.centreX;
+    mask.centreY = shape.centreY;
+
+    for (std::int32_t y = 0; y < 64; y += 3) {
+        for (std::int32_t x = 0; x < 64; x += 3) {
+            REQUIRE(render::maskCoverage(mask, 64, 64, x, y) ==
+                    Approx(render::shapeCoverage(shape, 64, 64, x, y)).margin(1e-6));
+        }
+    }
+}
+
+TEST_CASE("Inverting a mask gives its complement", "[render][mask]") {
+    // A vignette and a spotlight are the same mask with this flipped. Having to
+    // draw the complement by hand is how people end up with two masks that must
+    // be kept agreeing.
+    model::Mask mask;
+    mask.shape = model::MaskShape::Rectangle;
+    mask.width = 20;
+    mask.height = 20;
+    mask.feather = 4;
+
+    model::Mask flipped = mask;
+    flipped.inverted = true;
+
+    for (std::int32_t y = 0; y < 64; y += 2) {
+        for (std::int32_t x = 0; x < 64; x += 2) {
+            const float straight = render::maskCoverage(mask, 64, 64, x, y);
+            const float inverse = render::maskCoverage(flipped, 64, 64, x, y);
+            REQUIRE(straight + inverse == Approx(1.0F).margin(1e-6));
+        }
+    }
+}
+
+TEST_CASE("A mask stays put when its clip moves", "[render][graph][mask]") {
+    // The reason a mask is in output coordinates. A mask that travelled with
+    // its clip would be a crop, which is a different tool: this one is a window
+    // on the screen that a clip can be moved behind.
+    Fixture f;
+    f.sequence().setSize(64, 64);
+    SolidFrameSource source{64, 64};
+    source.define(f.longMedia, opaque(1.0F, 1.0F, 1.0F));
+    render::RenderGraph graph{source};
+
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    model::Mask mask;
+    mask.shape = model::MaskShape::Rectangle;
+    mask.width = 16;
+    mask.height = 16;
+    f.track(f.v1).find(id)->mask = mask;
+
+    const auto masked = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(masked);
+    CHECK(masked->at(32, 32).a == Approx(1.0F));
+    CHECK(masked->at(8, 8).a == Approx(0.0F));
+
+    // Move the clip well to the right. The window does not move with it.
+    model::Transform moved;
+    moved.positionX = 20.0;
+    REQUIRE(f.run(edit::makeSetTransform(f.project, f.on(f.v1), id, moved)));
+    const auto shifted = graph.composite(f.sequence(), f.at(10));
+    REQUIRE(shifted);
+    CHECK(shifted->at(32, 32).a == Approx(1.0F));
+    CHECK(shifted->at(52, 32).a == Approx(0.0F));
 }

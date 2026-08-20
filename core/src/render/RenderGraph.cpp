@@ -19,11 +19,13 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
-    const bool active =
-        !grade.isIdentity() || !table.isIdentity() || secondary.isActive() || lut != nullptr;
+    // A mask alone is reason enough to take the slow path: it changes which
+    // pixels are drawn even when nothing about their colour does.
+    const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive() ||
+                        lut != nullptr || clip.mask.isSet();
     drawTransformed(image, out, transform, clip.blend, active ? &grade : nullptr,
                     active ? &table : nullptr, active ? &secondary : nullptr, lut,
-                    static_cast<float>(clip.lut.amount));
+                    static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr);
 }
 
 Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::RationalTime& at,
