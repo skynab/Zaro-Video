@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "zaro/core/render/Qualifier.h"
+
 namespace zaro::render {
 namespace {
 
@@ -72,6 +74,35 @@ float shapeCoverage(const model::Graphic& graphic, std::int32_t width, std::int3
     const double ramp = std::max(1.0, graphic.feather);
     const double coverage = 0.5 - (distance / ramp);
     return static_cast<float>(std::clamp(coverage, 0.0, 1.0));
+}
+
+float vignetteGain(const model::Vignette& vignette, std::int32_t width, std::int32_t height,
+                   std::int32_t x, std::int32_t y) {
+    if (!vignette.isSet() || width <= 0 || height <= 0) {
+        return 1.0F;
+    }
+    // From the centre of the frame, in the same coordinates the mask uses.
+    const auto halfWidth = static_cast<float>(width) * 0.5F;
+    const auto halfHeight = static_cast<float>(height) * 0.5F;
+    const float dx = (static_cast<float>(x) + 0.5F) - halfWidth;
+    const float dy = (static_cast<float>(y) + 0.5F) - halfHeight;
+
+    // Two distances, blended by roundness: one normalised to the frame, which
+    // gives a widescreen frame a widescreen oval, and one in pixels, which is
+    // the circle a lens actually casts.
+    const float oval =
+        std::sqrt(((dx / halfWidth) * (dx / halfWidth)) + ((dy / halfHeight) * (dy / halfHeight)));
+    const float longest = std::max(halfWidth, halfHeight);
+    const float circle = std::sqrt((dx * dx) + (dy * dy)) / longest;
+    const auto roundness = static_cast<float>(std::clamp(vignette.roundness, 0.0, 1.0));
+    const float distance = circle + ((oval - circle) * roundness);
+
+    const auto midpoint = static_cast<float>(vignette.midpoint);
+    const auto feather = static_cast<float>(std::max(1e-4, vignette.feather));
+    // The same smoothstep every soft edge in this renderer uses, so a vignette
+    // and a feathered mask fall off with the same shape.
+    const float t = smoothly((distance - midpoint) / feather);
+    return 1.0F + (static_cast<float>(vignette.amount) * t);
 }
 
 float maskCoverage(const model::Mask& mask, std::int32_t width, std::int32_t height, double x,

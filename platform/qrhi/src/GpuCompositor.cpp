@@ -24,7 +24,8 @@ constexpr std::array<float, 12> kQuad{
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade,
 // five for the secondary, one for the look, two for the mask, four for the key.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16);
+constexpr int kUniformBytes =
+    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16;
 constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
@@ -200,6 +201,17 @@ void writeLook(std::array<float, kUniformFloats>& uniformData, const render::Lut
     // The size travels with the cube rather than being written out in the
     // shader, so the two cannot disagree about how big it is.
     uniformData[51] = static_cast<float>(render::LutTable::kSize);
+}
+
+/// Written on every draw, like the display knee and for the same reason: a
+/// draw that left the slot alone would inherit the last one's vignette.
+void writeVignette(std::array<float, kUniformFloats>& uniformData,
+                   const model::Vignette* vignette) {
+    const bool set = vignette != nullptr && vignette->isSet();
+    uniformData[92] = set ? static_cast<float>(vignette->amount) : 0.0F;
+    uniformData[93] = set ? static_cast<float>(vignette->midpoint) : 0.0F;
+    uniformData[94] = set ? static_cast<float>(vignette->feather) : 1.0F;
+    uniformData[95] = set ? static_cast<float>(vignette->roundness) : 1.0F;
 }
 
 void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask* mask,
@@ -607,7 +619,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            const render::CurveTable* curves,
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
                            float lutAmount, const model::Mask* mask,
-                           const render::KeyerConstants* keyer) {
+                           const render::KeyerConstants* keyer, const model::Vignette* vignette) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -710,6 +722,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
+    writeVignette(uniformData, vignette);
     writeKeyer(uniformData, keyer);
     writeDisplay(uniformData, 1.0F);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -901,7 +914,8 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::CurveTable* curves,
                                  const render::SecondaryConstants* secondary,
                                  const render::LutTable* lut, float lutAmount,
-                                 const model::Mask* mask, const render::KeyerConstants* keyer) {
+                                 const model::Mask* mask, const render::KeyerConstants* keyer,
+                                 const model::Vignette* vignette) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1175,6 +1189,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     writeGrade(uniformData, grade, curved, secondary);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
+    writeVignette(uniformData, vignette);
     writeKeyer(uniformData, keyer);
     writeDisplay(uniformData, 1.0F);
 
@@ -1306,6 +1321,8 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     writeGrade(uniformData, render::GradeConstants{}, false, nullptr);
     writeLook(uniformData, nullptr, 0.0F);
     writeMask(uniformData, nullptr, state.size);
+    // The frame being presented already has every clip's vignette in it.
+    writeVignette(uniformData, nullptr);
     // Nor keying: the frame being presented has already had every clip's key
     // applied to it, and a second one would cut holes in the composite.
     writeKeyer(uniformData, nullptr);

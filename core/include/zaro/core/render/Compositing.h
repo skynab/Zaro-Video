@@ -2,6 +2,7 @@
 
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Mask.h"
+#include "zaro/core/model/Vignette.h"
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/Keyer.h"
 #include "zaro/core/render/RgbaImage.h"
@@ -19,21 +20,43 @@ namespace zaro::render {
 /// the source beforehand. That is what the shader does — it grades what comes
 /// back from the texture unit — and the two have to agree. It also means a
 /// grade costs nothing for the pixels a transform never samples.
+/// Everything one clip does to one pixel, in one argument.
+///
+/// Collected rather than passed positionally, and not for tidiness. The list
+/// had grown to six nullable pointers in a row, which is the exact shape that
+/// once let a patch add colour correction to two of three draw sites and miss
+/// the third -- a transition that went two phases with its outgoing half
+/// ungraded. A struct makes the call sites read as what they set rather than as
+/// a column of nullptrs, and makes adding a stage one field instead of one more
+/// place to get the order wrong.
+///
+/// A default-constructed value means no shading at all, so a caller that only
+/// wants geometry passes nothing.
+struct ClipShading {
+    const GradeConstants* grade{nullptr};
+    const CurveTable* curves{nullptr};
+    const SecondaryConstants* secondary{nullptr};
+    const LutTable* lut{nullptr};
+    float lutAmount{1.0F};
+    const model::Mask* mask{nullptr};
+    const KeyerConstants* keyer{nullptr};
+    const model::Vignette* vignette{nullptr};
+
+    [[nodiscard]] bool keying() const noexcept { return keyer != nullptr && keyer->isActive(); }
+    [[nodiscard]] bool masking() const noexcept { return mask != nullptr && mask->isSet(); }
+    [[nodiscard]] bool vignetting() const noexcept {
+        return vignette != nullptr && vignette->isSet();
+    }
+};
+
 void drawTransformed(const RgbaImage& source, RgbaImage& destination,
                      const model::Transform& transform,
                      model::BlendMode blend = model::BlendMode::Normal,
-                     const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr,
-                     const SecondaryConstants* secondary = nullptr, const LutTable* lut = nullptr,
-                     float lutAmount = 1.0F, const model::Mask* mask = nullptr,
-                     const KeyerConstants* keyer = nullptr);
+                     const ClipShading& shading = {});
 
 /// Composite `source` over `destination` with no geometry -- the common case,
 /// and much faster than going through the sampler.
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity = 1.0,
-              model::BlendMode blend = model::BlendMode::Normal,
-              const GradeConstants* grade = nullptr, const CurveTable* curves = nullptr,
-              const SecondaryConstants* secondary = nullptr, const LutTable* lut = nullptr,
-              float lutAmount = 1.0F, const model::Mask* mask = nullptr,
-              const KeyerConstants* keyer = nullptr);
+              model::BlendMode blend = model::BlendMode::Normal, const ClipShading& shading = {});
 
 }  // namespace zaro::render

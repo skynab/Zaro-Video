@@ -53,6 +53,9 @@ layout(std140, binding = 0) uniform Block {
     vec4 cdlSlope;
     vec4 cdlOffset;
     vec4 cdlPower;    // w: non-zero when the CDL is not the identity
+    // The vignette, in output pixels from the centre of the frame. Must agree
+    // with render::vignetteGain.
+    vec4 vignette;    // x: amount, y: midpoint, z: feather, w: roundness
 } ubuf;
 
 
@@ -239,6 +242,24 @@ vec3 suppressSpill(vec3 colour)
     return colour;
 }
 
+// Must agree with render::vignetteGain. Brightness, not coverage: a vignette
+// darkens the corners rather than making them transparent.
+float vignetteGain(vec2 offset)
+{
+    if (ubuf.vignette.x == 0.0) {
+        return 1.0;
+    }
+    vec2 half_ = vec2(ubuf.params.z, ubuf.params.w) * 0.5;
+    if (half_.x <= 0.0 || half_.y <= 0.0) {
+        return 1.0;
+    }
+    float oval = length(offset / half_);
+    float circle = length(offset) / max(half_.x, half_.y);
+    float distance = mix(circle, oval, clamp(ubuf.vignette.w, 0.0, 1.0));
+    float t = smoothly((distance - ubuf.vignette.y) / max(ubuf.vignette.z, 1e-4));
+    return 1.0 + ubuf.vignette.x * t;
+}
+
 // Must agree with render::maskCoverage. The same signed distances the shape
 // rasteriser uses, so a mask and a shape of the same size cover the same pixels.
 float maskCoverage(vec2 offset)
@@ -325,6 +346,7 @@ void main()
     // Values are premultiplied, so opacity scales colour and coverage together
     // and a fade stays linear.
     fragColor = sampled * ubuf.params.x * maskCoverage(framePosition);
+    fragColor.rgb *= vignetteGain(framePosition);
 
     // Last of all, and only when presenting: fit what the frame carries into
     // what the screen can show. On straight colour, like the encoder does it --

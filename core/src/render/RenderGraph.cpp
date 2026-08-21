@@ -38,11 +38,18 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     // pixels are drawn even when nothing about their colour does. So is a key,
     // which changes whether they are drawn at all.
     const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive() ||
-                        lut != nullptr || clip.mask.isSet() || keyer.isActive();
-    drawTransformed(*source, out, transform, clip.blend, active ? &grade : nullptr,
-                    active ? &table : nullptr, active ? &secondary : nullptr, lut,
-                    static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr,
-                    keyer.isActive() ? &keyer : nullptr);
+                        lut != nullptr || clip.mask.isSet() || keyer.isActive() ||
+                        clip.vignette.isSet();
+    ClipShading shading;
+    shading.grade = active ? &grade : nullptr;
+    shading.curves = active ? &table : nullptr;
+    shading.secondary = active ? &secondary : nullptr;
+    shading.lut = lut;
+    shading.lutAmount = static_cast<float>(clip.lut.amount);
+    shading.mask = clip.mask.isSet() ? &clip.mask : nullptr;
+    shading.keyer = keyer.isActive() ? &keyer : nullptr;
+    shading.vignette = clip.vignette.isSet() ? &clip.vignette : nullptr;
+    drawTransformed(*source, out, transform, clip.blend, shading);
 }
 
 void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,

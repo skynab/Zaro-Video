@@ -293,6 +293,36 @@ std::vector<model::Effect> decodeEffects(const json& node) {
     return out;
 }
 
+json encode(const model::Vignette& vignette) {
+    const model::Vignette neutral;
+    if (vignette == neutral) {
+        return json::object();
+    }
+    json out = json::object();
+    const auto put = [&out](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            out[key] = value;
+        }
+    };
+    put("amount", vignette.amount, neutral.amount);
+    put("midpoint", vignette.midpoint, neutral.midpoint);
+    put("feather", vignette.feather, neutral.feather);
+    put("roundness", vignette.roundness, neutral.roundness);
+    return out;
+}
+
+model::Vignette decodeVignette(const json& node) {
+    model::Vignette out;
+    if (!node.is_object()) {
+        return out;
+    }
+    out.amount = node.value("amount", out.amount);
+    out.midpoint = node.value("midpoint", out.midpoint);
+    out.feather = node.value("feather", out.feather);
+    out.roundness = node.value("roundness", out.roundness);
+    return out;
+}
+
 json encode(const model::ColorWheels& wheels) {
     const model::ColorWheels neutral;
     if (wheels == neutral) {
@@ -651,6 +681,9 @@ json encode(const model::Clip& clip) {
     }
     if (clip.role != model::AudioRole::Unassigned) {
         out["role"] = model::toString(clip.role);
+    }
+    if (json vignette = encode(clip.vignette); !vignette.empty()) {
+        out["vignette"] = std::move(vignette);
     }
     if (json wheels = encode(clip.wheels); !wheels.empty()) {
         out["wheels"] = std::move(wheels);
@@ -1017,6 +1050,9 @@ Result<model::Clip> decodeClip(const json& node) {
         if (model::audioRoleFromString(node.at("role").get<std::string>().c_str(), role)) {
             clip.role = role;
         }
+    }
+    if (node.contains("vignette")) {
+        clip.vignette = decodeVignette(node.at("vignette"));
     }
     if (node.contains("wheels")) {
         clip.wheels = decodeWheels(node.at("wheels"));

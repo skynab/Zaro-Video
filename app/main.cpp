@@ -2607,6 +2607,69 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // The vignette, through the panel and out to the picture. A vignette
+        // darkens the corners without making them transparent, so on a frame
+        // that is lit the mean brightness has to fall while the frame stays
+        // opaque.
+        {
+            const auto vigSequenceId = window.project().activeSequence();
+            const auto vigTrackId =
+                window.project().findSequence(vigSequenceId)->videoTracks().front().id();
+            const auto vigClipId = window.project()
+                                       .findSequence(vigSequenceId)
+                                       ->findTrack(vigTrackId)
+                                       ->clips()
+                                       .front()
+                                       .id;
+            const auto vigRate = window.project().findSequence(vigSequenceId)->frameRate();
+
+            timeline->selectOnlyForTest(vigTrackId, vigClipId);
+            window.effects()->setSelection(vigTrackId, vigClipId);
+
+            std::int64_t litFrame = 0;
+            double lit = 0.0;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, vigRate});
+                const double gray = meanGray(settledGrab(window.monitor()));
+                if (gray > lit) {
+                    lit = gray;
+                    litFrame = frame;
+                }
+            }
+            window.setPosition(zaro::time::RationalTime{litFrame, vigRate});
+            const double open = meanGray(settledGrab(window.monitor()));
+
+            auto* amount = window.effects()->findChild<QDoubleSpinBox*>("vignette-amount");
+            if (amount == nullptr) {
+                std::fprintf(stderr, "  FAIL: the vignette control is not in the panel\n");
+                return 1;
+            }
+            amount->setValue(-1.0);
+            QApplication::processEvents();
+
+            const auto* vignetted = window.project()
+                                        .findSequence(vigSequenceId)
+                                        ->findTrack(vigTrackId)
+                                        ->find(vigClipId);
+            if (vignetted == nullptr || !vignetted->vignette.isSet()) {
+                std::fprintf(stderr, "  FAIL: the vignette did not reach the clip\n");
+                return 1;
+            }
+            const double darkened = meanGray(settledGrab(window.monitor()));
+            std::printf("  vignette: %.1f open, %.1f with the corners pulled down\n", open,
+                        darkened);
+            if (!(darkened < open * 0.9)) {
+                std::fprintf(stderr, "  FAIL: the vignette did not reach the picture\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Delivery: the curve a sequence goes out through, and the highlight
         // rolloff that keeps the encoder from clipping.
         //

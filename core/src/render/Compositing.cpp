@@ -56,9 +56,7 @@ Rgba scaled(const Rgba& pixel, float factor) {
 /// The key runs first, and on the ungraded colour. A key is a measurement of
 /// what the camera saw; running it after a grade would mean every adjustment to
 /// the look silently moved the edges of the matte.
-Rgba shaded(const Rgba& pixel, const GradeConstants* grade, const CurveTable* curves,
-            const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-            const KeyerConstants* keyer) {
+Rgba shaded(const Rgba& pixel, const ClipShading& shading) {
     if (pixel.a <= 0.0001F) {
         return pixel;
     }
@@ -68,22 +66,23 @@ Rgba shaded(const Rgba& pixel, const GradeConstants* grade, const CurveTable* cu
     float b = pixel.b * inverse;
 
     float alpha = pixel.a;
-    if (keyer != nullptr && keyer->isActive()) {
-        const float matte = keyMatte(*keyer, r, g, b);
-        if (keyer->showMatte) {
+    if (shading.keying()) {
+        const float matte = keyMatte(*shading.keyer, r, g, b);
+        if (shading.keyer->showMatte) {
             // The matte itself, opaque, so a hole in it is visible against
             // whatever is underneath rather than being one.
             return Rgba{matte * pixel.a, matte * pixel.a, matte * pixel.a, pixel.a};
         }
-        suppressSpill(*keyer, r, g, b);
+        suppressSpill(*shading.keyer, r, g, b);
         alpha *= matte;
         if (alpha <= 0.0001F) {
             return Rgba{0.0F, 0.0F, 0.0F, 0.0F};
         }
     }
 
-    if (grade != nullptr) {
-        gradePixel(*grade, r, g, b, curves, secondary, lut, lutAmount);
+    if (shading.grade != nullptr) {
+        gradePixel(*shading.grade, r, g, b, shading.curves, shading.secondary, shading.lut,
+                   shading.lutAmount);
     }
     return Rgba{r * alpha, g * alpha, b * alpha, alpha};
 }
@@ -91,9 +90,7 @@ Rgba shaded(const Rgba& pixel, const GradeConstants* grade, const CurveTable* cu
 }  // namespace
 
 void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, BlendMode blend,
-              const GradeConstants* grade, const CurveTable* curves,
-              const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-              const model::Mask* mask, const KeyerConstants* keyer) {
+              const ClipShading& shading) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
@@ -111,35 +108,42 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
         for (std::int32_t x = 0; x < width; ++x) {
             // Opacity scales a premultiplied pixel uniformly, colour and
             // coverage together; that is what keeps a fade linear.
-            const bool keying = keyer != nullptr && keyer->isActive();
             const Rgba corrected =
-                grade != nullptr || keying
-                    ? shaded(in[x], grade, curves, secondary, lut, lutAmount, keyer)
-                    : in[x];
+                shading.grade != nullptr || shading.keying() ? shaded(in[x], shading) : in[x];
             // Applied here rather than to the source: a mask is in output
             // coordinates, because where a clip shows through is a fact about
             // the screen and not about the picture being drawn.
-            float coverage = alpha;
-            if (mask != nullptr && mask->isSet()) {
-                coverage *= maskCoverage(*mask, destination.width(), destination.height(), x, y);
+            // Brightness, not coverage: a vignette darkens the corners, it
+            // does not make them transparent, so what is underneath must not
+            // show through them.
+            Rgba shadedPixel = corrected;
+            if (shading.vignetting()) {
+                const float gain = vignetteGain(*shading.vignette, destination.width(),
+                                                destination.height(), x, y);
+                shadedPixel.r *= gain;
+                shadedPixel.g *= gain;
+                shadedPixel.b *= gain;
             }
-            out[x] = blendPixel(coverage == 1.0F ? corrected : scaled(corrected, coverage), out[x],
-                                blend);
+
+            float coverage = alpha;
+            if (shading.masking()) {
+                coverage *=
+                    maskCoverage(*shading.mask, destination.width(), destination.height(), x, y);
+            }
+            out[x] = blendPixel(coverage == 1.0F ? shadedPixel : scaled(shadedPixel, coverage),
+                                out[x], blend);
         }
     }
 }
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Transform& transform,
-                     BlendMode blend, const GradeConstants* grade, const CurveTable* curves,
-                     const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-                     const model::Mask* mask, const KeyerConstants* keyer) {
+                     BlendMode blend, const ClipShading& shading) {
     if (!source.isValid() || !destination.isValid()) {
         return;
     }
     if (transform.isIdentity() && source.width() == destination.width() &&
         source.height() == destination.height()) {
-        drawOver(source, destination, 1.0, blend, grade, curves, secondary, lut, lutAmount, mask,
-                 keyer);
+        drawOver(source, destination, 1.0, blend, shading);
         return;
     }
 
@@ -184,17 +188,25 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
             if (sample.a <= 0.0F && sample.r == 0.0F && sample.g == 0.0F && sample.b == 0.0F) {
                 continue;
             }
-            if (grade != nullptr || (keyer != nullptr && keyer->isActive())) {
+            if (shading.grade != nullptr || shading.keying()) {
                 // Keyed after the sample rather than before it, which is what
                 // the shader does -- it keys what comes back from the texture
                 // unit. Keying first would mean a scaled clip was keyed at a
                 // different resolution than it is drawn at, and the two paths
                 // would disagree along every edge.
-                sample = shaded(sample, grade, curves, secondary, lut, lutAmount, keyer);
+                sample = shaded(sample, shading);
+            }
+            if (shading.vignetting()) {
+                const float gain = vignetteGain(*shading.vignette, destination.width(),
+                                                destination.height(), x, y);
+                sample.r *= gain;
+                sample.g *= gain;
+                sample.b *= gain;
             }
             float coverage = opacity;
-            if (mask != nullptr && mask->isSet()) {
-                coverage *= maskCoverage(*mask, destination.width(), destination.height(), x, y);
+            if (shading.masking()) {
+                coverage *=
+                    maskCoverage(*shading.mask, destination.width(), destination.height(), x, y);
             }
             if (coverage <= 0.0F) {
                 continue;

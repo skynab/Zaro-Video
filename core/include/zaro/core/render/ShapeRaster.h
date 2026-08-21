@@ -2,6 +2,7 @@
 
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/model/Mask.h"
+#include "zaro/core/model/Vignette.h"
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {
@@ -30,6 +31,14 @@ void drawShape(const model::Graphic& graphic, RgbaImage& out);
 /// The same geometry the shape rasteriser uses, so a mask and a shape of the
 /// same size cover exactly the same pixels — which is what anyone would assume
 /// on seeing the two controls side by side.
+/// How much brighter or darker this pixel is for the vignette, as a multiplier.
+///
+/// 1 leaves it alone. Same coordinates as `maskCoverage`, because it is the
+/// same question about where in the frame a pixel sits -- only the answer is
+/// applied to brightness rather than to coverage.
+[[nodiscard]] float vignetteGain(const model::Vignette& vignette, std::int32_t width,
+                                 std::int32_t height, std::int32_t x, std::int32_t y);
+
 [[nodiscard]] float maskCoverage(const model::Mask& mask, std::int32_t width, std::int32_t height,
                                  double x, double y);
 

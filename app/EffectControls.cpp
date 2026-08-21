@@ -441,6 +441,22 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     }
     colourForm->addRow(wheelsBox);
 
+    // The vignette. In the colour group because that is where somebody reaches
+    // for it, even though the arithmetic is geometry -- see model::Vignette.
+    vignetteAmount_ = makeSpin(-1.0, 1.0, 0.05, 2);
+    vignetteAmount_->setObjectName("vignette-amount");
+    vignetteMidpoint_ = makeSpin(0.0, 2.0, 0.05, 2);
+    vignetteFeather_ = makeSpin(0.0, 2.0, 0.05, 2);
+    vignetteRoundness_ = makeSpin(0.0, 1.0, 0.05, 2);
+    colourForm->addRow("Vignette", vignetteAmount_);
+    colourForm->addRow("  midpoint", vignetteMidpoint_);
+    colourForm->addRow("  feather", vignetteFeather_);
+    colourForm->addRow("  roundness", vignetteRoundness_);
+    for (QDoubleSpinBox* spin :
+         {vignetteAmount_, vignetteMidpoint_, vignetteFeather_, vignetteRoundness_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushVignette(); });
+    }
+
     // The keyer: what of this clip is transparent. Its own group rather than a
     // corner of the secondary, because it looks like a qualifier and answers a
     // different question -- one is "which pixels to correct", the other is
@@ -793,6 +809,11 @@ void EffectControls::applyToWidgets() {
     keyLumaLow_->setEnabled(luma);
     keyLumaHigh_->setEnabled(luma);
     keyShowMatte_->setEnabled(key.isSet());
+
+    vignetteAmount_->setValue(clip->vignette.amount);
+    vignetteMidpoint_->setValue(clip->vignette.midpoint);
+    vignetteFeather_->setValue(clip->vignette.feather);
+    vignetteRoundness_->setValue(clip->vignette.roundness);
 
     const model::ColorWheels& wheels = clip->wheels;
     wheels_[0]->setValue(wheels.offsetR);
@@ -1335,6 +1356,25 @@ void EffectControls::pushEffects() {
             emit keyframesChanged();
         }
     }
+}
+
+void EffectControls::pushVignette() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    model::Vignette vignette;
+    vignette.amount = vignetteAmount_->value();
+    vignette.midpoint = vignetteMidpoint_->value();
+    vignette.feather = vignetteFeather_->value();
+    vignette.roundness = vignetteRoundness_->value();
+
+    auto built = edit::makeSetVignette(*project_, {sequenceId_, track_}, clip_, vignette);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    applyToWidgets();
+    emit edited();
 }
 
 void EffectControls::pushWheels() {

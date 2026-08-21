@@ -337,6 +337,11 @@ enum class PlaceMode {
                                                model::ClipId clip,
                                                const model::ColorWheels& wheels);
 
+/// Darkening towards the corners.
+[[nodiscard]] Result<CommandPtr> makeSetVignette(model::Project& project, const EditTarget& target,
+                                                 model::ClipId clip,
+                                                 const model::Vignette& vignette);
+
 /// The keyer: what of the clip is transparent.
 [[nodiscard]] Result<CommandPtr> makeSetKeyer(model::Project& project, const EditTarget& target,
                                               model::ClipId clip, const model::Keyer& keyer);

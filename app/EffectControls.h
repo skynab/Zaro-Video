@@ -197,6 +197,12 @@ private:
     std::array<QDoubleSpinBox*, 9> wheels_{};
     void pushWheels();
 
+    QDoubleSpinBox* vignetteAmount_{nullptr};
+    QDoubleSpinBox* vignetteMidpoint_{nullptr};
+    QDoubleSpinBox* vignetteFeather_{nullptr};
+    QDoubleSpinBox* vignetteRoundness_{nullptr};
+    void pushVignette();
+
     QComboBox* keyKind_{nullptr};
     QDoubleSpinBox* keyRed_{nullptr};
     QDoubleSpinBox* keyGreen_{nullptr};

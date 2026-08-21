@@ -7,6 +7,7 @@
 #include "zaro/core/media/VideoFrame.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Mask.h"
+#include "zaro/core/model/Vignette.h"
 #include "zaro/core/render/CurveTable.h"
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/Keyer.h"
@@ -67,7 +68,8 @@ public:
                               const render::SecondaryConstants* secondary = nullptr,
                               const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
                               const model::Mask* mask = nullptr,
-                              const render::KeyerConstants* keyer = nullptr);
+                              const render::KeyerConstants* keyer = nullptr,
+                              const model::Vignette* vignette = nullptr);
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -84,7 +86,8 @@ public:
                                     const render::SecondaryConstants* secondary = nullptr,
                                     const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
                                     const model::Mask* mask = nullptr,
-                                    const render::KeyerConstants* keyer = nullptr);
+                                    const render::KeyerConstants* keyer = nullptr,
+                                    const model::Vignette* vignette = nullptr);
 
     /// Where the presented frame's highlights start rolling off.
     ///

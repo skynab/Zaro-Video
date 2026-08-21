@@ -13,6 +13,7 @@
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/model/Secondary.h"
 #include "zaro/core/model/ToneCurve.h"
+#include "zaro/core/model/Vignette.h"
 #include "zaro/core/time/TimeRange.h"
 
 namespace zaro::model {
@@ -145,6 +146,9 @@ struct Clip {
     /// Where on the screen this clip shows through. In output coordinates, so
     /// it stays put when the clip moves.
     Mask mask;
+
+    /// Darkening towards the corners, in output coordinates like the mask.
+    Vignette vignette;
 
     /// A look LUT, applied after the primary correction and before the curves:
     /// a LUT is a look put on a balanced picture, and the curves are the

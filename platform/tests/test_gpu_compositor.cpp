@@ -876,7 +876,7 @@ TEST_CASE("The GPU grade agrees with the CPU reference", "[gpu][golden][grade]")
 
         RgbaImage cpuOut{32, 32};
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
-                                grade.isIdentity() ? nullptr : &grade);
+                                {.grade = grade.isIdentity() ? nullptr : &grade});
 
         REQUIRE(compositor->beginFrame(32, 32).ok());
         REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
@@ -990,7 +990,8 @@ TEST_CASE("The GPU tone curve agrees with the CPU reference", "[gpu][golden][cur
         const render::GradeConstants neutral;
 
         RgbaImage cpuOut{32, 32};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, &table);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.grade = &neutral, .curves = &table});
 
         REQUIRE(compositor->beginFrame(32, 32).ok());
         REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, &table).ok());
@@ -1091,7 +1092,8 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
     REQUIRE(render::toLinear(frame, converted).ok());
     RgbaImage cpuOut{64, 64};
     const render::GradeConstants neutral;
-    render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal, &neutral, &table);
+    render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal,
+                            {.grade = &neutral, .curves = &table});
 
     const Difference difference = compare(cpuOut, curved, 1);
     INFO("worst " << difference.worst << ", mean " << difference.mean);
@@ -1220,8 +1222,8 @@ TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][seco
         const render::GradeConstants neutral;
 
         RgbaImage cpuOut{48, 48};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
-                                &secondary);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.grade = &neutral, .secondary = &secondary});
 
         REQUIRE(compositor->beginFrame(48, 48).ok());
         REQUIRE(
@@ -1296,8 +1298,8 @@ TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]"
         const render::GradeConstants neutral;
 
         RgbaImage cpuOut{32, 32};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
-                                nullptr, &table, testCase.amount);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.grade = &neutral, .lut = &table, .lutAmount = testCase.amount});
 
         REQUIRE(compositor->beginFrame(32, 32).ok());
         REQUIRE(compositor
@@ -1356,8 +1358,8 @@ TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
 
     for (const Case& testCase : cases) {
         RgbaImage cpuOut{64, 64};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, nullptr, nullptr,
-                                nullptr, nullptr, 1.0F, &testCase.mask);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.mask = &testCase.mask});
 
         REQUIRE(compositor->beginFrame(64, 64).ok());
         REQUIRE(compositor
@@ -1480,8 +1482,8 @@ TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]")
         const render::GradeConstants neutral;
 
         RgbaImage cpuOut{48, 48};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &neutral, nullptr,
-                                nullptr, nullptr, 1.0F, nullptr, &keyer);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.grade = &neutral, .keyer = &keyer});
 
         REQUIRE(compositor->beginFrame(48, 48).ok());
         REQUIRE(compositor
@@ -1702,7 +1704,7 @@ TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][whe
         REQUIRE(grade.wheels);
 
         RgbaImage cpuOut{48, 48};
-        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &grade);
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, {.grade = &grade});
 
         REQUIRE(compositor->beginFrame(48, 48).ok());
         REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
@@ -1713,6 +1715,72 @@ TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][whe
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
                            << difference.worstY << ", mean " << difference.mean);
         CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.002F);
+    }
+}
+
+TEST_CASE("The GPU agrees with the CPU on the vignette", "[gpu][golden][vignette]") {
+    // Geometry evaluated per pixel in two places, which is how a mask once came
+    // to feather differently on the two paths. The falloff shape is shared with
+    // the qualifier and the mask, so a disagreement here would be one there too.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::Vignette vignette;
+    };
+    std::vector<Case> cases;
+    {
+        model::Vignette classic;
+        classic.amount = -0.6;
+        cases.push_back({"an ordinary vignette", classic});
+
+        model::Vignette round;
+        round.amount = -0.8;
+        round.roundness = 0.0;
+        round.midpoint = 0.4;
+        cases.push_back({"round like a lens", round});
+
+        model::Vignette tight;
+        tight.amount = -1.0;
+        tight.midpoint = 0.2;
+        tight.feather = 0.05;
+        cases.push_back({"a hard edge", tight});
+
+        model::Vignette lifted;
+        lifted.amount = 0.5;
+        cases.push_back({"lifting the corners instead", lifted});
+    }
+
+    RgbaImage source{64, 36};  // deliberately not square, so roundness matters
+    for (std::int32_t y = 0; y < 36; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 64; ++x) {
+            const float level = 0.2F + (static_cast<float>(x) / 128.0F);
+            row[x] = Rgba{level, level * 0.8F, level * 0.6F, 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        RgbaImage cpuOut{64, 36};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.vignette = &testCase.vignette});
+
+        REQUIRE(compositor->beginFrame(64, 36).ok());
+        REQUIRE(compositor
+                    ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
+                           nullptr, nullptr, nullptr, 1.0F, nullptr, nullptr, &testCase.vignette)
+                    .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.01F);
         CHECK(difference.mean < 0.002F);
     }
 }

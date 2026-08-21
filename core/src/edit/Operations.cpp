@@ -1851,6 +1851,21 @@ Result<CommandPtr> makeSetEffects(Project& project, const EditTarget& target, Cl
                       [effects](Clip& clip) { clip.effects = effects; });
 }
 
+Result<CommandPtr> makeSetVignette(Project& project, const EditTarget& target, ClipId clipId,
+                                   const model::Vignette& vignette) {
+    for (const double value :
+         {vignette.amount, vignette.midpoint, vignette.feather, vignette.roundness}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a vignette has to be real numbers"};
+        }
+    }
+    if (vignette.feather < 0.0 || vignette.midpoint < 0.0) {
+        return Error{ErrorCode::InvalidData, "a vignette cannot fall off backwards"};
+    }
+    return modifyClip(project, target, clipId, "Set vignette", "vignette:" + idText(clipId),
+                      [vignette](Clip& clip) { clip.vignette = vignette; });
+}
+
 Result<CommandPtr> makeSetWheels(Project& project, const EditTarget& target, ClipId clipId,
                                  const model::ColorWheels& wheels) {
     for (const double value :

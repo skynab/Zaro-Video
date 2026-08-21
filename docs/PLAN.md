@@ -2538,6 +2538,41 @@ region with it.
 
 ---
 
+#### Phase 6k — vignette, and one argument for clip shading ✅
+
+**The refactor came first, and not for tidiness.** Adding the vignette would
+have made the eleventh positional parameter of `drawTransformed`, the seventh
+nullable pointer in a row. That is the exact shape that once let a patch add
+colour correction to two of three draw sites and miss the third — a transition
+that went two phases with its outgoing half ungraded. `ClipShading` collects
+them, so a call site reads as what it sets rather than as a column of nullptrs,
+and adding a stage is one field instead of one more place to get the order
+wrong. The golden-frame tests are what made the change safe to do mechanically:
+they compare against a CPU reference pixel by pixel, so a swapped argument would
+have shown up immediately. None did.
+
+**A vignette darkens; a mask makes holes.** `Mask` already carried the
+observation that a vignette and a spotlight are the same shape with the
+inversion flipped, and that is still true of the *geometry* — this reuses the
+same coordinates, the same smoothstep, and therefore falls off with the same
+shape as a feathered mask and a qualifier. What differs is what the shape
+multiplies: a mask scales coverage, so the clip underneath shows through; a
+vignette scales brightness, so it does not. There is a test that stacks a blue
+clip over a red one and requires no red in the corner.
+
+**Roundness is the choice between the frame's shape and a lens's.** 1 gives a
+widescreen frame a widescreen oval; 0 gives a circle in pixels, which is what a
+lens actually casts. The test puts them on a 128×32 frame, where the two
+disagree most.
+
+**It is in the colour group even though the arithmetic is geometry**, because
+that is where somebody reaches for it.
+
+Four-case GPU golden-frame test, passing first run; six core tests; and a
+self-test that pulls the corners down on a lit frame through the panel.
+
+---
+
 #### §7.3 — where colour stands
 
 Done: the working space and its rationale (ADR-005), primary correction, tone
@@ -2548,9 +2583,6 @@ wheels.
 
 Not done, and worth being plain about which is small and which is not:
 
-- **Vignette** is small: a radial falloff in output coordinates, and the mask
-  machinery already computes coverage there. It is a phase of its own only
-  because it needs both paths and a parity test like everything else here.
 - **LUT export (.cube out)** is small: the baking already exists, and what is
   missing is a writer and a decision about what to bake — the clip's whole grade,
   or only the parts a LUT can carry. That second half is the real work, because
