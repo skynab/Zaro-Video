@@ -201,3 +201,66 @@ TEST_CASE("Clearing the history forgets where the save was", "[edit][save]") {
     // caller.
     CHECK(f.stack.isModified());
 }
+
+// --- Starting from nothing --------------------------------------------------
+
+TEST_CASE("A new project has somewhere to put something", "[edit][newproject]") {
+    model::Project project = model::newProject();
+    const model::Sequence* sequence = project.findSequence(project.activeSequence());
+    REQUIRE(sequence != nullptr);
+    // A timeline with no tracks has nowhere to drop anything, and the first
+    // thing anybody does is drop something.
+    CHECK(sequence->videoTracks().size() == 1);
+    CHECK(sequence->audioTracks().size() == 1);
+    CHECK(sequence->duration().frames() == 0);
+
+    SECTION("and its ids do not collide with what is added next") {
+        const auto next = project.ids().next<model::ClipTag>();
+        CHECK(next.value() > sequence->videoTracks().front().id().value());
+    }
+
+    SECTION("and it round trips") {
+        auto text = io::saveProjectToString(project);
+        REQUIRE(text);
+        auto reloaded = io::loadProjectFromString(*text);
+        REQUIRE(reloaded);
+        CHECK(reloaded->project.activeSequence() == project.activeSequence());
+    }
+}
+
+TEST_CASE("An empty sequence takes its format from what is put on it", "[edit][newproject]") {
+    model::Project project = model::newProject();
+    const model::SequenceId sequenceId = project.activeSequence();
+    edit::CommandStack stack;
+
+    auto built = edit::makeConformSequence(project, sequenceId, time::rates::fps24, 4096, 2160);
+    REQUIRE(built);
+    stack.execute(project, std::move(*built));
+
+    const model::Sequence* sequence = project.findSequence(sequenceId);
+    CHECK(sequence->frameRate() == time::rates::fps24);
+    CHECK(sequence->width() == 4096);
+    CHECK(sequence->height() == 2160);
+
+    SECTION("and it is undoable like anything else") {
+        stack.undo(project);
+        CHECK(project.findSequence(sequenceId)->frameRate() == time::rates::fps25);
+        CHECK(project.findSequence(sequenceId)->width() == 1920);
+    }
+}
+
+TEST_CASE("Conforming a sequence that has clips on it is refused", "[edit][newproject]") {
+    // Every clip's timeline range is expressed at the sequence's rate, so
+    // changing it under a cut would retime the whole thing -- silently, and by
+    // a ratio nobody was thinking about.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    CHECK_FALSE(edit::makeConformSequence(f.project, f.sequenceId, time::rates::fps24, 1920, 1080));
+
+    SECTION("and so is a rate or a size that is not one") {
+        model::Project project = model::newProject();
+        const model::SequenceId id = project.activeSequence();
+        CHECK_FALSE(edit::makeConformSequence(project, id, time::Rational{0, 1}, 1920, 1080));
+        CHECK_FALSE(edit::makeConformSequence(project, id, time::rates::fps24, 0, 1080));
+    }
+}

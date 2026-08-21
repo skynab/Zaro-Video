@@ -176,6 +176,29 @@ void ProjectBin::appendSelectedToTimeline() {
         return;
     }
 
+    // The first thing on an empty timeline decides its format.
+    //
+    // Done here, before anything below takes a reference into the sequence: a
+    // command replaces the sequence wholesale, so a rate or a track captured
+    // first would be left pointing at the version that has just been thrown
+    // away. That is the bug this project has already found twice.
+    //
+    // In the bin rather than in the model, because it is a decision about what
+    // somebody meant, and those belong where the interaction is; every edit
+    // operation would otherwise have to carry a rule about when a sequence may
+    // change shape. The operation refuses once there is anything to retime, so
+    // calling it again later cannot do harm.
+    if (const media::VideoStreamInfo* first = ref->info.primaryVideo();
+        first != nullptr && sequence->duration().frames() == 0) {
+        auto conformed = edit::makeConformSequence(*project_, sequenceId_, first->frameRate,
+                                                   first->width, first->height);
+        if (conformed) {
+            commands_->execute(*project_, std::move(*conformed));
+            commands_->breakMerge();
+            sequence = project_->findSequence(sequenceId_);
+        }
+    }
+
     const time::Rational& rate = sequence->frameRate();
     const media::VideoStreamInfo* video = ref->info.primaryVideo();
     const time::Rational sourceRate = video != nullptr ? video->frameRate : rate;

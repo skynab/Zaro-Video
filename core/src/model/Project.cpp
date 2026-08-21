@@ -38,6 +38,19 @@ MediaRefId Project::addMedia(MediaRef ref) {
     return id;
 }
 
+Project newProject(const std::string& sequenceName) {
+    Project project;
+    Sequence sequence{project.ids().next<SequenceTag>(), sequenceName, time::rates::fps25};
+    sequence.setSize(1920, 1080);
+    // One of each. A timeline with no tracks has nowhere to drop anything, and
+    // the first thing anybody does is drop something.
+    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Video, "V1");
+    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Audio, "A1");
+    const SequenceId id = project.addSequence(std::move(sequence));
+    project.setActiveSequence(id);
+    return project;
+}
+
 const Subclip* Project::findSubclip(SubclipId id) const {
     for (const Subclip& subclip : subclips_) {
         if (subclip.id == id) {

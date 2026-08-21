@@ -162,6 +162,20 @@ public:
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
 
+        auto* newButton = new QPushButton("New", this);
+        newButton->setObjectName("new-project");
+        newButton->setToolTip("Start an empty project (Ctrl+N)");
+        newButton->setMinimumWidth(newButton->sizeHint().width());
+        transportRow->addWidget(newButton);
+        connect(newButton, &QPushButton::clicked, this, [this] { newProject(); });
+
+        auto* openButton = new QPushButton("Open…", this);
+        openButton->setObjectName("open-project");
+        openButton->setToolTip("Open another project (Ctrl+O)");
+        openButton->setMinimumWidth(openButton->sizeHint().width());
+        transportRow->addWidget(openButton);
+        connect(openButton, &QPushButton::clicked, this, [this] { openDialog(); });
+
         auto* saveButton = new QPushButton("Save", this);
         saveButton->setObjectName("save-project");
         saveButton->setToolTip("Write the project back to its file (Ctrl+S)");
@@ -421,6 +435,70 @@ public:
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
 
+    /// Open a different project into this window.
+    ///
+    /// Everything is loaded and the media opened *before* anything is replaced,
+    /// so a file that cannot be read leaves the window on the project it
+    /// already had. Half-swapping a window is how a program ends up showing one
+    /// project's timeline over another's media.
+    /// Reports rather than reports *and* decides how to tell somebody. The
+    /// button below puts the message on screen; a caller with no screen -- the
+    /// self-test -- gets the same answer without a dialog it cannot dismiss.
+    [[nodiscard]] Status openProject(const std::string& path) {
+        auto loaded = io::loadProject(path);
+        if (!loaded) {
+            return loaded.error();
+        }
+        if (loaded->project.findSequence(loaded->project.activeSequence()) == nullptr) {
+            return Error{ErrorCode::InvalidData, "that project has no active sequence"};
+        }
+        adopt(std::move(loaded->project), std::move(*loaded), path);
+        return {};
+    }
+
+    /// Start again, with somewhere to put something.
+    void newProject() {
+        model::Project fresh = model::newProject();
+        adopt(std::move(fresh), io::LoadedProject{}, {});
+    }
+
+    /// Replace what this window is showing.
+    ///
+    /// The same no-dialog bargain closing makes: whatever was unsaved is
+    /// written to its recovery file first, so switching projects never asks a
+    /// question and never loses anything.
+    void adopt(model::Project project, io::LoadedProject loaded, std::string path) {
+        autosave();
+        stop();
+
+        project_ = std::move(project);
+        loaded_ = std::move(loaded);
+        path_ = std::move(path);
+        sequenceId_ = project_.activeSequence();
+        position_ = time::RationalTime{0, project_.findSequence(sequenceId_)->frameRate()};
+        selectedTrack_ = model::TrackId{};
+        selectedClip_ = model::ClipId{};
+
+        // The history and the cache belong to the project that has just gone.
+        // A frame cached from it would be served for the new one -- the recipe
+        // covers what is in a sequence, not which project it came from.
+        commands_.clear();
+        commands_.markSaved();
+        renderCache_.clear();
+
+        if (Status opened = openMedia(); !opened) {
+            // The project is loaded and the window is bound to it; what failed
+            // is reading its files. Said plainly rather than swallowed: a
+            // timeline of clips that draw nothing is a puzzle.
+            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+        }
+        effects_->setSelection(model::TrackId{}, model::ClipId{});
+        timeline_->setCachedSpans({});
+        updateTitle();
+        refresh();
+        monitor_->update();
+    }
+
     /// Write the project back where it came from.
     ///
     /// Returns false when it could not be written, so a caller that was about
@@ -442,6 +520,17 @@ public:
         std::filesystem::remove(io::autosavePath(path_), code);
         updateTitle();
         return true;
+    }
+
+    void openDialog() {
+        const QString chosen =
+            QFileDialog::getOpenFileName(this, "Open project", {}, "Zaro projects (*.zaro)");
+        if (chosen.isEmpty()) {
+            return;
+        }
+        if (Status opened = openProject(chosen.toStdString()); !opened) {
+            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+        }
     }
 
     bool saveAs() {
@@ -731,6 +820,8 @@ protected:
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
             {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
+            {Qt::Key_N, Qt::ControlModifier, "New project", &PreviewWindow::doNew},
+            {Qt::Key_O, Qt::ControlModifier, "Open a project", &PreviewWindow::doOpen},
             {Qt::Key_S, Qt::ControlModifier, "Save", &PreviewWindow::doSave},
             {Qt::Key_S, Qt::ControlModifier | Qt::ShiftModifier, "Save as",
              &PreviewWindow::doSaveAs},
@@ -862,6 +953,8 @@ private:
     /// asks -- so match frame stays right through trims, speed, reverse, a
     /// multicam angle and a time remap, with nothing to keep in step.
     void doMatchFrame() { matchFrame(); }
+    void doNew() { newProject(); }
+    void doOpen() { openDialog(); }
     void doSave() { static_cast<void>(save()); }
     void doSaveAs() { static_cast<void>(saveAs()); }
     void doMarkIn() { source_->markIn(); }
@@ -4218,6 +4311,139 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // New and Open, through the real window.
+        //
+        // Last, and on purpose: it replaces the project this whole self-test
+        // has been editing, so nothing after it could rely on what came before.
+        {
+            const std::string originalPath = "/tmp/play/linked.zaro";
+            const std::size_t originalMedia = window.project().media().size();
+
+            // Something to undo, so that "New cleared the history" is a check
+            // that can fail: the block before this one drains the stack.
+            //
+            // The rate comes from the project rather than from the `sequence`
+            // reference this function has held since the top: by here, blocks
+            // above have added a track and a sequence, and both reallocate.
+            const auto liveRate =
+                window.project().findSequence(window.project().activeSequence())->frameRate();
+            auto scribble =
+                zaro::edit::makeAddMarker(window.project(), window.project().activeSequence(),
+                                          zaro::time::RationalTime{3, liveRate},
+                                          zaro::time::RationalTime{1, liveRate}, "before new");
+            if (!scribble) {
+                std::fprintf(stderr, "  FAIL: %s\n", scribble.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*scribble));
+            if (!window.commands().canUndo()) {
+                std::fprintf(stderr, "  FAIL: the setup for this check did not take\n");
+                return 1;
+            }
+
+            auto* newButton = window.findChild<QPushButton*>("new-project");
+            if (newButton == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no new-project button\n");
+                return 1;
+            }
+            newButton->click();
+            QApplication::processEvents();
+
+            const auto freshId = window.project().activeSequence();
+            const auto* fresh = window.project().findSequence(freshId);
+            if (fresh == nullptr || fresh->videoTracks().empty() ||
+                fresh->duration().frames() != 0) {
+                std::fprintf(stderr, "  FAIL: New did not give an empty sequence with tracks\n");
+                return 1;
+            }
+            if (!window.project().media().empty()) {
+                std::fprintf(stderr, "  FAIL: New kept the old project's media\n");
+                return 1;
+            }
+            if (window.commands().canUndo()) {
+                std::fprintf(stderr, "  FAIL: New kept the old project's history\n");
+                return 1;
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+
+            // An empty sequence takes the shape of the first thing put on it.
+            zaro::media::VideoStreamInfo stream;
+            stream.width = 4096;
+            stream.height = 2160;
+            stream.frameRate = zaro::time::rates::fps24;
+            stream.duration = zaro::time::Rational{4, 1};
+            auto conformed = zaro::edit::makeConformSequence(
+                window.project(), freshId, stream.frameRate, stream.width, stream.height);
+            if (!conformed) {
+                std::fprintf(stderr, "  FAIL: %s\n", conformed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*conformed));
+            const auto* shaped = window.project().findSequence(freshId);
+            std::printf("  new project: sequence conformed to %dx%d\n", shaped->width(),
+                        shaped->height());
+            if (shaped->width() != 4096 || shaped->frameRate() != zaro::time::rates::fps24) {
+                std::fprintf(stderr, "  FAIL: the empty sequence did not take the media's shape\n");
+                return 1;
+            }
+
+            // Once there is a cut on it, it will not change shape again.
+            zaro::model::MediaRef placeholder;
+            placeholder.id = window.project().ids().next<zaro::model::MediaRefTag>();
+            placeholder.name = "placeholder";
+            placeholder.info.duration = stream.duration;
+            placeholder.info.videoStreams.push_back(stream);
+            const auto placeholderId = window.project().addMedia(placeholder);
+
+            zaro::model::Clip anchorClip;
+            anchorClip.id = window.project().ids().next<zaro::model::ClipTag>();
+            anchorClip.source = placeholderId;
+            anchorClip.sourceRange =
+                zaro::time::TimeRange{zaro::time::RationalTime{0, stream.frameRate},
+                                      zaro::time::RationalTime{24, stream.frameRate}};
+            anchorClip.timelineRange = anchorClip.sourceRange;
+            auto anchored = zaro::edit::makeOverwrite(
+                window.project(), {freshId, shaped->videoTracks().front().id()}, anchorClip);
+            if (!anchored) {
+                std::fprintf(stderr, "  FAIL: %s\n", anchored.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*anchored));
+            if (zaro::edit::makeConformSequence(window.project(), freshId, zaro::time::rates::fps50,
+                                                640, 480)) {
+                std::fprintf(stderr, "  FAIL: a sequence with a cut on it can still be retimed\n");
+                return 1;
+            }
+
+            // Open: back to the project this self-test started from.
+            if (Status back = window.openProject(originalPath); !back) {
+                std::fprintf(stderr, "  FAIL: opening the original project failed\n");
+                return 1;
+            }
+            if (window.project().media().size() != originalMedia) {
+                std::fprintf(stderr, "  FAIL: opening did not restore the project's media\n");
+                return 1;
+            }
+            if (window.commands().isModified()) {
+                std::fprintf(stderr, "  FAIL: a freshly opened project reads as modified\n");
+                return 1;
+            }
+            std::printf("  opened %zu media back from %s\n", window.project().media().size(),
+                        originalPath.c_str());
+
+            // And a file that is not a project leaves the window as it was.
+            const std::size_t mediaBeforeBadOpen = window.project().media().size();
+            if (Status missing = window.openProject("/definitely/not/a/project.zaro"); missing) {
+                std::fprintf(stderr, "  FAIL: opening a missing file reported success\n");
+                return 1;
+            }
+            if (window.project().media().size() != mediaBeforeBadOpen) {
+                std::fprintf(stderr, "  FAIL: a failed open half-replaced the window\n");
+                return 1;
+            }
         }
 
         std::printf("  ok\n");

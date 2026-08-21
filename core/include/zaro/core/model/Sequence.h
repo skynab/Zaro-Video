@@ -25,6 +25,10 @@ public:
     void setName(std::string value) { name_ = std::move(value); }
 
     [[nodiscard]] const time::Rational& frameRate() const noexcept { return frameRate_; }
+    /// Only meaningful while the sequence is empty: every clip's timeline range
+    /// is expressed at this rate, so changing it under a cut would retime the
+    /// whole thing. `edit::makeConformSequence` is where that rule is enforced.
+    void setFrameRate(time::Rational value) { frameRate_ = std::move(value); }
     [[nodiscard]] const time::Rational& audioSampleRate() const noexcept {
         return audioSampleRate_;
     }

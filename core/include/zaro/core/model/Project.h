@@ -140,4 +140,16 @@ private:
     IdGenerator ids_;
 };
 
+/// A project with one empty sequence, ready to be edited into.
+///
+/// One sequence rather than none: a window with nothing to show has to special
+/// case every panel, and "no sequence" is a state somebody can only leave by
+/// making one anyway.
+///
+/// The rate and size are a placeholder, and are meant to be replaced by the
+/// first thing put on the timeline -- see `edit::makeConformSequence`. Asking
+/// somebody to choose a format before they have opened any footage is asking a
+/// question whose answer is in the footage.
+[[nodiscard]] Project newProject(const std::string& sequenceName = "Sequence 01");
+
 }  // namespace zaro::model

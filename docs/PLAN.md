@@ -2144,6 +2144,63 @@ what this phase built rather than more of it.
 
 ---
 
+#### Phase 6e — New and Open ✅
+
+The shell Phase 6d left off: until now the application took its project on the
+command line and could not start one or switch to another.
+
+**A new project has one sequence with one video track and one audio track.**
+Not none: a window with nothing to show has to special-case every panel, and "no
+sequence" is a state somebody can only leave by making one anyway. A timeline
+with no tracks has nowhere to drop anything, and the first thing anybody does is
+drop something.
+
+**Its format comes from the first thing put on it, not from a dialog.** Asking
+somebody to choose a rate and a frame size before they have opened any footage
+is asking a question whose answer is in the footage. So a new sequence starts at
+a placeholder shape and `edit::makeConformSequence` replaces it when the first
+clip arrives.
+
+**Conforming is refused the moment there is anything to retime.** Every clip's
+timeline range is expressed at the sequence's rate, so changing it under a cut
+would retime the whole thing — silently, and by a ratio nobody was thinking
+about. An empty sequence has nothing to disagree with, which is the only moment
+this is both safe and useful.
+
+**The rule lives in the bin, not in the model.** It is a decision about what
+somebody meant, and those belong where the interaction is; the alternative is
+every edit operation carrying a rule about when a sequence may change shape. The
+operation itself enforces the safety condition, so calling it later cannot do
+harm.
+
+**Opening loads everything before replacing anything.** A file that cannot be
+read leaves the window on the project it already had. Half-swapping a window is
+how a program ends up showing one project's timeline over another's media.
+
+**Switching projects asks nothing**, the same bargain closing makes in 6d:
+whatever is unsaved goes to its recovery file first. The command history and the
+render cache go with the project that has left — a cached frame's recipe covers
+what is in a sequence, not which project it came from, so keeping one would
+serve the old project's picture for the new one's timeline.
+
+**`openProject` reports rather than reporting and deciding how to say so.** The
+button puts the message on screen; a caller with no screen gets the same answer
+without a dialog it cannot dismiss. That separation was not tidiness — the
+self-test aborted inside Qt's offscreen platform on a modal it could never
+close, which is exactly the shape of a headless caller.
+
+Writing the self-test also ran straight into this file's oldest hazard: the
+block read the frame rate from the `sequence` reference the function has held
+since the top, and by that point two earlier blocks have added a track and a
+sequence, both of which reallocate. It aborted inside rational arithmetic on the
+wreckage, the same way the Phase 5t bug presented. The block now looks the
+sequence up when it needs it, and says why.
+
+**Not done: recent projects, and more than one window.** Both are shells around
+this shell, and neither changes what the program can do.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

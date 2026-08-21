@@ -2276,6 +2276,36 @@ Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,
                        });
 }
 
+Result<CommandPtr> makeConformSequence(Project& project, model::SequenceId sequenceId,
+                                       const time::Rational& frameRate, std::int32_t width,
+                                       std::int32_t height) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (frameRate.num() <= 0 || frameRate.den() <= 0) {
+        return Error{ErrorCode::InvalidData, "a sequence needs a real frame rate"};
+    }
+    if (width <= 0 || height <= 0) {
+        return Error{ErrorCode::InvalidData, "a sequence needs a frame size"};
+    }
+    for (const auto* list : {&sequence->videoTracks(), &sequence->audioTracks()}) {
+        for (const Track& track : *list) {
+            if (!track.isEmpty()) {
+                return Error{ErrorCode::InvalidData,
+                             "that sequence already has clips on it, and changing its rate would "
+                             "retime them"};
+            }
+        }
+    }
+
+    return makeCommand(sequenceId, "Conform sequence", {},
+                       [frameRate, width, height](Sequence& target) {
+                           target.setFrameRate(frameRate);
+                           target.setSize(width, height);
+                       });
+}
+
 Result<CommandPtr> makeRemoveTrack(Project& project, model::SequenceId sequenceId,
                                    TrackId trackId) {
     const Sequence* sequence = project.findSequence(sequenceId);

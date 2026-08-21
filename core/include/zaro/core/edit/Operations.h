@@ -497,4 +497,21 @@ struct TrackState {
 [[nodiscard]] Result<CommandPtr> makeRemoveTrack(model::Project& project,
                                                  model::SequenceId sequence, model::TrackId track);
 
+/// Set an empty sequence's rate and frame size.
+///
+/// **Refused once anything is on it.** Every clip's timeline range is expressed
+/// at the sequence's rate, so changing it under a cut would retime the whole
+/// thing -- silently, and by an amount that depends on the ratio between two
+/// rates nobody was thinking about. An empty sequence has nothing to disagree
+/// with, which is the only moment this is safe and also the only moment it is
+/// useful.
+///
+/// This is what lets a new project take its format from the first thing put on
+/// its timeline instead of from a dialog asked before there was any footage to
+/// answer it with.
+[[nodiscard]] Result<CommandPtr> makeConformSequence(model::Project& project,
+                                                     model::SequenceId sequence,
+                                                     const time::Rational& frameRate,
+                                                     std::int32_t width, std::int32_t height);
+
 }  // namespace zaro::edit
