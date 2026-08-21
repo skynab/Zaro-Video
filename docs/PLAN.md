@@ -2494,6 +2494,81 @@ still Rec.709 throughout.
 
 ---
 
+#### Phase 6j — the preview tone maps too, and the colour wheels ✅
+
+Two things: closing the divergence Phase 6i opened, and the last Lumetri control
+whose absence was an engine gap rather than a widget gap.
+
+**The preview now rolls off its highlights the way the encoder does.** 6i added
+the rolloff on the way out and left the screen clipping, which is exactly the
+preview/export disagreement every parity test in this project exists to prevent
+— and it was self-inflicted, which is the worst kind. The present pass takes the
+knee as a uniform and applies the same curve on straight colour; the composite
+draws write 1 into that slot on every draw, because a draw that left it alone
+would inherit whatever the last present wrote and tone map a clip on its way
+*into* the frame rather than the frame on its way to the screen. The golden-frame
+test compares a presented ramp against `render::toneMap` on the CPU and fails
+when the shader branch goes.
+
+**The wheels are an ASC CDL, and that is the whole decision.** Every grading tool
+has three wheels and almost none of them mean quite the same arithmetic by it.
+The CDL is the one definition other programs agree on, so a grade set here can be
+handed to somebody else and land the same way — and the numbers can go out to a
+.cdl or an EDL later without being reinterpreted. Per channel,
+`out = (in * slope + offset) ^ power`: slope scales so it moves highlights and
+leaves black alone, offset adds so it lifts black off zero, power is a gamma so
+it pins both ends and moves the middle. That is what makes three wheels *feel*
+like shadows, midtones and highlights when every one of them touches the whole
+picture, and there is a test for each of those three sentences.
+
+**The wheels run before contrast.** Both shape the midtones, and doing the CDL
+first means the contrast control pivots about middle grey of the picture
+somebody is actually looking at — which is what they expect from the control
+they reached for last.
+
+**Nine numbers rather than three pucks.** The arithmetic is what makes a grade,
+and a puck is a way of typing two of these at once; a circular control can be
+put in front of exactly these values later without anything behind them moving.
+Presentation, not engine, and said so rather than left as an implied gap.
+
+**Negative light stops at zero rather than becoming a NaN**, on both paths — a
+fractional power of a negative number has no value, and one NaN spreads through
+everything it is averaged with, so a single bad pixel would take a whole blurred
+region with it.
+
+---
+
+#### §7.3 — where colour stands
+
+Done: the working space and its rationale (ADR-005), primary correction, tone
+curves and the curve editor, HSL secondaries and the qualifier UI, look LUTs in,
+scopes, log and HDR input transforms with a per-media override, the delivery
+curve, the highlight rolloff on both the export and the preview, and the colour
+wheels.
+
+Not done, and worth being plain about which is small and which is not:
+
+- **Vignette** is small: a radial falloff in output coordinates, and the mask
+  machinery already computes coverage there. It is a phase of its own only
+  because it needs both paths and a parity test like everything else here.
+- **LUT export (.cube out)** is small: the baking already exists, and what is
+  missing is a writer and a decision about what to bake — the clip's whole grade,
+  or only the parts a LUT can carry. That second half is the real work, because
+  a LUT cannot carry a mask, a qualifier or anything spatial, and silently
+  dropping them would produce a file that does not match the shot it came from.
+- **Comparison view** is moderate: two frames side by side or wiped, which the
+  compositor can already do, plus a way to say which frame is the reference.
+- **Shot matching** is large and wants comparison view first. It is an analysis
+  that has to produce a grade, and the honest version reports what it matched
+  and how confidently rather than silently applying something.
+- **OCIO** is the largest by far: a dependency, a config format, and a rework of
+  every place that currently assumes Rec.709 primaries. The transfer half of
+  colour management is now done; the gamut half is untouched, and it is not
+  worth starting until somebody actually needs a working space that is not
+  Rec.709.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

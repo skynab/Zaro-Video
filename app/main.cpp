@@ -2548,6 +2548,65 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // The colour wheels, through the real panel and out to the picture.
+        //
+        // Lifting the shadows on a clip that is mostly black is the change this
+        // fixture can show: an offset adds the same amount everywhere, so black
+        // stops being black.
+        {
+            const auto wheelSequenceId = window.project().activeSequence();
+            const auto wheelTrackId =
+                window.project().findSequence(wheelSequenceId)->videoTracks().front().id();
+            const auto* wheelTrack =
+                window.project().findSequence(wheelSequenceId)->findTrack(wheelTrackId);
+            if (wheelTrack->clips().empty()) {
+                std::fprintf(stderr, "  FAIL: no clip to grade\n");
+                return 1;
+            }
+            const auto wheelClipId = wheelTrack->clips().front().id;
+            const auto wheelRate = window.project().findSequence(wheelSequenceId)->frameRate();
+
+            timeline->selectOnlyForTest(wheelTrackId, wheelClipId);
+            window.effects()->setSelection(wheelTrackId, wheelClipId);
+            window.setPosition(zaro::time::RationalTime{6, wheelRate});
+            QApplication::processEvents();
+            const double beforeLift = meanGray(settledGrab(window.monitor()));
+
+            auto* shadowRed = window.effects()->findChild<QDoubleSpinBox*>("wheel-0-0");
+            auto* shadowGreen = window.effects()->findChild<QDoubleSpinBox*>("wheel-0-1");
+            auto* shadowBlue = window.effects()->findChild<QDoubleSpinBox*>("wheel-0-2");
+            if (shadowRed == nullptr || shadowGreen == nullptr || shadowBlue == nullptr) {
+                std::fprintf(stderr, "  FAIL: the wheel controls are not in the panel\n");
+                return 1;
+            }
+            shadowRed->setValue(0.25);
+            shadowGreen->setValue(0.25);
+            shadowBlue->setValue(0.25);
+            QApplication::processEvents();
+
+            const auto* graded = window.project()
+                                     .findSequence(wheelSequenceId)
+                                     ->findTrack(wheelTrackId)
+                                     ->find(wheelClipId);
+            if (graded == nullptr || graded->wheels.offsetR != 0.25) {
+                std::fprintf(stderr, "  FAIL: the wheels did not reach the clip\n");
+                return 1;
+            }
+            const double afterLift = meanGray(settledGrab(window.monitor()));
+            std::printf("  colour wheels: %.1f before lifting the shadows, %.1f after\n",
+                        beforeLift, afterLift);
+            if (!(afterLift > beforeLift + 20.0)) {
+                std::fprintf(stderr, "  FAIL: the wheels did not reach the picture\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Delivery: the curve a sequence goes out through, and the highlight
         // rolloff that keeps the encoder from clipping.
         //

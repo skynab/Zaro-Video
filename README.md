@@ -73,6 +73,7 @@ headless: there is no window yet.
 | 6g | Audio roles and auto-ducking | **done** |
 | 6h | Log and HDR footage into the working space | **done** |
 | 6i | Delivery: output curve and highlight rolloff | **done** |
+| 6j | The preview tone maps too, and colour wheels | **done** |
 
 ## Building
 

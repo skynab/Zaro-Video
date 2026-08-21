@@ -293,6 +293,46 @@ std::vector<model::Effect> decodeEffects(const json& node) {
     return out;
 }
 
+json encode(const model::ColorWheels& wheels) {
+    const model::ColorWheels neutral;
+    if (wheels == neutral) {
+        return json::object();
+    }
+    json out = json::object();
+    const auto put = [&out](const char* key, double value, double fallback) {
+        if (value != fallback) {
+            out[key] = value;
+        }
+    };
+    put("slopeR", wheels.slopeR, neutral.slopeR);
+    put("slopeG", wheels.slopeG, neutral.slopeG);
+    put("slopeB", wheels.slopeB, neutral.slopeB);
+    put("offsetR", wheels.offsetR, neutral.offsetR);
+    put("offsetG", wheels.offsetG, neutral.offsetG);
+    put("offsetB", wheels.offsetB, neutral.offsetB);
+    put("powerR", wheels.powerR, neutral.powerR);
+    put("powerG", wheels.powerG, neutral.powerG);
+    put("powerB", wheels.powerB, neutral.powerB);
+    return out;
+}
+
+model::ColorWheels decodeWheels(const json& node) {
+    model::ColorWheels out;
+    if (!node.is_object()) {
+        return out;
+    }
+    out.slopeR = node.value("slopeR", out.slopeR);
+    out.slopeG = node.value("slopeG", out.slopeG);
+    out.slopeB = node.value("slopeB", out.slopeB);
+    out.offsetR = node.value("offsetR", out.offsetR);
+    out.offsetG = node.value("offsetG", out.offsetG);
+    out.offsetB = node.value("offsetB", out.offsetB);
+    out.powerR = node.value("powerR", out.powerR);
+    out.powerG = node.value("powerG", out.powerG);
+    out.powerB = node.value("powerB", out.powerB);
+    return out;
+}
+
 json encode(const model::Keyer& keyer) {
     const model::Keyer neutral;
     if (keyer == neutral) {
@@ -611,6 +651,9 @@ json encode(const model::Clip& clip) {
     }
     if (clip.role != model::AudioRole::Unassigned) {
         out["role"] = model::toString(clip.role);
+    }
+    if (json wheels = encode(clip.wheels); !wheels.empty()) {
+        out["wheels"] = std::move(wheels);
     }
     if (json keyer = encode(clip.keyer); !keyer.empty()) {
         out["keyer"] = std::move(keyer);
@@ -974,6 +1017,9 @@ Result<model::Clip> decodeClip(const json& node) {
         if (model::audioRoleFromString(node.at("role").get<std::string>().c_str(), role)) {
             clip.role = role;
         }
+    }
+    if (node.contains("wheels")) {
+        clip.wheels = decodeWheels(node.at("wheels"));
     }
     if (node.contains("keyer")) {
         clip.keyer = decodeKeyer(node.at("keyer"));

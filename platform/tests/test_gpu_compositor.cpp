@@ -17,6 +17,7 @@
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Compositing.h"
 #include "zaro/core/render/RenderGraph.h"
+#include "zaro/core/render/ToneMap.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 
@@ -1593,5 +1594,125 @@ TEST_CASE("The GPU agrees with the CPU on log and HDR curves", "[gpu][golden][lo
         // error.
         CHECK(difference.worst < 0.05F);
         CHECK(difference.mean < 0.005F);
+    }
+}
+
+TEST_CASE("The presented frame rolls off its highlights like the encoder does",
+          "[gpu][golden][tonemap]") {
+    // The divergence this closes: before it, a graded highlight looked clipped
+    // on screen and rolled off in the file. Every parity test in this project
+    // exists to stop preview and export disagreeing, and adding a rolloff to
+    // one and not the other created exactly that.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    // A ramp that runs well past white, so most of it is above any knee.
+    RgbaImage source{32, 1};
+    for (std::int32_t x = 0; x < 32; ++x) {
+        const auto value = static_cast<float>(x) / 4.0F;  // 0 .. 7.75
+        source.at(x, 0) = Rgba{value, value, value, 1.0F};
+    }
+
+    constexpr double knee = 0.7;
+    REQUIRE(compositor->beginFrame(32, 1).ok());
+    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal).ok());
+    REQUIRE(compositor->endFrameOnGpu().ok());
+    compositor->setPresentKnee(knee);
+    RgbaImage presented;
+    REQUIRE(compositor->presentToImage(32, 1, presented).ok());
+
+    // The reference: the same rolloff the encoder applies, on the CPU.
+    RgbaImage expected = source.clone();
+    render::toneMap(expected, static_cast<float>(knee));
+
+    float worst = 0.0F;
+    for (std::int32_t x = 0; x < 32; ++x) {
+        worst = std::max(worst, std::abs(presented.at(x, 0).g - expected.at(x, 0).g));
+    }
+    INFO("worst difference " << worst);
+    CHECK(worst < 0.01F);
+    // And it actually did something: the top of the ramp is below white rather
+    // than clipped to it.
+    CHECK(presented.at(31, 0).g < 1.0F);
+    CHECK(presented.at(31, 0).g > presented.at(24, 0).g);
+
+    SECTION("and with no rolloff the ramp clips, as it always did") {
+        compositor->setPresentKnee(1.0);
+        RgbaImage plain;
+        REQUIRE(compositor->presentToImage(32, 1, plain).ok());
+        CHECK(plain.at(31, 0).g >= 0.99F);
+    }
+}
+
+TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][wheels]") {
+    // The CDL is three pow() calls per pixel on both sides, and a power is
+    // exactly the kind of arithmetic where two implementations drift -- one
+    // clamping at zero and the other not, one applying the wheels before
+    // contrast and the other after. A grade that looked right in the preview
+    // and wrong in the file would be the result.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        model::ColorWheels wheels;
+    };
+    std::vector<Case> cases;
+    {
+        model::ColorWheels warmShadows;
+        warmShadows.offsetR = 0.04;
+        warmShadows.offsetB = -0.03;
+        cases.push_back({"warm the shadows", warmShadows});
+
+        model::ColorWheels coolHighlights;
+        coolHighlights.slopeR = 0.9;
+        coolHighlights.slopeB = 1.15;
+        cases.push_back({"cool the highlights", coolHighlights});
+
+        model::ColorWheels midtones;
+        midtones.powerR = 0.85;
+        midtones.powerG = 0.95;
+        midtones.powerB = 1.1;
+        cases.push_back({"twist the midtones", midtones});
+
+        model::ColorWheels crushing;
+        crushing.offsetR = crushing.offsetG = crushing.offsetB = -0.06;
+        crushing.powerR = crushing.powerG = crushing.powerB = 0.6;
+        cases.push_back({"crush into the toe", crushing});
+    }
+
+    // Shadows through to well above white, so the clamp at zero and the
+    // behaviour past one are both exercised.
+    RgbaImage source{48, 48};
+    for (std::int32_t y = 0; y < 48; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 48; ++x) {
+            const float level = 0.001F + ((static_cast<float>(y) / 47.0F) * 1.4F);
+            const float tint = static_cast<float>(x) / 47.0F;
+            row[x] = Rgba{level * (0.4F + tint), level, level * (1.4F - tint), 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const auto grade = render::gradeConstantsFor(model::ColorCorrection{}, testCase.wheels);
+        REQUIRE(grade.wheels);
+
+        RgbaImage cpuOut{48, 48};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, &grade);
+
+        REQUIRE(compositor->beginFrame(48, 48).ok());
+        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.02F);
+        CHECK(difference.mean < 0.002F);
     }
 }

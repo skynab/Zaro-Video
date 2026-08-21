@@ -86,6 +86,15 @@ public:
                                     const model::Mask* mask = nullptr,
                                     const render::KeyerConstants* keyer = nullptr);
 
+    /// Where the presented frame's highlights start rolling off.
+    ///
+    /// Set from the sequence being shown, so what is on screen is fitted to the
+    /// display the same way the export is fitted to the file. Without it a
+    /// graded highlight looks clipped in the preview and rolled off in the
+    /// deliverable, which is the divergence every parity test in this project
+    /// exists to prevent.
+    void setPresentKnee(double knee);
+
     /// Finish, and bring the result back to the CPU.
     ///
     /// The readback is here so the result can be compared and encoded. In a

@@ -193,6 +193,10 @@ private:
     void pushRole();
     void duckUnderDialogue();
 
+    /// Shadows, midtones and highlights: offset, power and slope per channel.
+    std::array<QDoubleSpinBox*, 9> wheels_{};
+    void pushWheels();
+
     QComboBox* keyKind_{nullptr};
     QDoubleSpinBox* keyRed_{nullptr};
     QDoubleSpinBox* keyGreen_{nullptr};

@@ -332,6 +332,11 @@ enum class PlaceMode {
                                                 model::ClipId clip,
                                                 const std::vector<model::Effect>& effects);
 
+/// The three colour wheels, as an ASC CDL.
+[[nodiscard]] Result<CommandPtr> makeSetWheels(model::Project& project, const EditTarget& target,
+                                               model::ClipId clip,
+                                               const model::ColorWheels& wheels);
+
 /// The keyer: what of the clip is transparent.
 [[nodiscard]] Result<CommandPtr> makeSetKeyer(model::Project& project, const EditTarget& target,
                                               model::ClipId clip, const model::Keyer& keyer);

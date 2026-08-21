@@ -18,7 +18,7 @@ namespace zaro::render {
 /// it silently did not match that copy of the code.
 void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
                            const model::Transform& transform, const time::RationalTime& at) {
-    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at));
+    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
@@ -47,7 +47,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
 
 void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
                                   const time::RationalTime& at) {
-    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at));
+    const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;

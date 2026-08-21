@@ -415,6 +415,32 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     connect(effectList_, &QListWidget::currentRowChanged, this, [this] { showEffects(); });
     connect(effectEnabled_, &QCheckBox::toggled, this, [this] { pushEffects(); });
 
+    // The three wheels. Nine numbers rather than three pucks: the arithmetic
+    // is what makes a grade, and a puck is a way of typing two of these at
+    // once. The engine is an ASC CDL either way -- see model::ColorWheels --
+    // so a circular control can be put in front of exactly these values later
+    // without anything behind them moving.
+    auto* wheelsBox = new QGroupBox("Wheels", this);
+    auto* wheelsForm = new QFormLayout(wheelsBox);
+    static constexpr const char* kWheelRows[] = {"Shadows", "Midtones", "Highlights"};
+    for (int row = 0; row < 3; ++row) {
+        auto* line = new QWidget(this);
+        auto* columns = new QHBoxLayout(line);
+        columns->setContentsMargins(0, 0, 0, 0);
+        for (int channel = 0; channel < 3; ++channel) {
+            const auto slot = static_cast<std::size_t>((row * 3) + channel);
+            // Offsets are signed and small; slopes and powers are multipliers
+            // around one. Ranges that match what the number means, so dragging
+            // one is a grade rather than a search.
+            wheels_[slot] = row == 0 ? makeSpin(-1.0, 1.0, 0.01, 3) : makeSpin(0.0, 4.0, 0.01, 3);
+            wheels_[slot]->setObjectName(QString("wheel-%1-%2").arg(row).arg(channel));
+            columns->addWidget(wheels_[slot]);
+            connect(wheels_[slot], &QDoubleSpinBox::valueChanged, this, [this] { pushWheels(); });
+        }
+        wheelsForm->addRow(QString::fromUtf8(kWheelRows[row]), line);
+    }
+    colourForm->addRow(wheelsBox);
+
     // The keyer: what of this clip is transparent. Its own group rather than a
     // corner of the secondary, because it looks like a qualifier and answers a
     // different question -- one is "which pixels to correct", the other is
@@ -767,6 +793,17 @@ void EffectControls::applyToWidgets() {
     keyLumaLow_->setEnabled(luma);
     keyLumaHigh_->setEnabled(luma);
     keyShowMatte_->setEnabled(key.isSet());
+
+    const model::ColorWheels& wheels = clip->wheels;
+    wheels_[0]->setValue(wheels.offsetR);
+    wheels_[1]->setValue(wheels.offsetG);
+    wheels_[2]->setValue(wheels.offsetB);
+    wheels_[3]->setValue(wheels.powerR);
+    wheels_[4]->setValue(wheels.powerG);
+    wheels_[5]->setValue(wheels.powerB);
+    wheels_[6]->setValue(wheels.slopeR);
+    wheels_[7]->setValue(wheels.slopeG);
+    wheels_[8]->setValue(wheels.slopeB);
 
     role_->setCurrentIndex(role_->findData(static_cast<int>(clip->role)));
     // Ducking is for a bed that has to get out of the way; a clip that is
@@ -1298,6 +1335,30 @@ void EffectControls::pushEffects() {
             emit keyframesChanged();
         }
     }
+}
+
+void EffectControls::pushWheels() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    model::ColorWheels wheels;
+    wheels.offsetR = wheels_[0]->value();
+    wheels.offsetG = wheels_[1]->value();
+    wheels.offsetB = wheels_[2]->value();
+    wheels.powerR = wheels_[3]->value();
+    wheels.powerG = wheels_[4]->value();
+    wheels.powerB = wheels_[5]->value();
+    wheels.slopeR = wheels_[6]->value();
+    wheels.slopeG = wheels_[7]->value();
+    wheels.slopeB = wheels_[8]->value();
+
+    auto built = edit::makeSetWheels(*project_, {sequenceId_, track_}, clip_, wheels);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    applyToWidgets();
+    emit edited();
 }
 
 void EffectControls::pushRole() {

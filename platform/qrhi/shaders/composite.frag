@@ -45,6 +45,14 @@ layout(std140, binding = 0) uniform Block {
     vec4 keyEdge;     // x: tolerance, y: outer, z: spill amount, w: spill channel
     vec4 keyLuma;     // x: innerLow, y: outerLow, z: innerHigh, w: outerHigh
     vec4 keyFlags;    // x: show the matte
+    // The display pass: fitting the finished frame into what the screen can
+    // show. Only the present pass sets this; a composite draw leaves it at 1,
+    // which is no rolloff at all.
+    vec4 display;     // x: highlight knee
+    // The three wheels, as an ASC CDL. Must agree with render::gradePixel.
+    vec4 cdlSlope;
+    vec4 cdlOffset;
+    vec4 cdlPower;    // w: non-zero when the CDL is not the identity
 } ubuf;
 
 
@@ -120,6 +128,15 @@ float qualifierMask(vec3 colour)
 vec3 applyGrade(vec3 colour)
 {
     colour *= ubuf.balance.rgb * ubuf.balance.w;
+
+    if (ubuf.cdlPower.w != 0.0) {
+        // The three wheels, before contrast, for the reason render::gradePixel
+        // gives. Negative light has no fractional power, so anything at or
+        // below zero stops there rather than becoming a NaN.
+        vec3 scaled = colour * ubuf.cdlSlope.rgb + ubuf.cdlOffset.rgb;
+        colour = mix(vec3(0.0), pow(max(scaled, vec3(0.0)), ubuf.cdlPower.rgb),
+                     step(vec3(1e-30), scaled));
+    }
 
     if (ubuf.grade.x != 1.0) {
         // Non-positive light has no fractional power, and one NaN spreads
@@ -256,6 +273,18 @@ float maskCoverage(vec2 offset)
     return ubuf.maskEdge.w > 0.5 ? 1.0 - coverage : coverage;
 }
 
+// Must agree with render::rolloff. Exactly the identity at or below the knee,
+// so a frame with nothing above white is presented untouched.
+float rolloff(float v, float knee)
+{
+    if (knee >= 1.0 || v <= knee) {
+        return v;
+    }
+    float headroom = 1.0 - knee;
+    float above = v - knee;
+    return knee + headroom * (above / (above + headroom));
+}
+
 void main()
 {
     // Outside the source is transparent, not the clamped edge pixel. Clamping
@@ -296,4 +325,16 @@ void main()
     // Values are premultiplied, so opacity scales colour and coverage together
     // and a fade stays linear.
     fragColor = sampled * ubuf.params.x * maskCoverage(framePosition);
+
+    // Last of all, and only when presenting: fit what the frame carries into
+    // what the screen can show. On straight colour, like the encoder does it --
+    // a compressive curve on premultiplied values would make the result depend
+    // on how transparent the pixel is.
+    if (ubuf.display.x < 1.0 && fragColor.a > 0.0001) {
+        vec3 straightOut = fragColor.rgb / fragColor.a;
+        straightOut = vec3(rolloff(straightOut.r, ubuf.display.x),
+                           rolloff(straightOut.g, ubuf.display.x),
+                           rolloff(straightOut.b, ubuf.display.x));
+        fragColor.rgb = straightOut * fragColor.a;
+    }
 }

@@ -68,6 +68,11 @@ struct Clip {
     /// the clip is placed in the frame.
     ColorCorrection color;
 
+    /// The three wheels, as an ASC CDL. Separate from `color` because it is a
+    /// different, interchangeable description of a grade rather than more of
+    /// the same one.
+    ColorWheels wheels;
+
     /// A clip that grades everything beneath it instead of drawing anything.
     ///
     /// It has no picture of its own: its grade, curves, secondary, LUT, mask

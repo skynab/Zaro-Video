@@ -24,7 +24,7 @@ constexpr std::array<float, 12> kQuad{
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade,
 // five for the secondary, one for the look, two for the mask, four for the key.
-constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16);
+constexpr int kUniformBytes = 64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16);
 constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
@@ -119,6 +119,15 @@ void writeGrade(std::array<float, kUniformFloats>& uniformData, const render::Gr
     // has to come out bit-identical.
     uniformData[26] = curved ? 1.0F : 0.0F;
 
+    // The three wheels. Written here with the rest of the primary, so a call
+    // site cannot pick up one and forget the other.
+    for (std::size_t channel = 0; channel < 3; ++channel) {
+        uniformData[80 + channel] = grade.slope[channel];
+        uniformData[84 + channel] = grade.offset[channel];
+        uniformData[88 + channel] = grade.power[channel];
+    }
+    uniformData[91] = grade.wheels ? 1.0F : 0.0F;
+
     // Five more vec4s: the secondary's own correction and its three windows.
     // Written here rather than at each call site for the same reason the flag
     // is -- a site that forgot them would key on zeros, which selects nothing
@@ -147,6 +156,14 @@ void writeGrade(std::array<float, kUniformFloats>& uniformData, const render::Gr
     uniformData[45] = window.lumaOuterLow;
     uniformData[46] = window.lumaInnerHigh;
     uniformData[47] = window.lumaOuterHigh;
+}
+
+/// The display pass's knee. Written on every draw, because a composite that
+/// left the slot alone would inherit whatever the last present wrote and tone
+/// map a clip on its way into the frame rather than the frame on its way to the
+/// screen.
+void writeDisplay(std::array<float, kUniformFloats>& uniformData, float knee) {
+    uniformData[76] = knee;
 }
 
 void writeKeyer(std::array<float, kUniformFloats>& uniformData,
@@ -260,6 +277,8 @@ struct GpuCompositor::State {
     // Presenting into an external target needs its own pipeline, because a
     // pipeline is tied to the render pass it was built for.
     std::unique_ptr<QRhiGraphicsPipeline> presentPipeline;
+    /// Where the preview's highlights start rolling off. 1 is no rolloff.
+    double presentKnee{1.0};
     std::unique_ptr<QRhiShaderResourceBindings> presentBindings;
     std::unique_ptr<QRhiBuffer> presentUniforms;
     std::unique_ptr<QRhiBuffer> vertexBuffer;
@@ -692,6 +711,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeKeyer(uniformData, keyer);
+    writeDisplay(uniformData, 1.0F);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
     state.commandBuffer->resourceUpdate(batch);
 
@@ -1156,6 +1176,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeKeyer(uniformData, keyer);
+    writeDisplay(uniformData, 1.0F);
 
     QRhiResourceUpdateBatch* compositeBatch = state.rhi->nextResourceUpdateBatch();
     compositeBatch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -1173,6 +1194,10 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     state.bindings.push_back(std::move(convertBindings));
     state.bindings.push_back(std::move(bindings));
     return {};
+}
+
+void GpuCompositor::setPresentKnee(double knee) {
+    state_->presentKnee = knee;
 }
 
 Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRenderTarget* target) {
@@ -1284,6 +1309,8 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     // Nor keying: the frame being presented has already had every clip's key
     // applied to it, and a second one would cut holes in the composite.
     writeKeyer(uniformData, nullptr);
+    // The one place it is not 1: this is the frame reaching the screen.
+    writeDisplay(uniformData, static_cast<float>(state.presentKnee));
     batch->updateDynamicBuffer(state.presentUniforms.get(), 0, kUniformBytes, uniformData.data());
 
     // Clear to opaque black: the bars either side of a letterboxed frame are

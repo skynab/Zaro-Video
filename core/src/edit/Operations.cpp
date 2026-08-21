@@ -1851,6 +1851,19 @@ Result<CommandPtr> makeSetEffects(Project& project, const EditTarget& target, Cl
                       [effects](Clip& clip) { clip.effects = effects; });
 }
 
+Result<CommandPtr> makeSetWheels(Project& project, const EditTarget& target, ClipId clipId,
+                                 const model::ColorWheels& wheels) {
+    for (const double value :
+         {wheels.slopeR, wheels.slopeG, wheels.slopeB, wheels.offsetR, wheels.offsetG,
+          wheels.offsetB, wheels.powerR, wheels.powerG, wheels.powerB}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "a wheel has to be a real number"};
+        }
+    }
+    return modifyClip(project, target, clipId, "Set wheels", "wheels:" + idText(clipId),
+                      [wheels](Clip& clip) { clip.wheels = wheels; });
+}
+
 Result<CommandPtr> makeSetKeyer(Project& project, const EditTarget& target, ClipId clipId,
                                 const model::Keyer& keyer) {
     for (const double value : {keyer.red, keyer.green, keyer.blue, keyer.tolerance, keyer.softness,

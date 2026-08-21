@@ -30,13 +30,23 @@ struct GradeConstants {
     float contrast{1.0F};
     float saturation{1.0F};
 
+    /// The three wheels, as an ASC CDL: `(in * slope + offset) ^ power`.
+    float slope[3]{1.0F, 1.0F, 1.0F};
+    float offset[3]{0.0F, 0.0F, 0.0F};
+    float power[3]{1.0F, 1.0F, 1.0F};
+    /// False when the CDL is the identity, so the whole step can be skipped
+    /// rather than computed and found to change nothing -- three pow() calls a
+    /// pixel is not something to pay for by accident.
+    bool wheels{false};
+
     [[nodiscard]] bool isIdentity() const noexcept {
         return balance.r == 1.0F && balance.g == 1.0F && balance.b == 1.0F && exposure == 1.0F &&
-               contrast == 1.0F && saturation == 1.0F;
+               contrast == 1.0F && saturation == 1.0F && !wheels;
     }
 };
 
-[[nodiscard]] GradeConstants gradeConstantsFor(const model::ColorCorrection& correction);
+[[nodiscard]] GradeConstants gradeConstantsFor(const model::ColorCorrection& correction,
+                                               const model::ColorWheels& wheels = {});
 
 /// Middle grey in scene-linear light, and the pivot contrast turns about.
 ///

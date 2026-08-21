@@ -48,7 +48,8 @@ WhiteBalanceGains whiteBalanceFor(const model::ColorCorrection& correction) {
     return gains;
 }
 
-GradeConstants gradeConstantsFor(const model::ColorCorrection& correction) {
+GradeConstants gradeConstantsFor(const model::ColorCorrection& correction,
+                                 const model::ColorWheels& wheels) {
     GradeConstants grade;
     grade.balance = whiteBalanceFor(correction);
     grade.exposure = std::pow(2.0F, static_cast<float>(correction.exposure));
@@ -58,6 +59,18 @@ GradeConstants gradeConstantsFor(const model::ColorCorrection& correction) {
     const auto amount = static_cast<float>(std::clamp(correction.contrast, -100.0, 100.0) / 100.0);
     grade.contrast = amount >= 0.0F ? 1.0F + amount : 1.0F / (1.0F - amount);
     grade.saturation = static_cast<float>(std::max(0.0, correction.saturation) / 100.0);
+
+    grade.wheels = !wheels.isIdentity();
+    const double slopes[3] = {wheels.slopeR, wheels.slopeG, wheels.slopeB};
+    const double offsets[3] = {wheels.offsetR, wheels.offsetG, wheels.offsetB};
+    const double powers[3] = {wheels.powerR, wheels.powerG, wheels.powerB};
+    for (std::size_t i = 0; i < 3; ++i) {
+        grade.slope[i] = static_cast<float>(slopes[i]);
+        grade.offset[i] = static_cast<float>(offsets[i]);
+        // A power of zero or less is not a curve, it is a division by nothing.
+        // Clamped here so the per-pixel path never has to check.
+        grade.power[i] = static_cast<float>(std::max(1e-3, powers[i]));
+    }
     return grade;
 }
 
@@ -75,6 +88,23 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
+
+    if (grade.wheels) {
+        // The CDL, before contrast. Both shape the midtones, and doing the
+        // wheels first means the contrast control pivots about middle grey of
+        // the picture somebody is actually looking at -- which is what they
+        // expect from the control they reached for last.
+        //
+        // Negative light has no fractional power, and one NaN spreads through
+        // everything it touches, so anything at or below zero stops at zero.
+        const auto cdl = [](float value, float slope, float offset, float power) {
+            const float scaled = (value * slope) + offset;
+            return scaled > 0.0F ? std::pow(scaled, power) : 0.0F;
+        };
+        r = cdl(r, grade.slope[0], grade.offset[0], grade.power[0]);
+        g = cdl(g, grade.slope[1], grade.offset[1], grade.power[1]);
+        b = cdl(b, grade.slope[2], grade.offset[2], grade.power[2]);
+    }
 
     if (grade.contrast != 1.0F) {
         // A power about middle grey. Negative light has no meaning and a

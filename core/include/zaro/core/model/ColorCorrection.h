@@ -36,6 +36,43 @@ struct ColorCorrection {
     friend bool operator==(const ColorCorrection&, const ColorCorrection&) = default;
 };
 
+/// The three colour wheels: shadows, midtones and highlights.
+///
+/// **This is an ASC CDL**, and deliberately so. Every grading tool has three
+/// wheels and almost none of them mean quite the same arithmetic by it; the CDL
+/// is the one definition that other programs agree on, which means a grade set
+/// here can be handed to somebody else and land the same way. It also means the
+/// numbers can be written to and read from a .cdl or an EDL later without
+/// having to be reinterpreted.
+///
+/// Per channel: `out = (in * slope + offset) ^ power`.
+///   - `slope` scales, so it moves the highlights most and leaves black alone.
+///   - `offset` adds, so it moves the shadows most and lifts black off zero.
+///   - `power` is a gamma, so it moves the midtones and pins both ends.
+///
+/// That is what makes three wheels feel like shadows, midtones and highlights
+/// even though every one of them touches the whole picture.
+struct ColorWheels {
+    double slopeR{1.0};
+    double slopeG{1.0};
+    double slopeB{1.0};
+
+    double offsetR{0.0};
+    double offsetG{0.0};
+    double offsetB{0.0};
+
+    double powerR{1.0};
+    double powerG{1.0};
+    double powerB{1.0};
+
+    [[nodiscard]] bool isIdentity() const noexcept {
+        return slopeR == 1.0 && slopeG == 1.0 && slopeB == 1.0 && offsetR == 0.0 &&
+               offsetG == 0.0 && offsetB == 0.0 && powerR == 1.0 && powerG == 1.0 && powerB == 1.0;
+    }
+
+    friend bool operator==(const ColorWheels&, const ColorWheels&) = default;
+};
+
 /// A look LUT, by path.
 ///
 /// The path rather than the contents: a .cube is a few hundred kilobytes of

@@ -79,6 +79,10 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
         return;
     }
 
+    // Fitted to the screen the same way the export is fitted to the file. Read
+    // from the sequence on every frame rather than set once, because the
+    // delivery is an ordinary undoable edit and can change under us.
+    compositor_->setPresentKnee(sequence_->output().highlightKnee);
     if (const Status status = graph_->compositeOn(commandBuffer, *sequence_, position_); !status) {
         lastError_ = QString::fromStdString(status.error().toString());
         return;
