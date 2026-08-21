@@ -56,6 +56,7 @@
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/BakeLut.h"
 #include "zaro/core/render/ColorPipeline.h"
+#include "zaro/core/render/Compare.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
@@ -166,6 +167,20 @@ public:
         loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
+
+        auto* compareButton = new QPushButton("Compare", this);
+        compareButton->setObjectName("compare");
+        compareButton->setCheckable(true);
+        compareButton->setToolTip("Hold this frame and grade against it");
+        compareButton->setMinimumWidth(compareButton->sizeHint().width());
+        transportRow->addWidget(compareButton);
+        connect(compareButton, &QPushButton::toggled, this, [this](bool on) {
+            // Turning it on takes the frame showing now as the reference. That
+            // is the gesture: somebody looks at a shot they like and says
+            // "against this" -- asking them to nominate one first would be a
+            // step between the thought and the thing.
+            setComparing(on, on ? position_ : referenceAt_);
+        });
 
         auto* deliveryButton = new QPushButton("Delivery…", this);
         deliveryButton->setObjectName("delivery");
@@ -467,6 +482,26 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Hold a frame and show the current one against it.
+    void setComparing(bool on, const time::RationalTime& reference) {
+        comparing_ = on;
+        referenceAt_ = reference;
+        monitor_->setComparison(on, referenceAt_, compareMode_, compareSplit_);
+        monitor_->update();
+    }
+    [[nodiscard]] bool comparing() const noexcept { return comparing_; }
+
+    void setCompareMode(render::CompareMode mode) {
+        compareMode_ = mode;
+        monitor_->setComparison(comparing_, referenceAt_, compareMode_, compareSplit_);
+        monitor_->update();
+    }
+    void setCompareSplit(double split) {
+        compareSplit_ = std::clamp(split, 0.0, 1.0);
+        monitor_->setComparison(comparing_, referenceAt_, compareMode_, compareSplit_);
+        monitor_->update();
+    }
 
     /// What this sequence is delivered as, and how its highlights get there.
     ///
@@ -1713,6 +1748,12 @@ private:
     /// pre-render. One cache: a frame rendered by the button is the frame the
     /// monitor asks for a moment later, and two caches would render it twice.
     render::RenderCache renderCache_;
+    /// Comparison view: a way of looking, not part of the cut, so none of this
+    /// is saved with the project.
+    bool comparing_{false};
+    time::RationalTime referenceAt_{};
+    render::CompareMode compareMode_{render::CompareMode::Split};
+    double compareSplit_{0.5};
     /// What the timeline last said was picked. Multicam syncing acts on one
     /// clip, and this is which one.
     model::TrackId selectedTrack_;
@@ -2608,6 +2649,76 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Comparison view, through the real monitor.
+        //
+        // A lit frame held as the reference while the playhead sits on a dark
+        // one: with the split in the middle, half the screen has to be lit and
+        // half dark, and moving the split has to move where the boundary is.
+        {
+            const auto cmpRate =
+                window.project().findSequence(window.project().activeSequence())->frameRate();
+
+            std::int64_t litFrame = -1;
+            std::int64_t darkFrame = -1;
+            double lit = 0.0;
+            double darkest = 1e9;
+            for (std::int64_t frame = 0; frame < 40; ++frame) {
+                window.setPosition(zaro::time::RationalTime{frame, cmpRate});
+                const double gray = meanGray(settledGrab(window.monitor()));
+                if (gray > lit) {
+                    lit = gray;
+                    litFrame = frame;
+                }
+                if (gray < darkest) {
+                    darkest = gray;
+                    darkFrame = frame;
+                }
+            }
+            if (litFrame < 0 || darkFrame < 0 || !(lit > darkest + 40.0)) {
+                std::fprintf(stderr, "  FAIL: no lit and dark pair to compare\n");
+                return 1;
+            }
+
+            // Hold the lit frame, then look at the dark one against it.
+            window.setPosition(zaro::time::RationalTime{litFrame, cmpRate});
+            QApplication::processEvents();
+            window.setComparing(true, zaro::time::RationalTime{litFrame, cmpRate});
+            window.setPosition(zaro::time::RationalTime{darkFrame, cmpRate});
+            QApplication::processEvents();
+
+            const QImage halves = settledGrab(window.monitor());
+            const double leftHalf =
+                meanGray(halves.copy(0, 0, halves.width() / 2, halves.height()));
+            const double rightHalf =
+                meanGray(halves.copy(halves.width() / 2, 0, halves.width() / 2, halves.height()));
+            std::printf("  comparison: %.1f on the reference side, %.1f on the current one\n",
+                        leftHalf, rightHalf);
+            if (!(leftHalf > rightHalf + 30.0)) {
+                std::fprintf(stderr,
+                             "  FAIL: the reference frame is not showing on its own side\n");
+                return 1;
+            }
+
+            // Move the split most of the way over and the reference takes over.
+            window.setCompareSplit(0.95);
+            QApplication::processEvents();
+            const double mostlyReference = meanGray(settledGrab(window.monitor()));
+            if (!(mostlyReference > leftHalf * 0.8)) {
+                std::fprintf(stderr, "  FAIL: moving the split did not move the boundary\n");
+                return 1;
+            }
+
+            // And switching it off puts the plain frame back.
+            window.setComparing(false, zaro::time::RationalTime{litFrame, cmpRate});
+            window.setCompareSplit(0.5);
+            QApplication::processEvents();
+            const double plain = meanGray(settledGrab(window.monitor()));
+            if (!(plain < leftHalf * 0.5)) {
+                std::fprintf(stderr, "  FAIL: turning comparison off did not restore the frame\n");
+                return 1;
+            }
         }
 
         // Baking a look out as a .cube, and reading it back.

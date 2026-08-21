@@ -2,6 +2,8 @@
 
 #include <QString>
 
+#include "zaro/core/render/Compare.h"
+
 namespace zaro::app {
 
 ProgramMonitor::ProgramMonitor(QWidget* parent) : QRhiWidget{parent} {
@@ -83,7 +85,13 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     // from the sequence on every frame rather than set once, because the
     // delivery is an ordinary undoable edit and can change under us.
     compositor_->setPresentKnee(sequence_->output().highlightKnee);
-    if (const Status status = graph_->compositeOn(commandBuffer, *sequence_, position_); !status) {
+    if (comparing_) {
+        if (const Status status = renderComparison(commandBuffer); !status) {
+            lastError_ = QString::fromStdString(status.error().toString());
+            return;
+        }
+    } else if (const Status status = graph_->compositeOn(commandBuffer, *sequence_, position_);
+               !status) {
         lastError_ = QString::fromStdString(status.error().toString());
         return;
     }
@@ -93,6 +101,51 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     }
     lastError_.clear();
     ++framesRendered_;
+}
+
+void ProgramMonitor::setComparison(bool on, const time::RationalTime& reference,
+                                   render::CompareMode mode, double split) {
+    comparing_ = on;
+    referenceAt_ = reference;
+    compareMode_ = mode;
+    split_ = split;
+    update();
+}
+
+/// Composite both instants on the CPU and upload the arrangement.
+///
+/// The same bargain Phase 5v made for adjustment layers, for a related reason:
+/// the GPU graph composites one instant into one target, and asking it for two
+/// would mean a second target and a restructure of the draw loop for something
+/// nobody exports. The render cache from Phase 5w means the reference frame is
+/// composited once and read thereafter, so holding a still while grading costs
+/// nothing.
+Status ProgramMonitor::renderComparison(QRhiCommandBuffer* commandBuffer) {
+    render::RenderGraph* cpu = graph_->cpuGraph();
+    if (cpu == nullptr) {
+        return Error{ErrorCode::Internal, "there is no CPU compositor to compare with"};
+    }
+    if (Status status = cpu->compositeInto(*sequence_, referenceAt_, referenceFrame_); !status) {
+        return status;
+    }
+    if (Status status = cpu->compositeInto(*sequence_, position_, currentFrame_); !status) {
+        return status;
+    }
+    render::compareFrames(referenceFrame_, currentFrame_, comparison_, compareMode_, split_);
+
+    // A frame of its own, opened on the caller's command buffer -- the same
+    // thing GpuRenderGraph::compositeOn does around its draws, and the reason
+    // the first version of this reported "draw outside a frame".
+    if (Status begun =
+            compositor_->beginFrameOn(commandBuffer, sequence_->width(), sequence_->height());
+        !begun) {
+        return begun;
+    }
+    if (Status drawn = compositor_->draw(comparison_, model::Transform{}, model::BlendMode::Normal);
+        !drawn) {
+        return drawn;
+    }
+    return compositor_->endFrameOnGpu();
 }
 
 void ProgramMonitor::setNesting(const model::Project* project, render::FrameSource* source) {

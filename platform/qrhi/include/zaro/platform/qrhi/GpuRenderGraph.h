@@ -95,6 +95,16 @@ private:
     const model::Project* project_{nullptr};
     render::FrameSource* nestedSource_{nullptr};
     std::unique_ptr<render::RenderGraph> nested_;
+
+public:
+    /// The CPU compositor this graph falls back to, building it if it has not
+    /// been needed yet. Null when there is nothing for it to read.
+    ///
+    /// Exposed because comparison view needs two composites of one sequence at
+    /// two instants, which is the same reason the fallback exists at all.
+    [[nodiscard]] render::RenderGraph* cpuGraph();
+
+private:
     render::RenderCache* cache_{nullptr};
     render::TextRasterizer* text_{nullptr};
     render::CurveTableCache curves_;

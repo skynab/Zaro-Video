@@ -33,6 +33,7 @@ add_library(zaro_core
     src/render/EffectStack.cpp
     src/render/FrameCache.cpp
     src/render/RenderCache.cpp
+    src/render/Compare.cpp
     src/render/Compositing.cpp
     src/render/CurveTable.cpp
     src/render/Grade.cpp

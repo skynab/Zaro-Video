@@ -44,6 +44,19 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
         .ok();
 }
 
+render::RenderGraph* GpuRenderGraph::cpuGraph() {
+    if (nestedSource_ == nullptr) {
+        return nullptr;
+    }
+    if (nested_ == nullptr) {
+        nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
+        nested_->setProject(project_);
+        nested_->setTextRasterizer(text_);
+        nested_->setRenderCache(cache_);
+    }
+    return nested_.get();
+}
+
 bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
                                       const time::RationalTime& at) {
     for (const model::Track& track : sequence.videoTracks()) {

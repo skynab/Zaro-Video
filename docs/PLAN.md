@@ -2610,6 +2610,46 @@ channels of every look.
 
 ---
 
+#### Phase 6m — comparison view ✅
+
+Holding a frame and grading the next one against it.
+
+**A way of looking, not part of the cut.** None of it is saved: not the
+reference, not the split, not the arrangement. It is the same rule the
+qualifier's mask view and the keyer's matte view follow — reopening a project
+into a half-and-half screen would be baffling, and nothing here reaches an
+export.
+
+**Turning it on takes the frame that is showing.** That is the gesture:
+somebody looks at a shot they like and says "against this". Asking them to
+nominate a reference first would put a step between the thought and the thing.
+
+**A split copies; it does not resample.** The whole point of putting two frames
+either side of a line is judging a difference in *detail*, and resampling one
+side would invent a difference of its own. There is a test that puts a
+single-pixel feature on one side and requires it to survive exactly. Side by
+side does scale — evenly, and centred, because a comparison that stretched one
+shot would be worse than useless for judging a grade.
+
+**The divide is drawn.** Without it, two similar grades read as one picture with
+an odd seam and somebody spends a while working out which side they are looking
+at.
+
+**It goes down the CPU path**, the one Phase 5v built for adjustment layers, for
+a related reason: the GPU graph composites one instant into one target, and
+asking it for two would mean a second target and a restructure of the draw loop
+for something nobody exports. Phase 5w's render cache is what makes that
+affordable — the held frame is composited once and read thereafter, so grading
+against a still costs nothing.
+
+Building it produced a mistake worth recording: the first version called
+`draw` without opening a frame on the command buffer, which the compositor
+reported as "draw outside a frame" rather than drawing nothing or crashing. The
+error said exactly what was wrong, which is the whole argument for the
+compositor checking its own preconditions instead of trusting callers.
+
+---
+
 #### §7.3 — where colour stands
 
 Done: the working space and its rationale (ADR-005), primary correction, tone

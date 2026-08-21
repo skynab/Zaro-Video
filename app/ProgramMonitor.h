@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "zaro/core/model/Sequence.h"
+#include "zaro/core/render/Compare.h"
 #include "zaro/core/render/FrameSource.h"
 #include "zaro/core/render/TextRasterizer.h"
 #include "zaro/core/time/RationalTime.h"
@@ -40,6 +41,17 @@ public:
     void setRenderCache(render::RenderCache* cache);
 
     void setPosition(const time::RationalTime& position);
+
+    /// Show the frame against a reference one.
+    ///
+    /// A viewing arrangement, not a render: nothing here reaches an export.
+    /// Turning it on takes the monitor down the CPU path, the same one an
+    /// adjustment layer forces -- two composites of the same sequence at
+    /// different instants is not something the GPU graph is shaped for, and the
+    /// render cache from Phase 5w is what makes that affordable.
+    void setComparison(bool on, const time::RationalTime& reference, render::CompareMode mode,
+                       double split);
+    [[nodiscard]] bool comparing() const noexcept { return comparing_; }
     [[nodiscard]] const time::RationalTime& position() const noexcept { return position_; }
 
     /// Empty when the last frame rendered cleanly.
@@ -60,6 +72,14 @@ private:
     const model::Project* project_{nullptr};
     render::FrameSource* nestedSource_{nullptr};
     render::RenderCache* cache_{nullptr};
+    bool comparing_{false};
+    time::RationalTime referenceAt_{};
+    render::CompareMode compareMode_{render::CompareMode::Split};
+    double split_{0.5};
+    render::RgbaImage referenceFrame_;
+    render::RgbaImage currentFrame_;
+    render::RgbaImage comparison_;
+    [[nodiscard]] Status renderComparison(QRhiCommandBuffer* commandBuffer);
     time::RationalTime position_{};
 
     std::unique_ptr<platform::qrhi::GpuCompositor> compositor_;

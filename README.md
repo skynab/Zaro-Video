@@ -76,6 +76,7 @@ headless: there is no window yet.
 | 6j | The preview tone maps too, and colour wheels | **done** |
 | 6k | Vignette, and one argument for clip shading | **done** |
 | 6l | Baking a look out as a .cube | **done** |
+| 6m | Comparison view | **done** |
 
 ## Building
 
