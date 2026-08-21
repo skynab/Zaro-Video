@@ -42,6 +42,24 @@ public:
 
     void clear();
 
+    /// Remember that the project as it stands now is what is on disk.
+    ///
+    /// A position in the history rather than a flag, so that undoing back to
+    /// the saved state reports the project as unmodified again -- which is what
+    /// it is, and a "modified" marker that will not go away is one people stop
+    /// reading.
+    void markSaved() noexcept;
+
+    /// Whether the project differs from what was last saved.
+    ///
+    /// True when there is no saved position to compare against, which covers a
+    /// project that has never been saved and one whose saved state has become
+    /// unreachable -- dropped off the end of the history, or stranded on a
+    /// branch that a new command discarded. Claiming "unmodified" in those
+    /// cases would be a guess, and the cost of guessing wrong is somebody's
+    /// work.
+    [[nodiscard]] bool isModified() const noexcept;
+
     [[nodiscard]] std::size_t depth() const noexcept { return commands_.size(); }
     [[nodiscard]] std::size_t position() const noexcept { return position_; }
     [[nodiscard]] std::size_t snapshotBytes() const;
@@ -52,6 +70,9 @@ private:
     std::size_t position_{0};
     std::size_t maxDepth_;
     bool mergeBroken_{true};
+    std::size_t savedPosition_{0};
+    /// False when the saved state is no longer anywhere in this history.
+    bool savedKnown_{false};
 };
 
 }  // namespace zaro::edit

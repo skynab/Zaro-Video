@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -80,9 +81,11 @@ using namespace zaro;
 // call to. Adding it in a .cpp would also require including its moc output.
 class PreviewWindow : public QWidget {
 public:
-    PreviewWindow(model::Project project, io::LoadedProject loaded)
-        : project_{std::move(project)}, loaded_{std::move(loaded)} {
+    PreviewWindow(model::Project project, io::LoadedProject loaded, std::string path)
+        : project_{std::move(project)}, loaded_{std::move(loaded)}, path_{std::move(path)} {
         sequenceId_ = project_.activeSequence();
+        // What was just loaded is what is on disk, by definition.
+        commands_.markSaved();
 
         monitor_ = new app::ProgramMonitor(this);
         monitor_->setMinimumSize(480, 270);
@@ -158,6 +161,13 @@ public:
         loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
+
+        auto* saveButton = new QPushButton("Save", this);
+        saveButton->setObjectName("save-project");
+        saveButton->setToolTip("Write the project back to its file (Ctrl+S)");
+        saveButton->setMinimumWidth(saveButton->sizeHint().width());
+        transportRow->addWidget(saveButton);
+        connect(saveButton, &QPushButton::clicked, this, [this] { static_cast<void>(save()); });
 
         auto* multicamButton = new QPushButton("Multicam…", this);
         multicamButton->setToolTip("Work out the offsets between a clip's angles");
@@ -296,6 +306,7 @@ public:
             // re-read rather than left claiming a range that no longer renders
             // to what is cached.
             updateCacheBar();
+            updateTitle();
         });
 
         connect(playButton_, &QPushButton::clicked, this, [this] { togglePlay(); });
@@ -320,7 +331,14 @@ public:
         clockTimer_->setInterval(4);
         connect(clockTimer_, &QTimer::timeout, this, [this] { followClock(); });
 
-        setWindowTitle("Zaro");
+        updateTitle();
+        // Every thirty seconds, and only when something has changed. A timer
+        // that writes regardless would rewrite an untouched project all day;
+        // one that writes on every edit would stall a drag on disk.
+        autosaveTimer_ = new QTimer(this);
+        autosaveTimer_->setInterval(30000);
+        connect(autosaveTimer_, &QTimer::timeout, this, [this] { autosave(); });
+        autosaveTimer_->start();
         restoreWorkspace();
         refresh();
     }
@@ -402,6 +420,69 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Write the project back where it came from.
+    ///
+    /// Returns false when it could not be written, so a caller that was about
+    /// to do something irreversible knows not to.
+    bool save() {
+        if (path_.empty()) {
+            return saveAs();
+        }
+        if (Status written = io::saveProject(project_, path_, loaded_.unknown); !written) {
+            QMessageBox::warning(this, "Save", QString::fromStdString(written.error().toString()));
+            return false;
+        }
+        commands_.markSaved();
+        // The recovery file describes work that is now in the project itself.
+        // Left behind, it would be offered on the next open as though it were
+        // newer, which is an alarming thing to be asked about a file that is
+        // already correct.
+        std::error_code code;
+        std::filesystem::remove(io::autosavePath(path_), code);
+        updateTitle();
+        return true;
+    }
+
+    bool saveAs() {
+        const QString chosen = QFileDialog::getSaveFileName(
+            this, "Save project", QString::fromStdString(path_.empty() ? "project.zaro" : path_),
+            "Zaro projects (*.zaro)");
+        if (chosen.isEmpty()) {
+            return false;
+        }
+        setProjectPath(chosen.toStdString());
+        return save();
+    }
+
+    /// Write the recovery file, if there is anything to recover.
+    void autosave() {
+        if (path_.empty() || !commands_.isModified()) {
+            return;
+        }
+        // Failures are silent on purpose. An autosave is something the program
+        // does on its own, and a dialog interrupting somebody mid-edit to
+        // report it is worse than the missing file -- the next explicit save
+        // will report the same problem at a moment they are expecting an
+        // answer.
+        static_cast<void>(io::saveProject(project_, io::autosavePath(path_), loaded_.unknown));
+    }
+
+    [[nodiscard]] const std::string& projectPath() const noexcept { return path_; }
+
+    /// Point Save at a different file. What Save As does once somebody has
+    /// chosen one.
+    void setProjectPath(std::string path) {
+        path_ = std::move(path);
+        updateTitle();
+    }
+
+    /// The file name, and whether it differs from what is on disk.
+    void updateTitle() {
+        const QString name = path_.empty() ? QString{"Untitled"}
+                                           : QFileInfo(QString::fromStdString(path_)).fileName();
+        setWindowTitle(QString("%1%2 — Zaro").arg(name, commands_.isModified() ? "*" : ""));
+    }
 
     /// Open the source monitor on the frame the selected clip is showing.
     void matchFrame() {
@@ -650,6 +731,9 @@ protected:
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
             {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
+            {Qt::Key_S, Qt::ControlModifier, "Save", &PreviewWindow::doSave},
+            {Qt::Key_S, Qt::ControlModifier | Qt::ShiftModifier, "Save as",
+             &PreviewWindow::doSaveAs},
         };
         for (const Binding& binding : kBindings) {
             if (event->key() == binding.key && event->modifiers() == binding.modifiers) {
@@ -703,6 +787,15 @@ protected:
     }
 
     void closeEvent(QCloseEvent* event) override {
+        // Never a dialog on the way out.
+        //
+        // "You have unsaved changes -- save?" is a question whose answer is
+        // almost always yes, asked at the moment somebody has already decided
+        // to leave. Writing the recovery file instead means quitting is always
+        // instant and never loses anything: the next open finds the autosave
+        // and offers it back. It also keeps the promise that the file somebody
+        // last chose to save stays as they left it.
+        autosave();
         saveWorkspace();
         shutDown();
         QWidget::closeEvent(event);
@@ -769,6 +862,8 @@ private:
     /// asks -- so match frame stays right through trims, speed, reverse, a
     /// multicam angle and a time remap, with nothing to keep in step.
     void doMatchFrame() { matchFrame(); }
+    void doSave() { static_cast<void>(save()); }
+    void doSaveAs() { static_cast<void>(saveAs()); }
     void doMarkIn() { source_->markIn(); }
     void doMarkOut() { source_->markOut(); }
     void doInsert() { placeFromSource(edit::PlaceMode::Insert); }
@@ -1309,6 +1404,9 @@ private:
 
     model::Project project_;
     io::LoadedProject loaded_;
+    /// Where the project came from, and where Save writes.
+    std::string path_;
+    QTimer* autosaveTimer_{nullptr};
     /// The active sequence, by id rather than by pointer.
     ///
     /// A pointer into the project's vector of sequences is valid until one is
@@ -1416,7 +1514,24 @@ int main(int argc, char** argv) {
 
     zaro::platform::ffmpeg::installLogHandler(false);
 
-    auto loaded = zaro::io::loadProject(arguments.at(1).toStdString());
+    const std::string projectPath = arguments.at(1).toStdString();
+
+    // A recovery file newer than the project means the last session ended
+    // without an explicit save. Offered rather than opened: the autosave is
+    // what somebody was in the middle of, and only they know whether they want
+    // it. Declining leaves the file alone, so the choice can be made again.
+    std::string openPath = projectPath;
+    if (!quitTest && !selfTest && !editTest && zaro::io::hasNewerAutosave(projectPath)) {
+        const auto answer = QMessageBox::question(
+            nullptr, "Recover",
+            QString("There is a more recent recovery file for %1.\n\nOpen it instead?")
+                .arg(QString::fromStdString(projectPath)));
+        if (answer == QMessageBox::Yes) {
+            openPath = zaro::io::autosavePath(projectPath);
+        }
+    }
+
+    auto loaded = zaro::io::loadProject(openPath);
     if (!loaded) {
         std::fprintf(stderr, "zaro-preview: %s\n", loaded.error().toString().c_str());
         return 1;
@@ -1427,7 +1542,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    PreviewWindow window{std::move(project), std::move(*loaded)};
+    // Recovered work is saved back to the *project*, not to the recovery file:
+    // opening an autosave and then saving into it would leave the real project
+    // stale for ever.
+    PreviewWindow window{std::move(project), std::move(*loaded), projectPath};
     if (const auto status = window.openMedia(); !status) {
         std::fprintf(stderr, "zaro-preview: %s\n", status.error().toString().c_str());
         return 1;
@@ -2128,6 +2246,120 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Saving, and the recovery file. Written to a scratch path rather than
+        // over the fixture: a self-test that rewrites its own input is one
+        // whose second run tests something else.
+        {
+            const std::filesystem::path scratch =
+                std::filesystem::temp_directory_path() / "zaro-selftest-save";
+            std::error_code code;
+            std::filesystem::create_directories(scratch, code);
+            const std::string savePath = (scratch / "project.zaro").string();
+            std::filesystem::remove(savePath, code);
+            std::filesystem::remove(zaro::io::autosavePath(savePath), code);
+
+            window.setProjectPath(savePath);
+            window.commands().markSaved();
+            if (window.commands().isModified()) {
+                std::fprintf(stderr, "  FAIL: a project just marked saved reads as modified\n");
+                return 1;
+            }
+
+            const auto saveSequenceId = window.project().activeSequence();
+            const auto saveTrackId =
+                window.project().findSequence(saveSequenceId)->videoTracks().front().id();
+            const auto saveRate = window.project().findSequence(saveSequenceId)->frameRate();
+            auto marker = zaro::edit::makeAddMarker(
+                window.project(), saveSequenceId, zaro::time::RationalTime{7, saveRate},
+                zaro::time::RationalTime{1, saveRate}, "saved here");
+            if (!marker) {
+                std::fprintf(stderr, "  FAIL: %s\n", marker.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*marker));
+            window.commands().breakMerge();
+            if (!window.commands().isModified()) {
+                std::fprintf(stderr, "  FAIL: an edit did not mark the project modified\n");
+                return 1;
+            }
+
+            // Through the button, the way somebody would.
+            auto* saveButton = window.findChild<QPushButton*>("save-project");
+            if (saveButton == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no save button\n");
+                return 1;
+            }
+            saveButton->click();
+            QApplication::processEvents();
+
+            if (!std::filesystem::exists(savePath)) {
+                std::fprintf(stderr, "  FAIL: saving wrote no file\n");
+                return 1;
+            }
+            if (window.commands().isModified()) {
+                std::fprintf(stderr, "  FAIL: the project still reads as modified after a save\n");
+                return 1;
+            }
+            if (window.windowTitle().contains('*')) {
+                std::fprintf(stderr, "  FAIL: the title still says modified after a save\n");
+                return 1;
+            }
+
+            // And what came back is the edit that was made.
+            auto reloaded = zaro::io::loadProject(savePath);
+            if (!reloaded) {
+                std::fprintf(stderr, "  FAIL: %s\n", reloaded.error().toString().c_str());
+                return 1;
+            }
+            const auto* savedSequence = reloaded->project.findSequence(saveSequenceId);
+            if (savedSequence == nullptr || savedSequence->markers().empty()) {
+                std::fprintf(stderr, "  FAIL: the saved file does not hold the edit\n");
+                return 1;
+            }
+            static_cast<void>(saveTrackId);
+
+            // A further edit, then the recovery file -- which must not touch
+            // the project itself.
+            const auto savedSize = std::filesystem::file_size(savePath);
+            auto second = zaro::edit::makeAddMarker(
+                window.project(), saveSequenceId, zaro::time::RationalTime{9, saveRate},
+                zaro::time::RationalTime{1, saveRate}, "not saved yet");
+            if (!second) {
+                std::fprintf(stderr, "  FAIL: %s\n", second.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*second));
+            window.commands().breakMerge();
+            window.autosave();
+
+            if (!zaro::io::hasNewerAutosave(savePath)) {
+                std::fprintf(stderr, "  FAIL: autosaving left nothing to recover\n");
+                return 1;
+            }
+            if (std::filesystem::file_size(savePath) != savedSize) {
+                std::fprintf(stderr, "  FAIL: autosaving wrote into the project file\n");
+                return 1;
+            }
+
+            // Saving properly clears it: what it described is now in the
+            // project, and offering it on the next open would be alarming.
+            saveButton->click();
+            QApplication::processEvents();
+            if (std::filesystem::exists(zaro::io::autosavePath(savePath))) {
+                std::fprintf(stderr, "  FAIL: the recovery file outlived the save\n");
+                return 1;
+            }
+
+            std::printf("  saving: %lld bytes, recovery written and cleared\n",
+                        static_cast<long long>(std::filesystem::file_size(savePath)));
+
+            std::filesystem::remove_all(scratch, code);
+            window.setProjectPath({});
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
         }
 
         // Getting back to the source: a subclip made from what is marked, match

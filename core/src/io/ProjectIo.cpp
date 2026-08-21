@@ -1,5 +1,6 @@
 #include "zaro/core/io/ProjectIo.h"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -1309,15 +1310,67 @@ Status saveProject(const model::Project& project, const std::string& path,
     if (!text) {
         return text.error();
     }
-    std::ofstream file{path, std::ios::binary | std::ios::trunc};
-    if (!file) {
-        return Error{ErrorCode::Io, "cannot open " + path + " for writing"};
+    // Written beside the file and renamed over it, never into it.
+    //
+    // A truncating write destroys the old project the instant it opens the
+    // file, so a crash, a full disk or a pulled cable partway through leaves
+    // neither the old version nor the new -- and the moment somebody is most
+    // likely to lose a day's work is the moment they were saving it. Rename
+    // within a directory is atomic: either the new file is there whole or the
+    // old one still is.
+    std::error_code code;
+    const std::filesystem::path target{path};
+    std::filesystem::path temporary = target;
+    temporary += ".saving";
+    {
+        std::ofstream file{temporary, std::ios::binary | std::ios::trunc};
+        if (!file) {
+            return Error{ErrorCode::Io, "cannot open " + temporary.string() + " for writing"};
+        }
+        file << *text;
+        file.flush();
+        if (!file) {
+            std::filesystem::remove(temporary, code);
+            return Error{ErrorCode::Io, "failed while writing " + temporary.string()};
+        }
     }
-    file << *text;
-    if (!file) {
-        return Error{ErrorCode::Io, "failed while writing " + path};
+
+    // In the same directory as the target on purpose: a rename across
+    // filesystems is a copy and a delete, which is exactly the non-atomic
+    // operation this exists to avoid.
+    std::filesystem::rename(temporary, target, code);
+    if (code) {
+        std::filesystem::remove(temporary, code);
+        return Error{ErrorCode::Io, "cannot replace " + path + ": " + code.message()};
     }
     return {};
+}
+
+std::string autosavePath(const std::string& projectPath) {
+    return projectPath + ".autosave";
+}
+
+bool hasNewerAutosave(const std::string& projectPath) {
+    std::error_code code;
+    const std::filesystem::path recovery{autosavePath(projectPath)};
+    if (!std::filesystem::exists(recovery, code) || code) {
+        return false;
+    }
+    const std::filesystem::path project{projectPath};
+    if (!std::filesystem::exists(project, code) || code) {
+        // No project to compare against -- an autosave of something never
+        // saved. That is the case recovery matters most for.
+        return true;
+    }
+    const auto recoveryTime = std::filesystem::last_write_time(recovery, code);
+    if (code) {
+        return false;
+    }
+    const auto projectTime = std::filesystem::last_write_time(project, code);
+    if (code) {
+        return false;
+    }
+    return recoveryTime > projectTime;
 }
 
 Result<LoadedProject> loadProjectFromString(const std::string& text) {

@@ -38,8 +38,23 @@ struct LoadedProject {
 /// understand. Omit it when writing a project built in memory.
 [[nodiscard]] Result<std::string> saveProjectToString(
     const model::Project& project, const std::shared_ptr<const UnknownFields>& unknown = nullptr);
+/// Writes beside the file and renames over it, so an interrupted save leaves
+/// the previous version intact rather than half of each.
 [[nodiscard]] Status saveProject(const model::Project& project, const std::string& path,
                                  const std::shared_ptr<const UnknownFields>& unknown = nullptr);
+
+/// Where the recovery file for a project lives.
+///
+/// Beside it, and named after it. Not in a temporary directory: a recovery file
+/// somewhere else is one nobody finds, and one the operating system may clear
+/// out from under them. Not over the project itself either -- autosaving into
+/// the file somebody last chose to save is making a decision they did not.
+[[nodiscard]] std::string autosavePath(const std::string& projectPath);
+
+/// Whether a usable recovery file sits beside this project and is newer than
+/// it, which is the only case where offering one is honest: an older autosave
+/// describes work the last real save already includes.
+[[nodiscard]] bool hasNewerAutosave(const std::string& projectPath);
 
 /// A hash of everything about a thing that a project file records about it.
 ///

@@ -2073,6 +2073,77 @@ subclips would be an odd place to start.
 
 ---
 
+#### Phase 6d — saving, autosave and recovery ✅
+
+Until this phase the application could open a project, export a master, export
+OTIO and export subtitles — and could not save. Every phase since 4a has been
+adding things somebody would lose.
+
+**A save writes beside the file and renames over it.** A truncating write
+destroys the old project the instant it opens the file, so a crash, a full disk
+or a pulled cable partway through leaves neither the old version nor the new —
+and the moment somebody is most likely to lose a day's work is the moment they
+were saving it. Rename within a directory is atomic: either the new file is
+there whole or the old one still is. The temporary goes in the same directory
+for that reason, because a rename across filesystems is a copy and a delete,
+which is the non-atomic operation this exists to avoid.
+
+**Modified is a position in the history, not a flag.** Undoing back to the
+state that was saved reports the project as unmodified again, because that is
+what it is — and a "modified" marker that will not go away is one people stop
+reading. Three cases had to be got right, and each has a test:
+
+- A merged command does not move the position but does change the project.
+  Without handling it, dragging a value after a save would leave the project
+  reading as unmodified while it had changed.
+- A new command discards the redo branch. If the saved state was on it, that
+  state can no longer be returned to, so it can no longer be recognised.
+- The history is bounded. When the saved state falls off the end it is
+  forgotten, because it can no longer be undone back to.
+
+In all three the answer is to admit the saved state is unknown, which reports
+"modified". Guessing the other way is cheap to write and costs somebody their
+work.
+
+**Autosave writes a recovery file beside the project, never into it.**
+Autosaving over the file somebody last chose to save is making a decision they
+did not make. The recovery file is named after the project and sits next to it —
+not in a temporary directory, which is somewhere nobody finds and the operating
+system may clear out from under them. It is offered on the next open only when
+it is *newer* than the project, because an older one describes work the last
+real save already includes. An explicit save deletes it: what it described is
+now in the project, and being asked about it next time would be alarming.
+
+**Every thirty seconds, and only when something changed.** A timer that writes
+regardless rewrites an untouched project all day; one that writes on every edit
+stalls a drag on disk.
+
+**Autosave failures are silent.** An autosave is something the program does on
+its own, and a dialog interrupting somebody mid-edit to report it is worse than
+the missing file — the next explicit save reports the same problem at a moment
+they are expecting an answer.
+
+**There is no dialog on the way out.** "You have unsaved changes — save?" is a
+question whose answer is almost always yes, asked at the moment somebody has
+already decided to leave. Closing writes the recovery file instead, so quitting
+is always instant and never loses anything, and the file they last chose to save
+stays as they left it. Recovered work saves back to the *project*, not to the
+recovery file, or the real project would stay stale for ever.
+
+The self-test writes to a scratch path rather than over the fixture — a
+self-test that rewrites its own input is one whose second run tests something
+else. It saves through the button, checks the title stops saying modified,
+reloads the file and finds the edit in it, then makes another edit, autosaves,
+and requires the project file's size to be unchanged. With autosave pointed at
+the project it reports nothing to recover and fails; with `markSaved` gutted it
+fails on the first check.
+
+**Not done: a New Project, and opening one from inside the window.** The
+application still takes its project on the command line. That is a shell around
+what this phase built rather than more of it.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly
