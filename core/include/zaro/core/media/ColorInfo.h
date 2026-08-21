@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 
 namespace zaro::media {
@@ -28,6 +29,15 @@ enum class TransferFunction : std::uint8_t {
     Linear,
     PQ,   ///< SMPTE ST 2084, HDR.
     HLG,  ///< Hybrid log gamma, HDR.
+
+    // Camera log curves. These are what a camera writes when it is asked to
+    // keep its whole range in an 8- or 10-bit file, and a file carrying one is
+    // almost never tagged as such -- the container says BT.709 because that is
+    // what the container has a number for. `MediaRef::transferOverride` is how
+    // somebody says what it really is.
+    SLog3,  ///< Sony.
+    VLog,   ///< Panasonic.
+    LogC3,  ///< Arri, EI 800.
 };
 
 /// The matrix used to get from Y'CbCr back to R'G'B'. Getting this wrong does
@@ -71,6 +81,12 @@ struct ColorInfo {
 
 [[nodiscard]] const char* toString(ColorPrimaries v) noexcept;
 [[nodiscard]] const char* toString(TransferFunction v) noexcept;
+/// The curve of that name, or nothing. Names come from project files, which
+/// outlive the build that wrote them: a curve a later version added is dropped
+/// rather than refusing to open the project.
+[[nodiscard]] bool transferFunctionFromString(const char* name, TransferFunction& out) noexcept;
+/// Every curve, once, so anything that has to offer them all has one list.
+[[nodiscard]] std::span<const TransferFunction> allTransferFunctions() noexcept;
 [[nodiscard]] const char* toString(ColorMatrix v) noexcept;
 [[nodiscard]] const char* toString(ColorRange v) noexcept;
 [[nodiscard]] std::string toString(const ColorInfo& v);

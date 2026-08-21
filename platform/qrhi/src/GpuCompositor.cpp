@@ -805,6 +805,16 @@ int transferIdFor(media::TransferFunction transfer) {
             return 3;
         case media::TransferFunction::Gamma28:
             return 4;
+        case media::TransferFunction::PQ:
+            return 5;
+        case media::TransferFunction::HLG:
+            return 6;
+        case media::TransferFunction::SLog3:
+            return 7;
+        case media::TransferFunction::VLog:
+            return 8;
+        case media::TransferFunction::LogC3:
+            return 9;
         default:
             return 0;  // BT.709 / SMPTE 170M
     }
@@ -886,9 +896,9 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                                  " is not a planar or semi-planar Y'CbCr layout"};
     }
     if (!render::isSupported(source.color())) {
-        return Error{ErrorCode::Unsupported, std::string{"HDR transfer function '"} +
+        return Error{ErrorCode::Unsupported, std::string{"transfer function '"} +
                                                  media::toString(source.color().transfer) +
-                                                 "' is not handled yet"};
+                                                 "' has no formula here"};
     }
     if (transform.opacity <= 0.0 || transform.scaleX == 0.0 || transform.scaleY == 0.0) {
         return {};

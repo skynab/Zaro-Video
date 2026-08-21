@@ -264,3 +264,32 @@ TEST_CASE("Conforming a sequence that has clips on it is refused", "[edit][newpr
         CHECK_FALSE(edit::makeConformSequence(project, id, time::rates::fps24, 0, 1080));
     }
 }
+
+// --- Interpreting footage ---------------------------------------------------
+
+TEST_CASE("A media reference reads its curve from the file until told otherwise", "[io][color]") {
+    Fixture f;
+    model::MediaRef& ref = f.project.mediaMutable().front();
+    ref.info.videoStreams.front().color.transfer = media::TransferFunction::BT709;
+    CHECK(ref.transfer() == media::TransferFunction::BT709);
+
+    // A camera log file says BT.709 because a container has a number for that
+    // and none for S-Log3. Nothing in the pixels can tell them apart.
+    ref.transferOverride = media::TransferFunction::SLog3;
+    CHECK(ref.transfer() == media::TransferFunction::SLog3);
+
+    SECTION("and it survives a round trip") {
+        auto text = io::saveProjectToString(f.project);
+        REQUIRE(text);
+        auto reloaded = io::loadProjectFromString(*text);
+        REQUIRE(reloaded);
+        CHECK(reloaded->project.media().front().transferOverride == media::TransferFunction::SLog3);
+    }
+
+    SECTION("and a file described correctly carries no override") {
+        ref.transferOverride = media::TransferFunction::Unknown;
+        auto text = io::saveProjectToString(f.project);
+        REQUIRE(text);
+        CHECK(text->find("transferOverride") == std::string::npos);
+    }
+}

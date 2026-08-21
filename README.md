@@ -71,6 +71,7 @@ headless: there is no window yet.
 | 6e | New and Open: the project shell | **done** |
 | 6f | Scene edit detection | **done** |
 | 6g | Audio roles and auto-ducking | **done** |
+| 6h | Log and HDR footage into the working space | **done** |
 
 ## Building
 

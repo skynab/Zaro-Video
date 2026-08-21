@@ -851,6 +851,11 @@ json encode(const model::MediaRef& ref) {
     if (!ref.proxyPath.empty()) {
         out["proxyPath"] = ref.proxyPath;
     }
+    if (ref.transferOverride != media::TransferFunction::Unknown) {
+        // Only when somebody has said so: a file the container described
+        // correctly should not carry a line asserting what it already says.
+        out["transferOverride"] = media::toString(ref.transferOverride);
+    }
     return out;
 }
 
@@ -1131,6 +1136,13 @@ Result<model::MediaRef> decodeMedia(const json& node) {
     }
     ref.path = node.value("path", std::string{});
     ref.proxyPath = node.value("proxyPath", std::string{});
+    if (node.contains("transferOverride")) {
+        media::TransferFunction transfer{};
+        if (media::transferFunctionFromString(
+                node.at("transferOverride").get<std::string>().c_str(), transfer)) {
+            ref.transferOverride = transfer;
+        }
+    }
     ref.contentHash = node.value("contentHash", std::string{});
     ref.name = node.value("name", std::string{});
 

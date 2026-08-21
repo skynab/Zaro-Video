@@ -54,12 +54,36 @@ struct MediaRef {
     std::string name;
     media::MediaInfo info;
 
+    /// What this footage's curve really is, when the file is wrong about it.
+    ///
+    /// Camera log is almost never tagged: a container has a number for BT.709
+    /// and no number for S-Log3, so an S-Log3 file says BT.709 and decodes to a
+    /// washed-out picture that grades badly and looks, at a glance, like
+    /// footage somebody underexposed. There is no way to detect it from the
+    /// pixels -- a flat shot and a log shot are the same picture -- so the only
+    /// honest mechanism is somebody saying so.
+    ///
+    /// On the media rather than the clip: it is a fact about the file, and
+    /// every clip that reads that file needs the same answer. `Unknown` means
+    /// believe the container.
+    media::TransferFunction transferOverride{media::TransferFunction::Unknown};
+
+    /// The curve to decode this file through: the override if there is one,
+    /// otherwise whatever the container said.
+    [[nodiscard]] media::TransferFunction transfer() const {
+        if (transferOverride != media::TransferFunction::Unknown) {
+            return transferOverride;
+        }
+        const media::VideoStreamInfo* video = info.primaryVideo();
+        return video != nullptr ? video->color.transfer : media::TransferFunction::Unknown;
+    }
+
     friend bool operator==(const MediaRef& a, const MediaRef& b) {
         // MediaInfo is a cache of what the file said, not part of identity: two
         // refs to the same file are the same ref even if one has not been
         // probed yet.
         return a.id == b.id && a.path == b.path && a.contentHash == b.contentHash &&
-               a.name == b.name;
+               a.name == b.name && a.transferOverride == b.transferOverride;
     }
 };
 

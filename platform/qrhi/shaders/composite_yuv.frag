@@ -42,6 +42,41 @@ float curveToLinear(float v, int id)
         return pow(max(v, 0.0), 2.2);
     } else if (id == 4) {   // Gamma 2.8
         return pow(max(v, 0.0), 2.8);
+    } else if (id == 5) {   // SMPTE ST 2084 (PQ)
+        // Absolute light, normalised so 100 cd/m2 -- SDR diffuse white -- is
+        // 1.0. Must match render::curves::kPqReference.
+        float m1 = 2610.0 / 16384.0;
+        float m2 = 2523.0 / 4096.0 * 128.0;
+        float c1 = 3424.0 / 4096.0;
+        float c2 = 2413.0 / 4096.0 * 32.0;
+        float c3 = 2392.0 / 4096.0 * 32.0;
+        float e = pow(max(v, 0.0), 1.0 / m2);
+        float den = c2 - c3 * e;
+        if (den <= 0.0) {
+            return 0.0;
+        }
+        return pow(max(e - c1, 0.0) / den, 1.0 / m1) * (10000.0 / 100.0);
+    } else if (id == 6) {   // Hybrid log gamma
+        float a = 0.17883277;
+        float b = 0.28466892;
+        float c = 0.55991073;
+        float x = clamp(v, 0.0, 1.0);
+        return x <= 0.5 ? (x * x) / 3.0 : (exp((x - c) / a) + b) / 12.0;
+    } else if (id == 7) {   // Sony S-Log3
+        if (v >= 171.2102946929 / 1023.0) {
+            return pow(10.0, ((v * 1023.0) - 420.0) / 261.5) * 0.19 - 0.01;
+        }
+        return ((v * 1023.0) - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
+    } else if (id == 8) {   // Panasonic V-Log
+        if (v < 0.181) {
+            return (v - 0.125) / 5.6;
+        }
+        return pow(10.0, (v - 0.598206) / 0.241514) - 0.00873;
+    } else if (id == 9) {   // Arri LogC3, EI 800
+        if (v > 5.367655 * 0.010591 + 0.092809) {
+            return (pow(10.0, (v - 0.385537) / 0.247190) - 0.052272) / 5.555556;
+        }
+        return (v - 0.092809) / 5.367655;
     }
     // BT.709 / SMPTE 170M inverse OETF.
     return v < 0.081 ? v / 4.5 : pow((v + 0.099) / 1.099, 1.0 / 0.45);

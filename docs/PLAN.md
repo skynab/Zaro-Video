@@ -2366,6 +2366,76 @@ to come first.
 
 ---
 
+#### Phase 6h — log and HDR footage into the working space ✅
+
+§7.3's input half: getting what a camera actually wrote into the linear space
+everything downstream assumes (ADR-005). Until now the renderer knew five
+display curves, and **refused** PQ and HLG outright.
+
+**Five new curves, and each is checked against its own specification.** S-Log3,
+V-Log, LogC3 (EI 800), PQ and HLG. The constants are written out rather than
+factored, because the only useful check on them is reading them against the
+document they came from — so the tests assert the published anchors: S-Log3 puts
+18% grey at code 420 of 1023 and 90% white at 598, V-Log puts grey at 42.3 IRE,
+LogC3 at 39.1%. All four landed first try, which is the outcome that makes the
+constants believable.
+
+**A log curve carries several stops above white**, and that headroom is what a
+grade is made from. There is a test that says so directly: Rec.709 runs out at
+1.0 and each log curve is past 4.0 there.
+
+**PQ carries absolute light and the working space carries relative light**, so
+the two need a reference to agree on. 100 cd/m² — SDR diffuse white — is the one
+chosen, which puts graphic white at 1.0 and leaves specular highlights above it,
+exactly what a scene-linear space is for. Any other choice makes a correctly
+exposed HDR shot arrive a hundred times too dark or too bright, and the number
+is in one named constant on the CPU with the shader's copy pointing at it.
+
+**The refusal stayed, aimed at what actually cannot be done.** `Unknown` is
+still refused, because guessing at a curve produces a picture that is wrong in a
+way nobody can see is a *tag* rather than the footage. Two tests had encoded
+"HDR is refused" as the desired behaviour and were rewritten rather than
+deleted: the thing they were protecting is still protected, it just has a
+narrower target.
+
+**Camera log is almost never tagged**, so there is a per-media override. A
+container has a number for BT.709 and none for S-Log3, so an S-Log3 file says
+BT.709 and decodes to a washed-out picture that looks, at a glance, like
+somebody underexposed. Nothing in the pixels can tell them apart — a flat shot
+and a log shot are the same picture — so the only honest mechanism is a person
+saying so, in the bin, where the list of files is. It sits on the *media*, not
+the clip: it is a fact about the file, and every clip reading that file needs
+the same answer. The bin shows it in the row, because a file being read as
+something other than what it claims is exactly the setting somebody forgets they
+made.
+
+Both read paths go through one `applyOverride`, because the CPU converts to the
+working space inside the media source and the GPU converts in a shader from the
+frame's own tag — a correction applied to one and not the other would show up
+only in the export.
+
+The golden-frame test covers all five curves against the CPU reference and
+passed first run. Its tolerance is looser than the display curves get, and
+honestly so: these carry values far above 1.0, so the sampled table's
+interpolation error scales with them; relative to the values involved it is the
+same error.
+
+**What the end-to-end test could not check, and why.** The fixture is pure black
+and pure white with nothing in between — black stays black under any curve and
+white clips under all of them, so the preview cannot tell two curves apart on
+it. The self-test therefore checks that the override reaches *the decoder*, and
+that the preview renders log footage rather than refusing it; the curves
+themselves are the golden-frame test's job. Stated here rather than papered over
+with a weaker assertion.
+
+**Not done: OCIO, output transforms, and tone mapping.** Footage now arrives in
+the working space correctly; choosing a *display* to send it back out to is the
+other half of colour management, and HDR delivery needs a tone map that this
+does not attempt. An HDR file will grade correctly and export through an SDR
+curve by clipping, which is honest but is not a deliverable.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

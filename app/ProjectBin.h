@@ -28,6 +28,9 @@ signals:
     void openRequested(zaro::model::MediaRefId media);
     /// Open this subclip in the source monitor, marked to its range.
     void openSubclipRequested(zaro::model::SubclipId subclip);
+    /// The footage's curve was corrected, so anything showing it must redraw
+    /// and the media has to be reopened.
+    void colorChanged();
     /// Point the selected timeline clip at this media instead.
     ///
     /// The bin does not know what is selected on the timeline, and should not:
@@ -44,6 +47,7 @@ private:
         model::SubclipId subclip;
     };
     [[nodiscard]] Selection selection() const;
+    void interpretMenu();
 
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;

@@ -566,16 +566,29 @@ TEST_CASE("The GPU YUV path refuses what it cannot handle", "[gpu][yuv]") {
     }
     REQUIRE(compositor->beginFrame(16, 16).ok());
 
+    // A curve with no formula. PQ and HLG used to be here; they have formulas
+    // now, and what is left to refuse is a tag nothing knows how to invert --
+    // where guessing produces a picture that is wrong in a way nobody can see
+    // is the tag rather than the footage.
+    media::VideoFrame untagged = yuvPattern(16, 16, media::PixelFormat::YUV420P,
+                                            media::ColorRange::Limited, media::ColorMatrix::BT709);
+    media::ColorInfo unknown = untagged.color();
+    unknown.transfer = media::TransferFunction::Unknown;
+    untagged.setColor(unknown);
+
+    const auto status =
+        compositor->drawSource(untagged, Transform{}, render::GradeConstants{}, BlendMode::Normal);
+    REQUIRE_FALSE(status.ok());
+    CHECK(status.error().code() == ErrorCode::Unsupported);
+
+    // And the HDR curves go through.
     media::VideoFrame hdr = yuvPattern(16, 16, media::PixelFormat::YUV420P,
                                        media::ColorRange::Limited, media::ColorMatrix::BT709);
     media::ColorInfo pq = hdr.color();
     pq.transfer = media::TransferFunction::PQ;
     hdr.setColor(pq);
-
-    const auto status =
-        compositor->drawSource(hdr, Transform{}, render::GradeConstants{}, BlendMode::Normal);
-    REQUIRE_FALSE(status.ok());
-    CHECK(status.error().code() == ErrorCode::Unsupported);
+    CHECK(
+        compositor->drawSource(hdr, Transform{}, render::GradeConstants{}, BlendMode::Normal).ok());
 
     RgbaImage out;
     REQUIRE(compositor->endFrame(out).ok());
@@ -1528,4 +1541,57 @@ TEST_CASE("Switching output size and source size does not wreck the pipeline",
     RgbaImage third;
     REQUIRE(compositor->endFrame(third).ok());
     CHECK(third.width() == 64);
+}
+
+TEST_CASE("The GPU agrees with the CPU on log and HDR curves", "[gpu][golden][log]") {
+    // These curves are the reason the two implementations exist separately: the
+    // CPU samples a table because std::pow per pixel is ruinous, and the shader
+    // evaluates the formula because a GPU does that for free. A log curve that
+    // is right in one and wrong in the other produces an export that does not
+    // match the preview it was graded in -- and log footage is precisely the
+    // footage nobody can eyeball, because it is meant to look flat.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    struct Case {
+        const char* name;
+        media::TransferFunction transfer;
+    };
+    const Case cases[] = {
+        {"S-Log3", media::TransferFunction::SLog3}, {"V-Log", media::TransferFunction::VLog},
+        {"LogC3", media::TransferFunction::LogC3},  {"PQ", media::TransferFunction::PQ},
+        {"HLG", media::TransferFunction::HLG},
+    };
+
+    for (const Case& testCase : cases) {
+        media::VideoFrame frame = yuvPattern(64, 64, media::PixelFormat::YUV420P,
+                                             media::ColorRange::Limited, media::ColorMatrix::BT709);
+        media::ColorInfo color = frame.color();
+        color.transfer = testCase.transfer;
+        frame.setColor(color);
+
+        RgbaImage converted;
+        REQUIRE(render::toLinear(frame, converted).ok());
+        RgbaImage cpuOut{64, 64};
+        render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal);
+
+        REQUIRE(compositor->beginFrame(64, 64).ok());
+        REQUIRE(
+            compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal)
+                .ok());
+        RgbaImage gpuOut;
+        REQUIRE(compositor->endFrame(gpuOut).ok());
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        // A looser bound than the display curves get, and honestly so: these
+        // carry values far above 1.0, so the table's interpolation error is
+        // scaled up with them. Relative to the values involved it is the same
+        // error.
+        CHECK(difference.worst < 0.05F);
+        CHECK(difference.mean < 0.005F);
+    }
 }

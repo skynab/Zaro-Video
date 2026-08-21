@@ -28,6 +28,10 @@ public:
 
     ~ProjectMediaSource() override;
 
+    /// Correct what the container claimed about a frame's curve, before
+    /// anything reads it.
+    void applyOverride(model::MediaRefId media, media::VideoFrame& frame) const;
+
     [[nodiscard]] Result<const render::RgbaImage*> imageFor(
         model::MediaRefId media, const time::RationalTime& sourceTime) override;
 

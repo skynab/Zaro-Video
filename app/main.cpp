@@ -258,6 +258,18 @@ public:
                         source_->loadMarked(*ref, subclip->range);
                     }
                 });
+        connect(bin_, &app::ProjectBin::colorChanged, this, [this] {
+            // The media source resolved each file's curve when it opened, so
+            // correcting one means reopening -- the same swap the proxy toggle
+            // makes, for the same reason.
+            renderCache_.clear();
+            if (Status reopened = reopenMedia(); !reopened) {
+                QMessageBox::warning(this, "Interpret",
+                                     QString::fromStdString(reopened.error().toString()));
+            }
+            monitor_->update();
+            updateCacheBar();
+        });
         connect(bin_, &app::ProjectBin::replaceRequested, this,
                 [this](zaro::model::MediaRefId id) { replaceSelectedSource(id); });
         connect(source_, &app::SourceMonitor::subclipRequested, this, [this] { makeSubclip(); });
@@ -375,6 +387,7 @@ public:
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
     [[nodiscard]] render::AudioSource& media() { return *media_; }
+    [[nodiscard]] render::SourceFrameProvider* frames() { return media_.get(); }
     [[nodiscard]] Status reopenMedia() { return openMedia(); }
 
     /// Re-seat everything that holds a pointer to the active sequence.
@@ -2439,6 +2452,78 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Interpreting footage: telling the program what a file's curve really
+        // is, and having the decoder believe it.
+        //
+        // Checked at the frame rather than at the picture, because this fixture
+        // is pure black and pure white with nothing in between: black stays
+        // black under any curve and white clips under all of them, so the
+        // preview cannot tell two curves apart on it. That the curves
+        // themselves are right, and that the GPU and the CPU agree about them,
+        // is what the golden-frame tests are for. What is left to check here is
+        // that the override reaches the decoder at all -- and it can fail,
+        // because without the plumbing the frame comes back tagged as the file
+        // described it.
+        {
+            const auto interpretMediaId = window.project().media().front().id;
+            const auto interpretRate =
+                window.project().findSequence(window.project().activeSequence())->frameRate();
+            const auto probeAt = zaro::time::RationalTime{4, interpretRate};
+
+            auto tagged = window.frames()->sourceFrameFor(interpretMediaId, probeAt);
+            if (!tagged) {
+                std::fprintf(stderr, "  FAIL: %s\n", tagged.error().toString().c_str());
+                return 1;
+            }
+            const auto taggedTransfer = (*tagged)->color().transfer;
+
+            for (zaro::model::MediaRef& media : window.project().mediaMutable()) {
+                if (media.id == interpretMediaId) {
+                    media.transferOverride = zaro::media::TransferFunction::SLog3;
+                }
+            }
+            window.renderCache().clear();
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            auto overridden = window.frames()->sourceFrameFor(interpretMediaId, probeAt);
+            if (!overridden) {
+                std::fprintf(stderr, "  FAIL: %s\n", overridden.error().toString().c_str());
+                return 1;
+            }
+            const auto overriddenTransfer = (*overridden)->color().transfer;
+            std::printf("  interpret footage: decoded as %s, then as %s\n",
+                        zaro::media::toString(taggedTransfer),
+                        zaro::media::toString(overriddenTransfer));
+            if (overriddenTransfer != zaro::media::TransferFunction::SLog3 ||
+                taggedTransfer == overriddenTransfer) {
+                std::fprintf(stderr, "  FAIL: the curve override did not reach the decoder\n");
+                return 1;
+            }
+            // And the preview still renders through it rather than refusing.
+            window.setPosition(probeAt);
+            window.monitor()->update();
+            QApplication::processEvents();
+            if (!window.monitor()->lastError().isEmpty()) {
+                std::fprintf(stderr, "  FAIL: rendering log footage reported %s\n",
+                             window.monitor()->lastError().toUtf8().constData());
+                return 1;
+            }
+
+            for (zaro::model::MediaRef& media : window.project().mediaMutable()) {
+                media.transferOverride = zaro::media::TransferFunction::Unknown;
+            }
+            window.renderCache().clear();
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.monitor()->update();
             QApplication::processEvents();

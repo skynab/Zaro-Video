@@ -1,10 +1,12 @@
 #include "ProjectBin.h"
 
+#include <QCursor>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -37,6 +39,11 @@ QString describe(const model::MediaRef& ref) {
     if (ref.info.primaryAudio() != nullptr) {
         text += "   ♪";
     }
+    if (ref.transferOverride != media::TransferFunction::Unknown) {
+        // Shown, because a file being read as something other than what it
+        // claims is exactly the kind of setting somebody forgets they made.
+        text += QString("   [%1]").arg(QString::fromUtf8(media::toString(ref.transferOverride)));
+    }
     return text;
 }
 
@@ -52,6 +59,10 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     // terse one. Double-clicking an item does the same thing.
     auto* appendButton = new QPushButton("Append", this);
     appendButton->setToolTip("Append to the end of the timeline");
+    auto* interpretButton = new QPushButton("Interpret…", this);
+    interpretButton->setObjectName("bin-interpret");
+    interpretButton->setToolTip("Say what this footage's curve really is");
+
     auto* replaceButton = new QPushButton("Replace", this);
     replaceButton->setObjectName("bin-replace");
     replaceButton->setToolTip("Point the selected timeline clip at this media instead");
@@ -60,6 +71,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     buttons->addWidget(importButton_);
     buttons->addWidget(appendButton);
     buttons->addWidget(replaceButton);
+    buttons->addWidget(interpretButton);
 
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(title);
@@ -80,6 +92,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
             emit openRequested(chosen.media);
         }
     });
+    connect(interpretButton, &QPushButton::clicked, this, [this] { interpretMenu(); });
     connect(replaceButton, &QPushButton::clicked, this, [this] {
         const Selection chosen = selection();
         if (chosen.media.isValid()) {
@@ -162,6 +175,46 @@ ProjectBin::Selection ProjectBin::selection() const {
     }
     return Selection{model::MediaRefId{item->data(Qt::UserRole).toULongLong()},
                      model::SubclipId{item->data(Qt::UserRole + 1).toULongLong()}};
+}
+
+/// Say what a file's curve really is.
+///
+/// In the bin because it is a fact about the file, and the bin is the list of
+/// files. Not a guess this program could make for somebody: a flat shot and a
+/// log shot are the same picture, and the only thing that can tell them apart
+/// is a person who knows what the camera was set to.
+void ProjectBin::interpretMenu() {
+    const Selection chosen = selection();
+    const model::MediaRef* ref = project_ != nullptr ? project_->findMedia(chosen.media) : nullptr;
+    if (ref == nullptr) {
+        return;
+    }
+
+    QMenu menu;
+    std::map<QAction*, media::TransferFunction> entries;
+    for (const media::TransferFunction transfer : media::allTransferFunctions()) {
+        QAction* action =
+            menu.addAction(transfer == media::TransferFunction::Unknown
+                               ? QString("As the file says (%1)")
+                                     .arg(QString::fromUtf8(media::toString(ref->transfer())))
+                               : QString::fromUtf8(media::toString(transfer)));
+        action->setCheckable(true);
+        action->setChecked(ref->transferOverride == transfer);
+        entries.emplace(action, transfer);
+    }
+
+    QAction* picked = menu.exec(QCursor::pos());
+    const auto found = entries.find(picked);
+    if (found == entries.end()) {
+        return;
+    }
+    for (model::MediaRef& media : project_->mediaMutable()) {
+        if (media.id == chosen.media) {
+            media.transferOverride = found->second;
+        }
+    }
+    refresh();
+    emit colorChanged();
 }
 
 void ProjectBin::appendSelectedToTimeline() {

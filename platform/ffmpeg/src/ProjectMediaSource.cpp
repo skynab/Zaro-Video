@@ -26,6 +26,8 @@ struct ProjectMediaSource::State {
     };
 
     std::map<std::uint64_t, std::string> paths;
+    /// Set only where somebody has told us the container is wrong.
+    std::map<std::uint64_t, media::TransferFunction> overrides;
     std::map<std::uint64_t, VideoEntry> video;
     std::map<std::uint64_t, AudioEntry> audio;
     render::FrameCache cache;
@@ -45,12 +47,31 @@ Result<std::unique_ptr<ProjectMediaSource>> ProjectMediaSource::open(const model
         // told when the toggle moved, and the decoders it already opened would
         // still be on the old files.
         source->state_->paths[ref.id.value()] = project.resolvedPath(ref);
+        if (ref.transferOverride != media::TransferFunction::Unknown) {
+            source->state_->overrides[ref.id.value()] = ref.transferOverride;
+        }
     }
     return source;
 }
 
 const render::FrameCache& ProjectMediaSource::cache() const {
     return state_->cache;
+}
+
+/// Correct what the container claimed, before anything reads it.
+///
+/// Both read paths go through here, because the CPU converts to the working
+/// space inside this class and the GPU converts in a shader from the frame's
+/// own tag -- so a correction applied to one and not the other would show up
+/// only in the export.
+void ProjectMediaSource::applyOverride(model::MediaRefId media, media::VideoFrame& frame) const {
+    const auto found = state_->overrides.find(media.value());
+    if (found == state_->overrides.end()) {
+        return;
+    }
+    media::ColorInfo color = frame.color();
+    color.transfer = found->second;
+    frame.setColor(color);
 }
 
 Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
@@ -77,6 +98,7 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
     if (!decoded) {
         return decoded.error();
     }
+    applyOverride(media, *decoded);
 
     render::RgbaImage image;
     if (Status status = render::toLinear(*decoded, image); !status) {
@@ -110,6 +132,7 @@ Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
     if (!decoded) {
         return decoded.error();
     }
+    applyOverride(media, *decoded);
     // No working-space cache here: the GPU converts on upload, so the frame the
     // caller wants is the one the decoder just produced.
     state_->lastSourceFrame = std::move(*decoded);
