@@ -305,6 +305,23 @@ enum class PlaceMode {
                                                    const EditTarget& target, model::ClipId clip,
                                                    const model::ToneCurves& curves);
 
+/// Point a clip at different media, keeping the cut.
+///
+/// The timeline range never moves: the whole reason to replace footage is that
+/// the edit is right and the material is wrong -- a graded take swapped for the
+/// ungraded one, a placeholder swapped for the delivery. Everything else on the
+/// clip stays too, because the alternative is somebody re-doing a grade they
+/// already did.
+///
+/// The source range keeps its offset where the new media is long enough, and
+/// slides back to fit where it is not. Refused outright only when the new media
+/// is shorter than the clip: at that point there is no honest answer, and
+/// silently shortening the clip would ripple a cut somebody did not ask to
+/// change.
+[[nodiscard]] Result<CommandPtr> makeReplaceSource(model::Project& project,
+                                                   const EditTarget& target, model::ClipId clip,
+                                                   model::MediaRefId media);
+
 /// The clip's effects, in order.
 ///
 /// The whole list at once rather than add, remove and reorder as separate

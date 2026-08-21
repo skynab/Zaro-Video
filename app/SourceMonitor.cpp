@@ -26,11 +26,14 @@ SourceMonitor::SourceMonitor(QWidget* parent) : QWidget{parent} {
     auto* markOut = new QPushButton("Out", this);
     auto* insert = new QPushButton("Insert", this);
     auto* overwrite = new QPushButton("Over", this);
+    auto* subclip = new QPushButton("Subclip", this);
+    subclip->setObjectName("make-subclip");
+    subclip->setToolTip("Keep the marked range in the bin");
     markIn->setToolTip("Mark in point (I)");
     markOut->setToolTip("Mark out point (O)");
     insert->setToolTip("Insert the marked range at the playhead, pushing what follows (,)");
     overwrite->setToolTip("Overwrite at the playhead (.)");
-    for (QPushButton* button : {markIn, markOut, insert, overwrite}) {
+    for (QPushButton* button : {markIn, markOut, insert, overwrite, subclip}) {
         // Never smaller than the text it holds.
         button->setMinimumWidth(button->sizeHint().width());
     }
@@ -38,6 +41,7 @@ SourceMonitor::SourceMonitor(QWidget* parent) : QWidget{parent} {
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(markIn);
     buttons->addWidget(markOut);
+    buttons->addWidget(subclip);
     buttons->addStretch(1);
     buttons->addWidget(insert);
     buttons->addWidget(overwrite);
@@ -58,6 +62,7 @@ SourceMonitor::SourceMonitor(QWidget* parent) : QWidget{parent} {
     connect(markOut, &QPushButton::clicked, this, &SourceMonitor::markOut);
     connect(insert, &QPushButton::clicked, this, [this] { emit insertRequested(); });
     connect(overwrite, &QPushButton::clicked, this, [this] { emit overwriteRequested(); });
+    connect(subclip, &QPushButton::clicked, this, [this] { emit subclipRequested(); });
 
     refresh();
 }
@@ -102,6 +107,29 @@ void SourceMonitor::load(const model::MediaRef& media) {
     monitor_->setSource(&sequence_, provider_);
     monitor_->setPosition(position_);
     refresh();
+}
+
+void SourceMonitor::showFrame(const model::MediaRef& media, const time::RationalTime& at) {
+    // Reloaded only when it is a different file. Somebody who matched back to
+    // a shot they were already working on has not asked to lose their marks.
+    if (media.id != mediaId_) {
+        load(media);
+    }
+    const time::Rational rate = sequence_.frameRate();
+    const time::RationalTime clamped{std::max<std::int64_t>(0, at.rescaledTo(rate).frames()), rate};
+    scrubber_->setValue(static_cast<int>(clamped.frames()));
+    setPosition(clamped);
+}
+
+void SourceMonitor::loadMarked(const model::MediaRef& media, const time::TimeRange& range) {
+    load(media);
+    const time::Rational rate = sequence_.frameRate();
+    in_ = range.start().rescaledTo(rate);
+    // Exclusive, which is how markOut stores it: the value is one past the last
+    // frame shown, and markedRange hands back a half-open range from the pair.
+    out_ = range.endExclusive().rescaledTo(rate);
+    scrubber_->setValue(static_cast<int>(in_->frames()));
+    setPosition(*in_);
 }
 
 void SourceMonitor::setPosition(const time::RationalTime& position) {

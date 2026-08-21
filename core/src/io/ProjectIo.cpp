@@ -802,6 +802,29 @@ json encode(const model::Sequence& sequence) {
     return out;
 }
 
+json encode(const model::Subclip& subclip) {
+    return json{{"id", subclip.id.value()},
+                {"source", subclip.source.value()},
+                {"range", encode(subclip.range)},
+                {"name", subclip.name}};
+}
+
+Result<model::Subclip> decodeSubclip(const json& node) {
+    if (!node.is_object() || !node.contains("range")) {
+        return Error{ErrorCode::InvalidData, "a subclip has no range"};
+    }
+    auto range = decodeRange(node.at("range"), "subclip range");
+    if (!range) {
+        return range.error();
+    }
+    model::Subclip out;
+    out.id = model::SubclipId{node.value("id", std::uint64_t{0})};
+    out.source = model::MediaRefId{node.value("source", std::uint64_t{0})};
+    out.range = *range;
+    out.name = node.value("name", std::string{});
+    return out;
+}
+
 json encode(const model::MediaRef& ref) {
     // MediaInfo is a probe cache, not project data, so only the parts the model
     // actually reasons about are written: duration bounds trims, and the size
@@ -1187,6 +1210,9 @@ std::uint64_t highestId(const model::Project& project) {
     for (const model::MediaRef& ref : project.media()) {
         bump(ref.id.value());
     }
+    for (const model::Subclip& subclip : project.subclips()) {
+        bump(subclip.id.value());
+    }
     for (const model::Sequence& sequence : project.sequences()) {
         bump(sequence.id().value());
         for (const model::Marker& marker : sequence.markers()) {
@@ -1251,11 +1277,20 @@ Result<std::string> saveProjectToString(const model::Project& project,
     for (const model::Sequence& sequence : project.sequences()) {
         sequences.push_back(encode(sequence));
     }
+    json subclips = json::array();
+    for (const model::Subclip& subclip : project.subclips()) {
+        subclips.push_back(encode(subclip));
+    }
 
     json document{{"zaro", {{"schemaVersion", kProjectSchemaVersion}}},
                   {"activeSequence", project.activeSequence().value()},
                   {"media", std::move(media)},
                   {"sequences", std::move(sequences)}};
+    if (!subclips.empty()) {
+        // Only when there are any: a project that has never had one should not
+        // carry an empty list saying so.
+        document["subclips"] = std::move(subclips);
+    }
     if (project.usingProxies()) {
         // Only when on. A project that has never seen a proxy should not carry
         // a line saying so.
@@ -1325,6 +1360,18 @@ Result<LoadedProject> loadProjectFromString(const std::string& text) {
     loaded.project.setUsingProxies(document.value("useProxies", false));
     loaded.project.setMedia(std::move(media));
     loaded.project.setSequences(std::move(sequences));
+    for (const json& node : document.value("subclips", json::array())) {
+        auto subclip = decodeSubclip(node);
+        if (!subclip) {
+            return subclip.error();
+        }
+        // A subclip of media that is not here describes a range of nothing.
+        // Dropped rather than kept: it would show in the bin as something that
+        // cannot be opened, which is worse than not showing at all.
+        if (loaded.project.findMedia(subclip->source) != nullptr) {
+            loaded.project.addSubclip(std::move(*subclip));
+        }
+    }
     loaded.project.setActiveSequence(
         model::SequenceId{document.value("activeSequence", std::uint64_t{0})});
 

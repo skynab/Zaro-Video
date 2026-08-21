@@ -66,6 +66,7 @@ headless: there is no window yet.
 | 5z | Chroma and luma keying, with spill suppression | **done** |
 | 6a | The effect stack: blur and sharpen, in order | **done** |
 | 6b | Keyframed effect parameters | **done** |
+| 6c | Subclips, match frame, replace footage | **done** |
 
 ## Building
 

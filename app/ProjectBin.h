@@ -26,10 +26,24 @@ signals:
     void edited();
     /// Open this in the source monitor.
     void openRequested(zaro::model::MediaRefId media);
+    /// Open this subclip in the source monitor, marked to its range.
+    void openSubclipRequested(zaro::model::SubclipId subclip);
+    /// Point the selected timeline clip at this media instead.
+    ///
+    /// The bin does not know what is selected on the timeline, and should not:
+    /// it is a list of what the project has. The window owns the selection and
+    /// does the work.
+    void replaceRequested(zaro::model::MediaRefId media);
 
 private:
     void importFiles();
     void appendSelectedToTimeline();
+    /// What is selected, as either a media reference or a subclip.
+    struct Selection {
+        model::MediaRefId media;
+        model::SubclipId subclip;
+    };
+    [[nodiscard]] Selection selection() const;
 
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;

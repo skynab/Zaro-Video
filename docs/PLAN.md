@@ -2016,6 +2016,63 @@ lane and can be dragged there, but the curve editor from Phase 5f is wired to
 
 ---
 
+#### Phase 6c — getting back to the source ✅
+
+Three of §7.1's remaining gaps, and they are one subject: the relationship
+between a clip on the timeline and the material behind it.
+
+**A subclip is a named range of a media reference, not a new kind of media.**
+It records where somebody said the good part is. Placing one makes an *ordinary*
+clip whose source range starts inside it, and from there the renderer, the media
+source, the render cache and every edit operation carry on knowing nothing about
+subclips at all. The alternative — a media reference with an offset — would mean
+every read had to be translated, in a layer that currently resolves a path and
+nothing else.
+
+**So a clip made from a subclip can be trimmed past its edges.** Premiere can
+restrict those trims. Doing that here would need a second kind of clip that
+every trim, ripple, roll, slip and slide had to learn about, to enforce a
+boundary somebody chose as a note to themselves. The subclip stays in the bin as
+that note, and the cut is not constrained by it. That is a trade, and it is
+written down rather than discovered.
+
+**Subclips are added directly, not through a command**, like media: the bin is
+not the cut, and nothing about a subclip changes what any sequence renders.
+They are dropped on load when their media is missing — a subclip that cannot be
+opened is worse in the bin than absent from it.
+
+**Match frame has no operation at all.** The answer to "which frame of the file
+is this" is `Clip::activeSourceTimeAt` — the mapping the renderer already asks
+for. A second implementation of it would be a second thing to keep in step with
+trims, speed, reverse, a multicam angle and a time remap, and it would fall
+behind the first time one of those changed. So the feature is a key binding, a
+lookup and a scrub.
+
+**Replacing footage keeps the cut, and everything on the clip.** The whole
+reason to replace is that the edit is right and the material is wrong — a graded
+take for the ungraded one, a delivery for a placeholder. The grade, the effects,
+the keyframes and the timeline range all stay. Where the new file is too short
+to reach the old in point, the in point slides back rather than the clip
+shortening: the clip's length *is* the cut. Where it is shorter than the clip
+itself the operation is refused, because at that point there is no honest
+answer and silently shortening would ripple an edit nobody asked to change.
+
+The self-test drives all three through the real widgets — the monitor's subclip
+button, the F key, the bin's Replace — and each one fails when its feature is
+removed: match frame lands on frame 0 instead of 70, and the replacement never
+reaches the clip.
+
+Writing it turned up a discipline the self-test now states: this block moves the
+playhead a long way, the timeline scrolls to follow, and the blocks that aim
+real mouse events at fixed coordinates have to run before it. Placed in the
+middle it silently broke a rubber-band selection two blocks later.
+
+**Not done: a bin that can rename or delete a subclip.** The model can, the list
+cannot; the bin has no editing affordances at all yet, and giving one just to
+subclips would be an odd place to start.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

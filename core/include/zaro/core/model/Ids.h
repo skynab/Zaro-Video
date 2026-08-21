@@ -38,6 +38,7 @@ using MediaRefId = Id<struct MediaRefTag>;
 using TransitionId = Id<struct TransitionTag>;
 using LinkId = Id<struct LinkTag>;
 using MarkerId = Id<struct MarkerTag>;
+using SubclipId = Id<struct SubclipTag>;
 
 /// Hands out ids that stay unique for the life of a project, including across
 /// save and load: loading restores the counter past the highest id seen, so a

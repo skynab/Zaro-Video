@@ -215,6 +215,19 @@ public:
                 source_->load(*ref);
             }
         });
+        connect(bin_, &app::ProjectBin::openSubclipRequested, this,
+                [this](zaro::model::SubclipId id) {
+                    const model::Subclip* subclip = project_.findSubclip(id);
+                    if (subclip == nullptr) {
+                        return;
+                    }
+                    if (const model::MediaRef* ref = project_.findMedia(subclip->source)) {
+                        source_->loadMarked(*ref, subclip->range);
+                    }
+                });
+        connect(bin_, &app::ProjectBin::replaceRequested, this,
+                [this](zaro::model::MediaRefId id) { replaceSelectedSource(id); });
+        connect(source_, &app::SourceMonitor::subclipRequested, this, [this] { makeSubclip(); });
         connect(source_, &app::SourceMonitor::insertRequested, this,
                 [this] { placeFromSource(edit::PlaceMode::Insert); });
         connect(source_, &app::SourceMonitor::overwriteRequested, this,
@@ -389,6 +402,71 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Open the source monitor on the frame the selected clip is showing.
+    void matchFrame() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr ||
+            !clip->timelineRange.contains(position_.rescaledTo(clip->start().rate()))) {
+            return;
+        }
+        const model::MediaRef* ref = project_.findMedia(clip->activeSource());
+        if (ref == nullptr) {
+            // A generated clip or a nest has no frame of a file to match to.
+            return;
+        }
+        source_->showFrame(*ref, clip->activeSourceTimeAt(position_));
+    }
+
+    /// Keep what is marked in the source monitor as a subclip.
+    void makeSubclip() {
+        const auto range = source_->markedRange();
+        if (!range || !source_->media().isValid()) {
+            return;
+        }
+        const model::MediaRef* ref = project_.findMedia(source_->media());
+        if (ref == nullptr) {
+            return;
+        }
+        model::Subclip subclip;
+        subclip.id = project_.ids().next<model::SubclipTag>();
+        subclip.source = ref->id;
+        subclip.range = *range;
+        // Numbered rather than asked for. Naming every subclip at the moment it
+        // is made is a dialog between somebody and the thing they were doing;
+        // the bin lists them under the file they came from, which is how they
+        // are found anyway.
+        std::size_t existing = 0;
+        for (const model::Subclip& other : project_.subclips()) {
+            existing += other.source == ref->id ? 1 : 0;
+        }
+        subclip.name = ref->name + " [" + std::to_string(existing + 1) + "]";
+        project_.addSubclip(std::move(subclip));
+        bin_->refresh();
+    }
+
+    /// Point the selected timeline clip at different media.
+    void replaceSelectedSource(model::MediaRefId media) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || !selectedClip_.isValid()) {
+            return;
+        }
+        auto built = edit::makeReplaceSource(project_, {sequence->id(), selectedTrack_},
+                                             selectedClip_, media);
+        if (!built) {
+            QMessageBox::warning(this, "Replace footage",
+                                 QString::fromStdString(built.error().toString()));
+            return;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        monitor_->update();
+        timeline_->update();
+        updateCacheBar();
+    }
 
     /// The work behind the menu, separated so it can be driven without one.
     ///
@@ -571,6 +649,7 @@ protected:
             {Qt::Key_Up, Qt::NoModifier, "Source back one frame", &PreviewWindow::doSourceBack},
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
+            {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
         };
         for (const Binding& binding : kBindings) {
             if (event->key() == binding.key && event->modifiers() == binding.modifiers) {
@@ -684,6 +763,12 @@ private:
         }
     }
 
+    /// Open the source monitor on the frame the selected clip is showing.
+    ///
+    /// The mapping is `Clip::activeSourceTimeAt` -- the same one the renderer
+    /// asks -- so match frame stays right through trims, speed, reverse, a
+    /// multicam angle and a time remap, with nothing to keep in step.
+    void doMatchFrame() { matchFrame(); }
     void doMarkIn() { source_->markIn(); }
     void doMarkOut() { source_->markOut(); }
     void doInsert() { placeFromSource(edit::PlaceMode::Insert); }
@@ -2040,6 +2125,140 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Getting back to the source: a subclip made from what is marked, match
+        // frame from a clip on the timeline, and replacing a clip's footage.
+        //
+        // Self-contained, and late: it moves the playhead a long way and the
+        // timeline scrolls to follow, and the blocks that aim real mouse events
+        // at fixed coordinates run before this.
+        {
+            const auto sourceSequenceId = window.project().activeSequence();
+            const auto sourceTrackId =
+                window.project().findSequence(sourceSequenceId)->videoTracks().front().id();
+            const auto sourceRate = window.project().findSequence(sourceSequenceId)->frameRate();
+            const zaro::model::MediaRef& sourceMedia = window.project().media().front();
+
+            // A subclip of a marked range, through the monitor's own button.
+            window.sourceMonitor()->load(sourceMedia);
+            window.sourceMonitor()->step(24);
+            window.sourceMonitor()->markIn();
+            window.sourceMonitor()->step(48);
+            window.sourceMonitor()->markOut();
+            QApplication::processEvents();
+
+            auto* subclipButton = window.sourceMonitor()->findChild<QPushButton*>("make-subclip");
+            if (subclipButton == nullptr) {
+                std::fprintf(stderr, "  FAIL: the source monitor has no subclip button\n");
+                return 1;
+            }
+            const auto markedRange = window.sourceMonitor()->markedRange();
+            const std::size_t subclipsBefore = window.project().subclips().size();
+            subclipButton->click();
+            QApplication::processEvents();
+
+            if (window.project().subclips().size() != subclipsBefore + 1) {
+                std::fprintf(stderr, "  FAIL: the subclip button made no subclip\n");
+                return 1;
+            }
+            const zaro::model::Subclip made = window.project().subclips().back();
+            if (!markedRange || made.range.duration() != markedRange->duration()) {
+                std::fprintf(stderr, "  FAIL: the subclip does not hold what was marked\n");
+                return 1;
+            }
+            std::printf("  subclip: %lld frames of %s\n",
+                        static_cast<long long>(made.range.duration().frames()), made.name.c_str());
+
+            // Match frame, from a clip this block places itself.
+            zaro::model::Clip probe;
+            probe.id = window.project().ids().next<zaro::model::ClipTag>();
+            probe.source = sourceMedia.id;
+            probe.name = "match probe";
+            probe.sourceRange = zaro::time::TimeRange{zaro::time::RationalTime{60, sourceRate},
+                                                      zaro::time::RationalTime{40, sourceRate}};
+            probe.timelineRange = zaro::time::TimeRange{zaro::time::RationalTime{0, sourceRate},
+                                                        zaro::time::RationalTime{40, sourceRate}};
+            const auto probeId = probe.id;
+            auto placedProbe = zaro::edit::makeOverwrite(window.project(),
+                                                         {sourceSequenceId, sourceTrackId}, probe);
+            if (!placedProbe) {
+                std::fprintf(stderr, "  FAIL: %s\n", placedProbe.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placedProbe));
+
+            const auto matchAt = zaro::time::RationalTime{10, sourceRate};
+            const zaro::model::Clip* matchClip = window.project()
+                                                     .findSequence(sourceSequenceId)
+                                                     ->findTrack(sourceTrackId)
+                                                     ->find(probeId);
+            const auto expected = matchClip->activeSourceTimeAt(matchAt);
+            timeline->selectOnlyForTest(sourceTrackId, probeId);
+            window.setPosition(matchAt);
+            QApplication::processEvents();
+            // Somewhere else first, so landing on the right frame cannot be
+            // where it already was.
+            window.sourceMonitor()->step(-2000);
+            QApplication::processEvents();
+
+            QKeyEvent matchKey(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier);
+            QCoreApplication::sendEvent(&window, &matchKey);
+            QApplication::processEvents();
+
+            const auto landed = window.sourceMonitor()->position();
+            std::printf("  match frame: source frame %lld, clip says %lld\n",
+                        static_cast<long long>(landed.frames()),
+                        static_cast<long long>(expected.frames()));
+            if (landed.rescaledTo(expected.rate()).frames() != expected.frames()) {
+                std::fprintf(stderr, "  FAIL: match frame landed on the wrong frame\n");
+                return 1;
+            }
+
+            // Replace footage: a second reference to the same file stands in
+            // for a graded version, and the cut must not move.
+            zaro::model::MediaRef graded = sourceMedia;
+            graded.id = window.project().ids().next<zaro::model::MediaRefTag>();
+            graded.name = "graded";
+            const auto gradedId = window.project().addMedia(graded);
+
+            const auto beforeStart = matchClip->start();
+            const auto beforeDuration = matchClip->timelineRange.duration();
+            const auto beforeIn = matchClip->sourceRange.start();
+            window.replaceSelectedSource(gradedId);
+            QApplication::processEvents();
+
+            const zaro::model::Clip* replaced = window.project()
+                                                    .findSequence(sourceSequenceId)
+                                                    ->findTrack(sourceTrackId)
+                                                    ->find(probeId);
+            if (replaced == nullptr || replaced->source != gradedId) {
+                std::fprintf(stderr, "  FAIL: replacing the footage did not reach the clip\n");
+                return 1;
+            }
+            if (replaced->start() != beforeStart ||
+                replaced->timelineRange.duration() != beforeDuration ||
+                replaced->sourceRange.start() != beforeIn) {
+                std::fprintf(stderr, "  FAIL: replacing the footage moved the cut\n");
+                return 1;
+            }
+            std::printf("  replace footage: the cut stayed at %lld for %lld frames\n",
+                        static_cast<long long>(beforeStart.frames()),
+                        static_cast<long long>(beforeDuration.frames()));
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            // Neither adding media nor adding a subclip is a command, so undo
+            // does not reach them; this block puts the project back itself.
+            window.project().mediaMutable().pop_back();
+            window.project().removeSubclip(made.id);
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.monitor()->update();
             QApplication::processEvents();

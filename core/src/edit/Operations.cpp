@@ -1739,6 +1739,51 @@ Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId
                       "lut:" + idText(clipId), [lut](Clip& clip) { clip.lut = lut; });
 }
 
+Result<CommandPtr> makeReplaceSource(Project& project, const EditTarget& target, ClipId clipId,
+                                     model::MediaRefId media) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    const model::MediaRef* ref = project.findMedia(media);
+    if (ref == nullptr) {
+        return Error{ErrorCode::NotFound, "no such media in this project"};
+    }
+    if (existing.nested.isValid() || existing.graphic.isSet()) {
+        return Error{ErrorCode::InvalidData, "that clip has no media to replace"};
+    }
+    if (existing.isMulticam()) {
+        // Which angle would it replace? Answering that would be guessing, and
+        // the operation that changes an angle's media is the one that sets the
+        // angles.
+        return Error{ErrorCode::InvalidData, "a multicam clip's angles are replaced together"};
+    }
+
+    const time::Rational& rate = existing.sourceRange.start().rate();
+    const time::RationalTime available = time::RationalTime::fromSeconds(ref->info.duration, rate);
+    if (available < existing.sourceRange.duration()) {
+        return Error{ErrorCode::InvalidData, "that media is shorter than the clip"};
+    }
+
+    // Keep the in point where it was if the new file reaches that far, and
+    // slide back to the last position that fits if it does not. Sliding rather
+    // than clamping the duration: the clip's length is the cut, and the cut is
+    // the thing being kept.
+    time::RationalTime start = existing.sourceRange.start();
+    const time::RationalTime latest = available - existing.sourceRange.duration();
+    if (start > latest) {
+        start = latest;
+    }
+    const time::TimeRange sourceRange{start, existing.sourceRange.duration()};
+
+    return modifyClip(project, target, clipId, "Replace footage", "replace:" + idText(clipId),
+                      [media, sourceRange](Clip& clip) {
+                          clip.source = media;
+                          clip.sourceRange = sourceRange;
+                      });
+}
+
 Result<CommandPtr> makeSetEffects(Project& project, const EditTarget& target, ClipId clipId,
                                   const std::vector<model::Effect>& effects) {
     for (const model::Effect& effect : effects) {

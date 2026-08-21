@@ -9,6 +9,30 @@
 
 namespace zaro::model {
 
+/// A named range of a media reference.
+///
+/// **Not a new kind of media.** A subclip records where somebody said the good
+/// part is; placing one makes an ordinary clip whose source range starts inside
+/// it, and from there the renderer, the media source, the cache and every edit
+/// operation carry on knowing nothing about subclips at all. Making it a media
+/// reference with an offset would mean every read had to be translated, in a
+/// layer that currently resolves a path and nothing else.
+///
+/// **So a clip made from one can be trimmed past its edges.** Premiere can
+/// restrict those trims; doing that here would need a second kind of clip that
+/// every trim, ripple, roll, slip and slide had to learn about, to enforce a
+/// boundary somebody chose as a note to themselves. The subclip stays in the
+/// bin as that note, and the cut is not constrained by it.
+struct Subclip {
+    SubclipId id;
+    MediaRefId source;
+    /// In the source's own time.
+    time::TimeRange range;
+    std::string name;
+
+    friend bool operator==(const Subclip&, const Subclip&) = default;
+};
+
 /// A file on disk that clips point at.
 ///
 /// The project references media; it never contains it. `contentHash` is what
@@ -62,6 +86,12 @@ public:
     Project() = default;
 
     [[nodiscard]] const std::vector<MediaRef>& media() const noexcept { return media_; }
+    [[nodiscard]] const std::vector<Subclip>& subclips() const noexcept { return subclips_; }
+    [[nodiscard]] const Subclip* findSubclip(SubclipId id) const;
+    /// Added directly rather than through a command, like media: the bin is not
+    /// the cut, and nothing about a subclip changes what any sequence renders.
+    SubclipId addSubclip(Subclip subclip);
+    bool removeSubclip(SubclipId id);
     /// Mutable access, for the few things that change a media reference in
     /// place -- attaching a proxy, relinking a moved file. Not for editing:
     /// anything that changes the cut goes through a command.
@@ -97,12 +127,13 @@ public:
     friend bool operator==(const Project& a, const Project& b) {
         // The id counter is bookkeeping, not content: a project loaded from
         // disk and one built in memory are equal if they describe the same cut.
-        return a.media_ == b.media_ && a.sequences_ == b.sequences_ &&
+        return a.media_ == b.media_ && a.subclips_ == b.subclips_ && a.sequences_ == b.sequences_ &&
                a.activeSequence_ == b.activeSequence_;
     }
 
 private:
     std::vector<MediaRef> media_;
+    std::vector<Subclip> subclips_;
     bool useProxies_{false};
     std::vector<Sequence> sequences_;
     SequenceId activeSequence_;

@@ -16,6 +16,16 @@
 namespace zaro::app {
 namespace {
 
+QString describe(const model::Subclip& subclip, const model::MediaRef& source) {
+    // Indented and named after its own label rather than the file: a subclip is
+    // a note about where the good part is, and the file it came from is the
+    // less interesting half of that.
+    QString text =
+        QString("    ") + QString::fromStdString(subclip.name.empty() ? source.name : subclip.name);
+    text += QString("   %1s").arg(subclip.range.duration().toSecondsDouble(), 0, 'f', 2);
+    return text;
+}
+
 QString describe(const model::MediaRef& ref) {
     QString text = QString::fromStdString(ref.name.empty() ? ref.path : ref.name);
     if (const media::VideoStreamInfo* video = ref.info.primaryVideo()) {
@@ -42,10 +52,14 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     // terse one. Double-clicking an item does the same thing.
     auto* appendButton = new QPushButton("Append", this);
     appendButton->setToolTip("Append to the end of the timeline");
+    auto* replaceButton = new QPushButton("Replace", this);
+    replaceButton->setObjectName("bin-replace");
+    replaceButton->setToolTip("Point the selected timeline clip at this media instead");
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(importButton_);
     buttons->addWidget(appendButton);
+    buttons->addWidget(replaceButton);
 
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(title);
@@ -55,6 +69,23 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     connect(importButton_, &QPushButton::clicked, this, &ProjectBin::importFiles);
     connect(appendButton, &QPushButton::clicked, this, &ProjectBin::appendSelectedToTimeline);
     connect(list_, &QListWidget::itemDoubleClicked, this, [this] { appendSelectedToTimeline(); });
+    connect(list_, &QListWidget::currentRowChanged, this, [this] {
+        const Selection chosen = selection();
+        if (!chosen.media.isValid()) {
+            return;
+        }
+        if (chosen.subclip.isValid()) {
+            emit openSubclipRequested(chosen.subclip);
+        } else {
+            emit openRequested(chosen.media);
+        }
+    });
+    connect(replaceButton, &QPushButton::clicked, this, [this] {
+        const Selection chosen = selection();
+        if (chosen.media.isValid()) {
+            emit replaceRequested(chosen.media);
+        }
+    });
 }
 
 void ProjectBin::setProject(model::Project* project, model::SequenceId sequence,
@@ -73,6 +104,18 @@ void ProjectBin::refresh() {
     for (const model::MediaRef& ref : project_->media()) {
         auto* item = new QListWidgetItem(describe(ref), list_);
         item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(ref.id.value()));
+        item->setData(Qt::UserRole + 1, QVariant::fromValue<qulonglong>(0));
+        // Subclips of this file, under it. Grouped rather than listed
+        // separately, because what somebody looks for is the take, and the take
+        // is found by finding the file it is in.
+        for (const model::Subclip& subclip : project_->subclips()) {
+            if (subclip.source != ref.id) {
+                continue;
+            }
+            auto* child = new QListWidgetItem(describe(subclip, ref), list_);
+            child->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(ref.id.value()));
+            child->setData(Qt::UserRole + 1, QVariant::fromValue<qulonglong>(subclip.id.value()));
+        }
     }
 }
 
@@ -112,15 +155,21 @@ void ProjectBin::importFiles() {
     emit edited();
 }
 
+ProjectBin::Selection ProjectBin::selection() const {
+    QListWidgetItem* item = list_->currentItem();
+    if (item == nullptr) {
+        return {};
+    }
+    return Selection{model::MediaRefId{item->data(Qt::UserRole).toULongLong()},
+                     model::SubclipId{item->data(Qt::UserRole + 1).toULongLong()}};
+}
+
 void ProjectBin::appendSelectedToTimeline() {
     if (project_ == nullptr || commands_ == nullptr) {
         return;
     }
-    QListWidgetItem* item = list_->currentItem();
-    if (item == nullptr) {
-        return;
-    }
-    const model::MediaRefId id{item->data(Qt::UserRole).toULongLong()};
+    const Selection chosen = selection();
+    const model::MediaRefId id = chosen.media;
     const model::MediaRef* ref = project_->findMedia(id);
     const model::Sequence* sequence = project_->findSequence(sequenceId_);
     if (ref == nullptr || sequence == nullptr || !ref->info.duration.isPositive()) {
@@ -130,6 +179,16 @@ void ProjectBin::appendSelectedToTimeline() {
     const time::Rational& rate = sequence->frameRate();
     const media::VideoStreamInfo* video = ref->info.primaryVideo();
     const time::Rational sourceRate = video != nullptr ? video->frameRate : rate;
+
+    // A subclip appends its range; media appends all of it. This is the only
+    // place a subclip means anything: what lands on the timeline is an
+    // ordinary clip either way.
+    const model::Subclip* subclip = project_->findSubclip(chosen.subclip);
+    const time::TimeRange sourceRange =
+        subclip != nullptr
+            ? subclip->range.rescaledTo(sourceRate)
+            : time::TimeRange{time::RationalTime{0, sourceRate},
+                              time::RationalTime::fromSeconds(ref->info.duration, sourceRate)};
 
     const bool hasVideo = video != nullptr;
     const auto& tracks = hasVideo ? sequence->videoTracks() : sequence->audioTracks();
@@ -142,7 +201,7 @@ void ProjectBin::appendSelectedToTimeline() {
     // and avoids having to decide what to overwrite.
     const time::RationalTime start =
         track.isEmpty() ? time::RationalTime{0, rate} : track.extent().endExclusive();
-    const auto duration = time::RationalTime::fromSeconds(ref->info.duration, rate);
+    const auto duration = sourceRange.duration().rescaledTo(rate);
     if (duration.frames() <= 0) {
         return;
     }
@@ -150,10 +209,8 @@ void ProjectBin::appendSelectedToTimeline() {
     model::Clip clip;
     clip.id = project_->ids().next<model::ClipTag>();
     clip.source = id;
-    clip.name = ref->name;
-    clip.sourceRange =
-        time::TimeRange{time::RationalTime{0, sourceRate},
-                        time::RationalTime::fromSeconds(ref->info.duration, sourceRate)};
+    clip.name = subclip != nullptr && !subclip->name.empty() ? subclip->name : ref->name;
+    clip.sourceRange = sourceRange;
     clip.timelineRange = time::TimeRange{start, duration};
 
     auto built = edit::makeOverwrite(*project_, {sequenceId_, track.id()}, clip);

@@ -38,6 +38,33 @@ MediaRefId Project::addMedia(MediaRef ref) {
     return id;
 }
 
+const Subclip* Project::findSubclip(SubclipId id) const {
+    for (const Subclip& subclip : subclips_) {
+        if (subclip.id == id) {
+            return &subclip;
+        }
+    }
+    return nullptr;
+}
+
+SubclipId Project::addSubclip(Subclip subclip) {
+    ZARO_CHECK(subclip.id.isValid(), "adding a subclip with no id");
+    ZARO_CHECK(findSubclip(subclip.id) == nullptr, "adding a subclip id that already exists");
+    const SubclipId id = subclip.id;
+    subclips_.push_back(std::move(subclip));
+    return id;
+}
+
+bool Project::removeSubclip(SubclipId id) {
+    for (auto it = subclips_.begin(); it != subclips_.end(); ++it) {
+        if (it->id == id) {
+            subclips_.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
 SequenceId Project::addSequence(Sequence sequence) {
     ZARO_CHECK(sequence.id().isValid(), "adding a sequence with no id");
     ZARO_CHECK(findSequence(sequence.id()) == nullptr, "adding a sequence id that already exists");
