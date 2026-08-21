@@ -497,6 +497,19 @@ struct TrackState {
 [[nodiscard]] Result<CommandPtr> makeRemoveTrack(model::Project& project,
                                                  model::SequenceId sequence, model::TrackId track);
 
+/// Cut a track at several points at once.
+///
+/// One command rather than a razor per point, because detecting the cuts in a
+/// shot is one decision: undoing it should give back the clip somebody had, not
+/// peel the cuts off one at a time in an order they never chose.
+///
+/// Points that fall outside a clip, or on a cut that already exists, are
+/// skipped rather than refused. The list comes from an analysis of the picture,
+/// and rejecting all of it because one point landed in a gap would throw away
+/// the answer over the least interesting part of it.
+[[nodiscard]] Result<CommandPtr> makeRazorAt(model::Project& project, const EditTarget& target,
+                                             const std::vector<time::RationalTime>& points);
+
 /// Set an empty sequence's rate and frame size.
 ///
 /// **Refused once anything is on it.** Every clip's timeline range is expressed

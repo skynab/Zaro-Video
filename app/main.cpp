@@ -55,6 +55,7 @@
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
+#include "zaro/core/render/SceneDetect.h"
 #include "zaro/core/render/Scopes.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
@@ -161,6 +162,14 @@ public:
         loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
+
+        auto* scenesButton = new QPushButton("Scenes", this);
+        scenesButton->setObjectName("detect-scenes");
+        scenesButton->setToolTip("Cut the selected clip where the picture changes (Ctrl+D)");
+        scenesButton->setMinimumWidth(scenesButton->sizeHint().width());
+        transportRow->addWidget(scenesButton);
+        connect(scenesButton, &QPushButton::clicked, this,
+                [this] { static_cast<void>(detectScenes()); });
 
         auto* newButton = new QPushButton("New", this);
         newButton->setObjectName("new-project");
@@ -434,6 +443,82 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Cut the selected clip where the picture changes.
+    ///
+    /// Returns how many cuts were made, so the self-test can say what happened
+    /// without a dialog. Zero is a perfectly good answer: a single continuous
+    /// take has no scene changes in it, and reporting one would be worse than
+    /// reporting none.
+    std::int32_t detectScenes() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr || clip->nested.isValid() ||
+            clip->graphic.isSet()) {
+            return 0;
+        }
+
+        const time::Rational rate = sequence->frameRate();
+        const std::int64_t first = clip->start().rescaledTo(rate).frames();
+        const std::int64_t count = clip->timelineRange.duration().rescaledTo(rate).frames();
+        if (count <= 1) {
+            return 0;
+        }
+
+        render::SceneDetectOptions options;
+        // Half a second, at whatever rate this sequence runs. Expressed in time
+        // rather than frames so the same setting means the same thing on a
+        // 24fps cut and a 60fps one.
+        options.minimumShot = time::RationalTime::fromSeconds(time::Rational{1, 2}, rate);
+
+        QProgressDialog progress("Looking for scene changes…", "Cancel", 0, static_cast<int>(count),
+                                 this);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setMinimumDuration(400);
+
+        render::SceneDetector detector{options};
+        for (std::int64_t i = 0; i < count; ++i) {
+            progress.setValue(static_cast<int>(i));
+            QCoreApplication::processEvents();
+            if (progress.wasCanceled()) {
+                return 0;
+            }
+            const time::RationalTime at{first + i, rate};
+            auto image = media_->imageFor(clip->activeSource(), clip->activeSourceTimeAt(at));
+            if (!image) {
+                // A frame that will not decode is a gap in the evidence, not a
+                // scene change. Skipped, and the frame before it stays the one
+                // the next is compared against.
+                continue;
+            }
+            detector.push(**image, at);
+        }
+        detector.flush();
+        progress.reset();
+
+        std::vector<time::RationalTime> points;
+        points.reserve(detector.cuts().size());
+        for (const render::SceneCut& cut : detector.cuts()) {
+            points.push_back(cut.at);
+        }
+        if (points.empty()) {
+            return 0;
+        }
+
+        auto built = edit::makeRazorAt(project_, {sequence->id(), selectedTrack_}, points);
+        if (!built) {
+            return 0;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        timeline_->update();
+        monitor_->update();
+        updateCacheBar();
+        updateTitle();
+        return static_cast<std::int32_t>(points.size());
+    }
 
     /// Open a different project into this window.
     ///
@@ -820,6 +905,8 @@ protected:
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
             {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
+            {Qt::Key_D, Qt::ControlModifier, "Detect cuts in the selected clip",
+             &PreviewWindow::doDetectScenes},
             {Qt::Key_N, Qt::ControlModifier, "New project", &PreviewWindow::doNew},
             {Qt::Key_O, Qt::ControlModifier, "Open a project", &PreviewWindow::doOpen},
             {Qt::Key_S, Qt::ControlModifier, "Save", &PreviewWindow::doSave},
@@ -953,6 +1040,7 @@ private:
     /// asks -- so match frame stays right through trims, speed, reverse, a
     /// multicam angle and a time remap, with nothing to keep in step.
     void doMatchFrame() { matchFrame(); }
+    void doDetectScenes() { static_cast<void>(detectScenes()); }
     void doNew() { newProject(); }
     void doOpen() { openDialog(); }
     void doSave() { static_cast<void>(save()); }
@@ -1559,6 +1647,26 @@ private:
 
 namespace {
 
+/// Grab what the monitor is showing, once it has actually drawn it.
+///
+/// One `processEvents` is not a guarantee of a repaint: the widget schedules
+/// one, and whether it happens before the grab depends on what else the event
+/// loop has to do. A scan that grabs too early reads the frame before the
+/// playhead moved -- or a blank one, if nothing has been drawn yet -- and the
+/// result is a check that usually passes and occasionally reports that a lit
+/// fixture is entirely black.
+///
+/// Bounded: if the monitor never draws, the scan should report what it saw
+/// rather than hang.
+QImage settledGrab(app::ProgramMonitor* monitor) {
+    const std::int64_t before = monitor->framesRendered();
+    monitor->update();
+    for (int spin = 0; spin < 100 && monitor->framesRendered() == before; ++spin) {
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    return monitor->grabFramebuffer();
+}
+
 /// Drive a real drag through the widget, as the mouse would.
 void dragOnTimeline(app::TimelineWidget* timeline, int fromX, int toX, int y,
                     Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
@@ -1783,9 +1891,7 @@ int main(int argc, char** argv) {
 
             const auto brightnessAt = [&](std::int64_t frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                window.monitor()->update();
-                QApplication::processEvents();
-                return meanGray(window.monitor()->grabFramebuffer());
+                return meanGray(settledGrab(window.monitor()));
             };
 
             // This fixture is black except on its flash frames, so a fade has to
@@ -1867,9 +1973,7 @@ int main(int argc, char** argv) {
         {
             const auto grayAt = [&](std::int64_t frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                window.monitor()->update();
-                QApplication::processEvents();
-                return meanGray(window.monitor()->grabFramebuffer());
+                return meanGray(settledGrab(window.monitor()));
             };
 
             std::int64_t litFrame = -1;
@@ -2040,8 +2144,7 @@ int main(int argc, char** argv) {
             double litness = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray > litness) {
                     litness = gray;
                     litFrame = frame;
@@ -2115,8 +2218,7 @@ int main(int argc, char** argv) {
             double darkest = 1e9;
             for (std::int64_t frame = 0; frame < 35; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < darkest) {
                     darkest = gray;
                     darkFrame = frame;
@@ -2339,6 +2441,49 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Scene edit detection, over the real footage.
+        //
+        // This fixture is one continuous take with white flashes in it, which
+        // makes it exactly the case the detector has to get right: a flash is
+        // not a cut. The assertion is that it finds *nothing*, and it can fail
+        // -- with the flash guard removed the same clip comes back in pieces.
+        {
+            const auto sceneSequenceId = window.project().activeSequence();
+            const auto sceneTrackId =
+                window.project().findSequence(sceneSequenceId)->videoTracks().front().id();
+            const auto* sceneTrack =
+                window.project().findSequence(sceneSequenceId)->findTrack(sceneTrackId);
+            if (sceneTrack->clips().empty()) {
+                std::fprintf(stderr, "  FAIL: nothing on the track to analyse\n");
+                return 1;
+            }
+            const auto sceneClipId = sceneTrack->clips().front().id;
+            const std::size_t clipsBefore = sceneTrack->clips().size();
+
+            timeline->selectOnlyForTest(sceneTrackId, sceneClipId);
+            window.effects()->setSelection(sceneTrackId, sceneClipId);
+            QApplication::processEvents();
+
+            const std::int32_t found = window.detectScenes();
+            const std::size_t clipsAfter = window.project()
+                                               .findSequence(sceneSequenceId)
+                                               ->findTrack(sceneTrackId)
+                                               ->clips()
+                                               .size();
+            std::printf(
+                "  scene detection: %d cuts in a continuous take, %zu clips before and "
+                "%zu after\n",
+                found, clipsBefore, clipsAfter);
+            if (found != 0 || clipsAfter != clipsBefore) {
+                std::fprintf(stderr, "  FAIL: a take with flashes in it was cut into pieces\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
         }
 
         // Saving, and the recovery file. Written to a scratch path rather than
@@ -2604,8 +2749,7 @@ int main(int argc, char** argv) {
             double beneath = 1e9;
             for (std::int64_t frame = 0; frame < 35; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < beneath) {
                     beneath = gray;
                     keyFrame = frame;
@@ -2697,8 +2841,7 @@ int main(int argc, char** argv) {
             double brightness = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray > brightness) {
                     brightness = gray;
                     brightFrame = frame;
@@ -2869,8 +3012,7 @@ int main(int argc, char** argv) {
             double litness = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray > litness) {
                     litness = gray;
                     litFrame = frame;
@@ -2954,8 +3096,7 @@ int main(int argc, char** argv) {
             double darkest = 1e9;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < darkest) {
                     darkest = gray;
                     darkFrame = frame;
@@ -3008,8 +3149,7 @@ int main(int argc, char** argv) {
             double darkest = 1e9;
             for (std::int64_t frame = 0; frame < 35; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < darkest) {
                     darkest = gray;
                     darkFrame = frame;
@@ -3181,8 +3321,7 @@ int main(int argc, char** argv) {
             double brightest = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < darkness) {
                     darkness = gray;
                     darkFrame = frame;
@@ -3264,8 +3403,7 @@ int main(int argc, char** argv) {
             double litness = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray > litness) {
                     litness = gray;
                     litFrame = frame;
@@ -3396,8 +3534,7 @@ int main(int argc, char** argv) {
             double brightest = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray < darkness) {
                     darkness = gray;
                     darkFrame = frame;
@@ -4051,8 +4188,7 @@ int main(int argc, char** argv) {
             double brightest = 0.0;
             for (std::int64_t frame = 0; frame < 40; ++frame) {
                 window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
-                QApplication::processEvents();
-                const double gray = meanGray(window.monitor()->grabFramebuffer());
+                const double gray = meanGray(settledGrab(window.monitor()));
                 if (gray > brightest) {
                     brightest = gray;
                     brightestFrame = frame;

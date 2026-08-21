@@ -69,6 +69,7 @@ headless: there is no window yet.
 | 6c | Subclips, match frame, replace footage | **done** |
 | 6d | Saving, autosave and recovery | **done** |
 | 6e | New and Open: the project shell | **done** |
+| 6f | Scene edit detection | **done** |
 
 ## Building
 

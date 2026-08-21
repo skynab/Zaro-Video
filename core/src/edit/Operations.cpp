@@ -2276,6 +2276,66 @@ Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,
                        });
 }
 
+Result<CommandPtr> makeRazorAt(Project& project, const EditTarget& target,
+                               const std::vector<time::RationalTime>& points) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    const time::Rational rate = located->sequence->frameRate();
+
+    // Sorted and de-duplicated here rather than trusted: cutting the same
+    // instant twice would make a clip of no length, and cutting out of order
+    // would split pieces that the earlier cuts had already replaced.
+    std::vector<RationalTime> cuts;
+    cuts.reserve(points.size());
+    for (const RationalTime& point : points) {
+        cuts.push_back(atRate(point, rate));
+    }
+    std::sort(cuts.begin(), cuts.end());
+    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+
+    // Ids for the tails, handed out now so that applying and re-applying an
+    // undone command produces the same clips rather than new ones each time.
+    std::vector<std::pair<RationalTime, ClipId>> planned;
+    for (const RationalTime& cut : cuts) {
+        const Clip* clip = located->track->clipAt(cut);
+        if (clip == nullptr || clip->start() == cut) {
+            continue;
+        }
+        planned.emplace_back(cut, project.ids().next<model::ClipTag>());
+    }
+    if (planned.empty()) {
+        return Error{ErrorCode::InvalidData, "none of those points is inside a clip"};
+    }
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, "Cut at scene changes", {},
+                       [planned, trackId](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+                           for (const auto& [cut, tailId] : planned) {
+                               const Clip* found = track->clipAt(cut);
+                               if (found == nullptr || found->start() == cut) {
+                                   continue;
+                               }
+                               const Clip original = *found;
+                               std::vector<Clip> rebuilt;
+                               for (const Clip& existing : track->clips()) {
+                                   if (existing.id != original.id) {
+                                       rebuilt.push_back(existing);
+                                       continue;
+                                   }
+                                   rebuilt.push_back(trimmedOut(original, cut));
+                                   Clip tail = trimmedIn(original, cut);
+                                   tail.id = tailId;
+                                   rebuilt.push_back(std::move(tail));
+                               }
+                               track->setClips(std::move(rebuilt));
+                           }
+                       });
+}
+
 Result<CommandPtr> makeConformSequence(Project& project, model::SequenceId sequenceId,
                                        const time::Rational& frameRate, std::int32_t width,
                                        std::int32_t height) {

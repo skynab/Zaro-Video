@@ -2243,6 +2243,70 @@ the stack named the exact function.
 
 ---
 
+#### Phase 6f — scene edit detection ✅
+
+Finding where one shot becomes the next, inside a clip that arrived as one
+continuous file.
+
+**The measurement is a histogram, not a difference of pixels.** A pan changes
+every pixel and almost no bin; a cut changes the distribution. Comparing pixels
+would report a camera move as an edit, which is the failure that makes a
+detector something people switch off.
+
+**Bins are indexed through the same warp the curve tables use.** Linear light is
+mostly small numbers, so binning it directly puts nearly every pixel of an
+ordinary picture in the bottom two bins and two quite different shots come out
+identical. The renderer already has one answer to "where does this brightness
+sit", and this uses it rather than inventing a second.
+
+**A flash is not a cut, and that is the hard half.** A camera flash differs
+enormously from the frame before it and then goes straight back to looking
+exactly like it. So confirmation compares *the shot before with the shot after*,
+a few frames either side, rather than the two frames on the boundary. Both
+halves of that matter, and the second was found by a failing test: without
+looking forward a flash is reported going in, and without looking *back* it is
+reported coming out — because the frame before that boundary is the flash
+itself, and the flash never returns.
+
+**The first shot is a shot.** The minimum length applies from the start of the
+material, not only between cuts. The real footage found this: it reported a cut
+one frame in, which would split a frame off the head of the clip — not an edit
+anybody can use, and there is not enough material before it to tell a cut from
+the shot simply beginning.
+
+**A dissolve passes unremarked**, because it moves the distribution a little at
+a time and no pair of frames crosses the threshold. That is the honest outcome:
+a dissolve is not a cut, and reporting one in the middle of it would split a
+shot where nobody made an edit. Writing that test also caught a bad *fixture*
+rather than bad code — flat colour frames have a single bin per channel, so the
+smallest change moves all of it and reads as a total change. The test now
+dissolves between two textured shots, which is what footage looks like.
+
+**Cutting is one command.** Detecting the cuts in a shot is one decision, so
+undoing it gives back the clip somebody had rather than peeling the cuts off one
+at a time in an order they never chose. Points that land in a gap or on an
+existing cut are skipped rather than refusing the whole list.
+
+The end-to-end test is the fixture itself: a continuous take with nine white
+flashes in it. The assertion is that detection finds **nothing** — and it fails
+loudly if the guard goes, because with confirmation switched off the same take
+comes back in ten pieces.
+
+**Also fixed here: an intermittent self-test failure.** One run in ten or so
+reported "no lit frame to fade" on footage that is plainly lit. A single
+`processEvents` is not a guarantee of a repaint — the widget schedules one, and
+whether it happens before the grab depends on what else the loop has to do, so
+a scan could read the frame before the playhead moved. Grabs now wait for the
+monitor's frame counter to move, bounded so a monitor that never draws reports
+what it saw rather than hanging. Ten consecutive runs pass; the original failure
+was rare enough that this is evidence and not proof.
+
+**Not done: detecting cuts across a whole timeline, and markers instead of
+cuts.** Both are shells around this; the analysis is the part that had to be
+right.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly
