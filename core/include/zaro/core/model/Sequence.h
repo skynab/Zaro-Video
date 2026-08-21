@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "zaro/core/media/ColorInfo.h"
 #include "zaro/core/model/Caption.h"
 #include "zaro/core/model/Marker.h"
 #include "zaro/core/model/Track.h"
@@ -23,6 +24,28 @@ public:
     [[nodiscard]] SequenceId id() const noexcept { return id_; }
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
     void setName(std::string value) { name_ = std::move(value); }
+
+    /// What this sequence is delivered as.
+    ///
+    /// The counterpart to `MediaRef::transferOverride`: that says what came in,
+    /// this says what goes out. It is a property of the sequence rather than of
+    /// the export, because it is also what the curve editor and the scopes are
+    /// drawn against -- those measure the display signal (ADR-010), and if the
+    /// deliverable's curve and the one they assume disagreed, a grade would be
+    /// judged against a picture nobody is going to see.
+    struct Output {
+        media::TransferFunction transfer{media::TransferFunction::BT709};
+
+        /// Where the highlight rolloff starts, in linear light. 1 or more means
+        /// no rolloff: the encoder clips, which is what this program did before
+        /// there was a choice.
+        double highlightKnee{1.0};
+
+        friend bool operator==(const Output&, const Output&) = default;
+    };
+
+    [[nodiscard]] const Output& output() const noexcept { return output_; }
+    void setOutput(const Output& value) { output_ = value; }
 
     [[nodiscard]] const time::Rational& frameRate() const noexcept { return frameRate_; }
     /// Only meaningful while the sequence is empty: every clip's timeline range
@@ -101,6 +124,7 @@ private:
     std::vector<Track> videoTracks_;
     std::vector<Track> audioTracks_;
     CaptionTrack captions_;
+    Output output_;
 };
 
 }  // namespace zaro::model

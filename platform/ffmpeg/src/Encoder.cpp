@@ -1,6 +1,7 @@
 #include <vector>
 
 #include "zaro/core/render/ColorPipeline.h"
+#include "zaro/core/render/ToneMap.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 
 #include "Ffi.h"
@@ -53,6 +54,11 @@ struct Encoder::State {
     SwrContextPtr resampler;
 
     std::vector<std::uint8_t> rgb;
+    /// Scratch for the rolloff, kept between frames: a tone-mapped copy is
+    /// frame-sized and an export allocating one per frame would spend more time
+    /// in the allocator than in the encoder.
+    render::RgbaImage toneMapped;
+    EncodeSettings settings;
     std::int64_t videoPts{0};
     std::int64_t videoPackets{0};
     std::int64_t audioPts{0};
@@ -199,6 +205,7 @@ Result<std::unique_ptr<Encoder>> Encoder::open(const EncodeSettings& settings) {
     if (const int rc = av_frame_get_buffer(state.videoFrame.get(), 32); rc < 0) {
         return toError(rc, "allocating an encoder frame");
     }
+    state.settings = settings;
     state.rgb.resize(static_cast<std::size_t>(settings.width) * 3 *
                      static_cast<std::size_t>(settings.height));
     return encoder;
@@ -251,9 +258,20 @@ Status Encoder::writeVideo(const render::RgbaImage& frame) {
         return Error{ErrorCode::InvalidData, "frame size does not match the output"};
     }
 
+    // Tone mapped before encoding, not inside it. The encoder's job is to
+    // write what it is given and clip what does not fit; making sure nothing
+    // needs clipping is a separate decision, and keeping the two apart is what
+    // lets a project with nothing above white go through unchanged.
+    const render::RgbaImage* toEncode = &frame;
+    if (state.settings.highlightKnee < 1.0) {
+        state.toneMapped = frame.clone();
+        render::toneMap(state.toneMapped, static_cast<float>(state.settings.highlightKnee));
+        toEncode = &state.toneMapped;
+    }
+
     const std::int32_t stride = frame.width() * 3;
-    if (Status status =
-            render::toDisplayRgb24(frame, state.rgb.data(), stride, media::TransferFunction::BT709);
+    if (Status status = render::toDisplayRgb24(*toEncode, state.rgb.data(), stride,
+                                               state.settings.transfer);
         !status) {
         return status;
     }

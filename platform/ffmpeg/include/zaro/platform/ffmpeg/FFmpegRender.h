@@ -117,6 +117,16 @@ struct EncodeSettings {
     std::string videoCodec;
     std::string audioCodec;
     std::int64_t videoBitRate{0};
+
+    /// What the deliverable is encoded through, and where its highlights start
+    /// rolling off. Taken from the sequence's `output()`, so what is exported
+    /// is what the scopes and the curve editor were drawn against.
+    ///
+    /// A knee of 1 means no rolloff and the encoder clips, which is what this
+    /// program did before there was a choice -- and is why an existing project
+    /// exports the same file it always did.
+    media::TransferFunction transfer{media::TransferFunction::BT709};
+    double highlightKnee{1.0};
 };
 
 /// Writes a rendered sequence to a file.
