@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/core/render/ColorPipeline.h"
+#include "zaro/core/render/ToneMap.h"
 
 using namespace zaro;
 using Catch::Approx;
@@ -277,4 +278,114 @@ TEST_CASE("A log curve keeps highlights a display curve would have clipped",
         CHECK(render::toLinearScalar(1.0F, transfer) > 4.0F);
     }
     CHECK(render::toLinearScalar(1.0F, TransferFunction::BT709) == Approx(1.0F).margin(0.01F));
+}
+
+TEST_CASE("The highlight rolloff is exactly the identity below its knee", "[render][tonemap]") {
+    // The load-bearing property. A tone map that touched the midtones would
+    // silently change every existing deliverable, and the first anybody would
+    // know is a re-export not matching the one that was signed off.
+    for (const float knee : {0.6F, 0.8F, 0.95F}) {
+        for (const float value : {0.0F, 0.05F, 0.18F, 0.4F, 0.5F}) {
+            if (value > knee) {
+                continue;
+            }
+            INFO("knee " << knee << " value " << value);
+            // Bit for bit, not approximately.
+            CHECK(render::rolloff(value, knee) == value);
+        }
+        CHECK(render::rolloff(knee, knee) == knee);
+    }
+}
+
+TEST_CASE("A knee of one or more is no rolloff at all", "[render][tonemap]") {
+    // What this program did before there was a choice, and what an SDR project
+    // with nothing above white wants anyway.
+    for (const float value : {0.0F, 0.5F, 1.0F, 4.0F, 40.0F}) {
+        CHECK(render::rolloff(value, 1.0F) == value);
+        CHECK(render::rolloff(value, 2.0F) == value);
+    }
+}
+
+TEST_CASE("Above the knee nothing clips and nothing collides", "[render][tonemap]") {
+    constexpr float knee = 0.8F;
+    float previous = render::rolloff(knee, knee);
+    for (const float value : {0.9F, 1.0F, 1.5F, 2.0F, 5.0F, 20.0F, 100.0F}) {
+        const float mapped = render::rolloff(value, knee);
+        INFO("value " << value << " -> " << mapped);
+        // Strictly increasing: two different highlights must not come out the
+        // same value, or a sky becomes a flat patch.
+        CHECK(mapped > previous);
+        // And never reaching 1, so there is always somewhere left to go.
+        CHECK(mapped < 1.0F);
+        previous = mapped;
+    }
+}
+
+TEST_CASE("The rolloff joins the identity without a corner", "[render][tonemap]") {
+    // A discontinuity in the slope reads as a hard edge across a sky -- the one
+    // artefact that makes a tone map worse than clipping.
+    constexpr float knee = 0.75F;
+    constexpr float step = 1e-4F;
+    const float slopeBelow =
+        (render::rolloff(knee - step, knee) - render::rolloff(knee - (2.0F * step), knee)) / step;
+    const float slopeAbove =
+        (render::rolloff(knee + (2.0F * step), knee) - render::rolloff(knee + step, knee)) / step;
+    CHECK(slopeBelow == Approx(1.0F).margin(0.01F));
+    CHECK(slopeAbove == Approx(1.0F).margin(0.01F));
+}
+
+TEST_CASE("Tone mapping an image works on straight colour", "[render][tonemap]") {
+    // Premultiplied values would make the result depend on how transparent the
+    // pixel is, so a highlight would tone map differently in the middle of a
+    // dissolve than either side of it.
+    render::RgbaImage image{2, 1};
+    image.at(0, 0) = render::Rgba{4.0F, 4.0F, 4.0F, 1.0F};
+    // The same colour at half coverage: premultiplied, that is 2.0.
+    image.at(1, 0) = render::Rgba{2.0F, 2.0F, 2.0F, 0.5F};
+
+    render::toneMap(image, 0.8F);
+    CHECK(image.at(0, 0).r == Approx(image.at(1, 0).r * 2.0F).margin(0.001F));
+    CHECK(image.at(0, 0).r < 1.0F);
+    CHECK(image.at(1, 0).a == Approx(0.5F));
+
+    SECTION("and leaves a frame with nothing above the knee alone") {
+        render::RgbaImage ordinary{2, 1};
+        ordinary.at(0, 0) = render::Rgba{0.2F, 0.4F, 0.6F, 1.0F};
+        ordinary.at(1, 0) = render::Rgba{0.0F, 0.0F, 0.0F, 0.0F};
+        const render::RgbaImage before = ordinary.clone();
+        render::toneMap(ordinary, 0.8F);
+        CHECK(ordinary.at(0, 0).r == before.at(0, 0).r);
+        CHECK(ordinary.at(0, 0).g == before.at(0, 0).g);
+        CHECK(ordinary.at(0, 0).b == before.at(0, 0).b);
+    }
+}
+
+TEST_CASE("Tone mapping is what stops the encoder clipping", "[render][tonemap]") {
+    // The encoder's job is to write what it is given and clip what does not
+    // fit; making sure nothing needs clipping is a separate decision. This is
+    // that division of labour, checked: the same frame, encoded with and
+    // without the rolloff applied first.
+    render::RgbaImage highlights{3, 1};
+    highlights.at(0, 0) = render::Rgba{0.5F, 0.5F, 0.5F, 1.0F};  // below the knee
+    highlights.at(1, 0) = render::Rgba{2.0F, 2.0F, 2.0F, 1.0F};
+    highlights.at(2, 0) = render::Rgba{8.0F, 8.0F, 8.0F, 1.0F};
+
+    std::vector<std::uint8_t> clipped(3 * 3);
+    REQUIRE(render::toDisplayRgb24(highlights, clipped.data(), 3 * 3).ok());
+    // Everything above white lands on the same code: two different highlights,
+    // one value.
+    CHECK(clipped[3] == 255);
+    CHECK(clipped[6] == 255);
+
+    render::RgbaImage rolled = highlights.clone();
+    render::toneMap(rolled, 0.8F);
+    std::vector<std::uint8_t> mapped(3 * 3);
+    REQUIRE(render::toDisplayRgb24(rolled, mapped.data(), 3 * 3).ok());
+    CHECK(mapped[3] < 255);
+    CHECK(mapped[6] < 255);
+    // Still ordered, and still distinct.
+    CHECK(mapped[6] > mapped[3]);
+    // And the pixel below the knee comes out on exactly the same code -- the
+    // property the whole design rests on.
+    CHECK(mapped[0] == clipped[0]);
 }

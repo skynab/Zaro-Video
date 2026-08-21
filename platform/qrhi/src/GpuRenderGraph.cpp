@@ -92,6 +92,12 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
         return compositor_->draw(*frame, model::Transform{}, model::BlendMode::Normal);
     }
 
+    // The same curve the CPU path reads, from the same place: these two
+    // traversals have to agree, and a display curve taken from different
+    // sources is exactly the kind of disagreement that only shows up in an
+    // export somebody has already signed off.
+    transfer_ = sequence.output().transfer;
+
     // Bottom-up. Index 0 is V1, the lowest track, and each later track
     // composites over what is already there.
     for (const model::Track& track : sequence.videoTracks()) {

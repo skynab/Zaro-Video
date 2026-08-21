@@ -178,6 +178,12 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
     out.clear();
     lastClipCount_ = 0;
     skippedText_ = 0;
+    // Curves, secondaries, LUTs and keys are all defined against the picture as
+    // it is *shown*, so they need the curve this sequence is delivered through.
+    // Read here rather than set by the caller: a nested sequence composites
+    // through this same function, and one that had to be told separately would
+    // eventually be told something different from its parent.
+    transfer_ = sequence.output().transfer;
 
     // Bottom-up. Index 0 is V1, the lowest track, and each later track
     // composites over what is already there.

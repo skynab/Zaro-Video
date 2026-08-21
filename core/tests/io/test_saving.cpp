@@ -293,3 +293,26 @@ TEST_CASE("A media reference reads its curve from the file until told otherwise"
         CHECK(text->find("transferOverride") == std::string::npos);
     }
 }
+
+TEST_CASE("A sequence's delivery curve survives a round trip", "[io][tonemap]") {
+    Fixture f;
+    model::Sequence::Output delivery;
+    delivery.transfer = media::TransferFunction::PQ;
+    delivery.highlightKnee = 0.75;
+    f.sequence().setOutput(delivery);
+
+    auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    auto reloaded = io::loadProjectFromString(*text);
+    REQUIRE(reloaded);
+    const model::Sequence::Output& back = reloaded->project.findSequence(f.sequenceId)->output();
+    CHECK(back.transfer == media::TransferFunction::PQ);
+    CHECK(back.highlightKnee == 0.75);
+
+    SECTION("and a sequence delivered the way every project always was writes nothing") {
+        Fixture plain;
+        auto bare = io::saveProjectToString(plain.project);
+        REQUIRE(bare);
+        CHECK(bare->find("\"output\"") == std::string::npos);
+    }
+}

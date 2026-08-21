@@ -524,6 +524,16 @@ struct TrackState {
 [[nodiscard]] Result<CommandPtr> makeRazorAt(model::Project& project, const EditTarget& target,
                                              const std::vector<time::RationalTime>& points);
 
+/// What the sequence is delivered as: its display curve and where its
+/// highlights start rolling off.
+///
+/// A command like any other, because it changes what every frame of the
+/// sequence looks like coming out -- and because the curve editor and the
+/// scopes are drawn against it, so it changes what a grade is judged on too.
+[[nodiscard]] Result<CommandPtr> makeSetSequenceOutput(model::Project& project,
+                                                       model::SequenceId sequence,
+                                                       const model::Sequence::Output& output);
+
 /// Set an empty sequence's rate and frame size.
 ///
 /// **Refused once anything is on it.** Every clip's timeline range is expressed

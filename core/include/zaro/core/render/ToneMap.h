@@ -24,6 +24,12 @@ namespace zaro::render {
 /// corner where the rolloff starts -- a discontinuity in the derivative reads
 /// as a hard edge across a sky.
 ///
+/// The curve is rational rather than exponential, which is a correctness
+/// choice and not a matter of taste: an exponential rolloff underflows to
+/// exactly 1 about four and a half stops above the knee, and PQ footage arrives
+/// with values up to 100 (Phase 6h), so the top two stops of an HDR signal
+/// would have come out as flat white.
+///
 /// A knee of 1 or more means no rolloff at all: the encoder clips, which is
 /// what this program did before there was a choice and what an SDR project with
 /// nothing above white wants anyway.

@@ -72,6 +72,7 @@ headless: there is no window yet.
 | 6f | Scene edit detection | **done** |
 | 6g | Audio roles and auto-ducking | **done** |
 | 6h | Log and HDR footage into the working space | **done** |
+| 6i | Delivery: output curve and highlight rolloff | **done** |
 
 ## Building
 

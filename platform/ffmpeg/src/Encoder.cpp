@@ -270,8 +270,8 @@ Status Encoder::writeVideo(const render::RgbaImage& frame) {
     }
 
     const std::int32_t stride = frame.width() * 3;
-    if (Status status = render::toDisplayRgb24(*toEncode, state.rgb.data(), stride,
-                                               state.settings.transfer);
+    if (Status status =
+            render::toDisplayRgb24(*toEncode, state.rgb.data(), stride, state.settings.transfer);
         !status) {
         return status;
     }

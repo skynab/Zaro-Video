@@ -9,15 +9,23 @@ float rolloff(float linear, float knee) {
     if (knee >= 1.0F || linear <= knee) {
         return linear;
     }
-    // Above the knee, the remaining headroom is spent asymptotically. At the
-    // knee this is exactly `knee` with slope exactly 1, so it joins the
-    // identity without a corner; as the input grows it approaches 1 and never
-    // reaches it, so two different highlights never come out the same value.
     const float headroom = 1.0F - knee;
     if (headroom <= 0.0F) {
         return knee;
     }
-    return knee + (headroom * (1.0F - std::exp(-(linear - knee) / headroom)));
+    // Above the knee the remaining headroom is spent asymptotically. At the
+    // knee this is exactly `knee` with slope exactly 1, so it joins the
+    // identity without a corner; as the input grows it approaches 1 without
+    // reaching it, so two different highlights never come out the same value.
+    //
+    // Rational rather than exponential, and that is not a matter of taste. An
+    // exponential rolloff underflows to exactly 1 about four and a half stops
+    // above the knee, which sounds far away until you remember that PQ arrives
+    // with values up to 100 (Phase 6h): the top two stops of an HDR signal
+    // would have collapsed to flat white. This form stays distinct until the
+    // input is millions of times the headroom, which no signal is.
+    const float above = linear - knee;
+    return knee + (headroom * (above / (above + headroom)));
 }
 
 void toneMap(RgbaImage& image, float knee) {

@@ -57,6 +57,7 @@
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
 #include "zaro/core/render/Scopes.h"
+#include "zaro/core/render/ToneMap.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
@@ -162,6 +163,13 @@ public:
         loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
         transportRow->addWidget(loudnessButton);
         connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
+
+        auto* deliveryButton = new QPushButton("Delivery…", this);
+        deliveryButton->setObjectName("delivery");
+        deliveryButton->setToolTip("What this sequence is delivered as");
+        deliveryButton->setMinimumWidth(deliveryButton->sizeHint().width());
+        transportRow->addWidget(deliveryButton);
+        connect(deliveryButton, &QPushButton::clicked, this, [this] { deliveryMenu(); });
 
         auto* scenesButton = new QPushButton("Scenes", this);
         scenesButton->setObjectName("detect-scenes");
@@ -456,6 +464,89 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// What this sequence is delivered as, and how its highlights get there.
+    ///
+    /// A sequence property rather than an export option, because the curve
+    /// editor and the scopes are drawn against it: choosing it at export time
+    /// would mean grading against one curve and delivering through another.
+    void deliveryMenu() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        const model::Sequence::Output current = sequence->output();
+
+        QMenu menu;
+        menu.addAction("Delivered through")->setEnabled(false);
+        std::map<QAction*, media::TransferFunction> curves;
+        for (const media::TransferFunction transfer : media::allTransferFunctions()) {
+            if (transfer == media::TransferFunction::Unknown) {
+                continue;  // no formula, so nothing could encode through it
+            }
+            QAction* action = menu.addAction(QString::fromUtf8(media::toString(transfer)));
+            action->setCheckable(true);
+            action->setChecked(current.transfer == transfer);
+            curves.emplace(action, transfer);
+        }
+
+        menu.addSeparator();
+        menu.addAction("Highlights")->setEnabled(false);
+        struct Knee {
+            const char* name;
+            double value;
+        };
+        static constexpr Knee kKnees[] = {
+            {"clip (as delivered before)", 1.0},
+            {"roll off gently", 0.9},
+            {"roll off", 0.8},
+            {"roll off hard", 0.65},
+        };
+        std::map<QAction*, double> knees;
+        for (const Knee& knee : kKnees) {
+            QAction* action = menu.addAction(QString::fromUtf8(knee.name));
+            action->setCheckable(true);
+            action->setChecked(current.highlightKnee == knee.value);
+            knees.emplace(action, knee.value);
+        }
+
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == nullptr) {
+            return;
+        }
+        model::Sequence::Output wanted = current;
+        if (const auto curve = curves.find(chosen); curve != curves.end()) {
+            wanted.transfer = curve->second;
+        } else if (const auto knee = knees.find(chosen); knee != knees.end()) {
+            wanted.highlightKnee = knee->second;
+        } else {
+            return;
+        }
+        setDelivery(wanted);
+    }
+
+    /// The work behind the menu, separated so it can be driven without one.
+    bool setDelivery(const model::Sequence::Output& output) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return false;
+        }
+        auto built = edit::makeSetSequenceOutput(project_, sequence->id(), output);
+        if (!built) {
+            QMessageBox::warning(this, "Delivery",
+                                 QString::fromStdString(built.error().toString()));
+            return false;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        // The delivery curve is what curves, secondaries and LUTs are baked
+        // against, so every cached frame was made for the old one.
+        renderCache_.clear();
+        monitor_->update();
+        updateCacheBar();
+        updateTitle();
+        return true;
+    }
 
     /// Cut the selected clip where the picture changes.
     ///
@@ -2452,6 +2543,69 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Delivery: the curve a sequence goes out through, and the highlight
+        // rolloff that keeps the encoder from clipping.
+        //
+        // Driven through the same method the menu calls. What is checked is
+        // that it reaches the sequence, that the renderer reads it back, and
+        // that undo puts it where it was -- a delivery setting somebody cannot
+        // undo is one they cannot experiment with.
+        {
+            const auto deliverySequenceId = window.project().activeSequence();
+            const auto wasOutput = window.project().findSequence(deliverySequenceId)->output();
+            if (wasOutput.highlightKnee != 1.0) {
+                std::fprintf(stderr,
+                             "  FAIL: a project should start delivering as it always "
+                             "did, clipping its highlights\n");
+                return 1;
+            }
+
+            zaro::model::Sequence::Output rolled;
+            rolled.transfer = zaro::media::TransferFunction::SRGB;
+            rolled.highlightKnee = 0.8;
+            if (!window.setDelivery(rolled)) {
+                std::fprintf(stderr, "  FAIL: the delivery could not be set\n");
+                return 1;
+            }
+            const auto& delivered = window.project().findSequence(deliverySequenceId)->output();
+            if (delivered.transfer != zaro::media::TransferFunction::SRGB ||
+                delivered.highlightKnee != 0.8) {
+                std::fprintf(stderr, "  FAIL: the delivery did not reach the sequence\n");
+                return 1;
+            }
+            // And it still renders through it rather than refusing.
+            window.monitor()->update();
+            QApplication::processEvents();
+            if (!window.monitor()->lastError().isEmpty()) {
+                std::fprintf(stderr, "  FAIL: rendering reported %s\n",
+                             window.monitor()->lastError().toUtf8().constData());
+                return 1;
+            }
+
+            // A curve with no formula is refused rather than accepted and left
+            // to fail at the encoder.
+            zaro::model::Sequence::Output nonsense;
+            nonsense.transfer = zaro::media::TransferFunction::Unknown;
+            if (zaro::edit::makeSetSequenceOutput(window.project(), deliverySequenceId, nonsense)) {
+                std::fprintf(stderr, "  FAIL: a curve with no formula was accepted\n");
+                return 1;
+            }
+
+            std::printf("  delivery: %s at knee %.2f, undo restores %s at %.2f\n",
+                        zaro::media::toString(delivered.transfer), delivered.highlightKnee,
+                        zaro::media::toString(wasOutput.transfer), wasOutput.highlightKnee);
+
+            window.commands().undo(window.project());
+            const auto& afterUndo = window.project().findSequence(deliverySequenceId)->output();
+            if (afterUndo.transfer != wasOutput.transfer ||
+                afterUndo.highlightKnee != wasOutput.highlightKnee) {
+                std::fprintf(stderr, "  FAIL: undo did not restore the delivery\n");
+                return 1;
             }
             window.monitor()->update();
             QApplication::processEvents();

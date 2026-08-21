@@ -2360,6 +2360,23 @@ Result<CommandPtr> makeRazorAt(Project& project, const EditTarget& target,
                        });
 }
 
+Result<CommandPtr> makeSetSequenceOutput(Project& project, model::SequenceId sequenceId,
+                                         const model::Sequence::Output& output) {
+    if (project.findSequence(sequenceId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (!std::isfinite(output.highlightKnee) || output.highlightKnee <= 0.0) {
+        return Error{ErrorCode::InvalidData, "the highlight knee has to be a positive number"};
+    }
+    if (output.transfer == media::TransferFunction::Unknown) {
+        // There is no formula for it, so nothing could encode through it. The
+        // same refusal the input side makes, for the same reason.
+        return Error{ErrorCode::InvalidData, "that curve has no formula here"};
+    }
+    return makeCommand(sequenceId, "Set delivery", "delivery:" + std::to_string(sequenceId.value()),
+                       [output](Sequence& sequence) { sequence.setOutput(output); });
+}
+
 Result<CommandPtr> makeConformSequence(Project& project, model::SequenceId sequenceId,
                                        const time::Rational& frameRate, std::int32_t width,
                                        std::int32_t height) {

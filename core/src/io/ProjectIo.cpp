@@ -790,6 +790,15 @@ json encode(const model::Sequence& sequence) {
         markers.push_back(encode(marker));
     }
     json captionTrack = encodeCaptions(sequence.captions());
+    const model::Sequence::Output defaultOutput;
+    json output = json::object();
+    if (sequence.output().transfer != defaultOutput.transfer) {
+        output["transfer"] = media::toString(sequence.output().transfer);
+    }
+    if (sequence.output().highlightKnee != defaultOutput.highlightKnee) {
+        output["highlightKnee"] = sequence.output().highlightKnee;
+    }
+
     json out{{"id", sequence.id().value()},
              {"name", sequence.name()},
              {"frameRate", encode(sequence.frameRate())},
@@ -802,6 +811,12 @@ json encode(const model::Sequence& sequence) {
              {"markers", std::move(markers)}};
     if (!captionTrack.empty()) {
         out["captions"] = std::move(captionTrack);
+    }
+    if (!output.empty()) {
+        // Only when it differs from the default: a Rec.709 sequence that clips
+        // its highlights is what every project was before there was a choice,
+        // and should not start carrying a line asserting it.
+        out["output"] = std::move(output);
     }
     return out;
 }
@@ -1058,6 +1073,19 @@ Result<model::Sequence> decodeSequence(const json& node) {
         sequence.setAudioSampleRate(*rate);
     }
     sequence.setSize(node.value("width", 1920), node.value("height", 1080));
+    if (node.contains("output") && node.at("output").is_object()) {
+        const json& output = node.at("output");
+        model::Sequence::Output delivery;
+        if (output.contains("transfer")) {
+            media::TransferFunction transfer{};
+            if (media::transferFunctionFromString(output.at("transfer").get<std::string>().c_str(),
+                                                  transfer)) {
+                delivery.transfer = transfer;
+            }
+        }
+        delivery.highlightKnee = output.value("highlightKnee", delivery.highlightKnee);
+        sequence.setOutput(delivery);
+    }
     if (node.contains("startTime")) {
         auto start = decodeTime(node.at("startTime"), "sequence startTime");
         if (!start) {

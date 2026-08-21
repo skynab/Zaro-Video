@@ -54,6 +54,12 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
     settings.frameRate = rate;
     settings.audioSampleRate = audioRate;
     settings.includeAudio = request.includeAudio;
+    // What the deliverable is encoded through, taken from the sequence rather
+    // than from the request: the scopes and the curve editor were drawn against
+    // this, and an export that used a different curve would be judged against a
+    // picture nobody is going to see.
+    settings.transfer = sequence->output().transfer;
+    settings.highlightKnee = sequence->output().highlightKnee;
 
     auto encoderOpened = Encoder::open(settings);
     if (!encoderOpened) {

@@ -106,8 +106,9 @@ private:
     LutCache luts_;
 
     /// The curve is drawn against the picture as it is *shown*, so baking it
-    /// needs the transfer function the frame is being shown through. Rec.709
-    /// until a sequence carries its own; the same default the scopes use.
+    /// needs the transfer function the frame is being shown through. Taken from
+    /// the sequence being composited, which is where the delivery curve is
+    /// recorded; Rec.709 is only the fallback for a sequence that has not said.
     media::TransferFunction transfer_{media::TransferFunction::BT709};
 
     FrameSource* source_;

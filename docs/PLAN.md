@@ -2436,6 +2436,64 @@ curve by clipping, which is honest but is not a deliverable.
 
 ---
 
+#### Phase 6i — delivery: the output curve and the highlight rolloff ✅
+
+The counterpart to Phase 6h. That phase got footage *into* the working space
+correctly; this one decides what it looks like coming out.
+
+**Delivery is a property of the sequence, not of the export.** The curve editor
+and the scopes are drawn against the display signal (ADR-010), so choosing the
+curve at export time would mean grading against one and delivering through
+another. Both render paths now read it from the sequence rather than assuming
+Rec.709, and they read it from the same place — a display curve taken from two
+sources is exactly the kind of disagreement that only shows up in an export
+somebody has already signed off.
+
+**The rolloff is exactly the identity below its knee.** Not an optimisation: a
+tone map that touched the midtones would silently change every existing
+deliverable, and the first anybody would know is a re-export not matching the
+one that was signed off. The default knee is 1 — no rolloff, the encoder clips —
+which is what this program did before there was a choice, and is why
+`verify-frame-exact.sh` still reports 46 frames byte-identical to FFmpeg.
+
+**A failing test changed the curve's shape.** The first version spent its
+headroom exponentially, which is smooth and joins the identity cleanly — and
+underflows to exactly 1 about four and a half stops above the knee. That sounds
+far away until you remember Phase 6h: PQ arrives with values up to 100, so the
+top two stops of an HDR signal would have come out as flat white. The rational
+form stays distinct until the input is millions of times the headroom, which no
+signal is. The test that caught it asks for strict monotonicity out to 100.
+
+**Tone mapping stays outside the encoder**, which is a decision the encoder's
+own documentation had already made: its job is to write what it is given and
+clip what does not fit, and making sure nothing needs clipping is a separate
+step. Keeping them apart is what lets a project with nothing above white go
+through untouched.
+
+**Curves with no formula are refused here too**, the same rule the input side
+uses: nothing could encode through `Unknown`, so it is rejected when the
+delivery is set rather than left to fail at the encoder.
+
+The revert checks are worth recording. Removing the identity-below-the-knee
+guard fails 19 assertions across three tests. Removing the encoder's call to the
+rolloff failed *nothing* — the unit tests covered `toneMap` and
+`toDisplayRgb24` separately but nothing checked that the encoder joined them up.
+That gap is now a real export: two files written from the same graded sequence,
+one clipping and one rolling off, decoded back and compared. It fails when the
+encoder ignores the setting.
+
+**Not done: the preview does not tone map.** The rolloff is applied on the way
+out, so a graded highlight looks clipped on screen and rolled off in the file.
+That is a preview/export divergence of exactly the kind this project has spent
+several phases removing, and it is here because the present pass is a separate
+shader path; it wants the knee as a uniform and one branch, and it wants doing
+before anybody grades HDR in anger.
+
+**Also not done: OCIO, and output primaries.** The curve is chosen; the gamut is
+still Rec.709 throughout.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

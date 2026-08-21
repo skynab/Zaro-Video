@@ -5,6 +5,7 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
+#include "zaro/core/render/ColorPipeline.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 
@@ -165,4 +166,64 @@ TEST_CASE("Rendering an empty range is refused", "[render][export]") {
     request.startFrame = 100000;
     const auto status = platform::ffmpeg::renderSequence(renderable.project, request);
     CHECK_FALSE(status.ok());
+}
+
+TEST_CASE("The sequence's delivery reaches the exported file", "[render][export][tonemap]") {
+    // The division of labour, end to end: the encoder writes what it is given
+    // and clips what does not fit, and the rolloff is what makes sure nothing
+    // needs clipping. Checked through a real encode, because the two live in
+    // different libraries and nothing else would notice if the sequence's
+    // setting stopped being read on the way.
+    Renderable renderable = buildProject("sync_click_flash.mov");
+    if (!renderable.ok) {
+        SKIP("fixture missing");
+    }
+
+    // Push the whole picture well above white, so every frame has something a
+    // clipping encoder would flatten.
+    model::Sequence* sequence = renderable.project.findSequence(renderable.sequence);
+    model::Clip lifted = sequence->videoTracks().front().clips().front();
+    lifted.color.exposure = 3.0;  // eight times the light
+    sequence->tracksMutable(model::TrackKind::Video).front().setClips({lifted});
+
+    const auto brightestCode = [&](const std::string& path) {
+        auto decoder = platform::ffmpeg::openVideoDecoder(path);
+        REQUIRE(decoder);
+        auto frame = (*decoder)->frameAtTime(time::RationalTime{0, time::rates::fps25});
+        REQUIRE(frame);
+        render::RgbaImage image;
+        REQUIRE(render::toLinear(*frame, image).ok());
+        float highest = 0.0F;
+        for (std::int32_t y = 0; y < image.height(); ++y) {
+            const render::Rgba* row = image.row(y);
+            for (std::int32_t x = 0; x < image.width(); ++x) {
+                highest = std::max(highest, row[x].g);
+            }
+        }
+        return highest;
+    };
+
+    platform::ffmpeg::RenderRequest request;
+    request.sequence = renderable.sequence;
+    request.startFrame = 0;
+    request.frameCount = 2;
+    request.includeAudio = false;
+
+    request.outputPath = outputPath("delivery-clipped.mov");
+    REQUIRE(platform::ffmpeg::renderSequence(renderable.project, request).ok());
+    const float clipped = brightestCode(request.outputPath);
+
+    model::Sequence::Output rolled;
+    rolled.highlightKnee = 0.7;
+    renderable.project.findSequence(renderable.sequence)->setOutput(rolled);
+    request.outputPath = outputPath("delivery-rolled.mov");
+    REQUIRE(platform::ffmpeg::renderSequence(renderable.project, request).ok());
+    const float mapped = brightestCode(request.outputPath);
+
+    INFO("clipped " << clipped << ", rolled off " << mapped);
+    // Clipping puts the highlight on the top code; the rolloff leaves it below,
+    // which is the whole observable difference.
+    CHECK(clipped >= 0.99F);
+    CHECK(mapped < clipped);
+    CHECK(mapped > 0.5F);
 }
