@@ -2573,6 +2573,43 @@ self-test that pulls the corners down on a lit frame through the panel.
 
 ---
 
+#### Phase 6l — baking a look out as a .cube ✅
+
+**A look file carries exactly what `gradePixel` does** — the primary, the
+wheels, the tone curves, a look LUT and the secondary — because that is
+precisely the part of a clip's look that is a function of colour and nothing
+else. The secondary belongs in that list and it is worth saying why: an HSL
+qualifier selects *by colour*, so it bakes perfectly well. What cannot go is
+anything that depends on where a pixel is, or on whether it is there at all.
+
+**What cannot be carried is said before the file is written, not after.** A look
+file that silently does not match the shot it came from is worse than no look
+file, and the moment to find out is while somebody is still deciding whether to
+write it. So the bake reports its omissions — the mask, the vignette, the key,
+the effects — and the panel puts them in front of somebody as a question rather
+than a notice.
+
+**A grade that lifts past white is one of those omissions.** A .cube has a 0..1
+domain, and there is nowhere in it for light above white. Writing the test found
+something worth knowing: a *white balance shift alone* is enough to trigger it,
+because warming a picture multiplies the red channel and pure white lands above
+one. That is not a bug in the bake, it is the honest answer, and it is now the
+first thing the self-test says about the difference between a look and a shot.
+
+**The cube is display-referred, through the sequence's delivery curve.** That is
+what every program reading a .cube expects, and it is the same curve the grade
+was judged against on the scopes — so the file describes the look somebody
+actually approved rather than a linear-light one nobody looked at.
+
+The round trip is the test: bake a grade, read it back through the `CubeLut`
+parser this project already had, and require the same colour out. A neutral clip
+must bake to an identity cube, and a two-entry cube with only red touched must
+come back with only red touched — which is what catches the channel order, the
+one mistake that produces a file that loads without complaint and swaps two
+channels of every look.
+
+---
+
 #### §7.3 — where colour stands
 
 Done: the working space and its rationale (ADR-005), primary correction, tone
@@ -2583,11 +2620,6 @@ wheels.
 
 Not done, and worth being plain about which is small and which is not:
 
-- **LUT export (.cube out)** is small: the baking already exists, and what is
-  missing is a writer and a decision about what to bake — the clip's whole grade,
-  or only the parts a LUT can carry. That second half is the real work, because
-  a LUT cannot carry a mask, a qualifier or anything spatial, and silently
-  dropping them would produce a file that does not match the shot it came from.
 - **Comparison view** is moderate: two frames side by side or wiped, which the
   compositor can already do, plus a way to say which frame is the reference.
 - **Shot matching** is large and wants comparison view first. It is an analysis

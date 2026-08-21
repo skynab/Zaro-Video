@@ -9,15 +9,18 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <fstream>
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/render/BakeLut.h"
 #include "zaro/core/render/Ducking.h"
 
 namespace zaro::app {
@@ -162,6 +165,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     lutName_->setObjectName("lut-name");
     lutLoad_ = new QPushButton("Load LUT...", this);
     lutClear_ = new QPushButton("Clear", this);
+    lutSave_ = new QPushButton("Save look…", this);
+    lutSave_->setObjectName("save-look");
+    lutSave_->setToolTip("Write this clip's grade out as a .cube");
     lutAmount_ = makeSpin(0.0, 1.0, 0.05, 3);
     lutAmount_->setObjectName("lut-amount");
 
@@ -170,6 +176,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     lutLayout->setContentsMargins(0, 0, 0, 0);
     lutLayout->addWidget(lutLoad_);
     lutLayout->addWidget(lutClear_);
+    lutLayout->addWidget(lutSave_);
     colourForm->addRow(lutRow);
     colourForm->addRow(lutName_);
     colourForm->addRow("LUT amount", lutAmount_);
@@ -186,6 +193,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         pushLut(lut);
     });
     connect(lutClear_, &QPushButton::clicked, this, [this] { pushLut(model::LutRef{}); });
+    connect(lutSave_, &QPushButton::clicked, this, [this] { saveLookAsCube(); });
     connect(lutAmount_, &QDoubleSpinBox::valueChanged, this, [this](double amount) {
         const model::Clip* clip = selectedClip();
         if (updating_ || clip == nullptr || clip->lut.path.empty()) {
@@ -1355,6 +1363,52 @@ void EffectControls::pushEffects() {
         if (keyed) {
             emit keyframesChanged();
         }
+    }
+}
+
+/// Write this clip's grade out as a .cube.
+///
+/// What could not be carried is said before the file is written, not after: a
+/// look file that silently does not match the shot it came from is worse than
+/// no look file, and the moment to find out is while somebody is still deciding
+/// whether to write it.
+void EffectControls::saveLookAsCube() {
+    const model::Clip* clip = selectedClip();
+    const model::Sequence* sequence =
+        project_ != nullptr ? project_->findSequence(sequenceId_) : nullptr;
+    if (clip == nullptr || sequence == nullptr) {
+        return;
+    }
+
+    render::LutOmissions omissions;
+    auto text = render::bakeCube(*clip, sequence->output().transfer, 33,
+                                 clip->name.empty() ? "Look" : clip->name, &omissions);
+    if (!text) {
+        QMessageBox::warning(this, "Save look", QString::fromStdString(text.error().toString()));
+        return;
+    }
+    if (omissions.any()) {
+        const auto answer = QMessageBox::question(
+            this, "Save look",
+            QString::fromStdString(omissions.describe()) + "\n\nWrite it anyway?");
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    const QString chosen =
+        QFileDialog::getSaveFileName(this, "Save look", "look.cube", "Cube LUTs (*.cube)");
+    if (chosen.isEmpty()) {
+        return;
+    }
+    std::ofstream file{chosen.toStdString(), std::ios::binary | std::ios::trunc};
+    if (!file) {
+        QMessageBox::warning(this, "Save look", "Could not open that file for writing.");
+        return;
+    }
+    file << *text;
+    if (!file) {
+        QMessageBox::warning(this, "Save look", "Failed while writing that file.");
     }
 }
 

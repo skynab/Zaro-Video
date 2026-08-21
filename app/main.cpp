@@ -48,11 +48,14 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Sync.h"
+#include "zaro/core/io/CubeLut.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
+#include "zaro/core/render/BakeLut.h"
+#include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
@@ -2597,6 +2600,90 @@ int main(int argc, char** argv) {
                         beforeLift, afterLift);
             if (!(afterLift > beforeLift + 20.0)) {
                 std::fprintf(stderr, "  FAIL: the wheels did not reach the picture\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Baking a look out as a .cube, and reading it back.
+        //
+        // The round trip is the assertion: a grade written to a file and loaded
+        // through the reader has to land on the same colour, or the look
+        // somebody hands to a colourist is not the one they approved.
+        {
+            const auto bakeSequenceId = window.project().activeSequence();
+            const auto bakeTrackId =
+                window.project().findSequence(bakeSequenceId)->videoTracks().front().id();
+            const auto bakeClipId = window.project()
+                                        .findSequence(bakeSequenceId)
+                                        ->findTrack(bakeTrackId)
+                                        ->clips()
+                                        .front()
+                                        .id;
+
+            zaro::model::ColorCorrection look;
+            look.saturation = 35.0;
+            // Deliberately not a white balance shift: warming the picture
+            // multiplies the red channel, so pure white lands above one and the
+            // bake correctly reports that the cube has nowhere to put it. A
+            // grade that only pulls values down stays inside the domain, which
+            // is the case this block is checking.
+            look.exposure = -0.3;
+            auto graded = zaro::edit::makeSetColorCorrection(
+                window.project(), {bakeSequenceId, bakeTrackId}, bakeClipId, look);
+            if (!graded) {
+                std::fprintf(stderr, "  FAIL: %s\n", graded.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*graded));
+
+            const auto* bakeClip = window.project()
+                                       .findSequence(bakeSequenceId)
+                                       ->findTrack(bakeTrackId)
+                                       ->find(bakeClipId);
+            zaro::render::LutOmissions omissions;
+            auto text = zaro::render::bakeCube(
+                *bakeClip, window.project().findSequence(bakeSequenceId)->output().transfer, 33,
+                "selftest", &omissions);
+            if (!text) {
+                std::fprintf(stderr, "  FAIL: %s\n", text.error().toString().c_str());
+                return 1;
+            }
+            auto parsed = zaro::io::CubeLut::parse(*text);
+            if (!parsed) {
+                std::fprintf(stderr, "  FAIL: the baked cube does not parse: %s\n",
+                             parsed.error().toString().c_str());
+                return 1;
+            }
+
+            // The same colour through the grade and through the file.
+            const auto transfer = window.project().findSequence(bakeSequenceId)->output().transfer;
+            const auto grade = zaro::render::gradeConstantsFor(bakeClip->color, bakeClip->wheels);
+            float r = zaro::render::toLinearScalar(0.6F, transfer);
+            float g = zaro::render::toLinearScalar(0.35F, transfer);
+            float b = zaro::render::toLinearScalar(0.2F, transfer);
+            zaro::render::gradePixel(grade, r, g, b, nullptr, nullptr, nullptr, 1.0F);
+            const float wantR = zaro::render::fromLinearScalar(r, transfer);
+
+            float lr = 0.6F;
+            float lg = 0.35F;
+            float lb = 0.2F;
+            parsed->apply(lr, lg, lb);
+
+            std::printf("  look file: %d entries a side, graded red %.3f, through the cube %.3f\n",
+                        parsed->size(), static_cast<double>(wantR), static_cast<double>(lr));
+            if (std::fabs(static_cast<double>(lr) - static_cast<double>(wantR)) > 0.01) {
+                std::fprintf(stderr, "  FAIL: the baked look does not match the grade\n");
+                return 1;
+            }
+            if (omissions.any()) {
+                std::fprintf(stderr, "  FAIL: a plain grade reported something left out: %s\n",
+                             omissions.describe().c_str());
                 return 1;
             }
 

@@ -27,6 +27,7 @@ add_library(zaro_core
     src/render/AudioGraph.cpp
     src/render/AudioProcessor.cpp
     src/render/Loudness.cpp
+    src/render/BakeLut.cpp
     src/render/ColorPipeline.cpp
     src/render/Ducking.cpp
     src/render/EffectStack.cpp

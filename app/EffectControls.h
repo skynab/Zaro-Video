@@ -154,6 +154,8 @@ private:
     QWidget* secondaryGroup_{nullptr};
     QPushButton* lutLoad_{nullptr};
     QPushButton* lutClear_{nullptr};
+    QPushButton* lutSave_{nullptr};
+    void saveLookAsCube();
     QLabel* lutName_{nullptr};
     QDoubleSpinBox* lutAmount_{nullptr};
     /// Time remapping: a switch rather than a stopwatch, because a remap that
