@@ -2201,6 +2201,48 @@ this shell, and neither changes what the program can do.
 
 ---
 
+#### Fix — a pipeline built against a freed render pass descriptor ✅
+
+Reported as "unexpected exits". Six crash reports on this machine, in two
+signatures; one was a self-test of mine reading a dangling reference, and the
+other was real and in the compositor.
+
+`GpuCompositor` kept `intermediatePass` as a **raw pointer into whichever
+staging slot happened to create the first one**. Two ordinary things then had to
+happen together, and opening a second project does both at once:
+
+- A change of **output** size recreates the output target and clears the
+  conversion pipelines, so the next `drawSource` rebuilds one.
+- A change of **source** size makes the staging slot destroy and recreate its
+  own render pass descriptor — and the `if (intermediatePass == nullptr)` guard
+  meant the cached pointer was never updated to the replacement.
+
+The rebuilt pipeline was then handed freed memory. Metal read a colour
+attachment with an invalid pixel format and aborted the process from inside an
+ordinary repaint, with nothing in the stack between `paintEvent` and the
+assertion to say why.
+
+**Every staging surface now shares one descriptor, owned by the compositor.**
+All of them have the same texture format, and a QRhi render pass descriptor is
+compatible with any target of that format — which is what
+`newCompatibleRenderPassDescriptor` means. So there is one, it is a
+`unique_ptr` on the compositor's state, and it lives as long as the pipelines
+that reference it. The per-slot descriptor is gone, which is what makes the bug
+unreachable rather than merely unlikely.
+
+The regression test is the sequence that reproduces it: draw at one output and
+source size, then at another, then back. It aborted before the fix and passes
+after. Phase 6e is what made it easy to reach — Open is the one action that
+changes both sizes in a single step — but the defect predates it, and any
+project mixing resolutions could have found it.
+
+**Worth noting for next time:** asan found nothing here. The freed object was a
+Qt allocation reached through Metal's own validation, so the process died before
+any instrumented read. The crash reports on disk were what identified it, and
+the stack named the exact function.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

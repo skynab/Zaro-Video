@@ -1484,3 +1484,48 @@ TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]")
         CHECK(difference.mean < 0.002F);
     }
 }
+
+TEST_CASE("Switching output size and source size does not wreck the pipeline",
+          "[gpu][drawsource][regression]") {
+    // A pipeline outliving the render pass descriptor it was built against.
+    //
+    // The intermediate pass descriptor used to be a raw pointer into whichever
+    // staging slot happened to create the first one. Two things then had to
+    // line up, and opening a second project lines them up every time: a change
+    // of output size clears the conversion pipeline so it will be rebuilt, and
+    // a change of *source* size makes the staging slot destroy and recreate its
+    // descriptor. The rebuilt pipeline was then handed a pointer to freed
+    // memory, and Metal aborted the process reporting a colour attachment with
+    // an invalid pixel format -- from inside an ordinary repaint, with nothing
+    // in the stack to say why.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    const media::VideoFrame small = yuvPattern(
+        64, 48, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
+    const media::VideoFrame large = yuvPattern(
+        96, 64, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
+
+    REQUIRE(compositor->beginFrame(64, 48).ok());
+    REQUIRE(compositor->drawSource(small, Transform{}, render::GradeConstants{}).ok());
+    RgbaImage first;
+    REQUIRE(compositor->endFrame(first).ok());
+
+    // A different output size clears the conversion pipeline; a different
+    // source size recreates the staging surface it was built against.
+    REQUIRE(compositor->beginFrame(96, 64).ok());
+    REQUIRE(compositor->drawSource(large, Transform{}, render::GradeConstants{}).ok());
+    RgbaImage second;
+    REQUIRE(compositor->endFrame(second).ok());
+    CHECK(second.width() == 96);
+
+    // And back again, which is what closing one project and opening another
+    // looks like from here.
+    REQUIRE(compositor->beginFrame(64, 48).ok());
+    REQUIRE(compositor->drawSource(small, Transform{}, render::GradeConstants{}).ok());
+    RgbaImage third;
+    REQUIRE(compositor->endFrame(third).ok());
+    CHECK(third.width() == 64);
+}

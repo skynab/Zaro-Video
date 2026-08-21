@@ -289,12 +289,27 @@ struct GpuCompositor::State {
     struct Intermediate {
         std::unique_ptr<QRhiTexture> texture;
         std::unique_ptr<QRhiTextureRenderTarget> target;
-        std::unique_ptr<QRhiRenderPassDescriptor> pass;
         QSize size;
     };
     std::vector<Intermediate> intermediates;
     std::size_t intermediateIndex{0};
-    QRhiRenderPassDescriptor* intermediatePass{nullptr};
+
+    /// One descriptor for every staging surface, owned here.
+    ///
+    /// Every staging texture has the same format, and a QRhi render pass
+    /// descriptor is compatible with any target of the same format -- that is
+    /// what "compatible" means in `newCompatibleRenderPassDescriptor`. So there
+    /// is one, and it lives as long as the compositor.
+    ///
+    /// It used to be a raw pointer into whichever slot created the first one,
+    /// and that was a use-after-free waiting for two ordinary things to happen
+    /// together. A change of output size clears the conversion pipeline so it
+    /// will be rebuilt; a change of *source* size makes a slot destroy and
+    /// recreate its descriptor. Opening a second project does both at once. The
+    /// rebuilt pipeline was handed freed memory, and Metal aborted the process
+    /// from inside a repaint, reporting a colour attachment with an invalid
+    /// pixel format and nothing in the stack to say why.
+    std::unique_ptr<QRhiRenderPassDescriptor> intermediatePass;
 
     std::unique_ptr<QRhiTexture> target;
     std::unique_ptr<QRhiTextureRenderTarget> renderTarget;
@@ -898,13 +913,12 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         QRhiColorAttachment attachment(staging.texture.get());
         staging.target.reset(
             state.rhi->newTextureRenderTarget(QRhiTextureRenderTargetDescription(attachment)));
-        staging.pass.reset(staging.target->newCompatibleRenderPassDescriptor());
-        staging.target->setRenderPassDescriptor(staging.pass.get());
+        if (state.intermediatePass == nullptr) {
+            state.intermediatePass.reset(staging.target->newCompatibleRenderPassDescriptor());
+        }
+        staging.target->setRenderPassDescriptor(state.intermediatePass.get());
         if (!staging.target->create()) {
             return Error{ErrorCode::Internal, "cannot create a staging render target"};
-        }
-        if (state.intermediatePass == nullptr) {
-            state.intermediatePass = staging.pass.get();
         }
     }
 
@@ -940,7 +954,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         inputLayout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float2, 0}});
         pipeline->setVertexInputLayout(inputLayout);
         pipeline->setShaderResourceBindings(layout.get());
-        pipeline->setRenderPassDescriptor(state.intermediatePass);
+        pipeline->setRenderPassDescriptor(state.intermediatePass.get());
         if (!pipeline->create()) {
             return Error{ErrorCode::Internal, "cannot create the colour conversion pipeline"};
         }
