@@ -7,6 +7,7 @@
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
+#include "zaro/core/render/FrameSource.h"
 
 #include "CurveEditor.h"
 #include "HueBand.h"
@@ -43,6 +44,9 @@ public:
 
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
+
+    /// Where the dialogue is read from when ducking. Not owned.
+    void setAudioSource(render::AudioSource* audio) { audio_ = audio; }
 
     /// Where the playhead is.
     ///
@@ -182,6 +186,12 @@ private:
     void pushEffects();
     void showEffects();
     bool applyEffectStack(const std::vector<model::Effect>& stack);
+
+    QComboBox* role_{nullptr};
+    QPushButton* duck_{nullptr};
+    render::AudioSource* audio_{nullptr};
+    void pushRole();
+    void duckUnderDialogue();
 
     QComboBox* keyKind_{nullptr};
     QDoubleSpinBox* keyRed_{nullptr};

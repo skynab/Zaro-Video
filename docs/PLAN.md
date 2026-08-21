@@ -2307,6 +2307,65 @@ right.
 
 ---
 
+#### Phase 6g — audio roles and auto-ducking ✅
+
+What a piece of sound is for, and the one decision that reads it.
+
+**A role belongs to the clip, not to the track.** Material moves; somebody who
+drags a line of dialogue onto the music track has not made it music. The list is
+four long on purpose — dialogue, music, effects, ambience — because those are
+what a mix is built out of and what an automatic decision can act on. A longer
+taxonomy is one nobody maintains, with most clips left on whatever the default
+happened to be. `Unassigned` is that default and is honest about it: a clip
+nobody has classified is not dialogue, and treating it as such would duck the
+music under every stray sound in the timeline.
+
+**Ducking follows what is heard, not what is on the timeline.** A dialogue clip
+with ten seconds of room tone at its head would otherwise duck the music for ten
+seconds before anybody said anything. So the dialogue is read and its loudness
+envelope decides — which also means a pause long enough to matter lifts the
+music without anyone marking it. The envelope is `media::envelope` from Phase
+5x, written for aligning multicam audio and doing the same job here.
+
+**The answer is keyframes, not a live sidechain.** A compressor listening to
+another track would be fewer moving parts and completely opaque: nothing on
+screen would say why the music dipped, and nothing could be nudged when it
+dipped in the wrong place. Keyframes are the automation somebody would have
+drawn, on the parameter they would have drawn it on, and they can be dragged
+afterwards. They are written in the clip's source time like every other curve
+(ADR-008), so the ducking stays glued to the music through a trim.
+
+**Down quickly, back slowly, and hold through the gaps.** Coming down late is
+audible as the first word being buried; going up early is audible as a pump
+under the pause between sentences. The hold is what stops the music lifting
+between every sentence, which is more distracting than never ducking at all.
+
+**It is a change to the level somebody set, not a replacement of it.** A bed
+already pulled down six ducks to eighteen, not to twelve.
+
+A failing test found something the model does that the options could not: **the
+curve's keyframe times are quantised to frames**, so a fade shorter than one
+lands on the same instant as the dip it precedes — and `Curve::set` replaces
+rather than appends, so the level before the dip vanished and the ramp ran all
+the way from the start of the clip. The emit now guarantees distinct times, and
+the defaults are stated in seconds rather than in samples, which is how the
+nonsense got in.
+
+`edit::makeSetCurve` writes a whole curve as one command, because these curves
+come from an analysis: undoing an auto-duck gives back the level somebody had
+rather than removing two hundred keyframes one at a time.
+
+The self-test drives it through the panel in both directions: as dialogue the
+button is disabled, because a clip cannot duck under itself; as music with a
+dialogue clip over it, 39 keyframes appear between −12 and 0 dB. Making it duck
+on clip presence instead of on level collapses that to a flat −12 and fails.
+
+**Not done: ducking a whole timeline in one action, and roles driving submixes.**
+Both want a mix structure that does not exist yet; the role is the part that had
+to come first.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

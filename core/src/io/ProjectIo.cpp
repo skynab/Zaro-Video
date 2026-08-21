@@ -609,6 +609,9 @@ json encode(const model::Clip& clip) {
     if (json secondary = encode(clip.secondary); !secondary.empty()) {
         out["secondary"] = std::move(secondary);
     }
+    if (clip.role != model::AudioRole::Unassigned) {
+        out["role"] = model::toString(clip.role);
+    }
     if (json keyer = encode(clip.keyer); !keyer.empty()) {
         out["keyer"] = std::move(keyer);
     }
@@ -945,6 +948,12 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     if (node.contains("secondary")) {
         clip.secondary = decodeSecondary(node.at("secondary"));
+    }
+    if (node.contains("role")) {
+        model::AudioRole role{};
+        if (model::audioRoleFromString(node.at("role").get<std::string>().c_str(), role)) {
+            clip.role = role;
+        }
     }
     if (node.contains("keyer")) {
         clip.keyer = decodeKeyer(node.at("keyer"));

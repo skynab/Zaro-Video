@@ -28,6 +28,7 @@ add_library(zaro_core
     src/render/AudioProcessor.cpp
     src/render/Loudness.cpp
     src/render/ColorPipeline.cpp
+    src/render/Ducking.cpp
     src/render/EffectStack.cpp
     src/render/FrameCache.cpp
     src/render/RenderCache.cpp
@@ -45,6 +46,7 @@ add_library(zaro_core
     src/render/RgbaImage.cpp
     src/model/Animation.cpp
     src/model/Caption.cpp
+    src/model/AudioRole.cpp
     src/model/Clip.cpp
     src/model/Effect.cpp
     src/model/Graphic.cpp

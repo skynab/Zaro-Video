@@ -3,6 +3,7 @@
 #include <string>
 
 #include "zaro/core/model/Animation.h"
+#include "zaro/core/model/AudioRole.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/model/Effect.h"
@@ -57,6 +58,10 @@ struct Clip {
     /// unit the value is edited and displayed in, and converting at the edges
     /// keeps rounding out of the stored value.
     double gainDb{0.0};
+
+    /// What this sound is for. Drives nothing on its own -- it is what the
+    /// automatic decisions read, and what a mix is organised by.
+    AudioRole role{AudioRole::Unassigned};
     double pan{0.0};
 
     /// Primary colour correction, applied in the linear working space before

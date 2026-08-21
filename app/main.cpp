@@ -854,6 +854,7 @@ public:
         monitor_->setRenderCache(&renderCache_);
         timeline_->setProject(&project_, liveSequence()->id(), &commands_);
         effects_->setProject(&project_, liveSequence()->id(), &commands_);
+        effects_->setAudioSource(media_.get());
         mixer_->setProject(&project_, liveSequence()->id(), &commands_);
         bin_->setProject(&project_, liveSequence()->id(), &commands_);
         source_->setProvider(media_.get());
@@ -2441,6 +2442,126 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Roles and auto-ducking, through the real panel.
+        //
+        // The fixture is a click track under a picture, which is not speech --
+        // so this block puts the audio clip in both roles in turn and checks
+        // that the answer depends on the role rather than on the file.
+        {
+            const auto duckSequenceId = window.project().activeSequence();
+            const auto* duckSequence = window.project().findSequence(duckSequenceId);
+            if (duckSequence->audioTracks().empty()) {
+                std::fprintf(stderr, "  FAIL: no audio track to duck on\n");
+                return 1;
+            }
+            const auto duckTrackId = duckSequence->audioTracks().front().id();
+            const auto* duckTrack =
+                window.project().findSequence(duckSequenceId)->findTrack(duckTrackId);
+            if (duckTrack->clips().empty()) {
+                std::fprintf(stderr, "  FAIL: no audio clip to duck\n");
+                return 1;
+            }
+            const auto duckClipId = duckTrack->clips().front().id;
+
+            timeline->selectOnlyForTest(duckTrackId, duckClipId);
+            window.effects()->setSelection(duckTrackId, duckClipId);
+            QApplication::processEvents();
+
+            auto* roleBox = window.effects()->findChild<QComboBox*>("audio-role");
+            auto* duckButton = window.effects()->findChild<QPushButton*>("duck-under-dialogue");
+            if (roleBox == nullptr || duckButton == nullptr) {
+                std::fprintf(stderr, "  FAIL: the audio role controls are not in the panel\n");
+                return 1;
+            }
+
+            // As dialogue, the button is off: a clip cannot duck under itself.
+            roleBox->setCurrentIndex(
+                roleBox->findData(static_cast<int>(zaro::model::AudioRole::Dialogue)));
+            QApplication::processEvents();
+            const auto* asDialogue = window.project()
+                                         .findSequence(duckSequenceId)
+                                         ->findTrack(duckTrackId)
+                                         ->find(duckClipId);
+            if (asDialogue->role != zaro::model::AudioRole::Dialogue) {
+                std::fprintf(stderr, "  FAIL: the role did not reach the clip\n");
+                return 1;
+            }
+            if (duckButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: dialogue was offered the chance to duck itself\n");
+                return 1;
+            }
+
+            // Now give it something to duck under: a second copy of the same
+            // audio on its own track, called dialogue. The file does not have
+            // to be speech -- what the analysis reads is the level, and what
+            // decides is the role.
+            auto addedTrack = zaro::edit::makeAddTrack(window.project(), duckSequenceId,
+                                                       zaro::model::TrackKind::Audio, "A2");
+            if (!addedTrack) {
+                std::fprintf(stderr, "  FAIL: %s\n", addedTrack.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*addedTrack));
+            const auto voiceTrackId =
+                window.project().findSequence(duckSequenceId)->audioTracks().back().id();
+
+            zaro::model::Clip voice = *window.project()
+                                           .findSequence(duckSequenceId)
+                                           ->findTrack(duckTrackId)
+                                           ->find(duckClipId);
+            voice.id = window.project().ids().next<zaro::model::ClipTag>();
+            voice.role = zaro::model::AudioRole::Dialogue;
+            voice.animation = {};
+            auto placedVoice =
+                zaro::edit::makeOverwrite(window.project(), {duckSequenceId, voiceTrackId}, voice);
+            if (!placedVoice) {
+                std::fprintf(stderr, "  FAIL: %s\n", placedVoice.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placedVoice));
+
+            // And the original becomes the bed.
+            timeline->selectOnlyForTest(duckTrackId, duckClipId);
+            window.effects()->setSelection(duckTrackId, duckClipId);
+            QApplication::processEvents();
+            roleBox->setCurrentIndex(
+                roleBox->findData(static_cast<int>(zaro::model::AudioRole::Music)));
+            QApplication::processEvents();
+            if (!duckButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: a music bed cannot be ducked\n");
+                return 1;
+            }
+            duckButton->click();
+            QApplication::processEvents();
+
+            const auto* ducked = window.project()
+                                     .findSequence(duckSequenceId)
+                                     ->findTrack(duckTrackId)
+                                     ->find(duckClipId);
+            const zaro::model::Curve* gain =
+                ducked != nullptr ? ducked->animation.find(zaro::model::Param::GainDb) : nullptr;
+            if (gain == nullptr || gain->size() < 2) {
+                std::fprintf(stderr, "  FAIL: ducking under dialogue wrote no automation\n");
+                return 1;
+            }
+            double lowest = 0.0;
+            double highest = -1000.0;
+            for (const zaro::model::Keyframe& key : gain->keyframes()) {
+                lowest = std::min(lowest, key.value);
+                highest = std::max(highest, key.value);
+            }
+            std::printf("  ducking: %zu keyframes between %.1f and %.1f dB\n", gain->size(), lowest,
+                        highest);
+            if (!(lowest < -6.0) || !(highest > -1.0)) {
+                std::fprintf(stderr, "  FAIL: the curve does not dip and come back\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
         }
 
         // Scene edit detection, over the real footage.

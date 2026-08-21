@@ -18,6 +18,7 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/render/Ducking.h"
 
 namespace zaro::app {
 namespace {
@@ -495,6 +496,22 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     auto* audioForm = new QFormLayout(audio);
     addRow(audioForm, "Gain", model::Param::GainDb, gain_);
     addRow(audioForm, "Pan", model::Param::Pan, pan_);
+
+    // What the sound is for, and the one decision that reads it. Together,
+    // because a role with nothing acting on it is a label somebody sets once
+    // and never sees again.
+    role_ = new QComboBox(this);
+    role_->setObjectName("audio-role");
+    for (const model::AudioRole kind : model::allAudioRoles()) {
+        role_->addItem(QString::fromUtf8(model::toString(kind)), static_cast<int>(kind));
+    }
+    audioForm->addRow("Role", role_);
+    duck_ = new QPushButton("Duck under dialogue", this);
+    duck_->setObjectName("duck-under-dialogue");
+    duck_->setToolTip("Write volume keyframes that keep this clip out of the way of speech");
+    audioForm->addRow(duck_);
+    connect(role_, &QComboBox::currentIndexChanged, this, [this] { pushRole(); });
+    connect(duck_, &QPushButton::clicked, this, [this] { duckUnderDialogue(); });
     audioGroup_ = audio;
 
     // Scrolled, because the panel is now taller than a short display: motion,
@@ -621,6 +638,7 @@ void EffectControls::applyToWidgets() {
         opacity_->setValue(identity.opacity);
         blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
         timeRemap_->setChecked(false);
+        role_->setCurrentIndex(role_->findData(static_cast<int>(model::AudioRole::Unassigned)));
         keyKind_->setCurrentIndex(keyKind_->findData(static_cast<int>(model::KeyKind::None)));
         keyShowMatte_->setChecked(false);
         effectList_->clear();
@@ -749,6 +767,12 @@ void EffectControls::applyToWidgets() {
     keyLumaLow_->setEnabled(luma);
     keyLumaHigh_->setEnabled(luma);
     keyShowMatte_->setEnabled(key.isSet());
+
+    role_->setCurrentIndex(role_->findData(static_cast<int>(clip->role)));
+    // Ducking is for a bed that has to get out of the way; a clip that is
+    // itself the dialogue has nothing to duck under.
+    duck_->setEnabled(audio_ != nullptr && clip->role != model::AudioRole::Unassigned &&
+                      clip->role != model::AudioRole::Dialogue);
 
     timeRemap_->setChecked(clip->isTimeRemapped());
     // Freezing a clip that is already frozen is a no-op the operation refuses,
@@ -1274,6 +1298,49 @@ void EffectControls::pushEffects() {
             emit keyframesChanged();
         }
     }
+}
+
+void EffectControls::pushRole() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const auto role = static_cast<model::AudioRole>(role_->currentData().toInt());
+    auto built = edit::makeSetAudioRole(*project_, {sequenceId_, track_}, clip_, role);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    applyToWidgets();
+    emit edited();
+}
+
+/// Write the automation somebody would otherwise have drawn.
+///
+/// Reported through the panel rather than a dialog: the answer is visible on
+/// the timeline the moment it lands, and a clip with no speech over it is not
+/// an error -- it is a clip nothing was in the way of.
+void EffectControls::duckUnderDialogue() {
+    const model::Clip* clip = selectedClip();
+    const model::Sequence* sequence =
+        project_ != nullptr ? project_->findSequence(sequenceId_) : nullptr;
+    if (clip == nullptr || sequence == nullptr || audio_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    auto curve = render::duckingCurve(*sequence, *clip, *audio_);
+    if (!curve) {
+        return;
+    }
+    auto built =
+        edit::makeSetCurve(*project_, {sequenceId_, track_}, clip_, model::Param::GainDb, *curve);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    applyToWidgets();
+    emit keyframesChanged();
+    emit edited();
 }
 
 void EffectControls::pushKeyer() {

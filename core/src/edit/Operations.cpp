@@ -1144,6 +1144,30 @@ std::string keyframeKey(ClipId clip, model::Param param, const time::RationalTim
 
 }  // namespace
 
+Result<CommandPtr> makeSetCurve(Project& project, const EditTarget& target, ClipId clipId,
+                                model::Param param, const model::Curve& curve) {
+    for (const model::Keyframe& key : curve.keyframes()) {
+        if (!std::isfinite(key.value)) {
+            return Error{ErrorCode::InvalidData, "a keyframe has to be a real number"};
+        }
+    }
+    return modifyClip(
+        project, target, clipId, curve.empty() ? "Clear automation" : "Set automation",
+        "curve:" + idText(clipId) + ":" + model::toString(param), [param, curve](Clip& clip) {
+            if (curve.empty()) {
+                clip.animation.erase(param);
+                return;
+            }
+            clip.animation.curve(param) = curve;
+        });
+}
+
+Result<CommandPtr> makeSetAudioRole(Project& project, const EditTarget& target, ClipId clipId,
+                                    model::AudioRole role) {
+    return modifyClip(project, target, clipId, "Set role", "role:" + idText(clipId),
+                      [role](Clip& clip) { clip.role = role; });
+}
+
 Result<CommandPtr> makeSetKeyframe(Project& project, const EditTarget& target, ClipId clipId,
                                    model::Param param, const time::RationalTime& sourceTime,
                                    double value, model::Interpolation interpolation) {

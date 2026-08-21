@@ -350,6 +350,20 @@ enum class PlaceMode {
 // about where the clip currently sits and its identity is not.
 
 /// Add a keyframe, or replace the one already at that time.
+/// Replace a parameter's whole curve.
+///
+/// One command, because the curves this exists for are written by an analysis
+/// rather than by hand: undoing an auto-duck should give back the level
+/// somebody had, not remove two hundred keyframes one at a time. An empty
+/// curve clears the parameter, which is how the same command undoes itself.
+[[nodiscard]] Result<CommandPtr> makeSetCurve(model::Project& project, const EditTarget& target,
+                                              model::ClipId clip, model::Param param,
+                                              const model::Curve& curve);
+
+/// What a clip's sound is for.
+[[nodiscard]] Result<CommandPtr> makeSetAudioRole(model::Project& project, const EditTarget& target,
+                                                  model::ClipId clip, model::AudioRole role);
+
 [[nodiscard]] Result<CommandPtr> makeSetKeyframe(
     model::Project& project, const EditTarget& target, model::ClipId clip, model::Param param,
     const time::RationalTime& sourceTime, double value,
