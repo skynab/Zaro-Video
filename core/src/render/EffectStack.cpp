@@ -89,7 +89,7 @@ void blur(RgbaImage& image, RgbaImage& scratch, float radius) {
 }
 
 void applyEffects(const std::vector<model::Effect>& effects, RgbaImage& image, RgbaImage& scratch,
-                  RgbaImage& scratch2) {
+                  RgbaImage& scratch2, double seconds) {
     if (!image.isValid()) {
         return;
     }
@@ -97,13 +97,14 @@ void applyEffects(const std::vector<model::Effect>& effects, RgbaImage& image, R
         if (!effect.enabled) {
             continue;
         }
-        const auto radius = static_cast<float>(effect.value(model::EffectParam::Radius));
+        const auto radius = static_cast<float>(effect.valueAt(model::EffectParam::Radius, seconds));
         switch (effect.kind) {
             case model::EffectKind::Blur:
                 blur(image, scratch, radius);
                 break;
             case model::EffectKind::Sharpen: {
-                const auto amount = static_cast<float>(effect.value(model::EffectParam::Amount));
+                const auto amount =
+                    static_cast<float>(effect.valueAt(model::EffectParam::Amount, seconds));
                 if (amount <= 0.0F || radius <= 0.0F) {
                     break;
                 }

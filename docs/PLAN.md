@@ -1952,6 +1952,70 @@ the same table now that there is a table to put them in.
 
 ---
 
+#### Phase 6b — keyframed effect parameters ✅
+
+The design question Phase 6a left open: how to name a parameter that lives
+inside a list somebody can reorder.
+
+**The curves live on the effect, not in the clip's animation.** That is the
+whole answer. The obvious alternative is to give every effect an id and key the
+clip's `ClipAnimation` by (id, parameter) — which means two structures that have
+to be kept agreeing through every add, remove and reorder, and an id generator,
+and a rule for what happens when a stack is copied between clips. Putting the
+curves inside the effect makes all of it free: moving an effect carries its
+animation, deleting one takes its curves, copying a clip copies both together,
+and there is nothing to remember. The reason `ClipAnimation` is separate from
+`Transform` does not apply here — a transform's fields are fixed and always
+present, and an effect is an object with a lifetime of its own.
+
+**Keyed in the clip's source time, like every other curve** (ADR-008), so an
+effect keyframed against a moment in the footage stays on it through a trim.
+
+**One command still writes the whole stack.** Phase 6a's argument was that three
+composable commands are three ways to reach a stack no sequence of user actions
+could produce; adding a keyframe did not change that, so there are no new
+operations — the panel mutates a copy and pushes it, and breaks the merge run so
+that a keyframe is its own undo step.
+
+**Editing an animated parameter writes a keyframe, not a static value.**
+Anything else means turning a knob and watching the number spring back the
+moment the playhead moves. The spin box shows the value *at the playhead* for
+the same reason: a control displaying the value a parameter had before it was
+animated is a control that lies.
+
+**The stopwatch and the diamond keep meaning different things.** Switching the
+stopwatch on seeds a keyframe holding what is already showing, so the picture
+does not move; switching it off keeps that value as the static one, so it does
+not move then either. The diamond is inert until the stopwatch is on — a
+keyframe on a parameter that is not animated has nowhere to go, and quietly
+turning animation on would collapse the distinction between the two buttons.
+
+**An animated effect counts as active even where its curve reads zero.**
+Deciding otherwise would mean the renderer took one path on some frames of a
+ramp and another on the rest.
+
+**The curve codec is now shared.** Effect curves and clip curves are written by
+one function and read by another, rather than two copies that would eventually
+disagree about how a bezier handle is stored — the same consolidation that
+Phase 5 needed after the transition-grade bug, done before the second copy
+existed rather than after it drifted.
+
+A test writing a ramp caught a wrong expectation rather than a wrong
+implementation: a point just outside a blurred edge does not move one way as the
+radius grows — it rises as the edge softens and falls again once the same light
+is spread thin enough. The middle of the object does move one way, because a
+blur conserves light, and that is what the test asserts now.
+
+The self-test animates a blur through the same stopwatch every other parameter
+has: 178188 bright pixels at the start of the ramp, 133708 at the end. With the
+curve lookup removed it reports the same number twice and fails.
+
+**Not done: an editor for effect curves.** The keyframes show in the timeline's
+lane and can be dragged there, but the curve editor from Phase 5f is wired to
+`model::Param` and does not know about effects yet.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

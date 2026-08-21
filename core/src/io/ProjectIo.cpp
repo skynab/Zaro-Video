@@ -158,6 +158,70 @@ model::ColorCorrection decodeColor(const json& node) {
     return out;
 }
 
+/// One curve, as an array of keyframes.
+///
+/// Shared by the clip's own animation and by the curves an effect carries, so
+/// that the two cannot come to disagree about how a bezier handle is written.
+json encodeCurve(const model::Curve& curve) {
+    json keys = json::array();
+    for (const model::Keyframe& key : curve.keyframes()) {
+        const model::Keyframe defaults;
+        json encoded{{"time", encode(key.time)}, {"value", key.value}};
+        if (key.interpolation != defaults.interpolation) {
+            encoded["interpolation"] = model::toString(key.interpolation);
+        }
+        // Handles are only meaningful for beziers, and writing the default ease
+        // onto every linear keyframe would triple the size of a long automation
+        // curve for no information.
+        if (key.out != defaults.out) {
+            encoded["out"] = json{{"dx", key.out.dx}, {"dy", key.out.dy}};
+        }
+        if (key.in != defaults.in) {
+            encoded["in"] = json{{"dx", key.in.dx}, {"dy", key.in.dy}};
+        }
+        keys.push_back(std::move(encoded));
+    }
+    return keys;
+}
+
+Result<model::Curve> decodeCurve(const json& keys) {
+    model::Curve curve;
+    if (!keys.is_array()) {
+        return curve;
+    }
+    for (const json& encoded : keys) {
+        if (!encoded.is_object() || !encoded.contains("time")) {
+            return Error{ErrorCode::InvalidData, "a keyframe has no time"};
+        }
+        auto when = decodeTime(encoded.at("time"), "keyframe time");
+        if (!when) {
+            return when.error();
+        }
+        model::Keyframe key;
+        key.time = *when;
+        key.value = encoded.value("value", 0.0);
+        if (encoded.contains("interpolation")) {
+            key.interpolation = model::interpolationFromString(
+                encoded.at("interpolation").get<std::string>().c_str());
+        }
+        const auto handle = [&encoded](const char* which, model::Handle& into) {
+            if (!encoded.contains(which) || !encoded.at(which).is_object()) {
+                return;
+            }
+            const json& from = encoded.at(which);
+            into.dx = from.value("dx", into.dx);
+            into.dy = from.value("dy", into.dy);
+        };
+        handle("out", key.out);
+        handle("in", key.in);
+        // set() rather than push_back: a hand-edited or corrupted file can hold
+        // keyframes out of order or twice over, and evaluation depends on
+        // neither being possible.
+        curve.set(key);
+    }
+    return curve;
+}
+
 json encode(const std::vector<model::Effect>& effects) {
     json out = json::array();
     for (const model::Effect& effect : effects) {
@@ -171,6 +235,15 @@ json encode(const std::vector<model::Effect>& effects) {
         }
         if (!values.empty()) {
             entry["values"] = std::move(values);
+        }
+        json curves = json::object();
+        for (const auto& [param, curve] : effect.animation) {
+            if (!curve.empty()) {
+                curves[model::toString(param)] = encodeCurve(curve);
+            }
+        }
+        if (!curves.empty()) {
+            entry["curves"] = std::move(curves);
         }
         out.push_back(std::move(entry));
     }
@@ -200,6 +273,17 @@ std::vector<model::Effect> decodeEffects(const json& node) {
                 model::EffectParam param{};
                 if (model::effectParamFromString(name.c_str(), param) && value.is_number()) {
                     effect.values[param] = value.get<double>();
+                }
+            }
+        }
+        if (entry.contains("curves") && entry.at("curves").is_object()) {
+            for (const auto& [name, keys] : entry.at("curves").items()) {
+                model::EffectParam param{};
+                if (!model::effectParamFromString(name.c_str(), param)) {
+                    continue;
+                }
+                if (auto curve = decodeCurve(keys); curve && !curve->empty()) {
+                    effect.animation[param] = std::move(*curve);
                 }
             }
         }
@@ -384,25 +468,7 @@ json encode(const model::ClipAnimation& animation) {
         if (curve.empty()) {
             continue;
         }
-        json keys = json::array();
-        for (const model::Keyframe& key : curve.keyframes()) {
-            const model::Keyframe defaults;
-            json encoded{{"time", encode(key.time)}, {"value", key.value}};
-            if (key.interpolation != defaults.interpolation) {
-                encoded["interpolation"] = model::toString(key.interpolation);
-            }
-            // Handles are only meaningful for beziers, and writing the default
-            // ease onto every linear keyframe would triple the size of a long
-            // automation curve for no information.
-            if (key.out != defaults.out) {
-                encoded["out"] = json{{"dx", key.out.dx}, {"dy", key.out.dy}};
-            }
-            if (key.in != defaults.in) {
-                encoded["in"] = json{{"dx", key.in.dx}, {"dy", key.in.dy}};
-            }
-            keys.push_back(std::move(encoded));
-        }
-        out[model::toString(param)] = std::move(keys);
+        out[model::toString(param)] = encodeCurve(curve);
     }
     return out;
 }
@@ -420,39 +486,12 @@ Result<model::ClipAnimation> decodeAnimation(const json& node) {
             // open the project.
             continue;
         }
-        model::Curve curve;
-        for (const json& encoded : keys) {
-            if (!encoded.is_object() || !encoded.contains("time")) {
-                return Error{ErrorCode::InvalidData, "a keyframe has no time"};
-            }
-            auto when = decodeTime(encoded.at("time"), "keyframe time");
-            if (!when) {
-                return when.error();
-            }
-            model::Keyframe key;
-            key.time = *when;
-            key.value = encoded.value("value", 0.0);
-            if (encoded.contains("interpolation")) {
-                key.interpolation = model::interpolationFromString(
-                    encoded.at("interpolation").get<std::string>().c_str());
-            }
-            const auto handle = [&encoded](const char* which, model::Handle& into) {
-                if (!encoded.contains(which) || !encoded.at(which).is_object()) {
-                    return;
-                }
-                const json& from = encoded.at(which);
-                into.dx = from.value("dx", into.dx);
-                into.dy = from.value("dy", into.dy);
-            };
-            handle("out", key.out);
-            handle("in", key.in);
-            // set() rather than push_back: a hand-edited or corrupted file can
-            // hold keyframes out of order or twice over, and evaluation depends
-            // on neither being possible.
-            curve.set(key);
+        auto curve = decodeCurve(keys);
+        if (!curve) {
+            return curve.error();
         }
-        if (!curve.empty()) {
-            out.curve(param) = std::move(curve);
+        if (!curve->empty()) {
+            out.curve(param) = std::move(*curve);
         }
     }
     return out;

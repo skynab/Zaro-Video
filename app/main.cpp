@@ -1983,6 +1983,60 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "  FAIL: disabling the effect did not restore the edges\n");
                 return 1;
             }
+            enabledBox->setChecked(true);
+            QApplication::processEvents();
+
+            // Now animate it, through the same stopwatch every other parameter
+            // has. A ramp from nothing to a wide blur, and the picture has to
+            // differ along it.
+            auto* stopwatch = window.effects()->findChild<QToolButton*>("effect-stopwatch-0");
+            if (stopwatch == nullptr) {
+                std::fprintf(stderr, "  FAIL: the effect parameter has no stopwatch\n");
+                return 1;
+            }
+            window.setPosition(zaro::time::RationalTime{2, sequence.frameRate()});
+            QApplication::processEvents();
+            firstParam->setValue(0.0);
+            QApplication::processEvents();
+            stopwatch->click();
+            QApplication::processEvents();
+
+            const auto* animatedClip =
+                window.project().findSequence(fxSequenceId)->findTrack(fxTop)->find(fxClipId);
+            if (animatedClip->effects.empty() ||
+                !animatedClip->effects.front().isAnimated(zaro::model::EffectParam::Radius)) {
+                std::fprintf(stderr, "  FAIL: the stopwatch did not animate the parameter\n");
+                return 1;
+            }
+
+            // A second keyframe further along, by moving the playhead and
+            // typing a value -- which on an animated parameter has to write a
+            // keyframe rather than a static value nothing would read.
+            window.setPosition(zaro::time::RationalTime{30, sequence.frameRate()});
+            QApplication::processEvents();
+            firstParam->setValue(8.0);
+            QApplication::processEvents();
+
+            window.setPosition(zaro::time::RationalTime{2, sequence.frameRate()});
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const int rampStart = brightPixels(window.monitor()->grabFramebuffer(), 200);
+
+            window.setPosition(zaro::time::RationalTime{30, sequence.frameRate()});
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const int rampEnd = brightPixels(window.monitor()->grabFramebuffer(), 200);
+
+            std::printf(
+                "  keyframed blur: %d bright pixels at the start of the ramp, %d at the "
+                "end\n",
+                rampStart, rampEnd);
+            if (!(rampEnd < rampStart * 9 / 10)) {
+                std::fprintf(stderr, "  FAIL: the keyframed blur is not ramping\n");
+                return 1;
+            }
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());

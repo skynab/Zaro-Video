@@ -260,6 +260,15 @@ std::vector<time::RationalTime> TimelineLayout::keyframeTimes(const model::Clip&
             times.push_back(key.time);
         }
     }
+    // Effects keep their curves themselves, so the lane has to ask them too. A
+    // keyframe somebody set and cannot see is one they will set again.
+    for (const model::Effect& effect : clip.effects) {
+        for (const auto& [param, curve] : effect.animation) {
+            for (const model::Keyframe& key : curve.keyframes()) {
+                times.push_back(key.time);
+            }
+        }
+    }
     // Parameters keyed together land on the same instant, and that instant is
     // one diamond.
     std::sort(times.begin(), times.end());

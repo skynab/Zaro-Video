@@ -28,7 +28,8 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     const RgbaImage* source = &image;
     if (model::anyActive(clip.effects)) {
         effected_ = image.clone();
-        applyEffects(clip.effects, effected_, effectScratch_, effectScratchB_);
+        applyEffects(clip.effects, effected_, effectScratch_, effectScratchB_,
+                     clip.sourceSecondsAt(at));
         source = &effected_;
     }
 

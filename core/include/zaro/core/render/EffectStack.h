@@ -30,7 +30,10 @@ void blur(RgbaImage& image, RgbaImage& scratch, float radius);
 /// `scratch` is kept by the caller between frames, because these allocate
 /// frame-sized buffers and a render loop that did that per frame would spend
 /// more time in the allocator than in the filter.
+/// `seconds` is the clip's source time, the same coordinate every other curve
+/// on a clip is keyed in (ADR-008), so an effect keyframed against a moment in
+/// the footage stays on it through a trim.
 void applyEffects(const std::vector<model::Effect>& effects, RgbaImage& image, RgbaImage& scratch,
-                  RgbaImage& scratch2);
+                  RgbaImage& scratch2, double seconds = 0.0);
 
 }  // namespace zaro::render

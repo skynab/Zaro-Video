@@ -88,10 +88,27 @@ double Effect::value(EffectParam param) const {
     return 0.0;
 }
 
+const Curve* Effect::curve(EffectParam param) const {
+    const auto found = animation.find(param);
+    return found == animation.end() || found->second.empty() ? nullptr : &found->second;
+}
+
+bool Effect::isAnimated(EffectParam param) const {
+    return curve(param) != nullptr;
+}
+
+double Effect::valueAt(EffectParam param, double seconds) const {
+    const Curve* animated = curve(param);
+    return animated == nullptr ? value(param) : animated->valueAtSeconds(seconds);
+}
+
 bool anyActive(const std::vector<Effect>& effects) {
     for (const Effect& effect : effects) {
         if (!effect.enabled) {
             continue;
+        }
+        if (!effect.animation.empty()) {
+            return true;
         }
         switch (effect.kind) {
             case EffectKind::Blur:

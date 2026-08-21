@@ -255,3 +255,144 @@ TEST_CASE("An effect stack survives a round trip through a project file", "[rend
     CHECK(back[1].value(model::EffectParam::Amount) == Approx(0.75));
     CHECK_FALSE(back[2].enabled);
 }
+
+// --- Keyframed parameters ---------------------------------------------------
+
+namespace {
+
+model::Effect rampedBlur(const Fixture& f, std::int64_t fromFrame, double fromRadius,
+                         std::int64_t toFrame, double toRadius) {
+    model::Effect effect;
+    effect.kind = model::EffectKind::Blur;
+    model::Curve curve;
+    curve.set(model::Keyframe{f.at(fromFrame), fromRadius, model::Interpolation::Linear, {}, {}});
+    curve.set(model::Keyframe{f.at(toFrame), toRadius, model::Interpolation::Linear, {}, {}});
+    effect.animation[model::EffectParam::Radius] = std::move(curve);
+    return effect;
+}
+
+}  // namespace
+
+TEST_CASE("A curve overrides the static value where it exists", "[render][effects]") {
+    Fixture f;
+    model::Effect effect = rampedBlur(f, 0, 0.0, 100, 10.0);
+    effect.setValue(model::EffectParam::Radius, 99.0);
+
+    // The static value is ignored outright rather than blended with: an
+    // animated parameter has one answer at every instant, and it is the curve's.
+    CHECK(effect.valueAt(model::EffectParam::Radius, 0.0) == Approx(0.0));
+    CHECK(effect.valueAt(model::EffectParam::Radius, 2.0) == Approx(5.0));
+    CHECK(effect.valueAt(model::EffectParam::Radius, 4.0) == Approx(10.0));
+    // And it is still there for when the stopwatch goes off again.
+    CHECK(effect.value(model::EffectParam::Radius) == Approx(99.0));
+}
+
+TEST_CASE("An effect ramps over the clip", "[render][effects]") {
+    Fixture f;
+    f.sequence().setSize(32, 32);
+    SolidFrameSource source{32, 32};
+    render::RenderGraph graph{source};
+
+    model::Graphic shape;
+    shape.kind = model::GraphicKind::Rectangle;
+    shape.width = 12.0;
+    shape.height = 12.0;
+    shape.red = 1.0;
+    shape.green = 1.0;
+    shape.blue = 1.0;
+    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v1), shape, f.range(0, 100))));
+    const model::ClipId clipId = f.track(f.v1).clips().front().id;
+    // Source starts at zero for a generated clip, so source seconds and
+    // timeline seconds agree and the expectations below stay readable.
+    REQUIRE(f.track(f.v1).clips().front().sourceRange.start().frames() == 0);
+
+    REQUIRE(f.run(
+        edit::makeSetEffects(f.project, f.on(f.v1), clipId, {rampedBlur(f, 0, 0.0, 100, 8.0)})));
+
+    auto atStart = graph.composite(f.sequence(), f.at(0));
+    auto middle = graph.composite(f.sequence(), f.at(50));
+    auto atEnd = graph.composite(f.sequence(), f.at(99));
+    REQUIRE(atStart);
+    REQUIRE(middle);
+    REQUIRE(atEnd);
+
+    // The middle of the rectangle is the measure that moves one way: a blur
+    // conserves light, so a wider one always lowers the peak. A point just
+    // outside the edge does *not* move one way -- it rises as the edge softens
+    // and falls again once the same light is spread thin enough -- and an
+    // assertion on it would have been a statement about the radius that
+    // happened to be picked.
+    CHECK(atStart->at(16, 16).a == Approx(1.0F));
+    CHECK(middle->at(16, 16).a < atStart->at(16, 16).a);
+    CHECK(atEnd->at(16, 16).a < middle->at(16, 16).a);
+    // And the edge has moved outwards at all, which is what says the ramp ran.
+    CHECK(atStart->at(23, 16).a == Approx(0.0F).margin(0.001));
+    CHECK(middle->at(23, 16).a > 0.01F);
+}
+
+TEST_CASE("An effect's curves move with it", "[render][effects]") {
+    // The reason the curves live on the effect rather than in the clip's
+    // animation: reordering is a swap, and a swap has to carry the keyframes.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const model::ClipId clipId = f.track(f.v1).clips().front().id;
+
+    REQUIRE(f.run(edit::makeSetEffects(f.project, f.on(f.v1), clipId,
+                                       {sharpenOf(1.0, 0.5), rampedBlur(f, 0, 1.0, 50, 6.0)})));
+    std::vector<model::Effect> stack = f.track(f.v1).clips().front().effects;
+    std::swap(stack[0], stack[1]);
+    REQUIRE(f.run(edit::makeSetEffects(f.project, f.on(f.v1), clipId, stack)));
+
+    const std::vector<model::Effect>& after = f.track(f.v1).clips().front().effects;
+    REQUIRE(after.size() == 2);
+    CHECK(after[0].kind == model::EffectKind::Blur);
+    CHECK(after[0].isAnimated(model::EffectParam::Radius));
+    CHECK(after[0].valueAt(model::EffectParam::Radius, 2.0) == Approx(6.0));
+    CHECK_FALSE(after[1].isAnimated(model::EffectParam::Radius));
+}
+
+TEST_CASE("A keyframe on a parameter the effect does not take is refused", "[render][effects]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const model::ClipId clipId = f.track(f.v1).clips().front().id;
+
+    model::Effect wrong = blurOf(2.0);
+    model::Curve curve;
+    curve.set(model::Keyframe{f.at(0), 0.5, model::Interpolation::Linear, {}, {}});
+    wrong.animation[model::EffectParam::Amount] = std::move(curve);
+    CHECK_FALSE(edit::makeSetEffects(f.project, f.on(f.v1), clipId, {wrong}));
+}
+
+TEST_CASE("An animated effect counts as active even where its curve reads zero",
+          "[render][effects]") {
+    // Conservative on purpose: deciding otherwise would mean the renderer took
+    // one path on some frames of a ramp and another on the rest.
+    Fixture f;
+    model::Effect flat = rampedBlur(f, 0, 0.0, 50, 0.0);
+    CHECK(model::anyActive({flat}));
+}
+
+TEST_CASE("An effect's keyframes survive a round trip", "[render][effects][io]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const model::ClipId clipId = f.track(f.v1).clips().front().id;
+
+    model::Effect ramped = rampedBlur(f, 0, 1.0, 50, 7.0);
+    ramped.animation[model::EffectParam::Radius].set(
+        model::Keyframe{f.at(25), 3.0, model::Interpolation::Hold, {}, {}});
+    REQUIRE(f.run(edit::makeSetEffects(f.project, f.on(f.v1), clipId, {ramped})));
+
+    auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    auto reloaded = io::loadProjectFromString(*text);
+    REQUIRE(reloaded);
+
+    const std::vector<model::Effect>& back =
+        reloaded->project.findSequence(f.sequenceId)->findTrack(f.v1)->clips().front().effects;
+    REQUIRE(back.size() == 1);
+    const model::Curve* curve = back[0].curve(model::EffectParam::Radius);
+    REQUIRE(curve != nullptr);
+    REQUIRE(curve->size() == 3);
+    CHECK(curve->keyframes()[1].interpolation == model::Interpolation::Hold);
+    CHECK(back[0].valueAt(model::EffectParam::Radius, 1.5) == Approx(3.0));
+}

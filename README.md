@@ -65,6 +65,7 @@ headless: there is no window yet.
 | 5y | Time remapping and freeze frames | **done** |
 | 5z | Chroma and luma keying, with spill suppression | **done** |
 | 6a | The effect stack: blur and sharpen, in order | **done** |
+| 6b | Keyframed effect parameters | **done** |
 
 ## Building
 

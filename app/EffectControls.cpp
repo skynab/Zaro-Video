@@ -317,14 +317,47 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     effectForm->addRow(orderRow);
     effectForm->addRow(effectEnabled_);
     for (int i = 0; i < kMaxEffectParams; ++i) {
-        effectParamLabels_[static_cast<std::size_t>(i)] = new QLabel(this);
-        effectParamSpins_[static_cast<std::size_t>(i)] = makeSpin(0.0, 1.0, 0.1, 3);
-        effectParamSpins_[static_cast<std::size_t>(i)]->setObjectName(
-            QString("effect-param-%1").arg(i));
-        effectForm->addRow(effectParamLabels_[static_cast<std::size_t>(i)],
-                           effectParamSpins_[static_cast<std::size_t>(i)]);
-        connect(effectParamSpins_[static_cast<std::size_t>(i)], &QDoubleSpinBox::valueChanged, this,
+        const auto slot = static_cast<std::size_t>(i);
+        effectParamLabels_[slot] = new QLabel(this);
+        effectParamSpins_[slot] = makeSpin(0.0, 1.0, 0.1, 3);
+        effectParamSpins_[slot]->setObjectName(QString("effect-param-%1").arg(i));
+
+        // The same two diamonds every other animatable row has, so an effect
+        // parameter animates the way a position does rather than being a
+        // parameter people have to learn is different.
+        auto* stopwatch = new QToolButton(this);
+        stopwatch->setText(QString::fromUtf8("\u23F1"));
+        stopwatch->setCheckable(true);
+        stopwatch->setAutoRaise(true);
+        stopwatch->setToolTip("Animate this parameter");
+        stopwatch->setObjectName(QString("effect-stopwatch-%1").arg(i));
+        auto* keyframe = new QToolButton(this);
+        keyframe->setText(QString::fromUtf8("\u25C6"));
+        keyframe->setCheckable(true);
+        keyframe->setAutoRaise(true);
+        keyframe->setToolTip("Keyframe at the playhead");
+        keyframe->setObjectName(QString("effect-keyframe-%1").arg(i));
+        const int side = stopwatch->fontMetrics().height() + 8;
+        for (QToolButton* button : {stopwatch, keyframe}) {
+            button->setFixedSize(side, side);
+        }
+        effectParamStopwatches_[slot] = stopwatch;
+        effectParamKeyframes_[slot] = keyframe;
+
+        auto* line = new QWidget(this);
+        auto* row = new QHBoxLayout(line);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(4);
+        row->addWidget(stopwatch);
+        row->addWidget(keyframe);
+        row->addWidget(effectParamSpins_[slot], 1);
+        effectForm->addRow(effectParamLabels_[slot], line);
+
+        connect(effectParamSpins_[slot], &QDoubleSpinBox::valueChanged, this,
                 [this] { pushEffects(); });
+        connect(stopwatch, &QToolButton::clicked, this,
+                [this, i](bool on) { toggleEffectAnimated(i, on); });
+        connect(keyframe, &QToolButton::clicked, this, [this, i] { toggleEffectKeyframe(i); });
     }
     effectGroup_ = effectBox;
 
@@ -1089,18 +1122,115 @@ void EffectControls::showEffects() {
             label->setText(name);
             spin->setRange(info.minimum, info.maximum);
             spin->setSingleStep(info.step);
-            spin->setValue(chosen->value(info.param));
+            effectParamOf_[shown] = info.param;
+
+            // The value at the playhead, not the static one: an animated
+            // parameter reads differently on every frame, and a control showing
+            // the value it had before it was animated is a control that lies.
+            const model::Clip* owner = selectedClip();
+            const double seconds = owner != nullptr ? owner->sourceSecondsAt(position_) : 0.0;
+            spin->setValue(chosen->valueAt(info.param, seconds));
+
+            const bool animated = chosen->isAnimated(info.param);
+            const auto when = keyframeTime();
+            effectParamStopwatches_[shown]->setChecked(animated);
+            effectParamStopwatches_[shown]->setEnabled(when.has_value());
+            effectParamKeyframes_[shown]->setEnabled(animated && when.has_value());
+            effectParamKeyframes_[shown]->setChecked(
+                animated && when.has_value() && chosen->curve(info.param)->at(*when) != nullptr);
+
             label->setVisible(true);
             spin->setVisible(true);
+            effectParamStopwatches_[shown]->setVisible(true);
+            effectParamKeyframes_[shown]->setVisible(true);
             ++shown;
         }
     }
     for (std::size_t i = shown; i < static_cast<std::size_t>(kMaxEffectParams); ++i) {
         effectParamLabels_[i]->setVisible(false);
         effectParamSpins_[i]->setVisible(false);
+        effectParamStopwatches_[i]->setVisible(false);
+        effectParamKeyframes_[i]->setVisible(false);
     }
 
     updating_ = wasUpdating;
+}
+
+/// Turn a curve on or off for one effect parameter.
+///
+/// Switching the stopwatch on seeds a keyframe at the playhead holding the
+/// value that is showing, so the picture does not move; switching it off keeps
+/// the value that is showing as the static one, so it does not move then
+/// either. The same bargain the clip's own parameters make.
+void EffectControls::toggleEffectAnimated(int row, bool on) {
+    const model::Clip* clip = selectedClip();
+    const int chosen = effectList_->currentRow();
+    const auto when = keyframeTime();
+    if (updating_ || clip == nullptr || !when.has_value() || chosen < 0 ||
+        chosen >= static_cast<int>(clip->effects.size())) {
+        showEffects();  // put the button back where the model says it is
+        return;
+    }
+    const model::EffectParam param = effectParamOf_[static_cast<std::size_t>(row)];
+
+    std::vector<model::Effect> stack = clip->effects;
+    model::Effect& effect = stack[static_cast<std::size_t>(chosen)];
+    const double showing = effect.valueAt(param, clip->sourceSecondsAt(position_));
+    if (on) {
+        model::Keyframe key;
+        key.time = *when;
+        key.value = showing;
+        effect.animation[param].set(key);
+    } else {
+        effect.animation.erase(param);
+        effect.setValue(param, showing);
+    }
+    if (applyEffectStack(stack)) {
+        commands_->breakMerge();
+        showEffects();
+        emit keyframesChanged();
+    }
+}
+
+void EffectControls::toggleEffectKeyframe(int row) {
+    const model::Clip* clip = selectedClip();
+    const int chosen = effectList_->currentRow();
+    const auto when = keyframeTime();
+    if (updating_ || clip == nullptr || !when.has_value() || chosen < 0 ||
+        chosen >= static_cast<int>(clip->effects.size())) {
+        showEffects();
+        return;
+    }
+    const model::EffectParam param = effectParamOf_[static_cast<std::size_t>(row)];
+    if (!clip->effects[static_cast<std::size_t>(chosen)].isAnimated(param)) {
+        // A keyframe on a parameter that is not animated has nowhere to go.
+        // Rather than quietly turning animation on, the button is inert until
+        // the stopwatch is -- which is what makes the two mean different things.
+        showEffects();
+        return;
+    }
+
+    std::vector<model::Effect> stack = clip->effects;
+    model::Effect& effect = stack[static_cast<std::size_t>(chosen)];
+    model::Curve& curve = effect.animation[param];
+    if (curve.at(*when) != nullptr) {
+        curve.removeAt(*when);
+        if (curve.empty()) {
+            // The last keyframe gone is no animation, and a curve with nothing
+            // in it must not linger as a parameter that reads zero everywhere.
+            effect.animation.erase(param);
+        }
+    } else {
+        model::Keyframe key;
+        key.time = *when;
+        key.value = effect.valueAt(param, clip->sourceSecondsAt(position_));
+        curve.set(key);
+    }
+    if (applyEffectStack(stack)) {
+        commands_->breakMerge();
+        showEffects();
+        emit keyframesChanged();
+    }
 }
 
 void EffectControls::pushEffects() {
@@ -1113,16 +1243,36 @@ void EffectControls::pushEffects() {
     model::Effect& chosen = stack[static_cast<std::size_t>(row)];
     chosen.enabled = effectEnabled_->isChecked();
 
+    const auto when = keyframeTime();
     std::size_t index = 0;
+    bool keyed = false;
     for (const model::EffectParamInfo& info : model::parametersOf(chosen.kind)) {
         if (index >= static_cast<std::size_t>(kMaxEffectParams)) {
             break;
         }
-        chosen.setValue(info.param, effectParamSpins_[index]->value());
+        const double typed = effectParamSpins_[index]->value();
+        if (chosen.isAnimated(info.param)) {
+            // Editing an animated parameter writes a keyframe at the playhead
+            // rather than a static value nothing would read. Anything else
+            // means turning a knob and watching the number spring back the
+            // moment the playhead moves.
+            if (when.has_value()) {
+                model::Keyframe key;
+                key.time = *when;
+                key.value = typed;
+                chosen.animation[info.param].set(key);
+                keyed = true;
+            }
+        } else {
+            chosen.setValue(info.param, typed);
+        }
         ++index;
     }
     if (applyEffectStack(stack)) {
         showEffects();
+        if (keyed) {
+            emit keyframesChanged();
+        }
     }
 }
 

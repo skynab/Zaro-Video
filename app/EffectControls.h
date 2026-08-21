@@ -170,6 +170,14 @@ private:
     QCheckBox* effectEnabled_{nullptr};
     std::array<QLabel*, kMaxEffectParams> effectParamLabels_{};
     std::array<QDoubleSpinBox*, kMaxEffectParams> effectParamSpins_{};
+    std::array<QToolButton*, kMaxEffectParams> effectParamStopwatches_{};
+    std::array<QToolButton*, kMaxEffectParams> effectParamKeyframes_{};
+    /// Which parameter each row is showing at the moment. The rows are a pool
+    /// that gets relabelled, so a handler cannot capture its parameter the way
+    /// the fixed rows above do.
+    std::array<model::EffectParam, kMaxEffectParams> effectParamOf_{};
+    void toggleEffectAnimated(int row, bool on);
+    void toggleEffectKeyframe(int row);
     QWidget* effectGroup_{nullptr};
     void pushEffects();
     void showEffects();

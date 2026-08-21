@@ -1742,10 +1742,27 @@ Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId
 Result<CommandPtr> makeSetEffects(Project& project, const EditTarget& target, ClipId clipId,
                                   const std::vector<model::Effect>& effects) {
     for (const model::Effect& effect : effects) {
+        // Both the static values and the curves: a keyframe on a parameter the
+        // effect does not take is the same silent nothing as a value on one,
+        // and it is easier to reach because the panel builds its rows from the
+        // table while a copied stack need not have.
+        std::vector<model::EffectParam> named;
         for (const auto& [param, value] : effect.values) {
+            named.push_back(param);
             if (!std::isfinite(value)) {
                 return Error{ErrorCode::InvalidData, "an effect parameter has to be a real number"};
             }
+        }
+        for (const auto& [param, curve] : effect.animation) {
+            named.push_back(param);
+            for (const model::Keyframe& key : curve.keyframes()) {
+                if (!std::isfinite(key.value)) {
+                    return Error{ErrorCode::InvalidData,
+                                 "an effect keyframe has to be a real number"};
+                }
+            }
+        }
+        for (const model::EffectParam param : named) {
             bool belongs = false;
             for (const model::EffectParamInfo& info : model::parametersOf(effect.kind)) {
                 belongs = belongs || info.param == param;

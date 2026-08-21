@@ -5,6 +5,8 @@
 #include <span>
 #include <vector>
 
+#include "zaro/core/model/Animation.h"
+
 namespace zaro::model {
 
 /// One of the effects a clip can carry.
@@ -66,13 +68,39 @@ struct Effect {
     /// of the table.
     std::map<EffectParam, double> values;
 
+    /// Curves that override the static values above, where they exist.
+    ///
+    /// Held on the effect rather than in the clip's `ClipAnimation`, and that
+    /// is the whole design. A parameter inside a reorderable list has no stable
+    /// name in a flat map: the obvious alternative is to give every effect an
+    /// id and key the clip's animation by (id, parameter), which means two
+    /// structures that have to be kept agreeing through every add, remove and
+    /// reorder. Keeping the curves inside the effect makes all three free --
+    /// moving an effect carries its animation, deleting one takes its curves,
+    /// and copying a clip copies both together, with nothing to remember.
+    std::map<EffectParam, Curve> animation;
+
+    /// The static value, ignoring any curve.
     [[nodiscard]] double value(EffectParam param) const;
     void setValue(EffectParam param, double value) { values[param] = value; }
+
+    /// The value at a moment in the clip's source time, in seconds -- the curve
+    /// where there is one, the static value where there is not.
+    [[nodiscard]] double valueAt(EffectParam param, double seconds) const;
+
+    [[nodiscard]] bool isAnimated(EffectParam param) const;
+    /// The curve for a parameter, or null.
+    [[nodiscard]] const Curve* curve(EffectParam param) const;
 
     friend bool operator==(const Effect&, const Effect&) = default;
 };
 
-/// Whether any of them would change the picture.
+/// Whether any of them would change the picture at any moment.
+///
+/// Conservative about animation on purpose: an effect with a curve counts as
+/// active even where the curve happens to read zero, because deciding
+/// otherwise would mean the renderer taking one path on some frames of a ramp
+/// and another on the rest.
 [[nodiscard]] bool anyActive(const std::vector<Effect>& effects);
 
 }  // namespace zaro::model
