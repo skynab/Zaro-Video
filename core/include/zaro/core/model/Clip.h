@@ -5,6 +5,7 @@
 #include "zaro/core/model/Animation.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/model/Effect.h"
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/model/Keyer.h"
@@ -149,6 +150,19 @@ struct Clip {
     /// One rather than a list, for now — the machinery is the same either way,
     /// and a list with no UI to manage it is a list nobody can reach.
     Secondary secondary;
+
+    /// Effects, in the order they are applied.
+    ///
+    /// A list rather than a field each, because order is the thing a list has
+    /// and a set of fields does not: blurring and then sharpening is not the
+    /// same picture as sharpening and then blurring, and somebody has to be
+    /// able to say which they meant.
+    ///
+    /// These run on the clip's image, before the key and the grade. They are
+    /// the only stage that reads a pixel's *neighbours*, so they cannot live in
+    /// the per-pixel path the rest of the pipeline is; putting the spatial
+    /// stage first is what keeps the rest a single pass.
+    std::vector<Effect> effects;
 
     /// What of this clip is transparent, so a clip under it shows through.
     ///

@@ -79,10 +79,11 @@ private:
 
     /// Draw a clip whose picture is already an image -- a generated shape, or a
     /// nested sequence composited on the CPU.
-    /// Whether any adjustment layer is live at this moment, which sends the
+    /// Whether anything live at this moment is beyond what one queued sampling
+    /// pass can do -- an adjustment layer, or an effect -- which sends the
     /// whole frame down the CPU path.
-    [[nodiscard]] static bool hasAdjustment(const model::Sequence& sequence,
-                                            const time::RationalTime& at);
+    [[nodiscard]] static bool needsCpuFallback(const model::Sequence& sequence,
+                                               const time::RationalTime& at);
 
     bool drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
                        const model::Transform& transform, const time::RationalTime& at);

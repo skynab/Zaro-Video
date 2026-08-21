@@ -86,6 +86,12 @@ private:
     /// Scratch for generated clips, kept between frames so a shape layer does
     /// not allocate a frame-sized buffer on every frame.
     RgbaImage generated_;
+    /// The same, for the effect stack: a blur needs the clip's image and two
+    /// buffers of its size, and allocating three of those per frame would cost
+    /// more than the filter.
+    RgbaImage effected_;
+    RgbaImage effectScratch_;
+    RgbaImage effectScratchB_;
     const model::Project* project_{nullptr};
     /// Scratch per nesting level, so a nested composite does not overwrite the
     /// buffer the level above it is still drawing from.

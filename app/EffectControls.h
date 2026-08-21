@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "HueBand.h"
 
 class QCheckBox;
+class QListWidget;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
@@ -154,6 +156,24 @@ private:
     /// is not keyframed is not a remap -- see model::Param::TimeRemap.
     QCheckBox* timeRemap_{nullptr};
     QPushButton* freeze_{nullptr};
+
+    /// The effect stack. A fixed pool of parameter rows, relabelled from
+    /// model::parametersOf, so that adding an effect to the model is data
+    /// rather than another widget here.
+    static constexpr int kMaxEffectParams = 4;
+    QListWidget* effectList_{nullptr};
+    QComboBox* effectKind_{nullptr};
+    QPushButton* effectAdd_{nullptr};
+    QPushButton* effectRemove_{nullptr};
+    QPushButton* effectUp_{nullptr};
+    QPushButton* effectDown_{nullptr};
+    QCheckBox* effectEnabled_{nullptr};
+    std::array<QLabel*, kMaxEffectParams> effectParamLabels_{};
+    std::array<QDoubleSpinBox*, kMaxEffectParams> effectParamSpins_{};
+    QWidget* effectGroup_{nullptr};
+    void pushEffects();
+    void showEffects();
+    bool applyEffectStack(const std::vector<model::Effect>& stack);
 
     QComboBox* keyKind_{nullptr};
     QDoubleSpinBox* keyRed_{nullptr};

@@ -1739,6 +1739,32 @@ Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId
                       "lut:" + idText(clipId), [lut](Clip& clip) { clip.lut = lut; });
 }
 
+Result<CommandPtr> makeSetEffects(Project& project, const EditTarget& target, ClipId clipId,
+                                  const std::vector<model::Effect>& effects) {
+    for (const model::Effect& effect : effects) {
+        for (const auto& [param, value] : effect.values) {
+            if (!std::isfinite(value)) {
+                return Error{ErrorCode::InvalidData, "an effect parameter has to be a real number"};
+            }
+            bool belongs = false;
+            for (const model::EffectParamInfo& info : model::parametersOf(effect.kind)) {
+                belongs = belongs || info.param == param;
+            }
+            if (!belongs) {
+                // Not pedantry: a value under a parameter the effect does not
+                // take is one that will be written to the file, read back, and
+                // never used -- a setting somebody made that quietly does
+                // nothing.
+                return Error{ErrorCode::InvalidData, std::string{model::toString(effect.kind)} +
+                                                         " has no " + model::toString(param)};
+            }
+        }
+    }
+    return modifyClip(project, target, clipId, effects.empty() ? "Clear effects" : "Set effects",
+                      "effects:" + idText(clipId),
+                      [effects](Clip& clip) { clip.effects = effects; });
+}
+
 Result<CommandPtr> makeSetKeyer(Project& project, const EditTarget& target, ClipId clipId,
                                 const model::Keyer& keyer) {
     for (const double value : {keyer.red, keyer.green, keyer.blue, keyer.tolerance, keyer.softness,

@@ -1873,6 +1873,85 @@ matte once it exists, and the matte has to be right first.
 
 ---
 
+#### Phase 6a — the effect stack ✅
+
+An ordered list of effects on a clip, and the first two to fill it.
+
+**A list, because order is what a list has and a set of fields does not.**
+Every effect so far has been a field on `Clip` — a grade, curves, a secondary, a
+LUT, a mask, a key — and that works right up to the point where two of them
+commute differently. Blurring and then sharpening is not the same picture as
+sharpening and then blurring, and somebody has to be able to say which they
+meant. §7.4 asks for a *library*; a library cannot be a field each.
+
+**Parameters come from a table, not from code.** An effect kind names the
+parameters it takes, with a range, a step and a default. The renderer reads that
+table and so does the panel, which is what makes "adding an effect is data"
+true rather than aspirational: the panel has a fixed pool of parameter rows it
+relabels, and a new effect needs no new widget. It also means a default cannot
+be one value in the model and another in the control.
+
+**A freshly added effect changes nothing.** Both defaults are the identity — a
+blur of no radius, a sharpen of no amount. Adding an effect and having the
+picture jump makes it impossible to tell what the effect did from what it
+happened to be set to.
+
+**A parameter that belongs to another effect is refused, not ignored.** Stored,
+it would be written to the file, read back, and never used: a setting somebody
+made that quietly does nothing.
+
+**The stack runs on the clip's image, before the key and the grade.** These are
+the only stage that reads a pixel's *neighbours*; everything else in the
+pipeline is per-pixel and runs at sample time. Putting the spatial stage first
+is what keeps the rest a single pass. The consequence is real and worth stating:
+a blur before a key softens the matte. Sometimes that is exactly what is wanted
+and sometimes it is not, and letting the stack be ordered against the grade is a
+later phase.
+
+**The blur is separable, premultiplied, and in linear light.** Separable because
+a radius that costs a thousand samples as a square costs sixty-four as two
+lines — the difference between a slider somebody drags and one they set and wait
+for. Premultiplied because blurring straight colours pulls the colour of
+transparent pixels into visible ones, which is the black halo around anything
+blurred over an alpha edge; there is a test that the soft edge keeps colour
+equal to coverage. Linear because the average of two brightnesses is the
+brightness of their average only in linear, and a blur is nothing but averages.
+The kernel is normalised, so a blur redistributes light rather than changing how
+much there is — an unnormalised one darkens in proportion to the radius, which
+reads as an exposure bug rather than a blur one.
+
+**Sharpening is unsharp masking, and leaves alpha alone.** The detail is
+whatever the blur threw away. Sharpening coverage as well would put a bright rim
+along every edge of a keyed subject, which is the artefact people blame the key
+for.
+
+**On the GPU, the whole frame goes to the CPU compositor.** An effect needs a
+pixel's neighbours, and this compositor queues every draw into one sampling
+pass. That is the same fallback adjustment layers established in Phase 5v, and
+the render cache from 5w is what makes it play back — the two earlier phases
+paying for this one. The fast path is a per-clip pre-pass into a texture,
+exactly the shape the Y'CbCr conversion already uses; it is a performance change
+and can land later without anything above it moving.
+
+The self-test adds a blur through the panel's own buttons and counts bright
+pixels rather than mean brightness — a blur redistributes light, so the mean
+barely moves and a test of it would pass on a blur that did nothing. What a blur
+actually does is turn hard edges into gradients, and 178188 bright pixels became
+145456. Writing it found a real bug: rebuilding the effect list emits
+`currentRowChanged`, which is wired back to the function doing the rebuilding,
+so it re-entered itself having already thrown away the selection it was in the
+middle of restoring — and every parameter edit was silently dropped.
+
+**Not done: keyframing an effect's parameters.** The keyframing engine is keyed
+by `model::Param`, which is a fixed enum of the clip's own fields; reaching a
+parameter inside an ordered list needs a way to name it that survives the list
+being reordered. That is a design question, not an oversight.
+
+**Not done: the rest of the library.** Distort and stylize are more entries in
+the same table now that there is a table to put them in.
+
+---
+
 ---
 
 ## 4. Effort and risk, stated plainly

@@ -305,6 +305,16 @@ enum class PlaceMode {
                                                    const EditTarget& target, model::ClipId clip,
                                                    const model::ToneCurves& curves);
 
+/// The clip's effects, in order.
+///
+/// The whole list at once rather than add, remove and reorder as separate
+/// operations: reordering is a move, a move is a remove and an insert, and
+/// three commands that have to compose correctly are three chances to leave a
+/// stack in a state no sequence of user actions could produce.
+[[nodiscard]] Result<CommandPtr> makeSetEffects(model::Project& project, const EditTarget& target,
+                                                model::ClipId clip,
+                                                const std::vector<model::Effect>& effects);
+
 /// The keyer: what of the clip is transparent.
 [[nodiscard]] Result<CommandPtr> makeSetKeyer(model::Project& project, const EditTarget& target,
                                               model::ClipId clip, const model::Keyer& keyer);

@@ -42,13 +42,21 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
         .ok();
 }
 
-bool GpuRenderGraph::hasAdjustment(const model::Sequence& sequence, const time::RationalTime& at) {
+bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
+                                      const time::RationalTime& at) {
     for (const model::Track& track : sequence.videoTracks()) {
         if (!sequence.isAudible(track)) {
             continue;
         }
         const model::Clip* clip = track.clipAt(at);
-        if (clip != nullptr && clip->enabled && clip->adjustment) {
+        if (clip == nullptr || !clip->enabled) {
+            continue;
+        }
+        // An adjustment layer needs the accumulated frame read back; an effect
+        // needs a pixel's neighbours, which this compositor's single sampling
+        // pass cannot reach. Both are things the CPU graph already does
+        // correctly, and neither is on the path that delivers.
+        if (clip->adjustment || model::anyActive(clip->effects)) {
             return true;
         }
     }
@@ -58,17 +66,18 @@ bool GpuRenderGraph::hasAdjustment(const model::Sequence& sequence, const time::
 Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::RationalTime& at) {
     lastClipCount_ = 0;
 
-    // An adjustment layer changes what has already been composited, and this
-    // compositor queues every draw into one pass -- so there is no point at
-    // which the accumulated frame can be read back and corrected. Rather than
-    // restructure that into ping-pong passes for a case that is rare in a
-    // preview and never on the path that delivers, the whole frame is
-    // composited on the CPU and uploaded.
+    // Two things this compositor cannot do in its one queued pass: an
+    // adjustment layer, which needs the accumulated frame read back and
+    // corrected, and an effect, which needs to read a pixel's neighbours rather
+    // than the one the sampler returned. Rather than restructure into ping-pong
+    // passes and a per-clip pre-pass for cases that are rare in a preview and
+    // never on the path that delivers, the whole frame is composited on the CPU
+    // and uploaded.
     //
     // The result is not merely close to the export: it is the same code. The
     // cost is a slow frame wherever an adjustment layer is, and that is a
     // trade worth stating rather than hiding.
-    if (hasAdjustment(sequence, at) && nestedSource_ != nullptr) {
+    if (needsCpuFallback(sequence, at) && nestedSource_ != nullptr) {
         if (nested_ == nullptr) {
             nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
             nested_->setProject(project_);

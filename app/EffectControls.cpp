@@ -8,8 +8,10 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -279,6 +281,106 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     connect(maskShape_, &QComboBox::currentIndexChanged, this, [this] { pushMask(); });
     connect(maskInverted_, &QCheckBox::toggled, this, [this] { pushMask(); });
 
+    // The effect stack. A list, because order is what a list has: blurring and
+    // then sharpening is not the same picture as sharpening and then blurring.
+    effectList_ = new QListWidget(this);
+    effectList_->setObjectName("effect-list");
+    effectList_->setMaximumHeight(90);
+    effectKind_ = new QComboBox(this);
+    effectKind_->setObjectName("effect-kind");
+    for (const model::EffectKind kind : model::allEffectKinds()) {
+        effectKind_->addItem(QString::fromUtf8(model::toString(kind)), static_cast<int>(kind));
+    }
+    effectAdd_ = new QPushButton("Add", this);
+    effectAdd_->setObjectName("effect-add");
+    effectRemove_ = new QPushButton("Remove", this);
+    effectUp_ = new QPushButton("Up", this);
+    effectDown_ = new QPushButton("Down", this);
+    effectEnabled_ = new QCheckBox("Enabled", this);
+    effectEnabled_->setObjectName("effect-enabled");
+
+    auto* effectBox = new QGroupBox("Effects", this);
+    auto* effectForm = new QFormLayout(effectBox);
+    effectForm->addRow(effectList_);
+    auto* addRowWidget = new QWidget(this);
+    auto* addLayout = new QHBoxLayout(addRowWidget);
+    addLayout->setContentsMargins(0, 0, 0, 0);
+    addLayout->addWidget(effectKind_, 1);
+    addLayout->addWidget(effectAdd_);
+    effectForm->addRow(addRowWidget);
+    auto* orderRow = new QWidget(this);
+    auto* orderLayout = new QHBoxLayout(orderRow);
+    orderLayout->setContentsMargins(0, 0, 0, 0);
+    orderLayout->addWidget(effectUp_);
+    orderLayout->addWidget(effectDown_);
+    orderLayout->addWidget(effectRemove_);
+    effectForm->addRow(orderRow);
+    effectForm->addRow(effectEnabled_);
+    for (int i = 0; i < kMaxEffectParams; ++i) {
+        effectParamLabels_[static_cast<std::size_t>(i)] = new QLabel(this);
+        effectParamSpins_[static_cast<std::size_t>(i)] = makeSpin(0.0, 1.0, 0.1, 3);
+        effectParamSpins_[static_cast<std::size_t>(i)]->setObjectName(
+            QString("effect-param-%1").arg(i));
+        effectForm->addRow(effectParamLabels_[static_cast<std::size_t>(i)],
+                           effectParamSpins_[static_cast<std::size_t>(i)]);
+        connect(effectParamSpins_[static_cast<std::size_t>(i)], &QDoubleSpinBox::valueChanged, this,
+                [this] { pushEffects(); });
+    }
+    effectGroup_ = effectBox;
+
+    connect(effectAdd_, &QPushButton::clicked, this, [this] {
+        const model::Clip* clip = selectedClip();
+        if (clip == nullptr) {
+            return;
+        }
+        std::vector<model::Effect> stack = clip->effects;
+        model::Effect added;
+        added.kind = static_cast<model::EffectKind>(effectKind_->currentData().toInt());
+        // Appended rather than inserted at the selection: an effect goes on top
+        // of what is there, which is what "add" means everywhere else.
+        stack.push_back(added);
+        const auto last = static_cast<int>(stack.size()) - 1;
+        if (applyEffectStack(stack)) {
+            {
+                const QSignalBlocker quiet{effectList_};
+                effectList_->addItem(QString::fromUtf8(model::toString(added.kind)));
+                effectList_->setCurrentRow(last);
+            }
+            showEffects();
+        }
+    });
+    connect(effectRemove_, &QPushButton::clicked, this, [this] {
+        const model::Clip* clip = selectedClip();
+        const int row = effectList_->currentRow();
+        if (clip == nullptr || row < 0 || row >= static_cast<int>(clip->effects.size())) {
+            return;
+        }
+        std::vector<model::Effect> stack = clip->effects;
+        stack.erase(stack.begin() + row);
+        if (applyEffectStack(stack)) {
+            effectList_->setCurrentRow(std::min(row, static_cast<int>(stack.size()) - 1));
+            showEffects();
+        }
+    });
+    const auto move = [this](int delta) {
+        const model::Clip* clip = selectedClip();
+        const int row = effectList_->currentRow();
+        const int to = row + delta;
+        if (clip == nullptr || row < 0 || to < 0 || to >= static_cast<int>(clip->effects.size())) {
+            return;
+        }
+        std::vector<model::Effect> stack = clip->effects;
+        std::swap(stack[static_cast<std::size_t>(row)], stack[static_cast<std::size_t>(to)]);
+        if (applyEffectStack(stack)) {
+            effectList_->setCurrentRow(to);
+            showEffects();
+        }
+    };
+    connect(effectUp_, &QPushButton::clicked, this, [move] { move(-1); });
+    connect(effectDown_, &QPushButton::clicked, this, [move] { move(1); });
+    connect(effectList_, &QListWidget::currentRowChanged, this, [this] { showEffects(); });
+    connect(effectEnabled_, &QCheckBox::toggled, this, [this] { pushEffects(); });
+
     // The keyer: what of this clip is transparent. Its own group rather than a
     // corner of the secondary, because it looks like a qualifier and answers a
     // different question -- one is "which pixels to correct", the other is
@@ -376,6 +478,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addWidget(colour);
     layout->addWidget(secondary);
     layout->addWidget(keyBox);
+    layout->addWidget(effectBox);
     layout->addWidget(audio);
     layout->addStretch(1);
 
@@ -456,6 +559,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     colorGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
     keyGroup_->setEnabled(enabled);
+    effectGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
 }
 
@@ -486,6 +590,8 @@ void EffectControls::applyToWidgets() {
         timeRemap_->setChecked(false);
         keyKind_->setCurrentIndex(keyKind_->findData(static_cast<int>(model::KeyKind::None)));
         keyShowMatte_->setChecked(false);
+        effectList_->clear();
+        showEffects();
         graphicGroup_->setVisible(false);
         maskGroup_->setVisible(false);
         curves_->setCurves(model::ToneCurves{});
@@ -530,6 +636,7 @@ void EffectControls::applyToWidgets() {
     colorGroup_->setVisible(isVideo);
     secondaryGroup_->setVisible(isVideo);
     keyGroup_->setVisible(isVideo);
+    effectGroup_->setVisible(isVideo);
     audioGroup_->setVisible(!isVideo);
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
@@ -583,6 +690,8 @@ void EffectControls::applyToWidgets() {
     lutAmount_->setValue(clip->lut.amount);
     lutAmount_->setEnabled(!path.isEmpty());
     lutClear_->setEnabled(!path.isEmpty());
+
+    showEffects();
 
     const model::Keyer& key = clip->keyer;
     keyKind_->setCurrentIndex(keyKind_->findData(static_cast<int>(key.kind)));
@@ -908,6 +1017,113 @@ model::Secondary EffectControls::secondaryFromWidgets() const {
     out.correction.exposure = keyExposure_->value();
     out.correction.saturation = keySaturation_->value();
     return out;
+}
+
+/// Rebuild the list and the parameter rows from the selected clip.
+///
+/// Driven from `model::parametersOf` rather than from a hand-written set of
+/// controls: the claim that adding an effect is data only holds if the panel
+/// reads the same table the renderer does.
+bool EffectControls::applyEffectStack(const std::vector<model::Effect>& stack) {
+    if (commands_ == nullptr || !clip_.isValid()) {
+        return false;
+    }
+    auto built = edit::makeSetEffects(*project_, {sequenceId_, track_}, clip_, stack);
+    if (!built) {
+        return false;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+    return true;
+}
+
+void EffectControls::showEffects() {
+    const model::Clip* clip = selectedClip();
+    const bool wasUpdating = updating_;
+    updating_ = true;
+
+    const int wanted = effectList_->currentRow();
+    {
+        // Blocked while rebuilding: clearing a list emits currentRowChanged,
+        // which is wired back to this function -- so without this it re-enters
+        // itself halfway through, having already thrown away the selection it
+        // is in the middle of restoring.
+        const QSignalBlocker quiet{effectList_};
+        effectList_->clear();
+        if (clip != nullptr) {
+            for (const model::Effect& effect : clip->effects) {
+                QString label = QString::fromUtf8(model::toString(effect.kind));
+                if (!effect.enabled) {
+                    label += " (off)";
+                }
+                effectList_->addItem(label);
+            }
+            if (wanted >= 0 && wanted < static_cast<int>(clip->effects.size())) {
+                effectList_->setCurrentRow(wanted);
+            }
+        }
+    }
+
+    const int row = effectList_->currentRow();
+    const model::Effect* chosen =
+        clip != nullptr && row >= 0 && row < static_cast<int>(clip->effects.size())
+            ? &clip->effects[static_cast<std::size_t>(row)]
+            : nullptr;
+    effectEnabled_->setChecked(chosen != nullptr && chosen->enabled);
+    effectEnabled_->setEnabled(chosen != nullptr);
+    effectRemove_->setEnabled(chosen != nullptr);
+    effectUp_->setEnabled(chosen != nullptr && row > 0);
+    effectDown_->setEnabled(clip != nullptr && chosen != nullptr &&
+                            row + 1 < static_cast<int>(clip->effects.size()));
+
+    std::size_t shown = 0;
+    if (chosen != nullptr) {
+        for (const model::EffectParamInfo& info : model::parametersOf(chosen->kind)) {
+            if (shown >= static_cast<std::size_t>(kMaxEffectParams)) {
+                break;
+            }
+            QLabel* label = effectParamLabels_[shown];
+            QDoubleSpinBox* spin = effectParamSpins_[shown];
+            QString name = QString::fromUtf8(model::toString(info.param));
+            name[0] = name[0].toUpper();
+            label->setText(name);
+            spin->setRange(info.minimum, info.maximum);
+            spin->setSingleStep(info.step);
+            spin->setValue(chosen->value(info.param));
+            label->setVisible(true);
+            spin->setVisible(true);
+            ++shown;
+        }
+    }
+    for (std::size_t i = shown; i < static_cast<std::size_t>(kMaxEffectParams); ++i) {
+        effectParamLabels_[i]->setVisible(false);
+        effectParamSpins_[i]->setVisible(false);
+    }
+
+    updating_ = wasUpdating;
+}
+
+void EffectControls::pushEffects() {
+    const model::Clip* clip = selectedClip();
+    const int row = effectList_->currentRow();
+    if (updating_ || clip == nullptr || row < 0 || row >= static_cast<int>(clip->effects.size())) {
+        return;
+    }
+    std::vector<model::Effect> stack = clip->effects;
+    model::Effect& chosen = stack[static_cast<std::size_t>(row)];
+    chosen.enabled = effectEnabled_->isChecked();
+
+    std::size_t index = 0;
+    for (const model::EffectParamInfo& info : model::parametersOf(chosen.kind)) {
+        if (index >= static_cast<std::size_t>(kMaxEffectParams)) {
+            break;
+        }
+        chosen.setValue(info.param, effectParamSpins_[index]->value());
+        ++index;
+    }
+    if (applyEffectStack(stack)) {
+        showEffects();
+    }
 }
 
 void EffectControls::pushKeyer() {

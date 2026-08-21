@@ -1867,6 +1867,130 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // The effect stack, added and ordered through the panel's own buttons.
+        //
+        // Measured by counting bright pixels rather than by mean brightness: a
+        // blur redistributes light rather than removing it, so the mean is very
+        // nearly unchanged and a test of it would pass on a blur that did
+        // nothing. What a blur actually does is turn hard edges into gradients,
+        // and that shows up as fewer pixels at full brightness.
+        {
+            const auto brightPixels = [](const QImage& image, int threshold) {
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        if (qGray(image.pixel(x, y)) >= threshold) {
+                            ++count;
+                        }
+                    }
+                }
+                return count;
+            };
+
+            const auto fxSequenceId = window.project().activeSequence();
+            const auto& fxTracks = window.project().findSequence(fxSequenceId)->videoTracks();
+            const auto fxTop = fxTracks.size() > 1 ? fxTracks[1].id() : fxTracks.front().id();
+
+            window.setPosition(zaro::time::RationalTime{5, sequence.frameRate()});
+            QApplication::processEvents();
+
+            // A white rectangle well inside the frame, so it has edges of its
+            // own for a blur to soften.
+            zaro::model::Graphic block;
+            block.kind = zaro::model::GraphicKind::Rectangle;
+            // The fixture's sequence is small, so the rectangle is too: it has
+            // to sit well inside the frame to have edges of its own.
+            block.width = 120.0;
+            block.height = 80.0;
+            block.red = 1.0;
+            block.green = 1.0;
+            block.blue = 1.0;
+            auto placed = zaro::edit::makeAddGraphic(
+                window.project(), {fxSequenceId, fxTop}, block,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                                      zaro::time::RationalTime{40, sequence.frameRate()}});
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            const auto fxClipId =
+                window.project().findSequence(fxSequenceId)->findTrack(fxTop)->clips().front().id;
+            window.monitor()->update();
+            QApplication::processEvents();
+            const int hardEdges = brightPixels(window.monitor()->grabFramebuffer(), 200);
+            if (hardEdges < 100) {
+                std::fprintf(stderr, "  FAIL: the rectangle did not reach the preview\n");
+                return 1;
+            }
+
+            timeline->selectOnlyForTest(fxTop, fxClipId);
+            window.effects()->setSelection(fxTop, fxClipId);
+            QApplication::processEvents();
+
+            auto* kindBox = window.effects()->findChild<QComboBox*>("effect-kind");
+            auto* addButton = window.effects()->findChild<QPushButton*>("effect-add");
+            auto* firstParam = window.effects()->findChild<QDoubleSpinBox*>("effect-param-0");
+            auto* enabledBox = window.effects()->findChild<QCheckBox*>("effect-enabled");
+            if (kindBox == nullptr || addButton == nullptr || firstParam == nullptr ||
+                enabledBox == nullptr) {
+                std::fprintf(stderr, "  FAIL: the effect controls are not in the panel\n");
+                return 1;
+            }
+
+            kindBox->setCurrentIndex(
+                kindBox->findData(static_cast<int>(zaro::model::EffectKind::Blur)));
+            addButton->click();
+            QApplication::processEvents();
+            if (window.project()
+                    .findSequence(fxSequenceId)
+                    ->findTrack(fxTop)
+                    ->find(fxClipId)
+                    ->effects.size() != 1) {
+                std::fprintf(stderr, "  FAIL: adding an effect did not reach the clip\n");
+                return 1;
+            }
+            // Adding one must not change the picture: what it does and what it
+            // is set to have to be tellable apart.
+            window.monitor()->update();
+            QApplication::processEvents();
+            const int justAdded = brightPixels(window.monitor()->grabFramebuffer(), 200);
+            if (std::abs(justAdded - hardEdges) > hardEdges / 20) {
+                std::fprintf(stderr, "  FAIL: adding an effect changed the picture by itself\n");
+                return 1;
+            }
+
+            firstParam->setValue(6.0);  // radius, in output pixels
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            const int blurred = brightPixels(window.monitor()->grabFramebuffer(), 200);
+
+            std::printf("  effect stack: %d bright pixels sharp, %d after a blur\n", hardEdges,
+                        blurred);
+            if (!(blurred < hardEdges * 9 / 10)) {
+                std::fprintf(stderr, "  FAIL: the blur did not reach the picture\n");
+                return 1;
+            }
+
+            // And switching it off brings the edges back, so what was measured
+            // was the effect rather than the clip changing for another reason.
+            enabledBox->setChecked(false);
+            QApplication::processEvents();
+            window.monitor()->update();
+            QApplication::processEvents();
+            if (brightPixels(window.monitor()->grabFramebuffer(), 200) < hardEdges * 9 / 10) {
+                std::fprintf(stderr, "  FAIL: disabling the effect did not restore the edges\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Keying, through the real GPU compositor and the real panel.
         //
         // A green rectangle stands in for a green screen: what is being checked

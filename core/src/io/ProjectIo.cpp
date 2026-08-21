@@ -158,6 +158,56 @@ model::ColorCorrection decodeColor(const json& node) {
     return out;
 }
 
+json encode(const std::vector<model::Effect>& effects) {
+    json out = json::array();
+    for (const model::Effect& effect : effects) {
+        json entry{{"kind", model::toString(effect.kind)}};
+        if (!effect.enabled) {
+            entry["enabled"] = false;
+        }
+        json values = json::object();
+        for (const auto& [param, value] : effect.values) {
+            values[model::toString(param)] = value;
+        }
+        if (!values.empty()) {
+            entry["values"] = std::move(values);
+        }
+        out.push_back(std::move(entry));
+    }
+    return out;
+}
+
+std::vector<model::Effect> decodeEffects(const json& node) {
+    std::vector<model::Effect> out;
+    if (!node.is_array()) {
+        return out;
+    }
+    for (const json& entry : node) {
+        if (!entry.is_object()) {
+            continue;
+        }
+        model::Effect effect;
+        const std::string kind = entry.value("kind", std::string{});
+        if (!model::effectKindFromString(kind.c_str(), effect.kind)) {
+            // An effect this build has never heard of, from a file a later one
+            // wrote. Dropped rather than refused: the rest of the cut is still
+            // openable, and UnknownFields carries the original back out on save.
+            continue;
+        }
+        effect.enabled = entry.value("enabled", true);
+        if (entry.contains("values") && entry.at("values").is_object()) {
+            for (const auto& [name, value] : entry.at("values").items()) {
+                model::EffectParam param{};
+                if (model::effectParamFromString(name.c_str(), param) && value.is_number()) {
+                    effect.values[param] = value.get<double>();
+                }
+            }
+        }
+        out.push_back(std::move(effect));
+    }
+    return out;
+}
+
 json encode(const model::Keyer& keyer) {
     const model::Keyer neutral;
     if (keyer == neutral) {
@@ -522,6 +572,9 @@ json encode(const model::Clip& clip) {
     if (json keyer = encode(clip.keyer); !keyer.empty()) {
         out["keyer"] = std::move(keyer);
     }
+    if (json effects = encode(clip.effects); !effects.empty()) {
+        out["effects"] = std::move(effects);
+    }
     if (json curves = encode(clip.curves); !curves.empty()) {
         out["curves"] = std::move(curves);
     }
@@ -832,6 +885,9 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     if (node.contains("keyer")) {
         clip.keyer = decodeKeyer(node.at("keyer"));
+    }
+    if (node.contains("effects")) {
+        clip.effects = decodeEffects(node.at("effects"));
     }
     if (node.contains("curves")) {
         clip.curves = decodeCurves(node.at("curves"));

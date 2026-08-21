@@ -64,6 +64,7 @@ headless: there is no window yet.
 | 5x | Sync detection: by timecode and by ear | **done** |
 | 5y | Time remapping and freeze frames | **done** |
 | 5z | Chroma and luma keying, with spill suppression | **done** |
+| 6a | The effect stack: blur and sharpen, in order | **done** |
 
 ## Building
 
