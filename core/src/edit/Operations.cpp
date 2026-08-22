@@ -2206,6 +2206,39 @@ Result<CommandPtr> makeAddCrossDissolve(Project& project, const EditTarget& targ
                        });
 }
 
+Result<CommandPtr> makeSetTransitionKind(Project& project, const EditTarget& target,
+                                         model::TransitionId transitionId,
+                                         model::TransitionKind kind,
+                                         model::TransitionDirection direction) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    bool found = false;
+    for (const model::Transition& transition : located->track->transitions()) {
+        found = found || transition.id == transitionId;
+    }
+    if (!found) {
+        return Error{ErrorCode::NotFound, "no such transition on that track"};
+    }
+
+    const TrackId trackId = target.track;
+    return makeCommand(target.sequence, "Change transition",
+                       "transition:" + std::to_string(transitionId.value()),
+                       [transitionId, kind, direction, trackId](Sequence& sequence) {
+                           Track* track = sequence.findTrack(trackId);
+                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+                           auto transitions = track->transitions();
+                           for (model::Transition& transition : transitions) {
+                               if (transition.id == transitionId) {
+                                   transition.kind = kind;
+                                   transition.direction = direction;
+                               }
+                           }
+                           track->setTransitions(std::move(transitions));
+                       });
+}
+
 Result<CommandPtr> makeRemoveTransition(Project& project, const EditTarget& target,
                                         model::TransitionId transitionId) {
     auto located = locate(project, target);

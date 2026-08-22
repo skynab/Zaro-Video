@@ -69,7 +69,8 @@ public:
                               const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
                               const model::Mask* mask = nullptr,
                               const render::KeyerConstants* keyer = nullptr,
-                              const model::Vignette* vignette = nullptr);
+                              const model::Vignette* vignette = nullptr,
+                              const model::Mask* wipe = nullptr);
 
     /// Composite a decoded frame directly, converting Y'CbCr to the working
     /// space in the same shader pass.
@@ -78,16 +79,14 @@ public:
     /// decoder produced them -- about 3 MB rather than 8 MB at 1080p -- and the
     /// colour conversion costs nothing extra, because the fragment shader is
     /// already sampling. See docs/adr/0007.
-    [[nodiscard]] Status drawSource(const media::VideoFrame& source,
-                                    const model::Transform& transform,
-                                    const render::GradeConstants& grade,
-                                    model::BlendMode blend = model::BlendMode::Normal,
-                                    const render::CurveTable* curves = nullptr,
-                                    const render::SecondaryConstants* secondary = nullptr,
-                                    const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
-                                    const model::Mask* mask = nullptr,
-                                    const render::KeyerConstants* keyer = nullptr,
-                                    const model::Vignette* vignette = nullptr);
+    [[nodiscard]] Status drawSource(
+        const media::VideoFrame& source, const model::Transform& transform,
+        const render::GradeConstants& grade, model::BlendMode blend = model::BlendMode::Normal,
+        const render::CurveTable* curves = nullptr,
+        const render::SecondaryConstants* secondary = nullptr,
+        const render::LutTable* lut = nullptr, float lutAmount = 1.0F,
+        const model::Mask* mask = nullptr, const render::KeyerConstants* keyer = nullptr,
+        const model::Vignette* vignette = nullptr, const model::Mask* wipe = nullptr);
 
     /// Where the presented frame's highlights start rolling off.
     ///

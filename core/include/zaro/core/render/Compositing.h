@@ -41,12 +41,18 @@ struct ClipShading {
     const model::Mask* mask{nullptr};
     const KeyerConstants* keyer{nullptr};
     const model::Vignette* vignette{nullptr};
+    /// A second mask, from a wipe. Its coverage multiplies the clip's own,
+    /// because a masked clip in a wipe shows where the mask says *and* where
+    /// the wipe has got to -- replacing one with the other would silently drop
+    /// whichever came second.
+    const model::Mask* wipe{nullptr};
 
     [[nodiscard]] bool keying() const noexcept { return keyer != nullptr && keyer->isActive(); }
     [[nodiscard]] bool masking() const noexcept { return mask != nullptr && mask->isSet(); }
     [[nodiscard]] bool vignetting() const noexcept {
         return vignette != nullptr && vignette->isSet();
     }
+    [[nodiscard]] bool wiping() const noexcept { return wipe != nullptr && wipe->isSet(); }
 };
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination,

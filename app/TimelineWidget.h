@@ -125,6 +125,13 @@ public:
     /// cannot make one cannot reach them.
     void selectOnlyForTest(model::TrackId track, model::ClipId clip);
 
+    /// Change the transition under the playhead to another kind.
+    ///
+    /// Separate from adding one, because that is how it is used: somebody drops
+    /// a dissolve on a cut and then decides it wants to be a wipe.
+    bool setTransitionKindAtPlayhead(model::TransitionKind kind,
+                                     model::TransitionDirection direction);
+
 private:
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;

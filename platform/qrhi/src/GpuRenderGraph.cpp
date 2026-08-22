@@ -12,24 +12,26 @@ namespace zaro::platform::qrhi {
 /// sites below each used to compute the grade for themselves and they drifted
 /// apart, leaving one half of a transition without its tone curves.
 bool GpuRenderGraph::drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
-                                   const model::Transform& transform,
-                                   const time::RationalTime& at) {
+                                   const model::Transform& transform, const time::RationalTime& at,
+                                   const model::Mask* wipe) {
     const render::SecondaryConstants secondary =
         render::secondaryConstantsFor(clip.secondary, transfer_);
     const render::LutTable* lut =
         clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     const render::KeyerConstants keyer = render::keyerConstantsFor(clip.keyer, transfer_);
     return compositor_
-        ->draw(
-            image, transform, clip.blend, render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
-            &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
-            static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr,
-            keyer.isActive() ? &keyer : nullptr, clip.vignette.isSet() ? &clip.vignette : nullptr)
+        ->draw(image, transform, clip.blend,
+               render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
+               &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
+               static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr,
+               keyer.isActive() ? &keyer : nullptr,
+               clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
         .ok();
 }
 
 bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& frame,
-                              const model::Transform& transform, const time::RationalTime& at) {
+                              const model::Transform& transform, const time::RationalTime& at,
+                              const model::Mask* wipe) {
     const render::SecondaryConstants secondary =
         render::secondaryConstantsFor(clip.secondary, transfer_);
     const render::LutTable* lut =
@@ -40,7 +42,7 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
                      clip.blend, &curves_.tableFor(clip.id.value(), clip.curves, transfer_),
                      &secondary, lut, static_cast<float>(clip.lut.amount),
                      clip.mask.isSet() ? &clip.mask : nullptr, keyer.isActive() ? &keyer : nullptr,
-                     clip.vignette.isSet() ? &clip.vignette : nullptr)
+                     clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
         .ok();
 }
 
@@ -55,6 +57,32 @@ render::RenderGraph* GpuRenderGraph::cpuGraph() {
         nested_->setRenderCache(cache_);
     }
     return nested_.get();
+}
+
+bool GpuRenderGraph::drawTransitionSide(const model::Clip& clip, const model::Sequence& sequence,
+                                        const model::Transform& transform,
+                                        const time::RationalTime& at, render::RgbaImage& scratch,
+                                        const model::Mask* wipe) {
+    if (clip.graphic.isSet()) {
+        if (scratch.width() != sequence.width() || scratch.height() != sequence.height()) {
+            scratch = render::RgbaImage{sequence.width(), sequence.height()};
+        }
+        if (clip.graphic.kind == model::GraphicKind::Text) {
+            if (!render::drawText(clip.graphic, text_, scratch)) {
+                // No font engine, or it failed. A missing title is a visible,
+                // diagnosable gap; a failed render is a stalled edit.
+                return false;
+            }
+        } else {
+            render::drawShape(clip.graphic, scratch);
+        }
+        return drawClipImage(clip, scratch, transform, at, wipe);
+    }
+    auto frame = provider_->sourceFrameFor(clip.activeSource(), clip.activeSourceTimeAt(at));
+    if (!frame) {
+        return false;
+    }
+    return drawClip(clip, **frame, transform, at, wipe);
 }
 
 bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
@@ -128,22 +156,23 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             if (outgoing != nullptr && incoming != nullptr) {
                 const double progress = transition->progressAt(at);
 
-                if (outgoing->enabled) {
-                    if (auto frame = provider_->sourceFrameFor(outgoing->activeSource(),
-                                                               outgoing->activeSourceTimeAt(at))) {
-                        if (drawClip(*outgoing, **frame, outgoing->transformAt(at), at)) {
-                            ++lastClipCount_;
-                        }
-                    }
+                if (outgoing->enabled &&
+                    drawTransitionSide(*outgoing, sequence, outgoing->transformAt(at), at,
+                                       generated_, nullptr)) {
+                    ++lastClipCount_;
                 }
                 if (incoming->enabled) {
-                    if (auto frame = provider_->sourceFrameFor(incoming->activeSource(),
-                                                               incoming->activeSourceTimeAt(at))) {
-                        model::Transform fading = incoming->transformAt(at);
-                        fading.opacity *= progress;
-                        if (drawClip(*incoming, **frame, fading, at)) {
-                            ++lastClipCount_;
-                        }
+                    // The same function the CPU path calls, so the two cannot
+                    // come to different answers about where a wipe's edge is.
+                    const render::TransitionShape shape = render::transitionShapeFor(
+                        *transition, progress, sequence.width(), sequence.height());
+                    model::Transform moving = incoming->transformAt(at);
+                    moving.opacity *= shape.opacity;
+                    moving.positionX += shape.offsetX;
+                    moving.positionY += shape.offsetY;
+                    if (drawTransitionSide(*incoming, sequence, moving, at, generatedB_,
+                                           shape.wipe.isSet() ? &shape.wipe : nullptr)) {
+                        ++lastClipCount_;
                     }
                 }
                 continue;

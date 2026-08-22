@@ -466,6 +466,17 @@ enum class PlaceMode {
 
 // --- Transitions ------------------------------------------------------------
 
+/// Change an existing transition's kind and direction.
+///
+/// Separate from adding one, because that is how it is used: somebody drops a
+/// dissolve on a cut and then decides it wants to be a wipe. Making them
+/// re-add it would mean re-choosing the duration and re-finding the cut.
+[[nodiscard]] Result<CommandPtr> makeSetTransitionKind(model::Project& project,
+                                                       const EditTarget& target,
+                                                       model::TransitionId transition,
+                                                       model::TransitionKind kind,
+                                                       model::TransitionDirection direction);
+
 /// Add a cross dissolve across the cut nearest `at`.
 ///
 /// The span straddles the cut, so both clips need material beyond it -- the

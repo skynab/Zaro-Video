@@ -2732,6 +2732,145 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Wipes and slides, through the real timeline and the real compositor.
+        //
+        // Between two generated clips rather than the footage: this fixture is
+        // black except on its flash frames, and a wipe between two black shots
+        // is a measurement of nothing. A white rectangle and a grey one have a
+        // boundary somebody can point at, which is exactly what a wipe is for.
+        {
+            const auto wipeSequenceId = window.project().activeSequence();
+            const auto& wipeTracks = window.project().findSequence(wipeSequenceId)->videoTracks();
+            const auto wipeTrackId =
+                wipeTracks.size() > 1 ? wipeTracks[1].id() : wipeTracks.front().id();
+            const auto wipeRate = window.project().findSequence(wipeSequenceId)->frameRate();
+
+            zaro::model::Graphic panel;
+            panel.kind = zaro::model::GraphicKind::Rectangle;
+            panel.width = 4000.0;
+            panel.height = 4000.0;
+            panel.red = 1.0;
+            panel.green = 1.0;
+            panel.blue = 1.0;
+            auto added = zaro::edit::makeAddGraphic(
+                window.project(), {wipeSequenceId, wipeTrackId}, panel,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, wipeRate},
+                                      zaro::time::RationalTime{80, wipeRate}});
+            if (!added) {
+                std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*added));
+
+            const auto cutAt = zaro::time::RationalTime{40, wipeRate};
+            auto razored =
+                zaro::edit::makeRazor(window.project(), {wipeSequenceId, wipeTrackId}, cutAt);
+            if (!razored) {
+                std::fprintf(stderr, "  FAIL: %s\n", razored.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*razored));
+
+            // The second piece pulled well down, so the two shots differ.
+            // The piece that starts at the cut, not the last clip on the
+            // track -- the fixture's own clip is still there beyond the panel.
+            const zaro::model::Clip* tail = window.project()
+                                                .findSequence(wipeSequenceId)
+                                                ->findTrack(wipeTrackId)
+                                                ->clipAt(cutAt);
+            if (tail == nullptr) {
+                std::fprintf(stderr, "  FAIL: the razor left nothing at the cut\n");
+                return 1;
+            }
+            const auto tailId = tail->id;
+            zaro::model::ColorCorrection dark;
+            dark.exposure = -4.0;
+            auto graded = zaro::edit::makeSetColorCorrection(
+                window.project(), {wipeSequenceId, wipeTrackId}, tailId, dark);
+            if (!graded) {
+                std::fprintf(stderr, "  FAIL: %s\n", graded.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*graded));
+
+            auto dissolve =
+                zaro::edit::makeAddCrossDissolve(window.project(), {wipeSequenceId, wipeTrackId},
+                                                 cutAt, zaro::time::RationalTime{20, wipeRate});
+            if (!dissolve) {
+                std::fprintf(stderr, "  FAIL: %s\n", dissolve.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*dissolve));
+
+            const auto span = window.project()
+                                  .findSequence(wipeSequenceId)
+                                  ->findTrack(wipeTrackId)
+                                  ->transitions()
+                                  .front()
+                                  .range;
+            const auto middle =
+                span.start() +
+                zaro::time::RationalTime{span.duration().frames() / 2, span.start().rate()};
+
+            timeline->selectOnlyForTest(wipeTrackId, window.project()
+                                                         .findSequence(wipeSequenceId)
+                                                         ->findTrack(wipeTrackId)
+                                                         ->clips()
+                                                         .front()
+                                                         .id);
+            window.setPosition(middle);
+            window.renderCache().clear();
+            const QImage blended = settledGrab(window.monitor());
+            const double dissolveLeft =
+                meanGray(blended.copy(0, 0, blended.width() / 2, blended.height()));
+            const double dissolveRight = meanGray(
+                blended.copy(blended.width() / 2, 0, blended.width() / 2, blended.height()));
+
+            if (!timeline->setTransitionKindAtPlayhead(zaro::model::TransitionKind::Wipe,
+                                                       zaro::model::TransitionDirection::Right)) {
+                std::fprintf(stderr, "  FAIL: the transition kind could not be changed\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            const QImage wiped = settledGrab(window.monitor());
+            const double wipeLeft = meanGray(wiped.copy(0, 0, wiped.width() / 2, wiped.height()));
+            const double wipeRight =
+                meanGray(wiped.copy(wiped.width() / 2, 0, wiped.width() / 2, wiped.height()));
+
+            std::printf("  wipe: dissolve halves %.1f/%.1f, wipe halves %.1f/%.1f\n", dissolveLeft,
+                        dissolveRight, wipeLeft, wipeRight);
+            // A dissolve blends both halves the same way; a wipe puts one shot
+            // on each side of a line.
+            if (std::fabs(dissolveLeft - dissolveRight) > 10.0) {
+                std::fprintf(stderr, "  FAIL: a dissolve did not blend evenly across the frame\n");
+                return 1;
+            }
+            if (!(wipeRight > wipeLeft + 30.0)) {
+                std::fprintf(stderr, "  FAIL: the wipe did not put the two shots either side\n");
+                return 1;
+            }
+
+            if (!timeline->setTransitionKindAtPlayhead(zaro::model::TransitionKind::Slide,
+                                                       zaro::model::TransitionDirection::Right)) {
+                std::fprintf(stderr, "  FAIL: the transition could not be made a slide\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            static_cast<void>(settledGrab(window.monitor()));
+            if (!window.monitor()->lastError().isEmpty()) {
+                std::fprintf(stderr, "  FAIL: rendering a slide reported %s\n",
+                             window.monitor()->lastError().toUtf8().constData());
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Shot matching, through the real window.
         //
         // This fixture's lit frames are flat white, and three anchors cannot be

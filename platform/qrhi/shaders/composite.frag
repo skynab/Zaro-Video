@@ -56,6 +56,11 @@ layout(std140, binding = 0) uniform Block {
     // The vignette, in output pixels from the centre of the frame. Must agree
     // with render::vignetteGain.
     vec4 vignette;    // x: amount, y: midpoint, z: feather, w: roundness
+    // A second mask, from a wipe. Its coverage multiplies the first, because a
+    // masked clip in a wipe shows where the mask says *and* where the wipe has
+    // got to.
+    vec4 wipeBox;     // xy: half size, zw: centre
+    vec4 wipeEdge;    // x: corner radius, y: feather, z: shape, w: inverted
 } ubuf;
 
 
@@ -262,19 +267,19 @@ float vignetteGain(vec2 offset)
 
 // Must agree with render::maskCoverage. The same signed distances the shape
 // rasteriser uses, so a mask and a shape of the same size cover the same pixels.
-float maskCoverage(vec2 offset)
+float shapeCoverage(vec2 offset, vec4 box, vec4 edge)
 {
-    if (ubuf.maskEdge.z < 0.5) {
+    if (edge.z < 0.5) {
         return 1.0;
     }
-    vec2 half_ = ubuf.maskBox.xy;
+    vec2 half_ = box.xy;
     if (half_.x <= 0.0 || half_.y <= 0.0) {
-        return ubuf.maskEdge.w > 0.5 ? 1.0 : 0.0;
+        return edge.w > 0.5 ? 1.0 : 0.0;
     }
-    vec2 d = offset - ubuf.maskBox.zw;
+    vec2 d = offset - box.zw;
 
     float distance;
-    if (ubuf.maskEdge.z > 1.5) {
+    if (edge.z > 1.5) {
         vec2 n = d / half_;
         float value = length(n);
         if (value == 0.0) {
@@ -284,14 +289,22 @@ float maskCoverage(vec2 offset)
             distance = (value - 1.0) / gradient;
         }
     } else {
-        float r = clamp(ubuf.maskEdge.x, 0.0, min(half_.x, half_.y));
+        float r = clamp(edge.x, 0.0, min(half_.x, half_.y));
         vec2 q = abs(d) - (half_ - vec2(r));
         distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     }
 
-    float ramp = max(1.0, ubuf.maskEdge.y);
+    float ramp = max(1.0, edge.y);
     float coverage = clamp(0.5 - (distance / ramp), 0.0, 1.0);
-    return ubuf.maskEdge.w > 0.5 ? 1.0 - coverage : coverage;
+    return edge.w > 0.5 ? 1.0 - coverage : coverage;
+}
+
+// The clip's own mask and a wipe's, multiplied: a masked clip in a wipe shows
+// where the mask says *and* where the wipe has got to.
+float maskCoverage(vec2 offset)
+{
+    return shapeCoverage(offset, ubuf.maskBox, ubuf.maskEdge) *
+           shapeCoverage(offset, ubuf.wipeBox, ubuf.wipeEdge);
 }
 
 // Must agree with render::rolloff. Exactly the identity at or below the knee,

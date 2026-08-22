@@ -6,6 +6,7 @@
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/TextRasterizer.h"
+#include "zaro/core/render/TransitionShape.h"
 
 namespace zaro::render {
 
@@ -17,7 +18,8 @@ namespace zaro::render {
 /// phases without its colour correction, because a patch that was meant to add
 /// it silently did not match that copy of the code.
 void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
-                           const model::Transform& transform, const time::RationalTime& at) {
+                           const model::Transform& transform, const time::RationalTime& at,
+                           const model::Mask* wipe) {
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
@@ -39,7 +41,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     // which changes whether they are drawn at all.
     const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive() ||
                         lut != nullptr || clip.mask.isSet() || keyer.isActive() ||
-                        clip.vignette.isSet();
+                        clip.vignette.isSet() || (wipe != nullptr && wipe->isSet());
     ClipShading shading;
     shading.grade = active ? &grade : nullptr;
     shading.curves = active ? &table : nullptr;
@@ -49,6 +51,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     shading.mask = clip.mask.isSet() ? &clip.mask : nullptr;
     shading.keyer = keyer.isActive() ? &keyer : nullptr;
     shading.vignette = clip.vignette.isSet() ? &clip.vignette : nullptr;
+    shading.wipe = wipe;
     drawTransformed(*source, out, transform, clip.blend, shading);
 }
 
@@ -106,6 +109,36 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
             pixel.b = b * pixel.a;
         }
     }
+}
+
+const RgbaImage* RenderGraph::clipImage(const model::Clip& clip, const time::RationalTime& at,
+                                        RgbaImage& scratch, std::int32_t width,
+                                        std::int32_t height) {
+    if (clip.graphic.isSet()) {
+        // Generated rather than read, at the sequence's size, so the transform
+        // that follows means the same thing it does for a clip whose media
+        // happens to be that size.
+        if (scratch.width() != width || scratch.height() != height) {
+            scratch = RgbaImage{width, height};
+        }
+        if (clip.graphic.kind == model::GraphicKind::Text) {
+            if (!drawText(clip.graphic, text_, scratch)) {
+                ++skippedText_;
+                return nullptr;
+            }
+        } else {
+            drawShape(clip.graphic, scratch);
+        }
+        return &scratch;
+    }
+    auto image = source_->imageFor(clip.activeSource(), clip.activeSourceTimeAt(at));
+    if (!image) {
+        // One unreadable clip must not take the whole frame with it. A gap
+        // where a clip should be is a visible, diagnosable problem; a failed
+        // render is a stalled edit.
+        return nullptr;
+    }
+    return *image;
 }
 
 bool RenderGraph::compositeNested(const model::Clip& clip, RgbaImage& out,
@@ -212,21 +245,28 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 // either side of the cut. sourceTimeAt extrapolates linearly,
                 // which is exactly the mapping wanted here.
                 if (outgoing->enabled) {
-                    if (auto image = source_->imageFor(outgoing->activeSource(),
-                                                       outgoing->activeSourceTimeAt(at))) {
-                        drawClip(*outgoing, **image, out, outgoing->transformAt(at), at);
+                    if (const RgbaImage* image =
+                            clipImage(*outgoing, at, generated_, out.width(), out.height())) {
+                        drawClip(*outgoing, *image, out, outgoing->transformAt(at), at);
                         ++lastClipCount_;
                     }
                 }
                 if (incoming->enabled) {
-                    if (auto image = source_->imageFor(incoming->activeSource(),
-                                                       incoming->activeSourceTimeAt(at))) {
+                    if (const RgbaImage* image =
+                            clipImage(*incoming, at, generatedB_, out.width(), out.height())) {
                         // Drawn over the outgoing clip at the dissolve's
                         // progress: with premultiplied `over` and an opaque
                         // source that gives out*(1-p) + in*p.
-                        model::Transform fading = incoming->transformAt(at);
-                        fading.opacity *= progress;
-                        drawClip(*incoming, **image, out, fading, at);
+                        // One function decides what a transition looks like
+                        // part way through, and both render paths call it.
+                        const TransitionShape shape =
+                            transitionShapeFor(*transition, progress, out.width(), out.height());
+                        model::Transform moving = incoming->transformAt(at);
+                        moving.opacity *= shape.opacity;
+                        moving.positionX += shape.offsetX;
+                        moving.positionY += shape.offsetY;
+                        drawClip(*incoming, *image, out, moving, at,
+                                 shape.wipe.isSet() ? &shape.wipe : nullptr);
                         ++lastClipCount_;
                     }
                 }

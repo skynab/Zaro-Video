@@ -130,6 +130,10 @@ void drawOver(const RgbaImage& source, RgbaImage& destination, double opacity, B
                 coverage *=
                     maskCoverage(*shading.mask, destination.width(), destination.height(), x, y);
             }
+            if (shading.wiping()) {
+                coverage *=
+                    maskCoverage(*shading.wipe, destination.width(), destination.height(), x, y);
+            }
             out[x] = blendPixel(coverage == 1.0F ? shadedPixel : scaled(shadedPixel, coverage),
                                 out[x], blend);
         }
@@ -207,6 +211,10 @@ void drawTransformed(const RgbaImage& source, RgbaImage& destination, const Tran
             if (shading.masking()) {
                 coverage *=
                     maskCoverage(*shading.mask, destination.width(), destination.height(), x, y);
+            }
+            if (shading.wiping()) {
+                coverage *=
+                    maskCoverage(*shading.wipe, destination.width(), destination.height(), x, y);
             }
             if (coverage <= 0.0F) {
                 continue;

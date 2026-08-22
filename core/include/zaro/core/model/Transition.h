@@ -9,10 +9,31 @@ namespace zaro::model {
 
 enum class TransitionKind : std::uint8_t {
     CrossDissolve,
+    /// The incoming shot is revealed behind a moving edge. Both shots stay
+    /// where they are; what moves is the boundary.
+    Wipe,
+    /// The incoming shot travels in from off screen and pushes nothing: the
+    /// outgoing one stays put underneath.
+    Slide,
+};
+
+/// Which way a wipe's edge, or a slide's picture, travels.
+///
+/// The same word for both on purpose: a wipe to the right uncovers from the
+/// left, and a slide to the right enters from the left, so a person who has
+/// chosen a direction for one already knows what it does for the other.
+enum class TransitionDirection : std::uint8_t {
+    Right,
+    Left,
+    Down,
+    Up,
 };
 
 [[nodiscard]] const char* toString(TransitionKind kind) noexcept;
 [[nodiscard]] TransitionKind transitionKindFromString(const char* name) noexcept;
+[[nodiscard]] const char* toString(TransitionDirection direction) noexcept;
+[[nodiscard]] bool transitionDirectionFromString(const char* name,
+                                                 TransitionDirection& out) noexcept;
 
 /// A blend across a cut.
 ///
@@ -34,6 +55,8 @@ struct Transition {
     /// On the timeline, straddling the cut between the two clips.
     time::TimeRange range;
     TransitionKind kind{TransitionKind::CrossDissolve};
+    /// Ignored by a cross dissolve, which has no direction to travel in.
+    TransitionDirection direction{TransitionDirection::Right};
 
     /// How far through, from 0 at the start to 1 at the end.
     [[nodiscard]] double progressAt(const time::RationalTime& t) const;

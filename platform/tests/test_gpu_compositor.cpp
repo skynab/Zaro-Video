@@ -18,6 +18,7 @@
 #include "zaro/core/render/Compositing.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/ToneMap.h"
+#include "zaro/core/render/TransitionShape.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 
@@ -1782,5 +1783,51 @@ TEST_CASE("The GPU agrees with the CPU on the vignette", "[gpu][golden][vignette
                            << difference.worstY << ", mean " << difference.mean);
         CHECK(difference.worst < 0.01F);
         CHECK(difference.mean < 0.002F);
+    }
+}
+
+TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") {
+    // A wipe is a second mask multiplied into the first, which is a change to
+    // the one function both paths use for coverage. Getting it wrong on one
+    // side is a transition that plays differently in the export than in the
+    // preview -- and a wipe is the transition where that is most visible,
+    // because the boundary is a hard edge somebody can point at.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+
+    model::Transition transition;
+    transition.kind = model::TransitionKind::Wipe;
+
+    RgbaImage source{64, 36};
+    source.fill(Rgba{0.6F, 0.3F, 0.15F, 1.0F});
+
+    for (const model::TransitionDirection direction :
+         {model::TransitionDirection::Right, model::TransitionDirection::Left,
+          model::TransitionDirection::Down, model::TransitionDirection::Up}) {
+        transition.direction = direction;
+        for (const double progress : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+            const render::TransitionShape shape =
+                render::transitionShapeFor(transition, progress, 64, 36);
+
+            RgbaImage cpuOut{64, 36};
+            render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                    {.wipe = shape.wipe.isSet() ? &shape.wipe : nullptr});
+
+            REQUIRE(compositor->beginFrame(64, 36).ok());
+            REQUIRE(compositor
+                        ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
+                               nullptr, nullptr, nullptr, 1.0F, nullptr, nullptr, nullptr,
+                               shape.wipe.isSet() ? &shape.wipe : nullptr)
+                        .ok());
+            RgbaImage gpuOut;
+            REQUIRE(compositor->endFrame(gpuOut).ok());
+
+            const Difference difference = compare(cpuOut, gpuOut, 1);
+            INFO(model::toString(direction) << " at " << progress << ": worst " << difference.worst
+                                            << ", mean " << difference.mean);
+            CHECK(difference.worst < 0.01F);
+        }
     }
 }

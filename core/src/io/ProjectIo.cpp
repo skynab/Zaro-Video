@@ -707,11 +707,17 @@ json encode(const model::Clip& clip) {
 }
 
 json encode(const model::Transition& transition) {
-    return json{{"id", transition.id.value()},
-                {"from", transition.from.value()},
-                {"to", transition.to.value()},
-                {"kind", model::toString(transition.kind)},
-                {"range", encode(transition.range)}};
+    json out{{"id", transition.id.value()},
+             {"from", transition.from.value()},
+             {"to", transition.to.value()},
+             {"kind", model::toString(transition.kind)},
+             {"range", encode(transition.range)}};
+    if (transition.kind != model::TransitionKind::CrossDissolve) {
+        // A dissolve has no direction to travel in, so writing one would be a
+        // value that means nothing and reads as though it might.
+        out["direction"] = model::toString(transition.direction);
+    }
+    return out;
 }
 
 Result<model::Transition> decodeTransition(const json& node) {
@@ -725,6 +731,13 @@ Result<model::Transition> decodeTransition(const json& node) {
     if (node.contains("kind")) {
         transition.kind =
             model::transitionKindFromString(node.at("kind").get<std::string>().c_str());
+    }
+    if (node.contains("direction")) {
+        model::TransitionDirection direction{};
+        if (model::transitionDirectionFromString(node.at("direction").get<std::string>().c_str(),
+                                                 direction)) {
+            transition.direction = direction;
+        }
     }
     auto range = decodeRange(node.at("range"), "transition range");
     if (!range) {

@@ -75,7 +75,22 @@ private:
     /// spline evaluations, and a grade that is not being edited changes on no
     /// frames at all.
     void drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
-                  const model::Transform& transform, const time::RationalTime& at);
+                  const model::Transform& transform, const time::RationalTime& at,
+                  const model::Mask* wipe = nullptr);
+    /// The picture for one clip at one instant, whether it is read or made.
+    ///
+    /// Null when there is nothing to draw. Generated clips go into `scratch`,
+    /// which the caller owns: a transition draws two clips, and one shared
+    /// buffer would have the second overwrite the first before it was used.
+    ///
+    /// Both the ordinary path and the transition path go through this. Before
+    /// they did, a transition read `source_->imageFor` directly and a dissolve
+    /// between two title cards drew nothing at all -- silently, because a clip
+    /// whose media cannot be read is a gap rather than an error.
+    [[nodiscard]] const RgbaImage* clipImage(const model::Clip& clip, const time::RationalTime& at,
+                                             RgbaImage& scratch, std::int32_t width,
+                                             std::int32_t height);
+
     /// Composite a nested sequence and draw it. False when it cannot be
     /// resolved, which the caller treats as a clip that drew nothing.
     [[nodiscard]] bool compositeNested(const model::Clip& clip, RgbaImage& out,
@@ -86,6 +101,8 @@ private:
     /// Scratch for generated clips, kept between frames so a shape layer does
     /// not allocate a frame-sized buffer on every frame.
     RgbaImage generated_;
+    /// A second buffer, so both halves of a transition can be generated.
+    RgbaImage generatedB_;
     /// The same, for the effect stack: a blur needs the clip's image and two
     /// buffers of its size, and allocating three of those per frame would cost
     /// more than the filter.

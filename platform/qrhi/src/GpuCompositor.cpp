@@ -25,7 +25,7 @@ constexpr std::array<float, 12> kQuad{
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade,
 // five for the secondary, one for the look, two for the mask, four for the key.
 constexpr int kUniformBytes =
-    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16;
+    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16 + 32;
 constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
@@ -214,6 +214,26 @@ void writeVignette(std::array<float, kUniformFloats>& uniformData,
     uniformData[95] = set ? static_cast<float>(vignette->roundness) : 1.0F;
 }
 
+/// A wipe's mask, in the slots beside the clip's own.
+void writeWipe(std::array<float, kUniformFloats>& uniformData, const model::Mask* wipe) {
+    if (wipe == nullptr || !wipe->isSet()) {
+        // The shape flag itself, which lives in the second vector. The block is
+        // zero-initialised on every draw so this is already 0, but writing the
+        // slot that is actually read beats writing one that happens to be
+        // beside it.
+        uniformData[102] = 0.0F;
+        return;
+    }
+    uniformData[96] = static_cast<float>(wipe->width * 0.5);
+    uniformData[97] = static_cast<float>(wipe->height * 0.5);
+    uniformData[98] = static_cast<float>(wipe->centreX);
+    uniformData[99] = static_cast<float>(wipe->centreY);
+    uniformData[100] = static_cast<float>(wipe->cornerRadius);
+    uniformData[101] = static_cast<float>(wipe->feather);
+    uniformData[102] = wipe->shape == model::MaskShape::Ellipse ? 2.0F : 1.0F;
+    uniformData[103] = wipe->inverted ? 1.0F : 0.0F;
+}
+
 void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask* mask,
                QSize frame) {
     // The frame size travels with every draw: the vertex shader needs it to
@@ -222,7 +242,10 @@ void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask
     uniformData[18] = static_cast<float>(frame.width());
     uniformData[19] = static_cast<float>(frame.height());
     if (mask == nullptr || !mask->isSet()) {
-        uniformData[54] = 0.0F;  // no shape
+        // Slot 58 is the shape flag; 54 is the centre. Both are zero in a
+        // freshly initialised block, which is why writing the wrong one was
+        // harmless -- but only by accident.
+        uniformData[58] = 0.0F;
         return;
     }
     uniformData[52] = static_cast<float>(mask->width * 0.5);
@@ -619,7 +642,8 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            const render::CurveTable* curves,
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
                            float lutAmount, const model::Mask* mask,
-                           const render::KeyerConstants* keyer, const model::Vignette* vignette) {
+                           const render::KeyerConstants* keyer, const model::Vignette* vignette,
+                           const model::Mask* wipe) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -723,6 +747,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeVignette(uniformData, vignette);
+    writeWipe(uniformData, wipe);
     writeKeyer(uniformData, keyer);
     writeDisplay(uniformData, 1.0F);
     batch->updateDynamicBuffer(uniforms.get(), 0, kUniformBytes, uniformData.data());
@@ -915,7 +940,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::SecondaryConstants* secondary,
                                  const render::LutTable* lut, float lutAmount,
                                  const model::Mask* mask, const render::KeyerConstants* keyer,
-                                 const model::Vignette* vignette) {
+                                 const model::Vignette* vignette, const model::Mask* wipe) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1190,6 +1215,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeVignette(uniformData, vignette);
+    writeWipe(uniformData, wipe);
     writeKeyer(uniformData, keyer);
     writeDisplay(uniformData, 1.0F);
 
@@ -1323,6 +1349,7 @@ Status GpuCompositor::presentInto(::QRhiCommandBuffer* commandBuffer, ::QRhiRend
     writeMask(uniformData, nullptr, state.size);
     // The frame being presented already has every clip's vignette in it.
     writeVignette(uniformData, nullptr);
+    writeWipe(uniformData, nullptr);
     // Nor keying: the frame being presented has already had every clip's key
     // applied to it, and a second one would cut holes in the composite.
     writeKeyer(uniformData, nullptr);

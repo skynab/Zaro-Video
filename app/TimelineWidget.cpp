@@ -976,6 +976,32 @@ void TimelineWidget::addDissolveAtPlayhead() {
     update();
 }
 
+bool TimelineWidget::setTransitionKindAtPlayhead(model::TransitionKind kind,
+                                                 model::TransitionDirection direction) {
+    if (project_ == nullptr || commands_ == nullptr || !selectedTrack_.isValid()) {
+        return false;
+    }
+    const model::Sequence* seq = sequence();
+    const model::Track* track = seq != nullptr ? seq->findTrack(selectedTrack_) : nullptr;
+    if (track == nullptr) {
+        return false;
+    }
+    const model::Transition* under = track->transitionAt(playhead_);
+    if (under == nullptr) {
+        return false;
+    }
+    auto built = edit::makeSetTransitionKind(*project_, {sequenceId_, selectedTrack_}, under->id,
+                                             kind, direction);
+    if (!built) {
+        return false;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+    return true;
+}
+
 void TimelineWidget::selectOnlyForTest(model::TrackId track, model::ClipId clip) {
     selection_.clear();
     selection_.push_back(edit::ClipRef{track, clip});

@@ -8,6 +8,7 @@
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/TextRasterizer.h"
+#include "zaro/core/render/TransitionShape.h"
 #include "zaro/platform/qrhi/GpuCompositor.h"
 
 namespace zaro::platform::qrhi {
@@ -86,12 +87,25 @@ private:
                                                const time::RationalTime& at);
 
     bool drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
-                       const model::Transform& transform, const time::RationalTime& at);
+                       const model::Transform& transform, const time::RationalTime& at,
+                       const model::Mask* wipe = nullptr);
 
     bool drawClip(const model::Clip& clip, const media::VideoFrame& frame,
-                  const model::Transform& transform, const time::RationalTime& at);
+                  const model::Transform& transform, const time::RationalTime& at,
+                  const model::Mask* wipe = nullptr);
 
     render::RgbaImage generated_;
+    /// A second buffer, so both halves of a transition can be generated.
+    render::RgbaImage generatedB_;
+
+    /// Draw one side of a transition, whether its picture is read or made.
+    ///
+    /// The transition branch used to reach straight for the decoder, so a
+    /// dissolve between two title cards drew nothing -- silently, because a
+    /// clip whose media cannot be read is treated as a gap.
+    bool drawTransitionSide(const model::Clip& clip, const model::Sequence& sequence,
+                            const model::Transform& transform, const time::RationalTime& at,
+                            render::RgbaImage& scratch, const model::Mask* wipe);
     const model::Project* project_{nullptr};
     render::FrameSource* nestedSource_{nullptr};
     std::unique_ptr<render::RenderGraph> nested_;

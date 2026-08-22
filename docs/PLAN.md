@@ -2719,6 +2719,53 @@ Not done, and worth being plain about which is small and which is not:
 
 ---
 
+### Phase 6o — wipes and slides §7.4 ✅
+
+Two more transition kinds, and a bug they uncovered.
+
+**Neither needed a new drawing primitive.** A slide is a transform and a wipe is
+a mask, both of which the compositor already applies per clip — so the whole
+feature is one function, `transitionShapeFor`, that says what the incoming clip
+looks like part way through, and both render paths call it. The alternative,
+each path working out where a wipe's edge is, is two answers to one question,
+and this project has already paid for that once.
+
+**A wipe's mask multiplies the clip's own rather than replacing it.** A masked
+clip in a wipe should show where its mask says *and* where the wipe has got to;
+replacing one with the other would silently drop whichever came second. That
+made `maskCoverage` in the shader take its box and edge as arguments instead of
+reading globals — a change that also fixed a latent trap next door, where "no
+shape" was being written to the slot beside the shape flag and worked only
+because the uniform block is zeroed on every draw.
+
+**Direction is one word for both kinds.** A wipe to the right uncovers from the
+left and a slide to the right enters from the left, so somebody who has chosen a
+direction for one already knows what it does for the other.
+
+**The bug: transitions never worked on generated clips.** The transition branch
+reached straight for the decoder, so a dissolve between two title cards drew
+nothing — and drew nothing *silently*, because a clip whose media cannot be read
+is treated as a gap rather than an error. That is exactly the failure mode the
+gap-not-error rule is supposed to buy tolerance for, and here it bought silence
+instead. Both paths now resolve a clip's picture through one function that knows
+about generated clips, with a second scratch buffer so the two halves of a
+transition do not overwrite each other. It was found by a self-test that could
+not otherwise be written: this fixture is black except on its flash frames, and
+a wipe between two black shots measures nothing.
+
+The end-to-end test is the discriminating one: at the midpoint a dissolve blends
+both halves of the frame the same way (63.3 and 63.3) while a wipe puts one shot
+on each side of the line (7.6 and 119.6). Make the wipe fall back to opacity and
+it reports 63.3 twice and fails. The golden-frame test covers all four
+directions at five points each.
+
+**Not done: nested sequences in transitions.** They have the same shape of
+problem the generated clips had, and the same fix would work; the composite that
+draws a nest does not yet take a modified transform, which is what a slide would
+need from it.
+
+---
+
 ## 4. Effort and risk, stated plainly
 
 Premiere Pro is roughly three decades of work by a large team. Feature parity is not a
