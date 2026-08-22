@@ -7,6 +7,7 @@
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/render/PathRaster.h"
+#include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/RenderGraph.h"
 
 #include "ModelFixtures.h"
@@ -208,4 +209,56 @@ TEST_CASE("A path mask reaches the picture and survives a round trip", "[render]
                   .mask.path.points[0]
                   .outY == Approx(-14.0));
     }
+}
+
+TEST_CASE("A shape converts to the path that draws it", "[render][path]") {
+    // How a path gets made: start from the shape you have and bend it.
+    model::Mask rectangle;
+    rectangle.shape = model::MaskShape::Rectangle;
+    rectangle.width = 20.0;
+    rectangle.height = 20.0;
+
+    const model::MaskPath asPath = render::pathForShape(rectangle);
+    REQUIRE(asPath.points.size() == 4);
+
+    std::vector<float> fromShape;
+    std::vector<float> fromPath;
+    render::rasteriseMaskPath(asPath, 0.0, false, 40, 40, fromPath);
+    // The same coverage the analytic mask gives, so converting changes nothing
+    // anybody can see -- which is what makes it safe to offer as one click.
+    for (std::int32_t y = 0; y < 40; ++y) {
+        for (std::int32_t x = 0; x < 40; ++x) {
+            const float analytic =
+                render::maskCoverage(rectangle, 40, 40, x, y);
+            INFO("at " << x << "," << y);
+            REQUIRE(std::fabs(at(fromPath, 40, x, y) - analytic) < 0.02F);
+        }
+    }
+    static_cast<void>(fromShape);
+}
+
+TEST_CASE("An ellipse converts to four cubics that fit it", "[render][path]") {
+    model::Mask ellipse;
+    ellipse.shape = model::MaskShape::Ellipse;
+    ellipse.width = 24.0;
+    ellipse.height = 24.0;
+
+    const model::MaskPath asPath = render::pathForShape(ellipse);
+    REQUIRE(asPath.points.size() == 4);
+
+    std::vector<float> coverage;
+    render::rasteriseMaskPath(asPath, 0.0, false, 40, 40, coverage);
+    // Compared against the analytic ellipse everywhere but the edge, where the
+    // two antialias slightly differently.
+    int disagreements = 0;
+    for (std::int32_t y = 0; y < 40; ++y) {
+        for (std::int32_t x = 0; x < 40; ++x) {
+            const float analytic = render::maskCoverage(ellipse, 40, 40, x, y);
+            if (std::fabs(at(coverage, 40, x, y) - analytic) > 0.25F) {
+                ++disagreements;
+            }
+        }
+    }
+    INFO(disagreements << " pixels disagree");
+    CHECK(disagreements == 0);
 }

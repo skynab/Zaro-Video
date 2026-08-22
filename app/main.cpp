@@ -72,6 +72,7 @@
 #include "CurveEditor.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
+#include "MaskOverlay.h"
 #include "MixerPanel.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
@@ -96,6 +97,20 @@ public:
 
         monitor_ = new app::ProgramMonitor(this);
         monitor_->setMinimumSize(480, 270);
+
+        // The mask handles live on a transparent widget over the picture, so
+        // the renderer never has to know about them and the widget that draws
+        // them is the one that receives the clicks.
+        maskOverlay_ = new app::MaskOverlay(monitor_, monitor_);
+        monitor_->installEventFilter(this);
+        connect(maskOverlay_, &app::MaskOverlay::edited, this, [this] {
+            renderCache_.clear();
+            monitor_->update();
+            timeline_->update();
+            effects_->refresh();
+            updateCacheBar();
+            updateTitle();
+        });
 
         timecode_ = new QLabel(this);
         // Ask the system for its fixed-width family rather than naming one:
@@ -351,6 +366,7 @@ public:
                 [this](model::TrackId track, model::ClipId clip) {
                     selectedTrack_ = track;
                     selectedClip_ = clip;
+                    maskOverlay_->setTarget(&project_, sequenceId_, track, clip, &commands_);
                 });
         connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { measureScopes(); });
         connect(mixer_, &app::MixerPanel::edited, this, [this] {
@@ -1188,6 +1204,18 @@ protected:
         }
     }
 
+    /// Keep the mask handles over the picture when the monitor resizes.
+    ///
+    /// An event filter rather than a layout: the overlay has to cover the
+    /// monitor exactly, and a layout that also managed the monitor's own
+    /// children would be a second thing deciding where the picture is.
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (watched == monitor_ && event->type() == QEvent::Resize) {
+            maskOverlay_->setGeometry(monitor_->rect());
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
     void closeEvent(QCloseEvent* event) override {
         // Never a dialog on the way out.
         //
@@ -1843,6 +1871,7 @@ private:
     std::int32_t lastSyncSkipped_{0};
 
     app::ProgramMonitor* monitor_{nullptr};
+    app::MaskOverlay* maskOverlay_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
     app::EffectControls* effects_{nullptr};
     app::ScopesPanel* scopes_{nullptr};
@@ -2804,6 +2833,116 @@ int main(int argc, char** argv) {
             if (!(halved < whole * 0.75) || !(halved > whole * 0.25)) {
                 std::fprintf(stderr,
                              "  FAIL: the path mask did not reach the picture as a triangle\n");
+                return 1;
+            }
+
+            // And the editor: convert the shape to a path through the panel,
+            // then drag a point with the mouse and watch the picture follow.
+            timeline->selectOnlyForTest(pathTrackId, panelId);
+            window.effects()->setSelection(pathTrackId, panelId);
+            QApplication::processEvents();
+
+            // Back to a rectangle first, so there is a shape to convert.
+            zaro::model::Mask box;
+            box.shape = zaro::model::MaskShape::Rectangle;
+            box.width = shaped->width() / 2.0;
+            box.height = shaped->height() / 2.0;
+            auto boxed = zaro::edit::makeSetMask(window.project(), {pathSequenceId, pathTrackId},
+                                                 panelId, box);
+            if (!boxed) {
+                std::fprintf(stderr, "  FAIL: %s\n", boxed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*boxed));
+            window.effects()->setSelection(pathTrackId, panelId);
+            QApplication::processEvents();
+
+            auto* convert = window.effects()->findChild<QPushButton*>("mask-to-path");
+            if (convert == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no convert-to-path button\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            const double asRectangle = meanGray(settledGrab(window.monitor()));
+            convert->click();
+            QApplication::processEvents();
+
+            const auto* converted = window.project()
+                                        .findSequence(pathSequenceId)
+                                        ->findTrack(pathTrackId)
+                                        ->find(panelId);
+            if (converted->mask.shape != zaro::model::MaskShape::Path ||
+                converted->mask.path.points.size() != 4) {
+                std::fprintf(stderr, "  FAIL: converting did not produce a four-point path\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            const double asPath = meanGray(settledGrab(window.monitor()));
+            if (std::fabs(asPath - asRectangle) > 3.0) {
+                std::fprintf(stderr,
+                             "  FAIL: converting a shape to a path changed the picture "
+                             "(%.1f -> %.1f)\n",
+                             asRectangle, asPath);
+                return 1;
+            }
+
+            // Drag the top-left point out to the corner of the frame, through
+            // the overlay, with real mouse events.
+            auto* overlay = window.monitor()->findChild<zaro::app::MaskOverlay*>();
+            if (overlay == nullptr || !overlay->isEditing()) {
+                std::fprintf(stderr, "  FAIL: the mask overlay is not editing the path\n");
+                return 1;
+            }
+            const QRectF picture = window.monitor()->pictureRect();
+            const double scale = picture.width() / shaped->width();
+            // A copy, not a reference: the drag mutates the model underneath,
+            // and a reference would compare the moved point against itself.
+            const zaro::model::MaskPoint corner = converted->mask.path.points.front();
+            const QPointF grabAt{picture.center().x() + (corner.x * scale),
+                                 picture.center().y() + (corner.y * scale)};
+            const QPointF dropAt{picture.left() + 2.0, picture.top() + 2.0};
+
+            QMouseEvent press(QEvent::MouseButtonPress, grabAt, grabAt, Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(overlay, &press);
+            QMouseEvent move(QEvent::MouseMove, dropAt, dropAt, Qt::NoButton, Qt::LeftButton,
+                             Qt::NoModifier);
+            QCoreApplication::sendEvent(overlay, &move);
+            QMouseEvent release(QEvent::MouseButtonRelease, dropAt, dropAt, Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(overlay, &release);
+            QApplication::processEvents();
+
+            const auto* dragged = window.project()
+                                      .findSequence(pathSequenceId)
+                                      ->findTrack(pathTrackId)
+                                      ->find(panelId);
+            const auto& movedCorner = dragged->mask.path.points.front();
+            window.renderCache().clear();
+            const double afterDrag = meanGray(settledGrab(window.monitor()));
+
+            std::printf(
+                "  mask editor: corner %.0f,%.0f -> %.0f,%.0f; %.1f masked, %.1f after "
+                "dragging\n",
+                corner.x, corner.y, movedCorner.x, movedCorner.y, asPath, afterDrag);
+            if (std::fabs(movedCorner.x - corner.x) < 10.0) {
+                std::fprintf(stderr, "  FAIL: dragging a point did not move it\n");
+                return 1;
+            }
+            if (!(afterDrag > asPath + 5.0)) {
+                std::fprintf(stderr,
+                             "  FAIL: enlarging the mask did not let more of the picture "
+                             "through\n");
+                return 1;
+            }
+            // One drag, one undo step.
+            window.commands().undo(window.project());
+            const auto* undone = window.project()
+                                     .findSequence(pathSequenceId)
+                                     ->findTrack(pathTrackId)
+                                     ->find(panelId);
+            if (std::fabs(undone->mask.path.points.front().x - corner.x) > 0.5) {
+                std::fprintf(stderr, "  FAIL: one drag was not one undo step\n");
                 return 1;
             }
 

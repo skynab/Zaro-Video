@@ -2882,6 +2882,54 @@ Speech-to-text ─────→ Text-based editing ──→ Scene edit detect
 
 ---
 
+### Phase 6q — the mask editor §7.4 ✅
+
+Handles on the picture, so a path mask is something you can draw rather than
+only something the engine can render.
+
+**An overlay widget, not something the renderer draws.** The renderer's job is
+the picture that gets delivered; putting handles into the composite would mean
+a flag threaded through every path that must never be set during an export. A
+transparent `QWidget` over the monitor draws them instead, and the widget that
+draws them is the one that receives the clicks.
+
+**One place decides where the picture is.** The monitor letterboxes, so the
+overlay asks it — `ProgramMonitor::pictureRect()` — rather than repeating the
+arithmetic. Two places deciding would put the handles a few pixels off the
+thing they are supposed to be on, and only at some window sizes.
+
+**Convert a shape rather than start from nothing.** Drawing a path from scratch
+needs a pen tool with its own modes; converting the rectangle or ellipse you
+already have is one button with a result you can see before you touch it. The
+conversion has to be invisible: the tests check a converted rectangle matches
+the analytic one within 0.02 everywhere, and a converted ellipse — four cubics
+with the 0.5523 circle constant — has no pixel off by more than 0.25.
+
+**A corner has no handle to grab.** Handles are hit-tested before points, so a
+handle pulled in tight is still reachable under the point that owns it. But a
+corner's handles sit exactly *on* its point, so that rule made every corner
+ungrabbable: the press landed on a zero-length handle and the drag bent the
+curve instead of moving the point. Coincident handles are skipped now, which
+matches the paint — a handle that is not drawn should not be grabbable. The
+self-test caught it, but only after the test's own bug was fixed: it held a
+*reference* to the point it was about to move, so it compared the moved point
+against itself and would have passed on any behaviour at all.
+
+**A drag is one undo step.** The moves merge and the release breaks the run, so
+undo puts the point back where it started rather than replaying the drag a
+mouse-move at a time.
+
+**Alt-click deletes, and refuses at three points.** Fewer than three enclose
+nothing, and a mask that vanished would look like the delete having gone
+wrong.
+
+The overlay hides itself when the selected clip has no path mask, so it never
+swallows a click meant for the picture, and ignores presses that hit nothing so
+they reach whatever is underneath.
+
+Not done: a pen tool for drawing a path from nothing, mask feather handles on
+the picture, and mask tracking.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

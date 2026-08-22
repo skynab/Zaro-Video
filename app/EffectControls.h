@@ -142,6 +142,8 @@ private:
     QDoubleSpinBox* maskCorner_{nullptr};
     QDoubleSpinBox* maskFeather_{nullptr};
     QCheckBox* maskInverted_{nullptr};
+    QPushButton* maskToPath_{nullptr};
+    void convertMaskToPath();
     QWidget* graphicGroup_{nullptr};
     QComboBox* shapeKind_{nullptr};
     QDoubleSpinBox* shapeWidth_{nullptr};

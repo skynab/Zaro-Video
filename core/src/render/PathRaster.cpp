@@ -55,6 +55,55 @@ void subdivide(FlatPath& out, double x0, double y0, double cx1, double cy1, doub
 
 }  // namespace
 
+model::MaskPath pathForShape(const model::Mask& mask) {
+    model::MaskPath out;
+    if (mask.shape == model::MaskShape::Path) {
+        return mask.path;
+    }
+    const double halfWidth = mask.width / 2.0;
+    const double halfHeight = mask.height / 2.0;
+    if (halfWidth <= 0.0 || halfHeight <= 0.0) {
+        return out;
+    }
+
+    const auto corner = [&](double x, double y) {
+        model::MaskPoint point;
+        point.x = mask.centreX + x;
+        point.y = mask.centreY + y;
+        return point;
+    };
+
+    if (mask.shape == model::MaskShape::Ellipse) {
+        // 0.5523 is the classic circle constant: the handle length that makes
+        // four cubics fit a circle to within a thousandth of its radius, which
+        // is far finer than the rasteriser can resolve.
+        constexpr double kCircle = 0.55228475;
+        const double hx = halfWidth * kCircle;
+        const double hy = halfHeight * kCircle;
+        model::MaskPoint top = corner(0.0, -halfHeight);
+        top.inX = -hx;
+        top.outX = hx;
+        model::MaskPoint right = corner(halfWidth, 0.0);
+        right.inY = -hy;
+        right.outY = hy;
+        model::MaskPoint bottom = corner(0.0, halfHeight);
+        bottom.inX = hx;
+        bottom.outX = -hx;
+        model::MaskPoint left = corner(-halfWidth, 0.0);
+        left.inY = hy;
+        left.outY = -hy;
+        out.points = {top, right, bottom, left};
+        return out;
+    }
+
+    // A rectangle. Its corner radius is dropped, and that is worth saying: a
+    // rounded rectangle would need eight points and two handles each, and the
+    // moment somebody drags one the roundedness stops being a number anyway.
+    out.points = {corner(-halfWidth, -halfHeight), corner(halfWidth, -halfHeight),
+                  corner(halfWidth, halfHeight), corner(-halfWidth, halfHeight)};
+    return out;
+}
+
 FlatPath flatten(const model::MaskPath& path, double tolerance) {
     FlatPath out;
     if (!path.isSet()) {

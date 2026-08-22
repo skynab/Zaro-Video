@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QRectF>
 #include <QRhiWidget>
 #include <memory>
 
@@ -58,6 +59,16 @@ public:
     [[nodiscard]] const QString& lastError() const noexcept { return lastError_; }
 
     [[nodiscard]] std::int64_t framesRendered() const noexcept { return framesRendered_; }
+
+    /// Where the picture sits inside this widget, in widget pixels.
+    ///
+    /// The frame is letterboxed to keep its aspect ratio, so anything drawn
+    /// *over* the monitor -- a mask outline, a handle somebody is dragging --
+    /// has to know where the bars are. Computed here rather than by the caller
+    /// because the compositor's present pass computes the same fit, and two
+    /// places deciding where the picture is would put an overlay a few pixels
+    /// off the thing it is supposed to be on.
+    [[nodiscard]] QRectF pictureRect() const;
 
 protected:
     void initialize(QRhiCommandBuffer* commandBuffer) override;

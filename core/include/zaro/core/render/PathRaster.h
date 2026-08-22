@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "zaro/core/model/Mask.h"
 #include "zaro/core/model/MaskPath.h"
 #include "zaro/core/render/RgbaImage.h"
 
@@ -13,6 +14,18 @@ namespace zaro::render {
 /// part and it depends on nothing but the path, while the coverage question is
 /// asked a million times a frame.
 using FlatPath = std::vector<std::pair<double, double>>;
+
+/// The path that draws the same outline a rectangle or an ellipse would.
+///
+/// How a path gets made: somebody starts from the shape they already have and
+/// bends it. Drawing one from nothing needs a pen tool -- a mode, a click
+/// vocabulary of its own, and a half-finished path that is not yet a mask --
+/// whereas converting is one action with a result you can see before you touch
+/// it.
+///
+/// An ellipse becomes four cubics with the usual 0.5523 handles, which is the
+/// closest a cubic gets to a circle and closer than the rasteriser can tell.
+[[nodiscard]] model::MaskPath pathForShape(const model::Mask& mask);
 
 /// Turn a path's cubic segments into a polyline.
 ///

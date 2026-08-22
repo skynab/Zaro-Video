@@ -22,6 +22,7 @@
 #include "zaro/core/model/ColorCorrection.h"
 #include "zaro/core/render/BakeLut.h"
 #include "zaro/core/render/Ducking.h"
+#include "zaro/core/render/PathRaster.h"
 
 namespace zaro::app {
 namespace {
@@ -281,6 +282,11 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     maskForm->addRow("Corner", maskCorner_);
     maskForm->addRow("Feather", maskFeather_);
     maskForm->addRow(maskInverted_);
+    maskToPath_ = new QPushButton("Convert to path", this);
+    maskToPath_->setObjectName("mask-to-path");
+    maskToPath_->setToolTip("Turn this shape into points you can drag on the picture");
+    maskForm->addRow(maskToPath_);
+    connect(maskToPath_, &QPushButton::clicked, this, [this] { convertMaskToPath(); });
     maskGroup_ = maskBox;
 
     for (QDoubleSpinBox* spin :
@@ -769,6 +775,9 @@ void EffectControls::applyToWidgets() {
     maskCorner_->setValue(clip->mask.cornerRadius);
     maskFeather_->setValue(clip->mask.feather);
     maskInverted_->setChecked(clip->mask.inverted);
+    // Nothing to convert from without a shape, and nothing to convert *to*
+    // once it is already a path.
+    maskToPath_->setEnabled(clip->mask.isSet() && clip->mask.shape != model::MaskShape::Path);
 
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {
@@ -1522,6 +1531,34 @@ void EffectControls::pushKeyer() {
         return;
     }
     commands_->execute(*project_, std::move(*built));
+    applyToWidgets();
+    emit edited();
+}
+
+/// Turn the shape into the path that draws it.
+///
+/// One click, and the picture does not change: the converted path covers the
+/// same pixels the rectangle or ellipse did, which is what makes it safe to
+/// offer without a warning. What changes is that the outline now has points on
+/// it somebody can drag.
+void EffectControls::convertMaskToPath() {
+    const model::Clip* selected = selectedClip();
+    if (selected == nullptr || commands_ == nullptr || !selected->mask.isSet()) {
+        return;
+    }
+    model::Mask converted = selected->mask;
+    converted.path = render::pathForShape(selected->mask);
+    if (!converted.path.isSet()) {
+        return;
+    }
+    converted.shape = model::MaskShape::Path;
+
+    auto built = edit::makeSetMask(*project_, {sequenceId_, track_}, clip_, converted);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
     applyToWidgets();
     emit edited();
 }

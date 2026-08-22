@@ -103,6 +103,27 @@ void ProgramMonitor::render(QRhiCommandBuffer* commandBuffer) {
     ++framesRendered_;
 }
 
+QRectF ProgramMonitor::pictureRect() const {
+    const auto widgetWidth = static_cast<double>(width());
+    const auto widgetHeight = static_cast<double>(height());
+    if (sequence_ == nullptr || sequence_->width() <= 0 || sequence_->height() <= 0 ||
+        widgetWidth <= 0.0 || widgetHeight <= 0.0) {
+        return QRectF{0.0, 0.0, widgetWidth, widgetHeight};
+    }
+    const double frameAspect =
+        static_cast<double>(sequence_->width()) / static_cast<double>(sequence_->height());
+    const double widgetAspect = widgetWidth / widgetHeight;
+    double pictureWidth = widgetWidth;
+    double pictureHeight = widgetHeight;
+    if (widgetAspect > frameAspect) {
+        pictureWidth = widgetHeight * frameAspect;
+    } else {
+        pictureHeight = widgetWidth / frameAspect;
+    }
+    return QRectF{(widgetWidth - pictureWidth) / 2.0, (widgetHeight - pictureHeight) / 2.0,
+                  pictureWidth, pictureHeight};
+}
+
 void ProgramMonitor::setComparison(bool on, const time::RationalTime& reference,
                                    render::CompareMode mode, double split) {
     comparing_ = on;

@@ -4,6 +4,7 @@ qt_standard_project_setup()
 
 add_executable(zaro-preview
     main.cpp
+    MaskOverlay.cpp
     ProgramMonitor.cpp
     ProgramMonitor.h
     TimelineWidget.cpp
