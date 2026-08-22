@@ -2,23 +2,30 @@
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
+#include <QScrollArea>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 
 #include "zaro/core/edit/Operations.h"
 
+#include "Theme.h"
+
 namespace zaro::app {
 namespace {
 
-const QColor kMeterBack{20, 20, 24};
-const QColor kMeterSafe{86, 196, 122};
+// The meter's own three colours. Safe reads in the accent, so a level that is
+// simply *fine* looks like the rest of the interface; amber and red are kept
+// for the two states that are a warning, which is what makes them carry.
+const QColor kMeterBack = theme::mix(theme::bg(), Qt::black, 0.35);
+const QColor kMeterSafe = theme::accent(500);
 const QColor kMeterWarn{226, 196, 92};
 const QColor kMeterOver{232, 96, 96};
-const QColor kHoldLine{240, 240, 248};
+const QColor kHoldLine = theme::neutral(100);
 
 /// Where a level sits on the meter, 0 at the bottom and 1 at the top.
 ///
@@ -41,6 +48,10 @@ constexpr int kHoldTicks = 12;
 
 LevelMeter::LevelMeter(QWidget* parent) : QWidget{parent} {
     setMinimumWidth(14);
+    // Narrow, and capped: a meter is read by where the top of the bar is, and a
+    // bar as wide as the strip is a block of colour that dominates a panel
+    // whose actual subject is the numbers under it.
+    setMaximumWidth(18);
     setMinimumHeight(80);
 }
 
@@ -105,11 +116,27 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget{parent} {
     masterLayout->setContentsMargins(0, 0, 0, 0);
     auto* masterLabel = new QLabel("Master", this);
     masterLayout->addWidget(masterLabel);
-    masterLayout->addWidget(master_, 1);
+    masterLayout->addWidget(master_, 1, Qt::AlignHCenter);
+
+    // A strip is taller than the panel usually gets, and a Qt layout given less
+    // room than its children need does not clip them -- it overlaps them, which
+    // put the meter on top of the solo button. Scrolling is the honest answer:
+    // the mixer stays readable at any height the splitter leaves it.
+    auto* content = new QWidget(this);
+    auto* contentRow = new QHBoxLayout(content);
+    contentRow->setContentsMargins(0, 0, 0, 0);
+    contentRow->addWidget(strips_, 1);
+    contentRow->addWidget(masterColumn);
+
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidget(content);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
     auto* outer = new QHBoxLayout(this);
-    outer->addWidget(strips_, 1);
-    outer->addWidget(masterColumn);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(scroll);
 }
 
 void MixerPanel::setProject(model::Project* project, model::SequenceId sequence,
@@ -172,7 +199,7 @@ void MixerPanel::refresh() {
                 auto* layout = new QVBoxLayout(column);
                 layout->setContentsMargins(2, 2, 2, 2);
                 layout->addWidget(strip.name);
-                layout->addWidget(strip.meter, 1);
+                layout->addWidget(strip.meter, 1, Qt::AlignHCenter);
                 auto* buttons = new QWidget(column);
                 auto* buttonRow = new QHBoxLayout(buttons);
                 buttonRow->setContentsMargins(0, 0, 0, 0);

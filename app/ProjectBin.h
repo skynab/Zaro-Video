@@ -5,6 +5,8 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
 
+class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 
@@ -20,6 +22,13 @@ public:
     void setProject(model::Project* project, model::SequenceId sequence,
                     edit::CommandStack* commands);
     void refresh();
+
+    /// Ask for files. Public because Import is a File-menu item as well as a
+    /// button in this panel, and both should be the same action.
+    void importFiles();
+
+    /// How many media references the project holds, for the status bar.
+    [[nodiscard]] int count() const;
 
 signals:
     /// Media was imported, or a clip appended.
@@ -39,8 +48,8 @@ signals:
     void replaceRequested(zaro::model::MediaRefId media);
 
 private:
-    void importFiles();
     void appendSelectedToTimeline();
+    void applyFilter();
     /// What is selected, as either a media reference or a subclip.
     struct Selection {
         model::MediaRefId media;
@@ -54,6 +63,9 @@ private:
     edit::CommandStack* commands_{nullptr};
     QListWidget* list_{nullptr};
     QPushButton* importButton_{nullptr};
+    QLineEdit* search_{nullptr};
+    QLabel* footer_{nullptr};
+    QString filter_;
 };
 
 }  // namespace zaro::app

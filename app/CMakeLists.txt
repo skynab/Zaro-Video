@@ -25,6 +25,10 @@ add_executable(zaro-preview
     ProjectBin.h
     SourceMonitor.cpp
     SourceMonitor.h
+    Theme.cpp
+    Theme.h
+    ViewerOverlay.cpp
+    ViewerOverlay.h
 )
 
 target_link_libraries(zaro-preview

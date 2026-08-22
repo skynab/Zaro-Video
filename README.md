@@ -8,16 +8,16 @@ locked in.
 
 ## Status
 
-**Phase 4i — markers and workspaces.** Media can be imported, marked up in a
-source monitor, cut into a timeline three-point with picture and sound linked,
-dissolved, marked, adjusted, watched and exported — a program monitor, a timeline
-with transport, scrubbing, drag, trim, razor and undo, audio waveforms backed by
-a content-hashed disk cache, and an Effect Controls panel for motion, opacity,
-blend mode and audio gain. On a 1080p59.94 timeline the GPU
-path holds the playhead to zero frames of offset with no audio underruns,
-presenting about 47 of the 59.94 frames per second against the CPU path's 7 —
-the remaining gap is the readback, which a preview window will not do. Still
-headless: there is no window yet.
+**Phase 6r — the Cutline chrome.** Media can be imported, marked up in a source
+monitor, cut into a timeline three-point with picture and sound linked,
+dissolved, marked, graded, masked, mixed, adjusted, watched and exported — and
+as of this phase the window looks like an editor rather than a test harness: a
+menu bar, a tool palette (select, blade, trim, slip, hand, zoom), four
+workspaces that decide which panels are up, one viewer with source and program
+pages, a burn-in over the picture with safe-area guides, and a status line, all
+drawn from one set of design tokens in `app/Theme`. On a 1080p59.94 timeline the
+GPU path holds the playhead to zero frames of offset with no audio underruns,
+presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 
 | Phase | | |
 |---|---|---|
@@ -81,6 +81,7 @@ headless: there is no window yet.
 | 6o | Wipes and slides, and transitions on generated clips | **done** |
 | 6p | Bezier masks: engine, not yet an editor | **done** |
 | 6q | The mask editor: convert a shape, drag the points | **done** |
+| 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building
 
@@ -132,7 +133,7 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   playback/ scheduler, transport (JKL), audio ring buffer
   io/       versioned JSON project files
 ui-core/    presentation logic with no toolkit: timeline geometry
-app/        the Qt shell: program monitor, timeline, transport
+app/        the Qt shell: chrome and theme, monitors, timeline, panels
 platform/
   ffmpeg/   the only place libav* headers are included
   qrhi/     GPU compositor and its shaders

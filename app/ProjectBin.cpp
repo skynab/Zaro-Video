@@ -3,8 +3,10 @@
 #include <QCursor>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QPushButton>
@@ -50,11 +52,23 @@ QString describe(const model::MediaRef& ref) {
 }  // namespace
 
 ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
-    auto* title = new QLabel("Project", this);
+    auto* title = new QLabel("Media", this);
     title->setStyleSheet("font-weight: 600;");
 
     list_ = new QListWidget(this);
     importButton_ = new QPushButton("Import…", this);
+
+    // A filter rather than a second panel. A bin is looked *in*, and typing
+    // three letters of a file name is how: at thirty clips the list is already
+    // longer than the panel is tall.
+    search_ = new QLineEdit(this);
+    search_->setPlaceholderText("Search media");
+    search_->setClearButtonEnabled(true);
+    connect(search_, &QLineEdit::textChanged, this, [this](const QString& text) {
+        filter_ = text.trimmed();
+        applyFilter();
+    });
+
     // Short, because the bin is narrow and a clipped label is worse than a
     // terse one. Double-clicking an item does the same thing.
     auto* appendButton = new QPushButton("Append", this);
@@ -67,16 +81,29 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     replaceButton->setObjectName("bin-replace");
     replaceButton->setToolTip("Point the selected timeline clip at this media instead");
 
-    auto* buttons = new QHBoxLayout;
-    buttons->addWidget(importButton_);
-    buttons->addWidget(appendButton);
-    buttons->addWidget(replaceButton);
-    buttons->addWidget(interpretButton);
+    // Two by two rather than four across: at the width this panel actually
+    // gets, a single row clipped every label to two letters.
+    auto* buttons = new QGridLayout;
+    buttons->setSpacing(6);
+    buttons->addWidget(appendButton, 0, 0);
+    buttons->addWidget(replaceButton, 0, 1);
+    buttons->addWidget(interpretButton, 1, 0, 1, 2);
+
+    auto* header = new QHBoxLayout;
+    header->addWidget(title);
+    header->addStretch(1);
+    header->addWidget(importButton_);
+
+    footer_ = new QLabel(this);
+    footer_->setProperty("muted", true);
 
     auto* layout = new QVBoxLayout(this);
-    layout->addWidget(title);
+    layout->setSpacing(6);
+    layout->addLayout(header);
+    layout->addWidget(search_);
     layout->addWidget(list_, 1);
     layout->addLayout(buttons);
+    layout->addWidget(footer_);
 
     connect(importButton_, &QPushButton::clicked, this, &ProjectBin::importFiles);
     connect(appendButton, &QPushButton::clicked, this, &ProjectBin::appendSelectedToTimeline);
@@ -101,6 +128,24 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     });
 }
 
+/// Hide what the search does not match, rather than rebuilding the list: the
+/// selection survives typing, which is what makes narrowing down feel like
+/// looking rather than starting again.
+void ProjectBin::applyFilter() {
+    int shown = 0;
+    for (int row = 0; row < list_->count(); ++row) {
+        QListWidgetItem* item = list_->item(row);
+        const bool matches =
+            filter_.isEmpty() || item->text().contains(filter_, Qt::CaseInsensitive);
+        item->setHidden(!matches);
+        shown += matches ? 1 : 0;
+    }
+    footer_->setText(
+        filter_.isEmpty()
+            ? QString("%1 %2").arg(list_->count()).arg(list_->count() == 1 ? "item" : "items")
+            : QString("%1 of %2 items").arg(shown).arg(list_->count()));
+}
+
 void ProjectBin::setProject(model::Project* project, model::SequenceId sequence,
                             edit::CommandStack* commands) {
     project_ = project;
@@ -112,6 +157,7 @@ void ProjectBin::setProject(model::Project* project, model::SequenceId sequence,
 void ProjectBin::refresh() {
     list_->clear();
     if (project_ == nullptr) {
+        applyFilter();
         return;
     }
     for (const model::MediaRef& ref : project_->media()) {
@@ -130,6 +176,11 @@ void ProjectBin::refresh() {
             child->setData(Qt::UserRole + 1, QVariant::fromValue<qulonglong>(subclip.id.value()));
         }
     }
+    applyFilter();
+}
+
+int ProjectBin::count() const {
+    return project_ != nullptr ? static_cast<int>(project_->media().size()) : 0;
 }
 
 void ProjectBin::importFiles() {

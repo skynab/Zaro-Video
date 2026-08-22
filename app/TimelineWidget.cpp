@@ -10,31 +10,40 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Snapping.h"
+#include "zaro/core/model/Graphic.h"
 #include "zaro/core/time/Timecode.h"
+
+#include "Theme.h"
 
 namespace zaro::app {
 namespace {
 
-const QColor kBackground{28, 28, 32};
-const QColor kRulerBackground{40, 40, 46};
-const QColor kHeaderBackground{34, 34, 40};
-const QColor kTrackBackground{24, 24, 28};
-const QColor kGridLine{58, 58, 66};
-const QColor kVideoClip{62, 96, 148};
-const QColor kAudioClip{58, 122, 96};
-const QColor kSelectedOutline{255, 196, 92};
-const QColor kBand{140, 180, 235};
-const QColor kPlayhead{236, 92, 82};
+// Every colour here comes from the design system, through Theme: a timeline
+// painted by hand is the one panel Qt's stylesheet cannot reach, so it asks for
+// the same tokens the stylesheet was built from rather than keeping a second
+// palette that drifts from it.
+const QColor kBackground = theme::bg();
+const QColor kRulerBackground = theme::mix(theme::surface(), theme::bg(), 0.40);
+const QColor kHeaderBackground = theme::mix(theme::surface(), theme::bg(), 0.55);
+const QColor kVideoLane = theme::mix(theme::surface(), theme::bg(), 0.46);
+const QColor kAudioLane = theme::mix(theme::surface(), theme::bg(), 0.72);
+const QColor kGridLine = theme::textAt(0.14);
+const QColor kSelectedOutline = theme::accent(300);
+const QColor kBand = theme::accent(400);
+const QColor kPlayhead = theme::accent(200);
 // Green, and only green: a bar with green, yellow and red in it is three
-// claims, and only one of them -- "this will play" -- is one we can make.
+// claims, and only one of them -- "this will play" -- is one we can make. The
+// one colour the system does not supply, because it is the one that is not
+// decoration.
 const QColor kCachedSpan{92, 176, 108};
-const QColor kKeyframe{226, 226, 236};
-const QColor kKeyframeHeld{255, 196, 92};
-const QColor kKeyframeOutline{20, 20, 24};
-const QColor kText{224, 224, 230};
-const QColor kDimText{150, 150, 160};
-const QColor kWaveform{188, 236, 210};
-const QColor kTransition{212, 196, 244};
+const QColor kKeyframe = theme::neutral(200);
+const QColor kKeyframeHeld = theme::accent(300);
+const QColor kKeyframeOutline = theme::bg();
+const QColor kText = theme::text();
+const QColor kDimText = theme::textAt(0.45);
+const QColor kWaveform = theme::accent(300);
+const QColor kTransition = theme::accent(300);
+const QColor kTrackFlag = theme::accent(400);
 
 /// Marker colours, indexed by the marker's own colour field. The model stores
 /// "the green one" rather than a colour value, so the palette can change
@@ -44,6 +53,30 @@ const QColor kMarkerPalette[] = {
     QColor{224, 120, 160}, QColor{200, 150, 235}, QColor{230, 140, 90},
 };
 
+/// How a clip is painted: its body, the strip along its top, and its label.
+///
+/// Three families rather than two. Generated pictures -- titles, shapes, text
+/// -- are not footage and reading them as footage is the mistake the strip is
+/// there to prevent: a title track that looks like a video track is a track
+/// whose clips you go looking for the media of.
+struct ClipPaint {
+    QColor body;
+    QColor strip;
+    QColor label;
+};
+
+ClipPaint clipPaint(model::TrackKind kind, const model::Clip& clip) {
+    if (clip.graphic.kind != model::GraphicKind::None) {
+        return {theme::neutral(900), theme::neutral(500), theme::neutral(200)};
+    }
+    if (kind == model::TrackKind::Audio) {
+        return {theme::mix(theme::bg(), theme::accent(900), 0.85), theme::accent(500),
+                theme::accent(200)};
+    }
+    return {theme::mix(theme::bg(), theme::accent(800), 0.85), theme::accent(400),
+            theme::accent(100)};
+}
+
 }  // namespace
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget{parent} {
@@ -51,6 +84,26 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget{parent} {
     setMouseTracking(true);
     setMinimumHeight(180);
     setAutoFillBackground(false);
+}
+
+void TimelineWidget::setTool(Tool tool) {
+    if (tool_ == tool) {
+        return;
+    }
+    tool_ = tool;
+    // Any half-finished gesture belongs to the tool that started it.
+    finishDrag();
+    unsetCursor();
+    emit toolChanged();
+    update();
+}
+
+void TimelineWidget::setSnapEnabled(bool enabled) {
+    if (snapEnabled_ == enabled) {
+        return;
+    }
+    snapEnabled_ = enabled;
+    emit snapChanged(snapEnabled_);
 }
 
 void TimelineWidget::setProject(model::Project* project, model::SequenceId sequence,
@@ -110,6 +163,90 @@ void TimelineWidget::zoomToFit() {
         layout_.zoomToFit(duration);
     }
     emit viewChanged();
+    update();
+}
+
+void TimelineWidget::zoomBy(double factor) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    layout_.zoomBy(factor, width() / 2.0, seq->frameRate());
+    emit viewChanged();
+    update();
+}
+
+namespace {
+// The span a zoom control covers, in pixels per second. Two decades: a
+// four-hour assembly at one end, individual frames at the other.
+constexpr double kMinPixelsPerSecond = 1.0;
+constexpr double kMaxPixelsPerSecond = 600.0;
+}  // namespace
+
+double TimelineWidget::zoomFraction() const {
+    // Logarithmic, because that is how zoom is felt: the step from 2 to 4
+    // pixels a second is the same gesture as the step from 200 to 400.
+    const double span = std::log(kMaxPixelsPerSecond / kMinPixelsPerSecond);
+    const double at = std::log(
+        std::clamp(layout_.metrics().pixelsPerSecond, kMinPixelsPerSecond, kMaxPixelsPerSecond) /
+        kMinPixelsPerSecond);
+    return std::clamp(at / span, 0.0, 1.0);
+}
+
+void TimelineWidget::setZoomFraction(double fraction) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const double span = std::log(kMaxPixelsPerSecond / kMinPixelsPerSecond);
+    const double wanted = kMinPixelsPerSecond * std::exp(std::clamp(fraction, 0.0, 1.0) * span);
+    const double current = layout_.metrics().pixelsPerSecond;
+    if (current <= 0.0) {
+        return;
+    }
+    // Through zoomBy rather than by setting the metric, so the frame under the
+    // middle of the view stays where it is.
+    layout_.zoomBy(wanted / current, width() / 2.0, seq->frameRate());
+    emit viewChanged();
+    update();
+}
+
+void TimelineWidget::undo() {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    commands_->undo(*project_);
+    selection_.clear();
+    announceSelection();
+    emit edited();
+    update();
+}
+
+void TimelineWidget::redo() {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    commands_->redo(*project_);
+    selection_.clear();
+    announceSelection();
+    emit edited();
+    update();
+}
+
+void TimelineWidget::selectAll() {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    selection_.clear();
+    for (const auto* list : {&seq->videoTracks(), &seq->audioTracks()}) {
+        for (const model::Track& track : *list) {
+            for (const model::Clip& clip : track.clips()) {
+                selection_.push_back(edit::ClipRef{track.id(), clip.id});
+            }
+        }
+    }
+    announceSelection();
     update();
 }
 
@@ -307,7 +444,7 @@ void TimelineWidget::paintTracks(QPainter& painter) {
 
     for (const ui::TimelineLayout::Row& row : layout_.rows(seq)) {
         const QRect lane(metrics.headerWidth, row.top, width() - metrics.headerWidth, row.height);
-        painter.fillRect(lane, kTrackBackground);
+        painter.fillRect(lane, row.kind == model::TrackKind::Audio ? kAudioLane : kVideoLane);
         paintClips(painter, row);
 
         paintTransitions(painter, row);
@@ -338,7 +475,7 @@ void TimelineWidget::paintTracks(QPainter& painter) {
             flags << "∦";
         }
         if (!flags.isEmpty()) {
-            painter.setPen(kSelectedOutline);
+            painter.setPen(kTrackFlag);
             painter.drawText(header.adjusted(0, 0, -10, 0), Qt::AlignVCenter | Qt::AlignRight,
                              flags.join(' '));
         }
@@ -373,8 +510,25 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             continue;
         }
 
-        const QColor base = row.kind == model::TrackKind::Video ? kVideoClip : kAudioClip;
-        painter.fillRect(body, clip->enabled ? base : base.darker(180));
+        const ClipPaint paint = clipPaint(row.kind, *clip);
+        const QColor fill = clip->enabled ? paint.body : paint.body.darker(150);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(fill);
+        painter.drawRoundedRect(body, 5.0, 5.0);
+
+        // A strip of the clip's own colour along its top. At the widths a busy
+        // timeline actually paints at, the strip is legible when the name is
+        // not: it is what makes a track readable at a glance.
+        if (body.height() > 10.0) {
+            painter.setBrush(clip->enabled ? paint.strip : paint.strip.darker(160));
+            painter.setClipRect(body);
+            painter.drawRoundedRect(QRectF(body.left(), body.top(), body.width(), 6.0), 5.0, 5.0);
+            painter.fillRect(QRectF(body.left(), body.top() + 3.0, body.width(), 3.0),
+                             clip->enabled ? paint.strip : paint.strip.darker(160));
+            painter.setClipping(false);
+        }
+        painter.setBrush(Qt::NoBrush);
 
         // The whole link group is outlined, not just the clip clicked on:
         // an edit is going to move all of them, so all of them should look
@@ -384,20 +538,24 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             !selected && clip->link.isValid() && clip->link == selectedLink_;
 
         if (selected || isLinkedToSelection) {
-            painter.setPen(QPen(kSelectedOutline, selected ? 2 : 1));
-            painter.drawRect(body.adjusted(1, 1, -1, -1));
+            painter.setPen(QPen(kSelectedOutline, selected ? 1.5 : 1));
+            painter.drawRoundedRect(body.adjusted(0.75, 0.75, -0.75, -0.75), 4.5, 4.5);
         } else {
-            painter.setPen(base.lighter(135));
-            painter.drawRect(body.adjusted(0.5, 0.5, -0.5, -0.5));
+            painter.setPen(theme::textAt(0.10));
+            painter.drawRoundedRect(body.adjusted(0.5, 0.5, -0.5, -0.5), 4.5, 4.5);
         }
+        painter.setRenderHint(QPainter::Antialiasing, false);
 
         if (row.kind == model::TrackKind::Audio) {
             paintWaveform(painter, *clip, body);
         }
 
         if (body.width() > 28.0) {
-            painter.setPen(kText);
-            painter.drawText(body.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+            painter.setPen(paint.label);
+            // Along the top, under the strip, rather than through the middle:
+            // the middle is where the waveform is, and a name drawn over an
+            // envelope is unreadable in both directions.
+            painter.drawText(body.adjusted(6, 7, -6, 0), Qt::AlignTop | Qt::AlignLeft,
                              QString::fromStdString(clip->name));
         }
 
@@ -492,9 +650,14 @@ void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, c
         return;
     }
 
-    const double midY = body.center().y();
-    const double halfHeight = body.height() * 0.42;
-    painter.setPen(kWaveform);
+    // Below the strip and the name, so the three things a clip shows do not
+    // sit on top of each other.
+    const QRectF field = body.adjusted(0, 9, 0, -2);
+    const double midY = field.center().y();
+    const double halfHeight = std::max(2.0, field.height() * 0.45);
+    QColor ink = kWaveform;
+    ink.setAlpha(205);
+    painter.setPen(ink);
 
     // One column per pixel, resolved through the clip's own source mapping --
     // so a trimmed clip shows the part of the waveform it actually plays, and a
@@ -614,6 +777,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
 
+    // Hand and Zoom are about the view rather than the cut, so they act
+    // anywhere -- over the ruler and over the headers included -- and are asked
+    // before either of those has a chance to mean something else.
+    if (tool_ == Tool::Hand || tool_ == Tool::Zoom) {
+        pressAt_ = QPoint(x, y);
+        static_cast<void>(pressWithTool(nullptr, x, y, event->modifiers()));
+        return;
+    }
+
     if (layout_.isInRuler(x, y)) {
         drag_ = Drag::Scrub;
         scrubTo(x);
@@ -626,32 +798,42 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     pressAt_ = QPoint(x, y);
 
     // Keyframes are tested first. They live inside a clip, so testing the clip
-    // first would mean every keyframe press started a clip drag instead.
-    if (const auto key = layout_.hitTestKeyframe(*seq, x, y)) {
-        // Alt deletes it. There is no keyframe *selection* — a selection model
-        // exists for clips and building a second one just so Delete has
-        // something to act on is the half-built trap multi-selection was
-        // deferred to avoid. A modifier on the thing itself needs no state.
-        if (event->modifiers().testFlag(Qt::AltModifier)) {
-            if (commands_ != nullptr) {
-                auto built = edit::makeRemoveKeyframesAt(*project_, {sequenceId_, key->track},
-                                                         key->clip, key->time);
-                if (built) {
-                    commands_->execute(*project_, std::move(*built));
-                    commands_->breakMerge();
-                    emit edited();
+    // first would mean every keyframe press started a clip drag instead. Only
+    // under Select: a diamond is a small target, and having the blade cut
+    // everywhere except on top of one would be a cut that sometimes did
+    // nothing.
+    if (tool_ == Tool::Select) {
+        if (const auto key = layout_.hitTestKeyframe(*seq, x, y)) {
+            // Alt deletes it. There is no keyframe *selection* — a selection model
+            // exists for clips and building a second one just so Delete has
+            // something to act on is the half-built trap multi-selection was
+            // deferred to avoid. A modifier on the thing itself needs no state.
+            if (event->modifiers().testFlag(Qt::AltModifier)) {
+                if (commands_ != nullptr) {
+                    auto built = edit::makeRemoveKeyframesAt(*project_, {sequenceId_, key->track},
+                                                             key->clip, key->time);
+                    if (built) {
+                        commands_->execute(*project_, std::move(*built));
+                        commands_->breakMerge();
+                        emit edited();
+                    }
                 }
+                update();
+                return;
             }
+            keyframeDrag_ = KeyframeDrag{key->track, key->clip, key->time};
+            drag_ = Drag::Keyframe;
             update();
             return;
         }
-        keyframeDrag_ = KeyframeDrag{key->track, key->clip, key->time};
-        drag_ = Drag::Keyframe;
-        update();
-        return;
     }
 
     const auto hit = layout_.hitTest(*seq, x, y);
+
+    if (hit && pressWithTool(&*hit, x, y, event->modifiers())) {
+        update();
+        return;
+    }
 
     if (!hit) {
         // Not yet a band and not yet a scrub. Which it becomes depends on
@@ -786,18 +968,22 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
         updateTrim(x);
         return;
     }
+    if (drag_ == Drag::Slip) {
+        updateSlip(x);
+        return;
+    }
+    if (drag_ == Drag::Pan) {
+        updatePan(x);
+        return;
+    }
 
     // A cursor that tells you what a click will do, before you make it.
     const model::Sequence* seq = sequence();
     if (seq == nullptr) {
         return;
     }
-    if (const auto hit = layout_.hitTest(*seq, x, y)) {
-        setCursor(hit->part == ui::TimelineLayout::Part::Body ? Qt::OpenHandCursor
-                                                              : Qt::SizeHorCursor);
-    } else {
-        unsetCursor();
-    }
+    const auto hit = layout_.hitTest(*seq, x, y);
+    applyCursor(hit ? &*hit : nullptr);
 }
 
 void TimelineWidget::updateDrag(int x) {
@@ -849,7 +1035,10 @@ void TimelineWidget::updateDrag(int x) {
 }
 
 void TimelineWidget::finishDrag() {
-    if (drag_ != Drag::None && drag_ != Drag::Scrub && commands_ != nullptr) {
+    if (drag_ == Drag::Pan && tool_ == Tool::Hand) {
+        setCursor(Qt::OpenHandCursor);
+    }
+    if (drag_ != Drag::None && drag_ != Drag::Scrub && drag_ != Drag::Pan && commands_ != nullptr) {
         // Close the merge group, so the next gesture is a separate undo step.
         commands_->breakMerge();
     }
@@ -918,6 +1107,162 @@ void TimelineWidget::wheelEvent(QWheelEvent* event) {
                           time::RationalTime{delta, seq->frameRate()});
     }
     emit viewChanged();
+    update();
+}
+
+bool TimelineWidget::pressWithTool(const ui::TimelineLayout::Hit* hit, int x, int /*y*/,
+                                   Qt::KeyboardModifiers modifiers) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return false;
+    }
+
+    switch (tool_) {
+        case Tool::Select:
+            return false;
+
+        case Tool::Hand:
+            panAnchorX_ = x;
+            panAnchorScroll_ = layout_.scroll().rescaledTo(seq->frameRate());
+            drag_ = Drag::Pan;
+            setCursor(Qt::ClosedHandCursor);
+            return true;
+
+        case Tool::Zoom:
+            // Alt reverses it, the way it does in every other tool that has
+            // one direction and needs two.
+            layout_.zoomBy(modifiers.testFlag(Qt::AltModifier) ? 1.0 / 1.6 : 1.6, x,
+                           seq->frameRate());
+            emit viewChanged();
+            update();
+            return true;
+
+        case Tool::Blade: {
+            if (hit == nullptr) {
+                return true;
+            }
+            // Snapped, so a cut aimed at a neighbouring edit point lands on it
+            // rather than a frame away from it.
+            razorAt(hit->track, maybeSnap(layout_.timeForX(x, seq->frameRate()), {}));
+            return true;
+        }
+
+        case Tool::Trim: {
+            if (hit == nullptr) {
+                return true;
+            }
+            const model::Track* track = seq->findTrack(hit->track);
+            const model::Clip* clip = track != nullptr ? track->find(hit->clip) : nullptr;
+            if (clip == nullptr) {
+                return true;
+            }
+            selectOnly(*hit);
+            rippleTrim_ = modifiers.testFlag(Qt::AltModifier);
+            // The nearer edge, so the whole clip is a trim handle: that is what
+            // picking the tool asked for.
+            const double middle =
+                (layout_.xForTime(clip->start()) + layout_.xForTime(clip->endExclusive())) / 2.0;
+            if (x < middle) {
+                drag_ = Drag::TrimIn;
+                trimAnchor_ = clip->start();
+            } else {
+                drag_ = Drag::TrimOut;
+                trimAnchor_ = clip->endExclusive();
+            }
+            return true;
+        }
+
+        case Tool::Slip: {
+            if (hit == nullptr) {
+                return true;
+            }
+            selectOnly(*hit);
+            slipAnchorX_ = x;
+            drag_ = Drag::Slip;
+            return true;
+        }
+    }
+    return false;
+}
+
+void TimelineWidget::updateSlip(int x) {
+    model::Sequence* seq = project_ != nullptr ? project_->findSequence(sequenceId_) : nullptr;
+    if (seq == nullptr || !selected_.isValid() || commands_ == nullptr) {
+        return;
+    }
+    // Measured in time rather than in pixels, so the gesture means the same
+    // thing at every zoom level.
+    const time::RationalTime delta =
+        layout_.timeForX(x, seq->frameRate()) - layout_.timeForX(slipAnchorX_, seq->frameRate());
+    if (delta.frames() == 0) {
+        return;
+    }
+    // Dragging right shows *earlier* source: the content moves with the
+    // pointer, which is the half of the gesture somebody is actually watching.
+    auto built = edit::makeSlip(*project_, {sequenceId_, selectedTrack_}, selected_, -delta);
+    if (!built) {
+        return;  // out of source at one end; the drag can carry on the other way
+    }
+    commands_->execute(*project_, std::move(*built));
+    // Only once a whole frame has been consumed, so slow drags at a high zoom
+    // accumulate instead of being rounded away one move at a time.
+    slipAnchorX_ = x;
+    emit edited();
+    update();
+}
+
+void TimelineWidget::updatePan(int x) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const time::RationalTime moved =
+        layout_.timeForX(x, seq->frameRate()) - layout_.timeForX(panAnchorX_, seq->frameRate());
+    // The content follows the hand, so the view moves the other way.
+    layout_.setScroll(panAnchorScroll_ - moved);
+    emit viewChanged();
+    update();
+}
+
+void TimelineWidget::applyCursor(const ui::TimelineLayout::Hit* hit) {
+    switch (tool_) {
+        case Tool::Hand:
+            setCursor(Qt::OpenHandCursor);
+            return;
+        case Tool::Zoom:
+            setCursor(Qt::CrossCursor);
+            return;
+        case Tool::Blade:
+            setCursor(Qt::SplitHCursor);
+            return;
+        case Tool::Trim:
+        case Tool::Slip:
+            setCursor(hit != nullptr ? Qt::SizeHorCursor : Qt::ArrowCursor);
+            return;
+        case Tool::Select:
+        default:
+            break;
+    }
+    if (hit == nullptr) {
+        unsetCursor();
+        return;
+    }
+    setCursor(hit->part == ui::TimelineLayout::Part::Body ? Qt::OpenHandCursor : Qt::SizeHorCursor);
+}
+
+void TimelineWidget::razorAt(model::TrackId track, const time::RationalTime& at) {
+    if (project_ == nullptr || commands_ == nullptr || !track.isValid()) {
+        return;
+    }
+    auto built = edit::makeRazor(*project_, {sequenceId_, track}, at);
+    if (!built) {
+        // On a boundary, or past the end of the clip: a cut that would produce
+        // a zero-length clip is refused rather than approximated.
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
     update();
 }
 
@@ -1063,7 +1408,22 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
             removeSelected(event->modifiers().testFlag(Qt::ShiftModifier));
             return;
         case Qt::Key_S:
-            snapEnabled_ = !snapEnabled_;
+            setSnapEnabled(!snapEnabled_);
+            return;
+        case Qt::Key_V:
+            setTool(Tool::Select);
+            return;
+        case Qt::Key_B:
+            setTool(Tool::Blade);
+            return;
+        case Qt::Key_T:
+            setTool(Tool::Trim);
+            return;
+        case Qt::Key_Y:
+            setTool(Tool::Slip);
+            return;
+        case Qt::Key_H:
+            setTool(Tool::Hand);
             return;
         case Qt::Key_M:
             addMarkerAtPlayhead();
@@ -1091,15 +1451,7 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
         case Qt::Key_A:
             if (event->modifiers().testFlag(Qt::ControlModifier) ||
                 event->modifiers().testFlag(Qt::MetaModifier)) {
-                selection_.clear();
-                for (const auto* list : {&seq->videoTracks(), &seq->audioTracks()}) {
-                    for (const model::Track& track : *list) {
-                        for (const model::Clip& clip : track.clips()) {
-                            selection_.push_back(edit::ClipRef{track.id(), clip.id});
-                        }
-                    }
-                }
-                announceSelection();
+                selectAll();
                 return;
             }
             break;
@@ -1107,27 +1459,19 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
             if (event->modifiers().testFlag(Qt::ControlModifier) ||
                 event->modifiers().testFlag(Qt::MetaModifier)) {
                 if (event->modifiers().testFlag(Qt::ShiftModifier)) {
-                    commands_->redo(*project_);
+                    redo();
                 } else {
-                    commands_->undo(*project_);
+                    undo();
                 }
-                selection_.clear();
-                announceSelection();
-                emit edited();
-                update();
                 return;
             }
             break;
         case Qt::Key_Equal:
         case Qt::Key_Plus:
-            layout_.zoomBy(1.4, width() / 2.0, seq->frameRate());
-            emit viewChanged();
-            update();
+            zoomBy(1.4);
             return;
         case Qt::Key_Minus:
-            layout_.zoomBy(1.0 / 1.4, width() / 2.0, seq->frameRate());
-            emit viewChanged();
-            update();
+            zoomBy(1.0 / 1.4);
             return;
         case Qt::Key_Backslash:
             zoomToFit();

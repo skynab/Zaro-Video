@@ -11,7 +11,10 @@
 // under two milliseconds does not, and asking it for the frame the clock is
 // currently on is both simpler and lower latency.
 
+#include <QAction>
+#include <QActionGroup>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -19,18 +22,25 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMap>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QStringList>
+#include <QSysInfo>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -78,11 +88,25 @@
 #include "ProjectBin.h"
 #include "ScopesPanel.h"
 #include "SourceMonitor.h"
+#include "Theme.h"
 #include "TimelineWidget.h"
+#include "ViewerOverlay.h"
 
 namespace {
 
 using namespace zaro;
+
+// Transport glyphs. Characters rather than an icon font: nothing is vendored
+// here, and a glyph that renders as a colour emoji on one platform and an
+// empty box on another is worse than a shape every font has.
+constexpr const char* kPlayGlyph = "\u25B6";         // BLACK RIGHT-POINTING TRIANGLE
+constexpr const char* kPauseGlyph = "\u275A\u275A";  // HEAVY VERTICAL BAR, twice
+
+/// The workspaces, in the order they appear on the tool bar.
+const QStringList kWorkspaces{"Edit", "Color", "Audio", "Deliver"};
+
+/// What the status line says it is running on.
+const QString kPlatformLabel = QSysInfo::prettyProductName();
 
 // No Q_OBJECT: this declares no signals or slots of its own, and
 // QMetaObject::invokeMethod with a lambda needs only a QObject to bind the
@@ -112,19 +136,29 @@ public:
             updateTitle();
         });
 
+        // The burn-in: what the frame is, over the frame. Below the mask
+        // handles, and transparent to the mouse, so it never takes a click the
+        // mask editor wanted.
+        viewerOverlay_ = new app::ViewerOverlay(monitor_, monitor_);
+        maskOverlay_->raise();
+
         timecode_ = new QLabel(this);
+        timecode_->setObjectName("timecode-big");
         // Ask the system for its fixed-width family rather than naming one:
         // a missing family costs a slow alias lookup and silently falls back.
         QFont monospace = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        monospace.setPointSize(15);
+        monospace.setPointSize(17);
         timecode_->setFont(monospace);
-        playButton_ = new QPushButton("Play", this);
+        remaining_ = new QLabel(this);
+        QFont smallMonospace = monospace;
+        smallMonospace.setPointSize(11);
+        remaining_->setFont(smallMonospace);
+        remaining_->setProperty("muted", true);
+        playButton_ = new QPushButton(kPlayGlyph, this);
+        playButton_->setToolTip("Play or pause (Space)");
+        playButton_->setProperty("accent", true);
+        playButton_->setFixedSize(46, 30);
         scrubber_ = new QSlider(Qt::Horizontal, this);
-
-        auto* transportRow = new QHBoxLayout;
-        transportRow->addWidget(playButton_);
-        transportRow->addWidget(scrubber_, 1);
-        transportRow->addWidget(timecode_);
 
         timeline_ = new app::TimelineWidget(this);
         effects_ = new app::EffectControls(this);
@@ -145,152 +179,39 @@ public:
         // Splitters rather than fixed layouts: panel sizes are a matter of what
         // someone is doing at the time, and the arrangement is remembered
         // between sessions.
-        // The transport belongs under the program monitor, not at the bottom of
-        // the window: it controls the picture above it, and putting the timeline
-        // between them makes that relationship harder to see.
-        // Export only, from the window. Importing an OTIO file produces a
-        // project of its own, and replacing the open one needs a "save first?"
-        // that does not exist yet -- so that direction lives in zaro-otio,
-        // where there is nothing to lose.
-        auto* otioButton = new QPushButton("Export OTIO…", this);
-        otioButton->setToolTip("Write this sequence as an OpenTimelineIO file");
-        otioButton->setMinimumWidth(otioButton->sizeHint().width());
-        transportRow->addWidget(otioButton);
-        connect(otioButton, &QPushButton::clicked, this, [this] {
-            if (liveSequence() == nullptr) {
-                return;
-            }
-            const QString path = QFileDialog::getSaveFileName(
-                this, "Export OpenTimelineIO", "timeline.otio", "OpenTimelineIO (*.otio)");
-            if (path.isEmpty()) {
-                return;
-            }
-            if (Status saved = io::saveOtio(project_, liveSequence()->id(), path.toStdString());
-                !saved) {
-                QMessageBox::warning(this, "OpenTimelineIO",
-                                     QString::fromStdString(saved.error().toString()));
-            }
-        });
+        //
+        // Everything the window can do lives in a menu. It used to live in a
+        // row of eighteen buttons under the picture, which was fine while there
+        // were four of them: a menu bar is the structure that says which of
+        // them belong together, and it costs the transport nothing.
+        buildMenus();
 
-        auto* proxyButton = new QPushButton("Proxies…", this);
-        proxyButton->setToolTip("Attach smaller copies for editing");
-        proxyButton->setMinimumWidth(proxyButton->sizeHint().width());
-        transportRow->addWidget(proxyButton);
-        connect(proxyButton, &QPushButton::clicked, this, [this] { proxyMenu(); });
-
-        auto* loudnessButton = new QPushButton("Loudness…", this);
-        loudnessButton->setToolTip("Measure the sequence and normalise to a target");
-        loudnessButton->setMinimumWidth(loudnessButton->sizeHint().width());
-        transportRow->addWidget(loudnessButton);
-        connect(loudnessButton, &QPushButton::clicked, this, [this] { loudnessMenu(); });
-
-        auto* compareButton = new QPushButton("Compare", this);
-        compareButton->setObjectName("compare");
-        compareButton->setCheckable(true);
-        compareButton->setToolTip("Hold this frame and grade against it");
-        compareButton->setMinimumWidth(compareButton->sizeHint().width());
-        transportRow->addWidget(compareButton);
-        connect(compareButton, &QPushButton::toggled, this, [this](bool on) {
-            // Turning it on takes the frame showing now as the reference. That
-            // is the gesture: somebody looks at a shot they like and says
-            // "against this" -- asking them to nominate one first would be a
-            // step between the thought and the thing.
-            setComparing(on, on ? position_ : referenceAt_);
-        });
-
-        auto* matchButton = new QPushButton("Match", this);
-        matchButton->setObjectName("match-shot");
-        matchButton->setToolTip("Match the selected clip to the held frame");
-        matchButton->setMinimumWidth(matchButton->sizeHint().width());
-        transportRow->addWidget(matchButton);
-        connect(matchButton, &QPushButton::clicked, this, [this] {
-            auto match = matchToReference();
-            if (!match) {
-                QMessageBox::information(this, "Match",
-                                         QString::fromStdString(match.error().message()));
-                return;
-            }
-            if (!match->usable) {
-                // Said, not applied. The person looking at both frames decides.
-                QMessageBox::information(this, "Match", QString::fromStdString(match->reason));
-                return;
-            }
-            QMessageBox::information(this, "Match",
-                                     QString("Matched: the two shots were %1 apart and are now %2.")
-                                         .arg(match->before, 0, 'f', 3)
-                                         .arg(match->after, 0, 'f', 3));
-        });
-
-        auto* deliveryButton = new QPushButton("Delivery…", this);
-        deliveryButton->setObjectName("delivery");
-        deliveryButton->setToolTip("What this sequence is delivered as");
-        deliveryButton->setMinimumWidth(deliveryButton->sizeHint().width());
-        transportRow->addWidget(deliveryButton);
-        connect(deliveryButton, &QPushButton::clicked, this, [this] { deliveryMenu(); });
-
-        auto* scenesButton = new QPushButton("Scenes", this);
-        scenesButton->setObjectName("detect-scenes");
-        scenesButton->setToolTip("Cut the selected clip where the picture changes (Ctrl+D)");
-        scenesButton->setMinimumWidth(scenesButton->sizeHint().width());
-        transportRow->addWidget(scenesButton);
-        connect(scenesButton, &QPushButton::clicked, this,
-                [this] { static_cast<void>(detectScenes()); });
-
-        auto* newButton = new QPushButton("New", this);
-        newButton->setObjectName("new-project");
-        newButton->setToolTip("Start an empty project (Ctrl+N)");
-        newButton->setMinimumWidth(newButton->sizeHint().width());
-        transportRow->addWidget(newButton);
-        connect(newButton, &QPushButton::clicked, this, [this] { newProject(); });
-
-        auto* openButton = new QPushButton("Open…", this);
-        openButton->setObjectName("open-project");
-        openButton->setToolTip("Open another project (Ctrl+O)");
-        openButton->setMinimumWidth(openButton->sizeHint().width());
-        transportRow->addWidget(openButton);
-        connect(openButton, &QPushButton::clicked, this, [this] { openDialog(); });
-
-        auto* saveButton = new QPushButton("Save", this);
-        saveButton->setObjectName("save-project");
-        saveButton->setToolTip("Write the project back to its file (Ctrl+S)");
-        saveButton->setMinimumWidth(saveButton->sizeHint().width());
-        transportRow->addWidget(saveButton);
-        connect(saveButton, &QPushButton::clicked, this, [this] { static_cast<void>(save()); });
-
-        auto* multicamButton = new QPushButton("Multicam…", this);
-        multicamButton->setToolTip("Work out the offsets between a clip's angles");
-        multicamButton->setMinimumWidth(multicamButton->sizeHint().width());
-        transportRow->addWidget(multicamButton);
-        connect(multicamButton, &QPushButton::clicked, this, [this] { multicamMenu(); });
-
-        auto* renderButton = new QPushButton("Render…", this);
-        renderButton->setToolTip("Pre-render the visible range so it plays back");
-        renderButton->setMinimumWidth(renderButton->sizeHint().width());
-        transportRow->addWidget(renderButton);
-        connect(renderButton, &QPushButton::clicked, this, [this] { renderMenu(); });
-
-        auto* captionsButton = new QPushButton("Captions…", this);
-        captionsButton->setToolTip("Import, export or burn in subtitles");
-        captionsButton->setMinimumWidth(captionsButton->sizeHint().width());
-        transportRow->addWidget(captionsButton);
-        connect(captionsButton, &QPushButton::clicked, this, [this] { captionsMenu(); });
-
-        auto* transportBar = new QWidget(this);
-        transportBar->setLayout(transportRow);
+        // One viewer with two pages rather than two viewers side by side: a
+        // source and a program monitor are the same act of looking at a frame,
+        // and giving each half the width means neither is big enough to judge
+        // one on.
+        viewerStack_ = new QStackedWidget(this);
+        viewerStack_->setObjectName("viewer-well");
+        viewerStack_->addWidget(source_);
+        viewerStack_->addWidget(monitor_);
+        viewerStack_->setCurrentWidget(monitor_);
 
         auto* programColumn = new QWidget(this);
         auto* programLayout = new QVBoxLayout(programColumn);
         programLayout->setContentsMargins(0, 0, 0, 0);
-        programLayout->addWidget(monitor_, 1);
-        programLayout->addWidget(transportBar);
+        programLayout->setSpacing(0);
+        programLayout->addWidget(buildViewerBar());
+        programLayout->addWidget(viewerStack_, 1);
+        programLayout->addWidget(buildTransportBar());
 
         topSplitter_ = new QSplitter(Qt::Horizontal, this);
+        topSplitter_->setHandleWidth(1);
         topSplitter_->addWidget(bin_);
-        topSplitter_->addWidget(source_);
         topSplitter_->addWidget(programColumn);
         // Scopes share the parameter column: they are read while grading, and
         // grading is done with the parameters in reach.
         auto* rightColumn = new QSplitter(Qt::Vertical, this);
+        rightColumn->setHandleWidth(1);
         rightColumn->addWidget(effects_);
         rightColumn->addWidget(scopes_);
         rightColumn->addWidget(mixer_);
@@ -305,12 +226,13 @@ public:
         scopes_->setMinimumHeight(150);
         mixer_->setMinimumHeight(190);
         topSplitter_->addWidget(rightColumn);
-        topSplitter_->setStretchFactor(1, 1);
-        topSplitter_->setStretchFactor(2, 2);
+        topSplitter_->setStretchFactor(1, 3);
 
         connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
             if (const model::MediaRef* ref = project_.findMedia(id)) {
                 source_->load(*ref);
+                // Opening a clip is a request to look at it.
+                showViewer(source_);
             }
         });
         connect(bin_, &app::ProjectBin::openSubclipRequested, this,
@@ -321,6 +243,7 @@ public:
                     }
                     if (const model::MediaRef* ref = project_.findMedia(subclip->source)) {
                         source_->loadMarked(*ref, subclip->range);
+                        showViewer(source_);
                     }
                 });
         connect(bin_, &app::ProjectBin::colorChanged, this, [this] {
@@ -350,13 +273,19 @@ public:
         });
 
         mainSplitter_ = new QSplitter(Qt::Vertical, this);
+        mainSplitter_->setHandleWidth(1);
         mainSplitter_->addWidget(topSplitter_);
-        mainSplitter_->addWidget(timeline_);
+        mainSplitter_->addWidget(buildTimelinePane());
         mainSplitter_->setStretchFactor(0, 3);
         mainSplitter_->setStretchFactor(1, 2);
 
         auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->addWidget(buildTitleBar());
+        layout->addWidget(buildToolBar());
         layout->addWidget(mainSplitter_, 1);
+        layout->addWidget(buildStatusBar());
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
                 &app::EffectControls::setSelection);
@@ -392,7 +321,12 @@ public:
                     stop();
                     setPosition(position);
                 });
-        connect(timeline_, &app::TimelineWidget::viewChanged, this, [this] { updateCacheBar(); });
+        connect(timeline_, &app::TimelineWidget::viewChanged, this, [this] {
+            updateCacheBar();
+            updateChrome();
+        });
+        connect(timeline_, &app::TimelineWidget::toolChanged, this, [this] { updateChrome(); });
+        connect(timeline_, &app::TimelineWidget::snapChanged, this, [this] { updateChrome(); });
         connect(timeline_, &app::TimelineWidget::edited, this, [this] {
             // Undo can change a clip's parameters as well as its position, so
             // the panel has to re-read rather than trust what it last wrote.
@@ -895,6 +829,9 @@ public:
         const QString name = path_.empty() ? QString{"Untitled"}
                                            : QFileInfo(QString::fromStdString(path_)).fileName();
         setWindowTitle(QString("%1%2 — Zaro").arg(name, commands_.isModified() ? "*" : ""));
+        if (statusLeft_ != nullptr) {
+            updateChrome();
+        }
     }
 
     /// Open the source monitor on the frame the selected clip is showing.
@@ -913,6 +850,7 @@ public:
             return;
         }
         source_->showFrame(*ref, clip->activeSourceTimeAt(position_));
+        showViewer(source_);
     }
 
     /// Keep what is marked in the source monitor as a subclip.
@@ -1134,6 +1072,8 @@ protected:
             const char* description;
             void (PreviewWindow::*action)();
         };
+        // Only the bindings that are *not* menu items: anything with a
+        // modifier lives on its action now, where the menu can show it.
         static const Binding kBindings[] = {
             {Qt::Key_I, Qt::NoModifier, "Mark in", &PreviewWindow::doMarkIn},
             {Qt::Key_O, Qt::NoModifier, "Mark out", &PreviewWindow::doMarkOut},
@@ -1145,13 +1085,6 @@ protected:
             {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
              &PreviewWindow::doSourceForward},
             {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
-            {Qt::Key_D, Qt::ControlModifier, "Detect cuts in the selected clip",
-             &PreviewWindow::doDetectScenes},
-            {Qt::Key_N, Qt::ControlModifier, "New project", &PreviewWindow::doNew},
-            {Qt::Key_O, Qt::ControlModifier, "Open a project", &PreviewWindow::doOpen},
-            {Qt::Key_S, Qt::ControlModifier, "Save", &PreviewWindow::doSave},
-            {Qt::Key_S, Qt::ControlModifier | Qt::ShiftModifier, "Save as",
-             &PreviewWindow::doSaveAs},
         };
         for (const Binding& binding : kBindings) {
             if (event->key() == binding.key && event->modifiers() == binding.modifiers) {
@@ -1190,15 +1123,6 @@ protected:
                 stop();
                 setPosition(liveSequence()->duration());
                 return;
-            case Qt::Key_E:
-                if (event->modifiers().testFlag(Qt::ControlModifier) ||
-                    event->modifiers().testFlag(Qt::MetaModifier)) {
-                    stop();
-                    app::ExportDialog dialog{project_, liveSequence()->id(), this};
-                    dialog.exec();
-                    return;
-                }
-                break;
             default:
                 QWidget::keyPressEvent(event);
         }
@@ -1212,6 +1136,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override {
         if (watched == monitor_ && event->type() == QEvent::Resize) {
             maskOverlay_->setGeometry(monitor_->rect());
+            viewerOverlay_->setGeometry(monitor_->rect());
         }
         return QWidget::eventFilter(watched, event);
     }
@@ -1232,6 +1157,650 @@ protected:
     }
 
 private:
+    // --- The chrome ---------------------------------------------------------
+    //
+    // The window's own furniture: a menu bar, a tool bar, the viewer's header,
+    // the transport, the timeline's header and a status line. Built here rather
+    // than in a designer file, in the order they are stacked on screen.
+
+    /// A small flat button, which is what most of the chrome is made of.
+    QPushButton* chromeButton(const QString& text, const QString& tip, bool checkable = false) {
+        auto* button = new QPushButton(text, this);
+        button->setToolTip(tip);
+        button->setProperty("flat", true);
+        button->setCheckable(checkable);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setMinimumWidth(0);
+        return button;
+    }
+
+    QFrame* chromeSeparator() {
+        auto* line = new QFrame(this);
+        line->setFrameShape(QFrame::VLine);
+        line->setFixedWidth(1);
+        line->setStyleSheet(
+            QString("background:%1;border:none").arg(app::theme::divider().name(QColor::HexRgb)));
+        line->setFixedHeight(20);
+        return line;
+    }
+
+    QLabel* mutedLabel(const QString& text = {}) {
+        auto* label = new QLabel(text, this);
+        label->setProperty("muted", true);
+        return label;
+    }
+
+    template <typename F>
+    QAction* menuItem(QMenu* menu, const QString& text, F&& handler,
+                      const QKeySequence& shortcut = {}, const QString& name = {}) {
+        QAction* action = menu->addAction(text);
+        if (!name.isEmpty()) {
+            action->setObjectName(name);
+        }
+        if (!shortcut.isEmpty()) {
+            // Window context: the menu bar is a child of this window, so an
+            // item is reachable wherever focus is inside it. Single letters are
+            // deliberately not bound here -- they would fire while somebody was
+            // typing a title into a text field.
+            action->setShortcut(shortcut);
+            action->setShortcutContext(Qt::WindowShortcut);
+        }
+        connect(action, &QAction::triggered, this, std::forward<F>(handler));
+        return action;
+    }
+
+    void buildMenus() {
+        menuBar_ = new QMenuBar(this);
+        // In the window rather than in the system bar: this is one window with
+        // its own furniture, and on macOS a native menu bar would put half the
+        // application somewhere the design does not show it.
+        menuBar_->setNativeMenuBar(false);
+
+        QMenu* file = menuBar_->addMenu("File");
+        menuItem(file, "New", [this] { newProject(); }, QKeySequence::New, "new-project");
+        menuItem(file, "Open…", [this] { openDialog(); }, QKeySequence::Open, "open-project");
+        file->addSeparator();
+        menuItem(
+            file, "Save", [this] { static_cast<void>(save()); }, QKeySequence::Save,
+            "save-project");
+        menuItem(file, "Save As…", [this] { static_cast<void>(saveAs()); }, QKeySequence::SaveAs);
+        file->addSeparator();
+        menuItem(
+            file, "Import Media…", [this] { bin_->importFiles(); }, QKeySequence("Ctrl+I"),
+            "import-media");
+        menuItem(
+            file, "Export…", [this] { exportDialog(); }, QKeySequence("Ctrl+E"), "export-sequence");
+        menuItem(file, "Export OpenTimelineIO…", [this] { exportOtio(); });
+        file->addSeparator();
+        menuItem(file, "Close Window", [this] { close(); }, QKeySequence::Close);
+
+        QMenu* edit = menuBar_->addMenu("Edit");
+        menuItem(edit, "Undo", [this] { timeline_->undo(); }, QKeySequence::Undo);
+        menuItem(edit, "Redo", [this] { timeline_->redo(); }, QKeySequence::Redo);
+        edit->addSeparator();
+        menuItem(edit, "Select All", [this] { timeline_->selectAll(); }, QKeySequence::SelectAll);
+        edit->addSeparator();
+        menuItem(
+            edit, "Detect Cuts in Selected Clip", [this] { static_cast<void>(detectScenes()); },
+            QKeySequence("Ctrl+D"), "detect-scenes");
+
+        QMenu* clip = menuBar_->addMenu("Clip");
+        menuItem(clip, "Match Frame", [this] { matchFrame(); });
+        menuItem(clip, "Make Subclip", [this] { makeSubclip(); });
+        clip->addSeparator();
+        menuItem(clip, "Proxies…", [this] { proxyMenu(); }, {}, "proxies");
+        menuItem(clip, "Multicam…", [this] { multicamMenu(); }, {}, "multicam");
+        menuItem(clip, "Captions…", [this] { captionsMenu(); }, {}, "captions");
+
+        QMenu* sequence = menuBar_->addMenu("Sequence");
+        menuItem(sequence, "Razor at Playhead", [this] { timeline_->razorAtPlayhead(); });
+        menuItem(sequence, "Add Dissolve at Playhead",
+                 [this] { timeline_->addDissolveAtPlayhead(); });
+        sequence->addSeparator();
+        menuItem(sequence, "Render Range…", [this] { renderMenu(); }, {}, "render-range");
+        menuItem(sequence, "Delivery…", [this] { deliveryMenu(); }, {}, "delivery");
+        menuItem(sequence, "Loudness…", [this] { loudnessMenu(); }, {}, "loudness");
+
+        QMenu* marker = menuBar_->addMenu("Marker");
+        menuItem(marker, "Add Marker", [this] { timeline_->addMarkerAtPlayhead(); });
+        menuItem(
+            marker, "Go to Next Marker", [this] { doNextMarker(); }, QKeySequence("Shift+Right"));
+        menuItem(
+            marker, "Go to Previous Marker", [this] { doPreviousMarker(); },
+            QKeySequence("Shift+Left"));
+
+        QMenu* effects = menuBar_->addMenu("Effects");
+        compareAction_ = menuItem(
+            effects, "Hold This Frame to Compare",
+            [this](bool on) {
+                // Turning it on takes the frame showing now as the reference. That
+                // is the gesture: somebody looks at a shot they like and says
+                // "against this" -- asking them to nominate one first would be a
+                // step between the thought and the thing.
+                setComparing(on, on ? position_ : referenceAt_);
+            },
+            {}, "compare");
+        compareAction_->setCheckable(true);
+        menuItem(
+            effects, "Match Selected Clip to Held Frame", [this] { matchShot(); }, {},
+            "match-shot");
+
+        QMenu* view = menuBar_->addMenu("View");
+        QMenu* workspaces = view->addMenu("Workspace");
+        for (const QString& name : kWorkspaces) {
+            QAction* action = workspaces->addAction(name);
+            action->setCheckable(true);
+            workspaceActions_.insert(name, action);
+            connect(action, &QAction::triggered, this, [this, name] { setWorkspace(name); });
+        }
+        view->addSeparator();
+        menuItem(view, "Zoom In", [this] { timeline_->zoomBy(1.4); }, QKeySequence::ZoomIn);
+        menuItem(view, "Zoom Out", [this] { timeline_->zoomBy(1.0 / 1.4); }, QKeySequence::ZoomOut);
+        menuItem(
+            view, "Zoom to Fit", [this] { timeline_->zoomToFit(); }, QKeySequence("Ctrl+Shift+F"));
+        view->addSeparator();
+        guidesAction_ = menuItem(
+            view, "Safe Area Guides",
+            [this](bool on) {
+                viewerOverlay_->setGuides(on);
+                if (guidesButton_ != nullptr) {
+                    guidesButton_->setChecked(on);
+                }
+            },
+            QKeySequence("Ctrl+'"), "safe-guides");
+        guidesAction_->setCheckable(true);
+
+        QMenu* window = menuBar_->addMenu("Window");
+        panelAction(window, "Project Bin", [this] { return bin_; });
+        panelAction(window, "Effect Controls", [this] { return static_cast<QWidget*>(effects_); });
+        panelAction(window, "Scopes", [this] { return static_cast<QWidget*>(scopes_); });
+        panelAction(window, "Audio Mixer", [this] { return static_cast<QWidget*>(mixer_); });
+        window->addSeparator();
+        menuItem(window, "Reset Panels", [this] { setWorkspace(workspace_); });
+
+        QMenu* help = menuBar_->addMenu("Help");
+        menuItem(help, "Keyboard Shortcuts", [this] { showShortcuts(); });
+        menuItem(help, "About Zaro", [this] {
+            QMessageBox::about(this, "Zaro Video",
+                               "Zaro Video — a non-linear editor.\n\n"
+                               "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
+        });
+    }
+
+    /// A Window-menu item that shows and hides one panel.
+    template <typename F>
+    void panelAction(QMenu* menu, const QString& text, F&& panel) {
+        QAction* action = menu->addAction(text);
+        action->setCheckable(true);
+        connect(action, &QAction::triggered, this, [panel](bool on) { panel()->setVisible(on); });
+        connect(menu, &QMenu::aboutToShow, this,
+                [action, panel] { action->setChecked(panel()->isVisible()); });
+    }
+
+    QWidget* buildTitleBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-titlebar");
+        bar->setFixedHeight(38);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(12, 0, 12, 0);
+        row->setSpacing(8);
+
+        auto* brand = new QLabel("Zaro", bar);
+        brand->setObjectName("chrome-brand");
+        row->addWidget(brand);
+        menuBar_->setParent(bar);
+        row->addWidget(menuBar_);
+        row->addStretch(1);
+
+        projectLabel_ = mutedLabel();
+        row->addWidget(projectLabel_);
+        row->addStretch(1);
+
+        autosaveLabel_ = mutedLabel();
+        row->addWidget(autosaveLabel_);
+        return bar;
+    }
+
+    QWidget* buildToolBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-toolbar");
+        bar->setFixedHeight(46);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(12, 0, 12, 0);
+        row->setSpacing(10);
+
+        // The tools, in the order a cut is made: pick, cut, trim, slip, then
+        // the two that move the view rather than the cut.
+        struct ToolEntry {
+            app::TimelineWidget::Tool tool;
+            const char* letter;
+            const char* name;
+            const char* key;
+        };
+        static const ToolEntry kTools[] = {
+            {app::TimelineWidget::Tool::Select, "V", "Select", "V"},
+            {app::TimelineWidget::Tool::Blade, "B", "Blade", "B"},
+            {app::TimelineWidget::Tool::Trim, "T", "Trim", "T"},
+            {app::TimelineWidget::Tool::Slip, "Y", "Slip", "Y"},
+            {app::TimelineWidget::Tool::Hand, "H", "Hand", "H"},
+            {app::TimelineWidget::Tool::Zoom, "Z", "Zoom", "Z"},
+        };
+        auto* toolGroup = new QWidget(bar);
+        toolGroup->setObjectName("tool-group");
+        auto* toolRow = new QHBoxLayout(toolGroup);
+        toolRow->setContentsMargins(2, 2, 2, 2);
+        toolRow->setSpacing(2);
+        for (const ToolEntry& entry : kTools) {
+            // A letter rather than a picture, and the letter is the key that
+            // picks the tool: with no icon font vendored, a labelled button
+            // that teaches its own shortcut beats a glyph that renders
+            // differently on every platform.
+            QPushButton* button = chromeButton(
+                entry.letter, QString("%1 tool (%2)").arg(entry.name, entry.key), true);
+            button->setFixedSize(30, 28);
+            const auto tool = entry.tool;
+            connect(button, &QPushButton::clicked, this,
+                    [this, tool] { timeline_->setTool(tool); });
+            toolButtons_.push_back(button);
+            toolRow->addWidget(button);
+        }
+        row->addWidget(toolGroup);
+
+        snapButton_ = chromeButton("Snap", "Pull edits to the edit points near them (S)", true);
+        snapButton_->setFixedHeight(28);
+        connect(snapButton_, &QPushButton::clicked, this,
+                [this](bool on) { timeline_->setSnapEnabled(on); });
+        row->addWidget(snapButton_);
+
+        QPushButton* markerButton = chromeButton("Marker", "Add a marker at the playhead (M)");
+        markerButton->setFixedHeight(28);
+        connect(markerButton, &QPushButton::clicked, this,
+                [this] { timeline_->addMarkerAtPlayhead(); });
+        row->addWidget(markerButton);
+
+        row->addWidget(chromeSeparator());
+        formatLabel_ = mutedLabel();
+        row->addWidget(formatLabel_);
+        row->addStretch(1);
+
+        auto* tabGroup = new QWidget(bar);
+        tabGroup->setObjectName("tab-group");
+        auto* tabRow = new QHBoxLayout(tabGroup);
+        tabRow->setContentsMargins(2, 2, 2, 2);
+        tabRow->setSpacing(2);
+        for (const QString& name : kWorkspaces) {
+            QPushButton* tab = chromeButton(name, QString("%1 workspace").arg(name), true);
+            tab->setFixedHeight(26);
+            connect(tab, &QPushButton::clicked, this, [this, name] { setWorkspace(name); });
+            workspaceTabs_.insert(name, tab);
+            tabRow->addWidget(tab);
+        }
+        row->addWidget(tabGroup);
+        row->addStretch(1);
+
+        auto* importButton = new QPushButton("Import", bar);
+        importButton->setFixedHeight(30);
+        connect(importButton, &QPushButton::clicked, this, [this] { bin_->importFiles(); });
+        row->addWidget(importButton);
+
+        auto* exportButton = new QPushButton("Export", bar);
+        exportButton->setProperty("accent", true);
+        exportButton->setFixedHeight(30);
+        connect(exportButton, &QPushButton::clicked, this, [this] { exportDialog(); });
+        row->addWidget(exportButton);
+        return bar;
+    }
+
+    QWidget* buildViewerBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-viewer-bar");
+        bar->setFixedHeight(34);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(12, 0, 12, 0);
+        row->setSpacing(8);
+
+        auto* segment = new QWidget(bar);
+        segment->setObjectName("segment-group");
+        auto* segmentRow = new QHBoxLayout(segment);
+        segmentRow->setContentsMargins(2, 2, 2, 2);
+        segmentRow->setSpacing(2);
+        sourceTab_ = chromeButton("Source", "The clip opened from the bin", true);
+        programTab_ = chromeButton("Program", "The sequence at the playhead", true);
+        for (QPushButton* tab : {sourceTab_, programTab_}) {
+            tab->setFixedHeight(24);
+            segmentRow->addWidget(tab);
+        }
+        programTab_->setChecked(true);
+        connect(sourceTab_, &QPushButton::clicked, this, [this] { showViewer(source_); });
+        connect(programTab_, &QPushButton::clicked, this, [this] { showViewer(monitor_); });
+        row->addWidget(segment);
+
+        viewerLabel_ = mutedLabel();
+        row->addWidget(viewerLabel_);
+        row->addStretch(1);
+
+        guidesButton_ = chromeButton("Guides", "Action-safe, title-safe and the thirds", true);
+        guidesButton_->setFixedHeight(24);
+        connect(guidesButton_, &QPushButton::clicked, this, [this](bool on) {
+            viewerOverlay_->setGuides(on);
+            guidesAction_->setChecked(on);
+        });
+        row->addWidget(guidesButton_);
+
+        qualityLabel_ = mutedLabel();
+        row->addWidget(qualityLabel_);
+        return bar;
+    }
+
+    QWidget* buildTransportBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-transport");
+        auto* column = new QVBoxLayout(bar);
+        column->setContentsMargins(14, 6, 14, 8);
+        column->setSpacing(6);
+        column->addWidget(scrubber_);
+
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        timecode_->setMinimumWidth(140);
+        row->addWidget(timecode_);
+        row->addStretch(1);
+
+        struct TransportEntry {
+            const char* glyph;
+            const char* tip;
+            void (PreviewWindow::*action)();
+        };
+        static const TransportEntry kBefore[] = {
+            {"|◀", "Go to the start (Home)", &PreviewWindow::goToStart},
+            {"◁", "Back one frame (Left)", &PreviewWindow::stepBack},
+        };
+        static const TransportEntry kAfter[] = {
+            {"▷", "Forward one frame (Right)", &PreviewWindow::stepForward},
+            {"▶|", "Go to the end (End)", &PreviewWindow::goToEnd},
+        };
+        const auto addTransport = [&](const TransportEntry& entry) {
+            QPushButton* button = chromeButton(entry.glyph, entry.tip);
+            button->setFixedSize(32, 30);
+            const auto action = entry.action;
+            connect(button, &QPushButton::clicked, this, [this, action] { (this->*action)(); });
+            row->addWidget(button);
+        };
+        for (const TransportEntry& entry : kBefore) {
+            addTransport(entry);
+        }
+        row->addWidget(playButton_);
+        for (const TransportEntry& entry : kAfter) {
+            addTransport(entry);
+        }
+
+        row->addWidget(chromeSeparator());
+        QPushButton* markIn = chromeButton("[", "Mark in (I)");
+        markIn->setFixedSize(30, 30);
+        connect(markIn, &QPushButton::clicked, this, [this] { doMarkIn(); });
+        row->addWidget(markIn);
+        QPushButton* markOut = chromeButton("]", "Mark out (O)");
+        markOut->setFixedSize(30, 30);
+        connect(markOut, &QPushButton::clicked, this, [this] { doMarkOut(); });
+        row->addWidget(markOut);
+
+        row->addStretch(1);
+        remaining_->setMinimumWidth(140);
+        remaining_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(remaining_);
+        column->addLayout(row);
+        return bar;
+    }
+
+    QWidget* buildTimelinePane() {
+        auto* pane = new QWidget(this);
+        auto* column = new QVBoxLayout(pane);
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(0);
+
+        auto* bar = new QWidget(pane);
+        bar->setObjectName("chrome-timeline-bar");
+        bar->setFixedHeight(34);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(10, 0, 10, 0);
+        row->setSpacing(8);
+        auto* title = new QLabel("Timeline", bar);
+        row->addWidget(title);
+        timelineLabel_ = mutedLabel();
+        row->addWidget(timelineLabel_);
+        row->addWidget(chromeSeparator());
+
+        QPushButton* razor = chromeButton("Razor", "Cut every selected track at the playhead (C)");
+        connect(razor, &QPushButton::clicked, this, [this] { timeline_->razorAtPlayhead(); });
+        row->addWidget(razor);
+        QPushButton* dissolve =
+            chromeButton("Dissolve", "Put a dissolve on the cut at the playhead");
+        connect(dissolve, &QPushButton::clicked, this,
+                [this] { timeline_->addDissolveAtPlayhead(); });
+        row->addWidget(dissolve);
+
+        row->addStretch(1);
+        snapLabel_ = mutedLabel();
+        row->addWidget(snapLabel_);
+        auto* zoomOut = chromeButton("−", "Zoom out");
+        zoomOut->setFixedSize(24, 24);
+        connect(zoomOut, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.0 / 1.4); });
+        row->addWidget(zoomOut);
+        zoomSlider_ = new QSlider(Qt::Horizontal, bar);
+        zoomSlider_->setFixedWidth(96);
+        zoomSlider_->setRange(0, 1000);
+        zoomSlider_->setFocusPolicy(Qt::NoFocus);
+        connect(zoomSlider_, &QSlider::valueChanged, this, [this](int value) {
+            if (zoomSlider_->isSliderDown()) {
+                timeline_->setZoomFraction(value / 1000.0);
+            }
+        });
+        row->addWidget(zoomSlider_);
+        auto* zoomIn = chromeButton("+", "Zoom in");
+        zoomIn->setFixedSize(24, 24);
+        connect(zoomIn, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.4); });
+        row->addWidget(zoomIn);
+
+        column->addWidget(bar);
+        column->addWidget(timeline_, 1);
+        return pane;
+    }
+
+    QWidget* buildStatusBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-statusbar");
+        bar->setFixedHeight(26);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(12, 0, 12, 0);
+        row->setSpacing(16);
+        statusLeft_ = mutedLabel();
+        statusMiddle_ = mutedLabel();
+        statusRight_ = mutedLabel();
+        row->addWidget(statusLeft_);
+        row->addWidget(statusMiddle_);
+        row->addStretch(1);
+        row->addWidget(statusRight_);
+        return bar;
+    }
+
+    /// Which page the one viewer is showing.
+    void showViewer(QWidget* page) {
+        viewerStack_->setCurrentWidget(page);
+        sourceTab_->setChecked(page == source_);
+        programTab_->setChecked(page == monitor_);
+    }
+
+public:
+    /// Put the program monitor back in the viewer. Match frame and opening a
+    /// clip from the bin both swap it for the source; this is the way back.
+    void showProgram() { showViewer(monitor_); }
+
+    /// A workspace is which panels are up. Four arrangements, because there are
+    /// four things people do with an editor, and each of them wants a different
+    /// half of the window: the panels a colourist needs are dead weight while
+    /// somebody is assembling, and the reverse.
+    void setWorkspace(const QString& name) {
+        if (!kWorkspaces.contains(name)) {
+            return;
+        }
+        // The arrangement of the workspace being left is remembered, so coming
+        // back to it finds the splitters where they were.
+        if (topSplitter_ != nullptr && !workspace_.isEmpty()) {
+            QSettings settings("Zaro", "Zaro Video");
+            settings.setValue("workspace/" + workspace_ + "/top", topSplitter_->saveState());
+            settings.setValue("workspace/" + workspace_ + "/main", mainSplitter_->saveState());
+        }
+        workspace_ = name;
+
+        const bool colour = name == "Color";
+        const bool audio = name == "Audio";
+        const bool deliver = name == "Deliver";
+        bin_->setVisible(!colour && !deliver);
+        effects_->setVisible(!deliver);
+        scopes_->setVisible(colour || deliver);
+        mixer_->setVisible(audio || deliver);
+
+        for (auto entry = workspaceTabs_.constBegin(); entry != workspaceTabs_.constEnd();
+             ++entry) {
+            entry.value()->setChecked(entry.key() == name);
+        }
+        for (auto entry = workspaceActions_.constBegin(); entry != workspaceActions_.constEnd();
+             ++entry) {
+            entry.value()->setChecked(entry.key() == name);
+        }
+
+        QSettings settings("Zaro", "Zaro Video");
+        if (const auto state = settings.value("workspace/" + name + "/top").toByteArray();
+            !state.isEmpty()) {
+            topSplitter_->restoreState(state);
+        }
+        if (const auto state = settings.value("workspace/" + name + "/main").toByteArray();
+            !state.isEmpty()) {
+            mainSplitter_->restoreState(state);
+        }
+        updateChrome();
+    }
+
+private:
+    /// Everything in the chrome that describes state rather than causing it.
+    void updateChrome() {
+        const model::Sequence* sequence = liveSequence();
+        const QString name = path_.empty()
+                                 ? QString{"Untitled"}
+                                 : QFileInfo(QString::fromStdString(path_)).completeBaseName();
+        projectLabel_->setText(
+            QString("%1 · %2%3")
+                .arg(name,
+                     sequence != nullptr ? QString::fromStdString(sequence->name()) : QString{"—"},
+                     commands_.isModified() ? " •" : ""));
+        autosaveLabel_->setText(commands_.isModified() ? "Unsaved changes" : "Saved");
+
+        if (sequence != nullptr) {
+            const double fps = sequence->frameRate().toDouble();
+            formatLabel_->setText(QString("%1×%2 · %3 fps · Rec.709")
+                                      .arg(sequence->width())
+                                      .arg(sequence->height())
+                                      .arg(fps, 0, 'g', 5));
+            const bool dropFrame = time::supportsDropFrame(sequence->frameRate());
+            const time::Timecode duration = time::timecodeFromFrames(
+                sequence->duration().frames(), sequence->frameRate(), dropFrame);
+            timelineLabel_->setText(
+                QString("%1 · %2").arg(QString::fromStdString(sequence->name()),
+                                       QString::fromStdString(duration.toString())));
+            viewerLabel_->setText(
+                QString("%1 — %2").arg(name, QString::fromStdString(sequence->name())));
+        }
+        qualityLabel_->setText(monitor_->comparing() ? "Compare · CPU" : "Full · GPU");
+
+        static const QString kToolNames[] = {"Select", "Blade", "Trim", "Slip", "Hand", "Zoom"};
+        statusLeft_->setText(QString("%1 tool · %2 workspace")
+                                 .arg(kToolNames[static_cast<int>(timeline_->tool())], workspace_));
+        const int items = bin_->count();
+        statusMiddle_->setText(
+            QString("%1 %2 · %3")
+                .arg(items)
+                .arg(items == 1 ? "item" : "items", commands_.isModified() ? "edited" : "clean"));
+        statusRight_->setText(QString("%1 · Qt %2").arg(kPlatformLabel, QT_VERSION_STR));
+
+        snapButton_->setChecked(timeline_->snapEnabled());
+        snapLabel_->setText(timeline_->snapEnabled() ? "Snap on" : "Snap off");
+        const auto tool = static_cast<std::size_t>(timeline_->tool());
+        for (std::size_t i = 0; i < toolButtons_.size(); ++i) {
+            toolButtons_[i]->setChecked(i == tool);
+        }
+        if (!zoomSlider_->isSliderDown()) {
+            const QSignalBlocker blocker{zoomSlider_};
+            zoomSlider_->setValue(static_cast<int>(timeline_->zoomFraction() * 1000.0));
+        }
+    }
+
+    /// Two menu items and a toolbar button that were buttons in a row before.
+    void exportDialog() {
+        if (liveSequence() == nullptr) {
+            return;
+        }
+        stop();
+        app::ExportDialog dialog{project_, liveSequence()->id(), this};
+        dialog.exec();
+    }
+
+    void exportOtio() {
+        if (liveSequence() == nullptr) {
+            return;
+        }
+        // Export only, from the window. Importing an OTIO file produces a
+        // project of its own, and replacing the open one needs a "save first?"
+        // that does not exist yet -- so that direction lives in zaro-otio,
+        // where there is nothing to lose.
+        const QString path = QFileDialog::getSaveFileName(
+            this, "Export OpenTimelineIO", "timeline.otio", "OpenTimelineIO (*.otio)");
+        if (path.isEmpty()) {
+            return;
+        }
+        if (Status saved = io::saveOtio(project_, liveSequence()->id(), path.toStdString());
+            !saved) {
+            QMessageBox::warning(this, "OpenTimelineIO",
+                                 QString::fromStdString(saved.error().toString()));
+        }
+    }
+
+    void matchShot() {
+        auto match = matchToReference();
+        if (!match) {
+            QMessageBox::information(this, "Match",
+                                     QString::fromStdString(match.error().message()));
+            return;
+        }
+        if (!match->usable) {
+            // Said, not applied. The person looking at both frames decides.
+            QMessageBox::information(this, "Match", QString::fromStdString(match->reason));
+            return;
+        }
+        QMessageBox::information(this, "Match",
+                                 QString("Matched: the two shots were %1 apart and are now %2.")
+                                     .arg(match->before, 0, 'f', 3)
+                                     .arg(match->after, 0, 'f', 3));
+    }
+
+    void showShortcuts() {
+        QMessageBox::information(this, "Keyboard shortcuts",
+                                 "Space play/pause · J K L shuttle · ← → step · Home End\n"
+                                 "I O mark in/out · , . insert/overwrite · F match frame\n"
+                                 "V B T Y H Z tools · C razor · M marker · S snapping\n"
+                                 "Ctrl+Z undo · Ctrl+S save · Ctrl+E export · Ctrl+D detect cuts");
+    }
+
+    void goToStart() {
+        stop();
+        setPosition(time::RationalTime{0, liveSequence()->frameRate()});
+    }
+    void goToEnd() {
+        stop();
+        setPosition(liveSequence()->duration());
+    }
+    void stepBack() { step(-1); }
+    void stepForward() { step(1); }
+
     /// Panel sizes and window geometry, remembered between sessions.
     ///
     /// Saved on close rather than continuously: writing settings on every drag
@@ -1239,8 +1808,12 @@ private:
     void saveWorkspace() {
         QSettings settings("Zaro", "Zaro Video");
         settings.setValue("window/geometry", saveGeometry());
-        settings.setValue("workspace/top", topSplitter_->saveState());
-        settings.setValue("workspace/main", mainSplitter_->saveState());
+        // Per workspace, because the panels differ between them: one saved
+        // arrangement restored into a different set of visible panels is a
+        // collapsed bin and a mixer four pixels tall.
+        settings.setValue("workspace/current", workspace_);
+        settings.setValue("workspace/" + workspace_ + "/top", topSplitter_->saveState());
+        settings.setValue("workspace/" + workspace_ + "/main", mainSplitter_->saveState());
     }
 
     void restoreWorkspace() {
@@ -1251,12 +1824,11 @@ private:
             !geometry.isEmpty()) {
             restoreGeometry(geometry);
         }
-        if (const auto state = settings.value("workspace/top").toByteArray(); !state.isEmpty()) {
-            topSplitter_->restoreState(state);
-        }
-        if (const auto state = settings.value("workspace/main").toByteArray(); !state.isEmpty()) {
-            mainSplitter_->restoreState(state);
-        }
+        const QString wanted = settings.value("workspace/current", "Edit").toString();
+        // Always through setWorkspace, so the panels, the tabs and the splitter
+        // states are one decision rather than three that can disagree.
+        workspace_.clear();
+        setWorkspace(kWorkspaces.contains(wanted) ? wanted : QString{"Edit"});
     }
 
     /// Stop everything and join. Called from both the close event and the
@@ -1365,7 +1937,7 @@ private:
         anchorClock_ = sink_ ? sink_->clockFrames() : 0;
         audioWritten_ = sink_ ? sink_->clockFrames() : 0;
         playing_ = true;
-        playButton_->setText("Pause");
+        playButton_->setText(kPauseGlyph);
 
         if (sink_) {
             // Audio on its own thread, for the reason ADR-006 records: sharing
@@ -1390,7 +1962,7 @@ private:
         if (sink_) {
             sink_->pause();
         }
-        playButton_->setText("Play");
+        playButton_->setText(kPlayGlyph);
     }
 
     /// Peaks are generated off the UI thread: decoding a long file's audio
@@ -1833,6 +2405,19 @@ private:
         if (!scrubber_->isSliderDown()) {
             scrubber_->setValue(static_cast<int>(position_.frames()));
         }
+
+        const time::Timecode left = time::timecodeFromFrames(
+            std::max<std::int64_t>(0, liveSequence()->duration().frames() - position_.frames()),
+            liveSequence()->frameRate(), dropFrame);
+        remaining_->setText("-" + QString::fromStdString(left.toString()));
+
+        const model::Track* track = liveSequence()->findTrack(selectedTrack_);
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        viewerOverlay_->setInfo(
+            clip != nullptr ? QString::fromStdString(clip->name) : QString{},
+            QString::fromStdString(code.toString()),
+            QString("%1×%2").arg(liveSequence()->width()).arg(liveSequence()->height()),
+            track != nullptr ? QString::fromStdString(track->name()) : QString{});
     }
 
     model::Project project_;
@@ -1883,6 +2468,34 @@ private:
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
     QSplitter* mainSplitter_{nullptr};
+
+    /// The chrome. None of it owns anything: every one of these is a child of
+    /// the window, and Qt deletes them with it.
+    QMenuBar* menuBar_{nullptr};
+    QStackedWidget* viewerStack_{nullptr};
+    app::ViewerOverlay* viewerOverlay_{nullptr};
+    QLabel* projectLabel_{nullptr};
+    QLabel* autosaveLabel_{nullptr};
+    QLabel* formatLabel_{nullptr};
+    QLabel* viewerLabel_{nullptr};
+    QLabel* qualityLabel_{nullptr};
+    QLabel* timelineLabel_{nullptr};
+    QLabel* snapLabel_{nullptr};
+    QLabel* statusLeft_{nullptr};
+    QLabel* statusMiddle_{nullptr};
+    QLabel* statusRight_{nullptr};
+    QLabel* remaining_{nullptr};
+    QSlider* zoomSlider_{nullptr};
+    QPushButton* sourceTab_{nullptr};
+    QPushButton* programTab_{nullptr};
+    QPushButton* snapButton_{nullptr};
+    QPushButton* guidesButton_{nullptr};
+    QAction* guidesAction_{nullptr};
+    QAction* compareAction_{nullptr};
+    std::vector<QPushButton*> toolButtons_;
+    QMap<QString, QPushButton*> workspaceTabs_;
+    QMap<QString, QAction*> workspaceActions_;
+    QString workspace_{"Edit"};
     edit::CommandStack commands_;
     QLabel* timecode_{nullptr};
     QPushButton* playButton_{nullptr};
@@ -1948,6 +2561,10 @@ void dragOnTimeline(app::TimelineWidget* timeline, int fromX, int toX, int y,
 
 int main(int argc, char** argv) {
     QApplication application(argc, argv);
+    // Before any window exists: the palette and the sheet decide what every
+    // widget looks like the moment it is constructed, and a window built first
+    // flashes the platform's own colours on its way to these.
+    zaro::app::theme::apply(application);
 
     QStringList arguments = QApplication::arguments();
     const bool selfTest = arguments.removeAll("--selftest") > 0;
@@ -2315,6 +2932,11 @@ int main(int argc, char** argv) {
         // upside down relative to it. Getting that backwards produces a scope
         // that looks entirely plausible and reports the opposite of the truth.
         {
+            // Scopes are up in the Color workspace. Grabbing a panel that is
+            // not on screen returns something, but not what a colourist would
+            // be looking at, so the test puts it on screen first.
+            window.setWorkspace("Color");
+            QApplication::processEvents();
             // Returns the mean row of the trace, as a fraction of the plot
             // area: 0 is the top of the scope and 1 the bottom.
             const auto traceHeight = [&]() -> double {
@@ -2377,6 +2999,8 @@ int main(int argc, char** argv) {
                              "  FAIL: a black frame should read at the bottom of the scope\n");
                 return 1;
             }
+            window.setWorkspace("Edit");
+            QApplication::processEvents();
         }
 
         // Colour correction, through the panel and out to the picture. The
@@ -3755,12 +4379,12 @@ int main(int argc, char** argv) {
             }
 
             // Through the button, the way somebody would.
-            auto* saveButton = window.findChild<QPushButton*>("save-project");
-            if (saveButton == nullptr) {
-                std::fprintf(stderr, "  FAIL: there is no save button\n");
+            auto* saveAction = window.findChild<QAction*>("save-project");
+            if (saveAction == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no Save item\n");
                 return 1;
             }
-            saveButton->click();
+            saveAction->trigger();
             QApplication::processEvents();
 
             if (!std::filesystem::exists(savePath)) {
@@ -3814,7 +4438,7 @@ int main(int argc, char** argv) {
 
             // Saving properly clears it: what it described is now in the
             // project, and offering it on the next open would be alarming.
-            saveButton->click();
+            saveAction->trigger();
             QApplication::processEvents();
             if (std::filesystem::exists(zaro::io::autosavePath(savePath))) {
                 std::fprintf(stderr, "  FAIL: the recovery file outlived the save\n");
@@ -4444,6 +5068,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "  FAIL: no audio track to mix\n");
                 return 1;
             }
+            // The mixer is up in the Audio workspace, which is the point of
+            // workspaces: it is not on screen while somebody is assembling.
+            window.setWorkspace("Audio");
             window.mixer()->refresh();
             QApplication::processEvents();
 
@@ -4829,11 +5456,15 @@ int main(int argc, char** argv) {
                 const int bottom = std::min((row->top + row->height) * dpr, shot.height());
                 std::int64_t found = 0;
                 for (int y = std::max(0, top); y < bottom; ++y) {
+                    // Asked of the theme rather than written out: the diamond
+                    // is painted in a token, and a literal here would have to
+                    // be chased every time the palette moves.
+                    const QColor diamond = zaro::app::theme::neutral(200);
                     for (int x = 0; x < shot.width(); ++x) {
                         const QColor pixel = shot.pixelColor(x, y);
-                        if (std::abs(pixel.red() - 226) <= 6 &&
-                            std::abs(pixel.green() - 226) <= 6 &&
-                            std::abs(pixel.blue() - 236) <= 6) {
+                        if (std::abs(pixel.red() - diamond.red()) <= 6 &&
+                            std::abs(pixel.green() - diamond.green()) <= 6 &&
+                            std::abs(pixel.blue() - diamond.blue()) <= 6) {
                             ++found;
                         }
                     }
@@ -5523,6 +6154,10 @@ int main(int argc, char** argv) {
                 return false;
             };
 
+            // Match frame left the source in the viewer, and a monitor that is
+            // not on screen does not repaint -- so nothing would read the cache.
+            window.showProgram();
+            QApplication::processEvents();
             window.renderCache().clear();
             window.renderVisibleRange();
             const std::size_t cached = window.renderCache().count();
@@ -5710,12 +6345,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            auto* newButton = window.findChild<QPushButton*>("new-project");
-            if (newButton == nullptr) {
-                std::fprintf(stderr, "  FAIL: there is no new-project button\n");
+            auto* newAction = window.findChild<QAction*>("new-project");
+            if (newAction == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no New item\n");
                 return 1;
             }
-            newButton->click();
+            newAction->trigger();
             QApplication::processEvents();
 
             const auto freshId = window.project().activeSequence();
