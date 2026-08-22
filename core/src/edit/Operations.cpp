@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "zaro/core/Check.h"
+#include "zaro/core/media/Waveform.h"
 
 namespace zaro::edit {
 namespace {
@@ -2389,6 +2391,35 @@ Result<CommandPtr> makeRemoveTransition(Project& project, const EditTarget& targ
 
 namespace {
 
+class RelinkMediaCommand final : public ProjectCommand {
+public:
+    RelinkMediaCommand(model::MediaRefId media, std::string path, std::string digest,
+                       std::string description)
+        : ProjectCommand{std::move(description)},
+          media_{media},
+          path_{std::move(path)},
+          digest_{std::move(digest)} {}
+
+protected:
+    void mutate(Project& project) override {
+        for (model::MediaRef& media : project.mediaMutable()) {
+            if (media.id == media_) {
+                media.path = path_;
+                media.contentDigest = digest_;
+                // The cache key is deliberately dropped rather than kept: it
+                // described the old file's timestamp, and a stale one would
+                // hand back the old file's waveform for the new file.
+                media.contentHash.clear();
+            }
+        }
+    }
+
+private:
+    model::MediaRefId media_;
+    std::string path_;
+    std::string digest_;
+};
+
 class ImportMediaCommand final : public ProjectCommand {
 public:
     ImportMediaCommand(model::MediaRef media, std::string description)
@@ -2415,6 +2446,26 @@ Result<CommandPtr> makeImportMedia(Project& project, model::MediaRef media) {
     }
     const std::string name = media.name.empty() ? media.path : media.name;
     return CommandPtr{std::make_unique<ImportMediaCommand>(std::move(media), "Import " + name)};
+}
+
+Result<CommandPtr> makeRelinkMedia(Project& project, model::MediaRefId mediaId,
+                                   const std::string& path) {
+    const model::MediaRef* media = project.findMedia(mediaId);
+    if (media == nullptr) {
+        return Error{ErrorCode::NotFound, "no such media in this project"};
+    }
+    if (path.empty()) {
+        return Error{ErrorCode::InvalidData, "a relink needs a file to point at"};
+    }
+    std::string digest;
+    if (auto found = media::contentDigest(path)) {
+        digest = *found;
+    } else {
+        return found.error();
+    }
+    return CommandPtr{std::make_unique<RelinkMediaCommand>(
+        mediaId, path, std::move(digest),
+        "Relink " + std::filesystem::path{path}.filename().string())};
 }
 
 // --- Structure --------------------------------------------------------------

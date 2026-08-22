@@ -82,4 +82,17 @@ private:
 /// identity -- relinking, conform -- should not use this.
 [[nodiscard]] Result<std::string> quickContentHash(const std::string& path);
 
+/// The same sampling without the timestamp: an identity that survives a copy.
+///
+/// Copying a file, restoring it from a backup, or syncing it to another machine
+/// changes its modification time and nothing else about it -- which is exactly
+/// the case relinking exists for, and exactly what `quickContentHash` is unable
+/// to see through. Size and the bytes at each end do survive all of that.
+///
+/// Still a sample rather than a whole-file hash, so two files that differ only
+/// somewhere in the middle collide. For relinking that is an acceptable trade:
+/// the answer is offered to somebody who can see both paths, not applied behind
+/// their back.
+[[nodiscard]] Result<std::string> contentDigest(const std::string& path);
+
 }  // namespace zaro::media

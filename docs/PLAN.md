@@ -3355,6 +3355,49 @@ after the point where those references stop being live.
 §7.4 is complete apart from feather handles on the picture and rotation and
 scale in the tracker, both noted where they belong.
 
+### Phase 7a — relinking §7.5 ✅
+
+Finding the project's media again after somebody moved it: the first of §7.5.
+
+**A digest that survives a copy.** `quickContentHash` mixes in the modification
+time, which is exactly what copying a file, restoring it from a backup or
+syncing it to another machine changes — its own docstring says not to use it
+for relinking. `media::contentDigest` is the same sampling without the
+timestamp, and the two now share one sampler rather than being two functions
+that could drift. It is still a sample and not a whole-file hash: two files
+differing only in the middle collide, which is acceptable because the answer is
+offered to somebody who can see both paths rather than applied behind their
+back.
+
+**By name first, then by content.** Filename narrows a folder of thousands to a
+handful in one pass; the digest says which of the handful is the file.
+Searching by content alone means reading every file under the folder, which on
+a card of camera media is minutes. Where several files share a name, the one
+whose digest matches wins — the test for that puts the decoy first in sorted
+order, so a version that ignored content would pick it.
+
+**Missing only.** A file that is where the project says it is is not something
+to go looking for, and offering to relink it would be offering to break it.
+
+**Bounded.** Twelve levels and two hundred thousand files. Pointed at a home
+directory or a mounted server, an unbounded walk is an application that has
+stopped responding.
+
+**Matched by name only is said out loud.** The report carries `byContent` per
+file and the dialog names the count, because a file matched on its name alone
+is one somebody should check is the right take — the mistake otherwise surfaces
+at the export.
+
+**The cache key is dropped on relink, not carried.** It described the old
+file's timestamp, and keeping it would hand back the old file's waveform for
+the new one.
+
+The self-test copies a fixture, imports it, moves it into a deeper folder,
+watches it stop decoding, relinks it, and watches it decode again.
+
+Not done in §7.5: consolidate, a media browser, transcode on ingest, smart
+rendering, metadata and search, versioning, shared projects and review.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

@@ -35,7 +35,7 @@ struct Subclip {
 
 /// A file on disk that clips point at.
 ///
-/// The project references media; it never contains it. `contentHash` is what
+/// The project references media; it never contains it. `contentDigest` is what
 /// makes relinking possible when a path changes, and what tells a proxy from
 /// the thing it stands in for.
 struct MediaRef {
@@ -50,7 +50,12 @@ struct MediaRef {
     /// same rate -- so that swapping between them moves no edit. A proxy of a
     /// different length would silently retime the cut.
     std::string proxyPath;
+    /// A cache key: changes when the file is touched, which is what a cache
+    /// wants and what a relink must not have.
     std::string contentHash;
+    /// An identity that survives being copied or restored, for finding this
+    /// file again when it has moved. See `media::contentDigest`.
+    std::string contentDigest;
     std::string name;
     media::MediaInfo info;
 
@@ -83,7 +88,8 @@ struct MediaRef {
         // refs to the same file are the same ref even if one has not been
         // probed yet.
         return a.id == b.id && a.path == b.path && a.contentHash == b.contentHash &&
-               a.name == b.name && a.transferOverride == b.transferOverride;
+               a.contentDigest == b.contentDigest && a.name == b.name &&
+               a.transferOverride == b.transferOverride;
     }
 };
 

@@ -88,6 +88,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 6v | Responsive timing: intros and outros that survive a trim | **done** |
 | 6w | Motion graphics templates | **done** |
 | 6x | Pin to clip: a title that follows its shot | **done** |
+| 7a | Relinking media that moved | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

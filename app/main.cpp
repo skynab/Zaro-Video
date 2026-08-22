@@ -62,6 +62,7 @@
 #include "zaro/core/io/CubeLut.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
+#include "zaro/core/io/Relink.h"
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
@@ -722,6 +723,38 @@ public:
         updateCacheBar();
         updateTitle();
         return analysed;
+    }
+
+    /// Find the project's missing files under a folder and point it at them.
+    ///
+    /// Everything found is relinked, and what is not found is reported: a
+    /// dialog per file would be a dialog per file, and the report says exactly
+    /// which ones were matched only by their name.
+    Result<io::RelinkReport> relinkMedia(const std::string& root) {
+        auto report = io::findRelinks(project_, root);
+        if (!report) {
+            return report;
+        }
+        for (const io::RelinkMatch& match : report->matches) {
+            auto built = edit::makeRelinkMedia(project_, match.media, match.found);
+            if (!built) {
+                continue;  // it went missing again between looking and linking
+            }
+            commands_.execute(project_, std::move(*built));
+        }
+        commands_.breakMerge();
+        if (!report->matches.empty()) {
+            if (Status reopened = openMedia(); !reopened) {
+                return reopened.error();
+            }
+            renderCache_.clear();
+            monitor_->update();
+            timeline_->update();
+            bin_->refresh();
+            updateCacheBar();
+            updateTitle();
+        }
+        return report;
     }
 
     /// Pin the selected clip to one on a lower track, or to nothing.
@@ -1545,6 +1578,7 @@ private:
         menuItem(
             file, "Import Media…", [this] { bin_->importFiles(); }, QKeySequence("Ctrl+I"),
             "import-media");
+        menuItem(file, "Relink Media…", [this] { relinkDialog(); }, QKeySequence{}, "relink-media");
         menuItem(
             file, "Export…", [this] { exportDialog(); }, QKeySequence("Ctrl+E"), "export-sequence");
         menuItem(file, "Export OpenTimelineIO…", [this] { exportOtio(); });
@@ -2147,6 +2181,39 @@ private:
         effects_->refresh();
         updateCacheBar();
         updateTitle();
+    }
+
+    void relinkDialog() {
+        const QString root = QFileDialog::getExistingDirectory(this, "Look for missing media in");
+        if (root.isEmpty()) {
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto report = relinkMedia(root.toStdString());
+        QApplication::restoreOverrideCursor();
+        if (!report) {
+            QMessageBox::warning(this, "Relink", QString::fromStdString(report.error().message()));
+            return;
+        }
+        std::size_t byName = 0;
+        for (const zaro::io::RelinkMatch& match : report->matches) {
+            if (!match.byContent) {
+                ++byName;
+            }
+        }
+        QString said =
+            QString("Relinked %1 of %2 missing file%3, from %4 looked at.")
+                .arg(report->matches.size())
+                .arg(report->matches.size() + report->stillMissing.size())
+                .arg(report->matches.size() + report->stillMissing.size() == 1 ? "" : "s")
+                .arg(report->examined);
+        if (byName > 0) {
+            // Said plainly: a file matched only by its name is one somebody
+            // should look at before trusting the cut.
+            said +=
+                QString("\n%1 matched by name only -- check they are the right takes.").arg(byName);
+        }
+        QMessageBox::information(this, "Relink", said);
     }
 
     void saveTemplateDialog() {
@@ -7452,6 +7519,94 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Relinking, with a file that really moves.
+        {
+            const std::filesystem::path relinkRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-relink";
+            std::filesystem::remove_all(relinkRoot);
+            std::filesystem::create_directories(relinkRoot / "before");
+            std::filesystem::create_directories(relinkRoot / "after" / "deeper");
+            const std::filesystem::path was = relinkRoot / "before" / "moved_clip.mov";
+            std::filesystem::copy_file("testdata/media/shaky_texture.mov", was);
+
+            auto probed = zaro::platform::ffmpeg::probe(was.string());
+            if (!probed) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probed.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef moving;
+            moving.path = was.string();
+            moving.name = "moved_clip";
+            moving.info = *probed;
+            if (auto digest = zaro::media::contentDigest(was.string())) {
+                moving.contentDigest = *digest;
+            }
+            auto imported = zaro::edit::makeImportMedia(window.project(), moving);
+            if (!imported) {
+                std::fprintf(stderr, "  FAIL: %s\n", imported.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*imported));
+            const auto movingId = window.project().media().back().id;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            // It decodes where it is.
+            const auto probeAt = zaro::time::RationalTime{2, zaro::time::rates::fps25};
+            if (!window.frameSource().imageFor(movingId, probeAt)) {
+                std::fprintf(stderr, "  FAIL: the copied fixture does not decode\n");
+                return 1;
+            }
+
+            // Now move it, the way a card being copied to a server does.
+            const std::filesystem::path now = relinkRoot / "after" / "deeper" / "moved_clip.mov";
+            std::filesystem::rename(was, now);
+            // Reopening tolerates a missing file -- one unreadable clip must
+            // not stop a project opening -- so what says it is gone is that it
+            // no longer decodes.
+            static_cast<void>(window.reopenMedia());
+            if (window.frameSource().imageFor(movingId, probeAt)) {
+                std::fprintf(stderr, "  FAIL: a file that moved still decodes\n");
+                return 1;
+            }
+
+            auto report = window.relinkMedia(relinkRoot.string());
+            if (!report) {
+                std::fprintf(stderr, "  FAIL: %s\n", report.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  relink: %zu found, %zu still missing, %d files looked at\n",
+                        report->matches.size(), report->stillMissing.size(), report->examined);
+            if (report->matches.size() != 1 || !report->matches.front().byContent) {
+                std::fprintf(stderr, "  FAIL: the moved file was not matched by its content\n");
+                return 1;
+            }
+            const auto* relinked = window.project().findMedia(movingId);
+            if (relinked == nullptr || relinked->path != now.string()) {
+                std::fprintf(stderr, "  FAIL: the project still points at the old path\n");
+                return 1;
+            }
+            // And it decodes again, which is the whole point.
+            if (!window.frameSource().imageFor(movingId, probeAt)) {
+                std::fprintf(stderr, "  FAIL: the relinked media does not decode\n");
+                return 1;
+            }
+
+            std::filesystem::remove_all(relinkRoot);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.renderCache().clear();
             window.monitor()->update();

@@ -390,6 +390,13 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y, double zoom);
 
+/// Point a media reference at a different file.
+///
+/// The digest is recomputed from the new file, so a relink that landed on the
+/// right thing leaves the project able to find it again next time.
+[[nodiscard]] Result<CommandPtr> makeRelinkMedia(model::Project& project, model::MediaRefId media,
+                                                 const std::string& path);
+
 /// Pin a clip to another, so it follows that clip's position and scale.
 ///
 /// An invalid host unpins. Refuses a pin to itself, to a clip in another

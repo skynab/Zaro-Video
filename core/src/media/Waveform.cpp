@@ -173,25 +173,23 @@ Result<Waveform> Waveform::decode(const std::string& bytes) {
     return out;
 }
 
-Result<std::string> quickContentHash(const std::string& path) {
+namespace {
+
+/// Size and a sample of the bytes at each end, mixed with FNV-1a.
+///
+/// A sample rather than the whole file: reading a hundred gigabytes of camera
+/// media on import would make importing unusable.
+Result<std::uint64_t> sampledMix(const std::string& path, std::uint64_t& sizeOut) {
     std::error_code code;
     const auto size = std::filesystem::file_size(path, code);
     if (code) {
         return Error{ErrorCode::NotFound, "cannot measure " + path};
     }
-    const auto modified = std::filesystem::last_write_time(path, code);
-    if (code) {
-        return Error{ErrorCode::NotFound, "cannot read the timestamp of " + path};
-    }
-
     std::ifstream file{path, std::ios::binary};
     if (!file) {
         return Error{ErrorCode::NotFound, "cannot open " + path};
     }
 
-    // A sample from each end rather than the whole file. Reading a hundred
-    // gigabytes of camera media on import would make importing unusable, and
-    // the cost of a collision here is a stale waveform.
     constexpr std::streamsize kSampleBytes = 64 * 1024;
     std::array<char, kSampleBytes> buffer{};
     std::uint64_t mixed = 1469598103934665603ULL;  // FNV-1a offset basis
@@ -213,14 +211,49 @@ Result<std::string> quickContentHash(const std::string& path) {
         absorb(buffer.data(), file.gcount());
     }
 
-    const auto sizeValue = static_cast<std::uint64_t>(size);
-    const auto timeValue = static_cast<std::uint64_t>(modified.time_since_epoch().count());
-    absorb(reinterpret_cast<const char*>(&sizeValue), sizeof(sizeValue));
-    absorb(reinterpret_cast<const char*>(&timeValue), sizeof(timeValue));
+    sizeOut = static_cast<std::uint64_t>(size);
+    absorb(reinterpret_cast<const char*>(&sizeOut), sizeof(sizeOut));
+    return mixed;
+}
 
+std::string asText(std::uint64_t mixed) {
     std::array<char, 32> text{};
     std::snprintf(text.data(), text.size(), "%016llx", static_cast<unsigned long long>(mixed));
     return std::string{text.data()};
+}
+
+}  // namespace
+
+Result<std::string> quickContentHash(const std::string& path) {
+    std::uint64_t size = 0;
+    auto mixed = sampledMix(path, size);
+    if (!mixed) {
+        return mixed.error();
+    }
+    std::error_code code;
+    const auto modified = std::filesystem::last_write_time(path, code);
+    if (code) {
+        return Error{ErrorCode::NotFound, "cannot read the timestamp of " + path};
+    }
+    // The timestamp is the difference between this and `contentDigest`: it
+    // makes a touched file look different, which is what a cache key wants and
+    // what a relink must not have.
+    const auto timeValue = static_cast<std::uint64_t>(modified.time_since_epoch().count());
+    std::uint64_t withTime = *mixed;
+    for (std::size_t i = 0; i < sizeof(timeValue); ++i) {
+        withTime ^= static_cast<std::uint8_t>((timeValue >> (i * 8)) & 0xFFULL);
+        withTime *= 1099511628211ULL;
+    }
+    return asText(withTime);
+}
+
+Result<std::string> contentDigest(const std::string& path) {
+    std::uint64_t size = 0;
+    auto mixed = sampledMix(path, size);
+    if (!mixed) {
+        return mixed.error();
+    }
+    return asText(*mixed);
 }
 
 }  // namespace zaro::media

@@ -40,6 +40,7 @@ add_library(zaro_core
     src/render/Keyer.cpp
     src/render/LutTable.cpp
     src/render/PathRaster.cpp
+    src/io/Relink.cpp
     src/render/Stabilise.cpp
     src/render/Tracker.cpp
     src/render/Qualifier.cpp

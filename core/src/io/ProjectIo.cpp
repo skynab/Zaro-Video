@@ -975,6 +975,7 @@ json encode(const model::MediaRef& ref) {
     json out{{"id", ref.id.value()},
              {"path", ref.path},
              {"contentHash", ref.contentHash},
+             {"contentDigest", ref.contentDigest},
              {"name", ref.name},
              {"cachedInfo", std::move(cached)}};
     if (!ref.proxyPath.empty()) {
@@ -1325,6 +1326,7 @@ Result<model::MediaRef> decodeMedia(const json& node) {
         }
     }
     ref.contentHash = node.value("contentHash", std::string{});
+    ref.contentDigest = node.value("contentDigest", std::string{});
     ref.name = node.value("name", std::string{});
 
     if (node.contains("cachedInfo")) {

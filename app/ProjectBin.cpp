@@ -208,6 +208,12 @@ void ProjectBin::importFiles() {
         if (auto hash = media::quickContentHash(ref.path)) {
             ref.contentHash = *hash;
         }
+        // Taken at import, because it is the only moment the file is certainly
+        // where the project thinks it is -- and a relink with nothing to
+        // compare against can only match on names.
+        if (auto digest = media::contentDigest(ref.path)) {
+            ref.contentDigest = *digest;
+        }
 
         auto built = edit::makeImportMedia(*project_, std::move(ref));
         if (built) {
