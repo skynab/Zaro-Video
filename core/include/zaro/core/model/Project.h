@@ -56,6 +56,15 @@ struct MediaRef {
     /// An identity that survives being copied or restored, for finding this
     /// file again when it has moved. See `media::contentDigest`.
     std::string contentDigest;
+
+    /// Whatever somebody wants to say about this file: which camera, which
+    /// take, whether it is any good.
+    ///
+    /// One free-text field rather than a schema of named fields. A schema is a
+    /// guess about what a production tracks, and productions that track
+    /// something it did not think of end up putting it in a "notes" field
+    /// anyway -- which is this one, without the two places to look.
+    std::string notes;
     std::string name;
     media::MediaInfo info;
 
@@ -88,7 +97,7 @@ struct MediaRef {
         // refs to the same file are the same ref even if one has not been
         // probed yet.
         return a.id == b.id && a.path == b.path && a.contentHash == b.contentHash &&
-               a.contentDigest == b.contentDigest && a.name == b.name &&
+               a.notes == b.notes && a.contentDigest == b.contentDigest && a.name == b.name &&
                a.transferOverride == b.transferOverride;
     }
 };

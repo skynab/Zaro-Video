@@ -3488,6 +3488,51 @@ asked for the picture to change under them right now.
 Not done: proxies for a whole bin at once, and a background queue — this runs
 on the calling thread with a wait cursor.
 
+### Phase 7d — metadata and search §7.5 ✅
+
+Finding a file in the bin by what it *is*, not only by what somebody called it.
+
+**One function feeds the search and the row.** `model::searchTextFor` is what
+the bin matches against and what the row shows the interesting parts of. A
+search that matches something the list does not show is a search whose results
+look wrong; a list that shows something the search cannot find is worse.
+
+**Every word has to match, in any order.** "prores 1080" finds the ProRes files
+at 1080 and not the ProRes files at 720 — which is what somebody typing two
+words means, and is not what matching the phrase would do. An empty query
+matches everything, so a cleared box shows the bin rather than nothing.
+
+**What is findable**: the name, the filename and the folder it came from, the
+video and audio codecs, the frame size — as `1920x1080` and as `1080`, because
+people type both — the rate with and without `fps`, the duration, a transfer
+override, the word `proxy` when it has one, and the notes.
+
+**Notes are one free-text field, not a schema.** A schema is a guess about what
+a production tracks, and a production that tracks something it did not think of
+writes it in the "notes" field anyway — which is this one, without the two
+places to look.
+
+**A note is a command.** It undoes like everything else, and a project with a
+note in it reads as modified: the alternative is somebody typing a note,
+quitting, and being told there was nothing to save. Media-level edits that
+predate this (the transfer override, attaching a proxy) still mutate the
+project directly, which is now the odd one out rather than the rule.
+
+**The codec name is cached in the project file.** Duration, size and rate were
+already cached so a bin could show something before any file was reopened;
+without the codec too, "prores" would find nothing in a project opened
+tomorrow. The self-test caught exactly this: the fixture loaded from the
+project file had no codec, so the first version searched for an empty string
+and "matched" everything.
+
+**Two files in the bin, not one.** With a single item, every search that
+matches at all looks like a search that works. The self-test imports a second
+fixture in a different codec, so "found it" and "found everything" are
+distinguishable answers.
+
+Not done in §7.5: smart rendering, a media browser, transcode on ingest,
+project versioning, shared projects with locking, and review.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

@@ -49,6 +49,14 @@ signals:
 
 private:
     void appendSelectedToTimeline();
+    void editNotes();
+
+public:
+    /// Write a note on a file. Public because it is the same action a script
+    /// or the self-test performs, without the dialog in the way.
+    void setNotes(model::MediaRefId media, const std::string& notes);
+
+private:
     void applyFilter();
     /// What is selected, as either a media reference or a subclip.
     struct Selection {

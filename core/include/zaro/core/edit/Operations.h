@@ -390,6 +390,14 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y, double zoom);
 
+/// Write whatever somebody wants to remember about a file.
+///
+/// A command rather than a direct edit, so notes undo like everything else and
+/// so a project with notes in it reads as modified -- the alternative is
+/// somebody typing a note, quitting, and being told there was nothing to save.
+[[nodiscard]] Result<CommandPtr> makeSetMediaNotes(model::Project& project, model::MediaRefId media,
+                                                   const std::string& notes);
+
 /// Point a media reference at a different file.
 ///
 /// The digest is recomputed from the new file, so a relink that landed on the

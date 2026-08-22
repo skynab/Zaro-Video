@@ -967,15 +967,20 @@ json encode(const model::MediaRef& ref) {
         cached["width"] = video->width;
         cached["height"] = video->height;
         cached["frameRate"] = encode(video->frameRate);
+        // The codec name too, so a bin opened tomorrow can still be searched
+        // for "prores" without reopening every file to find out.
+        cached["videoCodec"] = video->codecName;
     }
     if (const media::AudioStreamInfo* audio = ref.info.primaryAudio()) {
         cached["audioSampleRate"] = encode(audio->sampleRate);
         cached["audioChannels"] = audio->channelCount;
+        cached["audioCodec"] = audio->codecName;
     }
     json out{{"id", ref.id.value()},
              {"path", ref.path},
              {"contentHash", ref.contentHash},
              {"contentDigest", ref.contentDigest},
+             {"notes", ref.notes},
              {"name", ref.name},
              {"cachedInfo", std::move(cached)}};
     if (!ref.proxyPath.empty()) {
@@ -1327,6 +1332,7 @@ Result<model::MediaRef> decodeMedia(const json& node) {
     }
     ref.contentHash = node.value("contentHash", std::string{});
     ref.contentDigest = node.value("contentDigest", std::string{});
+    ref.notes = node.value("notes", std::string{});
     ref.name = node.value("name", std::string{});
 
     if (node.contains("cachedInfo")) {
@@ -1349,6 +1355,7 @@ Result<model::MediaRef> decodeMedia(const json& node) {
                 audio.sampleRate = *rate;
             }
             audio.channelCount = cached.value("audioChannels", 0);
+            audio.codecName = cached.value("audioCodec", std::string{});
             audio.duration = ref.info.duration;
             ref.info.audioStreams.push_back(std::move(audio));
         }
@@ -1356,6 +1363,7 @@ Result<model::MediaRef> decodeMedia(const json& node) {
             media::VideoStreamInfo video;
             video.width = cached.value("width", 0);
             video.height = cached.value("height", 0);
+            video.codecName = cached.value("videoCodec", std::string{});
             if (auto rate = decodeRational(cached.at("frameRate"), "media frameRate")) {
                 video.frameRate = *rate;
                 video.averageFrameRate = *rate;

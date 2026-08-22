@@ -91,6 +91,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 7a | Relinking media that moved | **done** |
 | 7b | Consolidate: gather a project's media into one folder | **done** |
 | 7c | Making proxies, not just attaching them | **done** |
+| 7d | Metadata and search: find a file by what it is | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

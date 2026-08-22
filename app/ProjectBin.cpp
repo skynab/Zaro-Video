@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -14,6 +15,7 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/Waveform.h"
+#include "zaro/core/model/MediaSearch.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 
@@ -41,6 +43,16 @@ QString describe(const model::MediaRef& ref) {
     if (ref.info.primaryAudio() != nullptr) {
         text += "   ♪";
     }
+    if (const media::VideoStreamInfo* video = ref.info.primaryVideo();
+        video != nullptr && !video->codecName.empty()) {
+        // The codec, because "which of these is the ProRes" is a question
+        // people ask of a bin, and because a search that matches on it should
+        // show what it matched.
+        text += QString("   %1").arg(QString::fromStdString(video->codecName));
+    }
+    if (!ref.notes.empty()) {
+        text += QString("   \u2014 %1").arg(QString::fromStdString(ref.notes));
+    }
     if (ref.transferOverride != media::TransferFunction::Unknown) {
         // Shown, because a file being read as something other than what it
         // claims is exactly the kind of setting somebody forgets they made.
@@ -62,7 +74,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     // three letters of a file name is how: at thirty clips the list is already
     // longer than the panel is tall.
     search_ = new QLineEdit(this);
-    search_->setPlaceholderText("Search media");
+    search_->setPlaceholderText("Search name, codec, size, notes");
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString& text) {
         filter_ = text.trimmed();
@@ -81,13 +93,18 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     replaceButton->setObjectName("bin-replace");
     replaceButton->setToolTip("Point the selected timeline clip at this media instead");
 
+    auto* notesButton = new QPushButton("Notes…", this);
+    notesButton->setObjectName("bin-notes");
+    notesButton->setToolTip("Write something about this file -- it is searchable");
+
     // Two by two rather than four across: at the width this panel actually
     // gets, a single row clipped every label to two letters.
     auto* buttons = new QGridLayout;
     buttons->setSpacing(6);
     buttons->addWidget(appendButton, 0, 0);
     buttons->addWidget(replaceButton, 0, 1);
-    buttons->addWidget(interpretButton, 1, 0, 1, 2);
+    buttons->addWidget(interpretButton, 1, 0);
+    buttons->addWidget(notesButton, 1, 1);
 
     auto* header = new QHBoxLayout;
     header->addWidget(title);
@@ -120,6 +137,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
         }
     });
     connect(interpretButton, &QPushButton::clicked, this, [this] { interpretMenu(); });
+    connect(notesButton, &QPushButton::clicked, this, [this] { editNotes(); });
     connect(replaceButton, &QPushButton::clicked, this, [this] {
         const Selection chosen = selection();
         if (chosen.media.isValid()) {
@@ -131,12 +149,23 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
 /// Hide what the search does not match, rather than rebuilding the list: the
 /// selection survives typing, which is what makes narrowing down feel like
 /// looking rather than starting again.
+///
+/// The match itself is `model::matchesSearch`, not a substring test on the row
+/// text: what is findable should be everything the project knows about a file
+/// -- its codec, its size, its rate, the folder it came from, the notes on it
+/// -- and not merely the part of that which happens to fit on one line.
 void ProjectBin::applyFilter() {
+    const std::string query = filter_.toStdString();
     int shown = 0;
     for (int row = 0; row < list_->count(); ++row) {
         QListWidgetItem* item = list_->item(row);
-        const bool matches =
-            filter_.isEmpty() || item->text().contains(filter_, Qt::CaseInsensitive);
+        const model::MediaRef* ref =
+            project_ != nullptr
+                ? project_->findMedia(model::MediaRefId{item->data(Qt::UserRole).toULongLong()})
+                : nullptr;
+        const bool matches = filter_.isEmpty() ||
+                             (ref != nullptr ? model::matchesSearch(*ref, query)
+                                             : item->text().contains(filter_, Qt::CaseInsensitive));
         item->setHidden(!matches);
         shown += matches ? 1 : 0;
     }
@@ -144,6 +173,44 @@ void ProjectBin::applyFilter() {
         filter_.isEmpty()
             ? QString("%1 %2").arg(list_->count()).arg(list_->count() == 1 ? "item" : "items")
             : QString("%1 of %2 items").arg(shown).arg(list_->count()));
+}
+
+/// Ask for a note about the selected file, and keep it.
+///
+/// The note goes through a command, so it undoes and so a project with a note
+/// in it reads as modified -- the alternative is somebody typing a note,
+/// quitting, and being told there was nothing to save.
+void ProjectBin::editNotes() {
+    const Selection chosen = selection();
+    if (project_ == nullptr || commands_ == nullptr || !chosen.media.isValid()) {
+        return;
+    }
+    const model::MediaRef* ref = project_->findMedia(chosen.media);
+    if (ref == nullptr) {
+        return;
+    }
+    bool accepted = false;
+    const QString typed = QInputDialog::getText(
+        this, "Notes", QString("Notes on %1").arg(QString::fromStdString(ref->name)),
+        QLineEdit::Normal, QString::fromStdString(ref->notes), &accepted);
+    if (!accepted) {
+        return;
+    }
+    setNotes(chosen.media, typed.toStdString());
+}
+
+void ProjectBin::setNotes(model::MediaRefId media, const std::string& notes) {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    auto built = edit::makeSetMediaNotes(*project_, media, notes);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    refresh();
+    emit edited();
 }
 
 void ProjectBin::setProject(model::Project* project, model::SequenceId sequence,

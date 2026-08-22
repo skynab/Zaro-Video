@@ -26,6 +26,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMap>
 #include <QMenu>
@@ -411,6 +412,7 @@ public:
     [[nodiscard]] render::AudioSource& media() { return *media_; }
     [[nodiscard]] render::SourceFrameProvider* frames() { return media_.get(); }
     [[nodiscard]] render::FrameSource& frameSource() { return *media_; }
+    [[nodiscard]] app::ProjectBin* bin() { return bin_; }
     [[nodiscard]] Status reopenMedia() { return openMedia(); }
 
     /// Re-seat everything that holds a pointer to the active sequence.
@@ -7649,6 +7651,132 @@ int main(int argc, char** argv) {
             }
             window.renderCache().clear();
             window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Metadata and search, through the real bin.
+        {
+            auto* binPanel = window.bin();
+            auto* binSearch = binPanel->findChild<QLineEdit*>();
+            auto* binList = binPanel->findChild<QListWidget*>();
+            if (binSearch == nullptr || binList == nullptr) {
+                std::fprintf(stderr, "  FAIL: the bin has no search box or list\n");
+                return 1;
+            }
+            const auto visibleRows = [&] {
+                int shown = 0;
+                for (int row = 0; row < binList->count(); ++row) {
+                    shown += binList->item(row)->isHidden() ? 0 : 1;
+                }
+                return shown;
+            };
+
+            // A second file, so "found it" and "found everything" are
+            // different answers: with one item in the bin every search that
+            // matches at all looks like a search that works.
+            auto probedSecond = zaro::platform::ffmpeg::probe("testdata/media/ladder_prores.mov");
+            if (!probedSecond) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probedSecond.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef second;
+            second.path = "testdata/media/ladder_prores.mov";
+            second.name = "ladder";
+            second.info = *probedSecond;
+            auto broughtIn = zaro::edit::makeImportMedia(window.project(), second);
+            if (!broughtIn) {
+                std::fprintf(stderr, "  FAIL: %s\n", broughtIn.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*broughtIn));
+            window.bin()->refresh();
+            QApplication::processEvents();
+
+            binSearch->setText("");
+            QApplication::processEvents();
+            const int everything = visibleRows();
+            if (everything < 2) {
+                std::fprintf(stderr, "  FAIL: the bin should hold two files, not %d\n", everything);
+                return 1;
+            }
+
+            // Searchable by a technical fact that is nowhere in the file's
+            // name: what the bin knows should be what the bin can find. The
+            // ladder is the ProRes one, and nothing else in the bin is.
+            const auto* first = &window.project().media().back();
+            const auto* firstVideo = first->info.primaryVideo();
+            if (firstVideo == nullptr || firstVideo->codecName.empty()) {
+                std::fprintf(stderr, "  FAIL: the fixture has no codec to search for\n");
+                return 1;
+            }
+            binSearch->setText(QString::fromStdString(firstVideo->codecName));
+            QApplication::processEvents();
+            const int byCodec = visibleRows();
+
+            binSearch->setText("definitelynotacodec");
+            QApplication::processEvents();
+            const int byNonsense = visibleRows();
+
+            // A note, written the way the Notes button writes it, and then
+            // found by searching for a word only the note contains.
+            binPanel->setNotes(first->id, "boom in shot, take 3");
+            QApplication::processEvents();
+            binSearch->setText("boom");
+            QApplication::processEvents();
+            const int byNote = visibleRows();
+
+            binSearch->setText(
+                QString("boom %1").arg(QString::fromStdString(firstVideo->codecName)));
+            QApplication::processEvents();
+            const int byBoth = visibleRows();
+
+            binSearch->setText("boom h264xyz");
+            QApplication::processEvents();
+            const int byBothWrong = visibleRows();
+
+            std::printf(
+                "  bin search: %d items, %d by codec, %d by note, %d by both, %d by "
+                "nonsense\n",
+                everything, byCodec, byNote, byBoth, byNonsense);
+            // The two fixtures are in different codecs, so a codec search has
+            // to pick out one of them rather than matching both.
+            if (byCodec != 1) {
+                std::fprintf(stderr, "  FAIL: searching by codec found %d of %d\n", byCodec,
+                             everything);
+                return 1;
+            }
+            if (byNonsense != 0) {
+                std::fprintf(stderr, "  FAIL: a nonsense search still matched\n");
+                return 1;
+            }
+            if (byNote != 1 || byBoth != 1) {
+                std::fprintf(stderr, "  FAIL: the note is not searchable (%d, %d)\n", byNote,
+                             byBoth);
+                return 1;
+            }
+            if (byBothWrong != 0) {
+                std::fprintf(stderr,
+                             "  FAIL: every word has to match, and one of these does not\n");
+                return 1;
+            }
+            if (window.project().findMedia(first->id)->notes.empty()) {
+                std::fprintf(stderr, "  FAIL: the note did not reach the project\n");
+                return 1;
+            }
+            // And it undoes, like every other edit.
+            window.commands().undo(window.project());
+            if (!window.project().findMedia(first->id)->notes.empty()) {
+                std::fprintf(stderr, "  FAIL: undoing did not take the note back\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            binSearch->setText("");
+            QApplication::processEvents();
+            window.bin()->refresh();
             QApplication::processEvents();
         }
 

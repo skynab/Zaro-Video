@@ -2391,6 +2391,27 @@ Result<CommandPtr> makeRemoveTransition(Project& project, const EditTarget& targ
 
 namespace {
 
+class MediaNotesCommand final : public ProjectCommand {
+public:
+    MediaNotesCommand(model::MediaRefId media, std::string notes, std::string description)
+        : ProjectCommand{std::move(description), "notes:" + std::to_string(media.value())},
+          media_{media},
+          notes_{std::move(notes)} {}
+
+protected:
+    void mutate(Project& project) override {
+        for (model::MediaRef& media : project.mediaMutable()) {
+            if (media.id == media_) {
+                media.notes = notes_;
+            }
+        }
+    }
+
+private:
+    model::MediaRefId media_;
+    std::string notes_;
+};
+
 class RelinkMediaCommand final : public ProjectCommand {
 public:
     RelinkMediaCommand(model::MediaRefId media, std::string path, std::string digest,
@@ -2446,6 +2467,18 @@ Result<CommandPtr> makeImportMedia(Project& project, model::MediaRef media) {
     }
     const std::string name = media.name.empty() ? media.path : media.name;
     return CommandPtr{std::make_unique<ImportMediaCommand>(std::move(media), "Import " + name)};
+}
+
+Result<CommandPtr> makeSetMediaNotes(Project& project, model::MediaRefId mediaId,
+                                     const std::string& notes) {
+    const model::MediaRef* media = project.findMedia(mediaId);
+    if (media == nullptr) {
+        return Error{ErrorCode::NotFound, "no such media in this project"};
+    }
+    // Merged by media id, so typing a note is one undo step rather than one
+    // per keystroke.
+    return CommandPtr{std::make_unique<MediaNotesCommand>(
+        mediaId, notes, "Note on " + (media->name.empty() ? media->path : media->name))};
 }
 
 Result<CommandPtr> makeRelinkMedia(Project& project, model::MediaRefId mediaId,
