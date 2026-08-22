@@ -85,6 +85,15 @@ q -f lavfi -i "color=c=black:s=400x320:r=25:d=4" \
   -vf "geq=lum='128+90*sin(X/9)*cos(Y/7)+40*sin((X+Y)/3)':cb=128:cr=128,crop=320:240:x='40+8*sin(n*0.9)':y='40+6*cos(n*1.3)',format=yuv420p" \
   -frames:v 100 -c:v libx264 -preset veryfast -crf 10 -g 25 "$out/shaky_texture.mov"
 
+# --- A frame wider than a proxy ------------------------------------------------
+# Everything else here is 320x240, which is smaller than the default proxy
+# width -- so a test using one of those cannot tell "keep the source's size"
+# from "shrink to 960". This one is 1280 wide and deliberately short.
+echo "  wide_texture.mp4    (1280x720, for size-changing tests)"
+q -f lavfi -i "color=c=black:s=1280x720:r=25:d=1" \
+  -vf "geq=lum='128+90*sin(X/11)*cos(Y/9)':cb=128:cr=128,format=yuv420p" \
+  -frames:v 24 -c:v libx264 -preset veryfast -crf 18 "$out/wide_texture.mp4"
+
 # --- Variable frame rate ------------------------------------------------------
 # Dropping three frames out of every ten leaves uneven PTS deltas -- 1/30s
 # within a run, 4/30s across the gap -- which is what phone footage looks like

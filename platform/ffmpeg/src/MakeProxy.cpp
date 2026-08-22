@@ -62,7 +62,10 @@ Result<ProxySummary> makeProxy(const ProxySettings& settings,
 
     ProxySummary summary;
     summary.path = settings.destination;
-    summary.width = even(std::min(settings.width, video->width));
+    // Zero means the source's own size: an ingest transcode changes the codec
+    // and nothing else.
+    summary.width =
+        even(settings.width > 0 ? std::min(settings.width, video->width) : video->width);
     summary.height = even(static_cast<std::int32_t>(
         std::llround(static_cast<double>(summary.width) * static_cast<double>(video->height) /
                      static_cast<double>(video->width))));
@@ -121,6 +124,10 @@ Result<ProxySummary> makeProxy(const ProxySettings& settings,
             if (index == 0) {
                 return frame.error();
             }
+        } else if ((*frame)->width() == scaled.width() && (*frame)->height() == scaled.height()) {
+            // Same size: resampling would be an expensive identity, and a
+            // box average at 1:1 is still a box average.
+            scaled = (*frame)->clone();
         } else {
             render::resizeInto(**frame, scaled);
         }

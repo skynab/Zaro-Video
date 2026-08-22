@@ -1,7 +1,10 @@
 #pragma once
 
 #include <QWidget>
+#include <string>
+#include <vector>
 
+#include "zaro/core/Error.h"
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
 
@@ -27,6 +30,14 @@ public:
     /// button in this panel, and both should be the same action.
     void importFiles();
 
+    /// Transcode files into an editing codec and import the results.
+    ///
+    /// Public without the dialogs in the way, for the same reason `setNotes`
+    /// is: it is the action, and the dialog is one way of asking for it.
+    [[nodiscard]] Status importTranscoded(const std::vector<std::string>& paths,
+                                          const std::string& destination,
+                                          const std::string& videoCodec);
+
     /// How many media references the project holds, for the status bar.
     [[nodiscard]] int count() const;
 
@@ -50,6 +61,7 @@ signals:
 private:
     void appendSelectedToTimeline();
     void editNotes();
+    void importTranscodedDialog();
 
 public:
     /// Write a note on a file. Public because it is the same action a script

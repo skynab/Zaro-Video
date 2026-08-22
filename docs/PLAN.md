@@ -3623,6 +3623,37 @@ nowhere to count from; asking where to put it first is the honest answer.
 Not done in §7.5: a media browser, transcode on ingest, shared projects with
 locking, and review.
 
+### Phase 7g — transcode on ingest §7.5 ✅
+
+Importing camera files by turning them into something pleasant to cut with,
+rather than fighting long-GOP footage all week.
+
+**A proxy and an ingest transcode are one operation.** A proxy is smaller in an
+easy codec; an ingest transcode is the same size in an easy codec. Phase 7c's
+`makeProxy` gained one rule — a width of zero keeps the source's size — and
+that was the whole engine change. Writing a second function would have been a
+second place for the frame-count rule to be got wrong, which is the rule that
+matters most in both.
+
+**The transcode is the media, not a proxy.** A proxy stands in for a file that
+stays where it is; an ingest transcode replaces it, because the reason to do it
+is that the camera's codec is painful. The original is left exactly where it
+was — ingesting must not be a thing that eats rushes — and its path goes into
+the notes, which after Phase 7d is both searchable and the only record of where
+the file in the project came from.
+
+**A fixture that can tell the difference.** Every fixture in `testdata` was
+320x240, which is *smaller than the default proxy width* — so a test of "keep
+the source's size" passed identically against a version that shrank everything
+to 960, and the revert check proved nothing. `wide_texture.mp4` is 1280x720 and
+one second long, and now the revert fails as it should. A test that cannot fail
+is worth exactly what it costs to run.
+
+**Right-click on Import**, rather than a fourth button in a panel that already
+clips its labels at that width.
+
+Not done in §7.5: a media browser, shared projects with locking, and review.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

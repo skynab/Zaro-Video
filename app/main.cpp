@@ -7854,6 +7854,84 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Transcoding on the way in, through the real bin.
+        {
+            const std::filesystem::path ingestRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-ingest";
+            std::filesystem::remove_all(ingestRoot);
+            std::filesystem::create_directories(ingestRoot);
+
+            const std::size_t mediaBefore = window.project().media().size();
+            if (Status done = window.bin()->importTranscoded({"testdata/media/shaky_texture.mov"},
+                                                             ingestRoot.string(), "prores_ks");
+                !done) {
+                std::fprintf(stderr, "  FAIL: %s\n", done.error().toString().c_str());
+                return 1;
+            }
+            if (window.project().media().size() != mediaBefore + 1) {
+                std::fprintf(stderr, "  FAIL: the transcoded file was not imported\n");
+                return 1;
+            }
+            const auto& ingested = window.project().media().back();
+            const auto* ingestedVideo = ingested.info.primaryVideo();
+            if (ingestedVideo == nullptr || ingestedVideo->codecName != "prores") {
+                std::fprintf(stderr, "  FAIL: the imported file is not in the ingest codec\n");
+                return 1;
+            }
+            if (std::filesystem::path{ingested.path}.parent_path() != ingestRoot) {
+                std::fprintf(stderr, "  FAIL: the project points somewhere unexpected\n");
+                return 1;
+            }
+            // The original is untouched: ingesting must not eat rushes.
+            if (!std::filesystem::exists("testdata/media/shaky_texture.mov")) {
+                std::fprintf(stderr, "  FAIL: ingesting moved the original\n");
+                return 1;
+            }
+            // And it is the same picture, frame for frame.
+            auto sourceInfo = zaro::platform::ffmpeg::probe("testdata/media/shaky_texture.mov");
+            if (!sourceInfo || sourceInfo->primaryVideo() == nullptr) {
+                std::fprintf(stderr, "  FAIL: the fixture does not probe\n");
+                return 1;
+            }
+            if (ingestedVideo->width != sourceInfo->primaryVideo()->width ||
+                ingestedVideo->durationInFrames().frames() !=
+                    sourceInfo->primaryVideo()->durationInFrames().frames()) {
+                std::fprintf(stderr, "  FAIL: the transcode changed the size or the length\n");
+                return 1;
+            }
+            // Where it came from is recorded, since the project now points at
+            // the copy.
+            if (ingested.notes.find("shaky_texture.mov") == std::string::npos) {
+                std::fprintf(stderr, "  FAIL: nothing says where the ingested file came from\n");
+                return 1;
+            }
+            std::printf("  ingest: %s at %dx%d, %lld frames\n", ingestedVideo->codecName.c_str(),
+                        ingestedVideo->width, ingestedVideo->height,
+                        static_cast<long long>(ingestedVideo->durationInFrames().frames()));
+
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            if (!window.frameSource().imageFor(
+                    ingested.id, zaro::time::RationalTime{2, zaro::time::rates::fps25})) {
+                std::fprintf(stderr, "  FAIL: the ingested file does not decode\n");
+                return 1;
+            }
+
+            std::filesystem::remove_all(ingestRoot);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Making a proxy, then editing against it.
         {
             const std::filesystem::path proxyRoot =

@@ -1,5 +1,6 @@
 #include "ProjectBin.h"
 
+#include <QApplication>
 #include <QCursor>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -10,14 +11,17 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <filesystem>
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/media/Waveform.h"
 #include "zaro/core/model/MediaSearch.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
+#include "zaro/platform/ffmpeg/FFmpegRender.h"
 
 namespace zaro::app {
 namespace {
@@ -138,6 +142,22 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     });
     connect(interpretButton, &QPushButton::clicked, this, [this] { interpretMenu(); });
     connect(notesButton, &QPushButton::clicked, this, [this] { editNotes(); });
+    connect(importButton_, &QPushButton::customContextMenuRequested, this, [this] {
+        // Right-click on Import, because transcoding on the way in is the
+        // less common choice and does not deserve a button of its own in a
+        // panel this narrow.
+        QMenu menu;
+        QAction* plain = menu.addAction("Import…");
+        QAction* transcoded = menu.addAction("Import and transcode to ProRes…");
+        QAction* chosen = menu.exec(QCursor::pos());
+        if (chosen == plain) {
+            importFiles();
+        } else if (chosen == transcoded) {
+            importTranscodedDialog();
+        }
+    });
+    importButton_->setContextMenuPolicy(Qt::CustomContextMenu);
+    importButton_->setToolTip("Import media — right-click to transcode on the way in");
     connect(replaceButton, &QPushButton::clicked, this, [this] {
         const Selection chosen = selection();
         if (chosen.media.isValid()) {
@@ -248,6 +268,92 @@ void ProjectBin::refresh() {
 
 int ProjectBin::count() const {
     return project_ != nullptr ? static_cast<int>(project_->media().size()) : 0;
+}
+
+/// Import files, transcoding each into an editing codec on the way in.
+///
+/// **The transcode is the media, not a proxy.** A proxy stands in for a file
+/// that stays where it is; an ingest transcode replaces it, because the reason
+/// to do it is that the camera's own codec is painful to cut with. The
+/// original is left exactly where it was -- ingesting must not be a thing that
+/// eats rushes -- and its path is written into the notes, which is the only
+/// record of where this came from once the project points at the copy.
+///
+/// The transcode itself is `makeProxy` with the size left alone: a proxy and an
+/// ingest transcode are one operation with different settings.
+Status ProjectBin::importTranscoded(const std::vector<std::string>& paths,
+                                    const std::string& destination, const std::string& videoCodec) {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return Error{ErrorCode::InvalidData, "there is no project to import into"};
+    }
+    std::error_code code;
+    std::filesystem::create_directories(destination, code);
+    if (!std::filesystem::is_directory(destination, code)) {
+        return Error{ErrorCode::Io, "cannot use " + destination + " as a folder"};
+    }
+
+    for (const std::string& path : paths) {
+        const std::filesystem::path source{path};
+        platform::ffmpeg::ProxySettings settings;
+        settings.source = path;
+        settings.destination =
+            (std::filesystem::path{destination} / (source.stem().string() + ".mov")).string();
+        settings.width = 0;  // the source's own size
+        settings.videoCodec = videoCodec;
+
+        auto made = platform::ffmpeg::makeProxy(settings);
+        if (!made) {
+            return made.error();
+        }
+        auto probed = platform::ffmpeg::probe(made->path);
+        if (!probed) {
+            return probed.error();
+        }
+
+        model::MediaRef ref;
+        ref.path = made->path;
+        ref.name = source.stem().string();
+        ref.info = *probed;
+        ref.notes = "ingested from " + path;
+        if (auto hash = media::quickContentHash(ref.path)) {
+            ref.contentHash = *hash;
+        }
+        if (auto digest = media::contentDigest(ref.path)) {
+            ref.contentDigest = *digest;
+        }
+        auto built = edit::makeImportMedia(*project_, std::move(ref));
+        if (!built) {
+            return built.error();
+        }
+        commands_->execute(*project_, std::move(*built));
+    }
+    commands_->breakMerge();
+    refresh();
+    emit edited();
+    return {};
+}
+
+void ProjectBin::importTranscodedDialog() {
+    const QStringList chosen = QFileDialog::getOpenFileNames(this, "Import and transcode");
+    if (chosen.isEmpty()) {
+        return;
+    }
+    const QString into = QFileDialog::getExistingDirectory(this, "Put the transcoded files in");
+    if (into.isEmpty()) {
+        return;
+    }
+    std::vector<std::string> paths;
+    paths.reserve(static_cast<std::size_t>(chosen.size()));
+    for (const QString& path : chosen) {
+        paths.push_back(path.toStdString());
+    }
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const Status done = importTranscoded(paths, into.toStdString(), "prores_ks");
+    QApplication::restoreOverrideCursor();
+    if (!done) {
+        QMessageBox::warning(this, "Import", QString::fromStdString(done.error().message()));
+    }
 }
 
 void ProjectBin::importFiles() {

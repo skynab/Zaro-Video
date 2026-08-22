@@ -152,6 +152,10 @@ struct ProxySettings {
     /// The width to aim for; the height follows the source's shape. Both are
     /// rounded to even numbers, because every codec worth making a proxy in
     /// subsamples chroma and cannot represent an odd one.
+    ///
+    /// Zero keeps the source's own size, which is what turns this from making
+    /// a proxy into transcoding on ingest: the same operation, told to change
+    /// the codec and not the size.
     std::int32_t width{960};
 
     /// Empty means H.264, not the container's default: a .mov defaults to
@@ -169,7 +173,13 @@ struct ProxySummary {
     std::uint64_t proxyBytes{0};
 };
 
-/// Make a smaller copy of a media file, frame for frame.
+/// Make another copy of a media file, frame for frame -- smaller, in a
+/// different codec, or both.
+///
+/// A proxy and an ingest transcode are this one operation with different
+/// settings: a proxy is smaller in an easy codec, an ingest transcode is the
+/// same size in an easy codec. Writing them as two functions would be two
+/// places for the frame-count rule below to be got wrong.
 ///
 /// **The same rate and the same number of frames, always.** A proxy is a
 /// stand-in, and the one thing a stand-in must not do is change where the cuts

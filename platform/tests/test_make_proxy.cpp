@@ -130,3 +130,42 @@ TEST_CASE("a proxy carries the picture, not a blank frame", "[proxy]") {
 
     std::filesystem::remove(destination);
 }
+
+TEST_CASE("a transcode keeps the size and changes only the codec", "[proxy][ingest]") {
+    // Wider than the default proxy width on purpose: on a 320-pixel fixture,
+    // "keep the source's size" and "shrink to 960" produce the same file and
+    // the test proves nothing.
+    ZARO_REQUIRE_FIXTURE("wide_texture.mp4");
+    const std::string source = fixture("wide_texture.mp4");
+    const std::string destination = scratch("zaro-ingest-transcode.mov");
+
+    platform::ffmpeg::ProxySettings settings;
+    settings.source = source;
+    settings.destination = destination;
+    settings.width = 0;  // the source's own size: an ingest transcode
+    settings.videoCodec = "prores_ks";
+
+    auto made = platform::ffmpeg::makeProxy(settings);
+    REQUIRE(made);
+
+    auto original = platform::ffmpeg::probe(source);
+    auto ingested = platform::ffmpeg::probe(destination);
+    REQUIRE(original);
+    REQUIRE(ingested);
+    const media::VideoStreamInfo* was = original->primaryVideo();
+    const media::VideoStreamInfo* now = ingested->primaryVideo();
+    REQUIRE(was != nullptr);
+    REQUIRE(now != nullptr);
+
+    CHECK(now->width == was->width);
+    CHECK(now->height == was->height);
+    CHECK(now->frameRate == was->frameRate);
+    CHECK(now->durationInFrames().frames() == was->durationInFrames().frames());
+    // The point of ingesting: an all-intra codec instead of whatever the
+    // camera wrote.
+    CHECK(now->width == 1280);
+    CHECK(now->codecName == "prores");
+    CHECK(was->codecName != "prores");
+
+    std::filesystem::remove(destination);
+}
