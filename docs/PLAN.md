@@ -3588,6 +3588,41 @@ leave them wondering why it took twenty minutes.
 Not done: copying the untouched parts of a longer timeline and re-encoding only
 the rest, which is where the packet arithmetic gets genuinely hard.
 
+### Phase 7f — project versions §7.5 ✅
+
+`cut.zaro`, `cut_v002.zaro`, `cut_v003.zaro`: a line drawn under what somebody
+had, with the next hour's work after it.
+
+**The number comes from the folder, not from the open file.** Somebody working
+on v002 while v005 exists is looking at an old version, and a "new version"
+that counted from their file would overwrite v003. The highest version beside
+it plus one is the only answer that cannot destroy work, and the revert check
+for this phase is exactly that mistake.
+
+**The unnumbered original is version one of itself.** It is what somebody who
+has not been versioning has, so the first new version is v002 rather than a
+v001 that duplicates a file already there.
+
+**The width is kept.** `cut_v02.zaro` gives `cut_v03.zaro`, not `cut_v003.zaro`
+— the padding is somebody's convention, and silently changing it makes a folder
+that no longer sorts.
+
+**A name that merely contains digits is not a version.** `take2.zaro` becomes
+`take2_v002.zaro`: `take2` is a name somebody chose, and renumbering it would
+be this tool having an opinion about their filing. The suffix has to be `_v`
+and digits at the very end.
+
+**The window carries on in the new file.** That is the point of the feature —
+work after the line belongs after the line — and the previous file is left
+exactly as it was, which is the other half of it. "Open a Version…" lists the
+siblings oldest first, with the current one ticked and unselectable.
+
+**Versioning an unsaved project is refused rather than guessed at.** There is
+nowhere to count from; asking where to put it first is the honest answer.
+
+Not done in §7.5: a media browser, transcode on ingest, shared projects with
+locking, and review.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

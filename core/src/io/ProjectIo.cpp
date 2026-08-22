@@ -1,7 +1,10 @@
 #include "zaro/core/io/ProjectIo.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -1596,6 +1599,96 @@ Result<model::Clip> loadGraphicTemplate(const std::string& path) {
         return Error{ErrorCode::InvalidData, "that template has no graphic in it"};
     }
     return clip;
+}
+
+namespace {
+
+/// The stem split into its name and its version number, if it has one.
+///
+/// A version suffix is `_v` followed by digits at the very end. Deliberately
+/// strict: `take_v2_final` is a name somebody chose, not version two of
+/// `take`, and renumbering it would be this tool having an opinion about
+/// their filing.
+struct Versioned {
+    std::string base;
+    int number{0};
+    int width{0};
+    bool numbered{false};
+};
+
+[[nodiscard]] Versioned splitVersion(const std::string& stem) {
+    Versioned split;
+    split.base = stem;
+    std::size_t digits = stem.size();
+    while (digits > 0 && std::isdigit(static_cast<unsigned char>(stem[digits - 1])) != 0) {
+        --digits;
+    }
+    if (digits == stem.size() || digits < 2) {
+        return split;
+    }
+    if (stem[digits - 1] != 'v' && stem[digits - 1] != 'V') {
+        return split;
+    }
+    if (stem[digits - 2] != '_' && stem[digits - 2] != '-') {
+        return split;
+    }
+    split.base = stem.substr(0, digits);
+    split.width = static_cast<int>(stem.size() - digits);
+    split.number = std::stoi(stem.substr(digits));
+    split.numbered = true;
+    return split;
+}
+
+}  // namespace
+
+std::vector<std::string> versionsOf(const std::string& projectPath) {
+    const std::filesystem::path path{projectPath};
+    const Versioned split = splitVersion(path.stem().string());
+    const std::string extension = path.extension().string();
+
+    std::vector<std::pair<int, std::string>> found;
+    std::error_code code;
+    for (const auto& entry : std::filesystem::directory_iterator{
+             path.parent_path().empty() ? std::filesystem::path{"."} : path.parent_path(), code}) {
+        if (!entry.is_regular_file(code) || entry.path().extension() != extension) {
+            continue;
+        }
+        const Versioned other = splitVersion(entry.path().stem().string());
+        // Same name, whether or not either of them is numbered: the unnumbered
+        // file is version one of itself.
+        const std::string otherBase = other.numbered ? other.base : other.base + "_v";
+        const std::string ourBase = split.numbered ? split.base : split.base + "_v";
+        if (otherBase != ourBase) {
+            continue;
+        }
+        found.emplace_back(other.numbered ? other.number : 1, entry.path().string());
+    }
+    std::sort(found.begin(), found.end());
+
+    std::vector<std::string> paths;
+    paths.reserve(found.size());
+    for (auto& [number, where] : found) {
+        paths.push_back(std::move(where));
+    }
+    return paths;
+}
+
+std::string nextVersionPath(const std::string& projectPath) {
+    const std::filesystem::path path{projectPath};
+    const Versioned split = splitVersion(path.stem().string());
+    const std::string extension = path.extension().string();
+
+    int highest = split.numbered ? split.number : 1;
+    for (const std::string& sibling : versionsOf(projectPath)) {
+        const Versioned other = splitVersion(std::filesystem::path{sibling}.stem().string());
+        highest = std::max(highest, other.numbered ? other.number : 1);
+    }
+
+    const int width = split.width > 0 ? split.width : 3;
+    std::ostringstream numbered;
+    numbered << split.base << (split.numbered ? "" : "_v") << std::setw(width) << std::setfill('0')
+             << (highest + 1) << extension;
+    return (path.parent_path() / numbered.str()).string();
 }
 
 std::string autosavePath(const std::string& projectPath) {

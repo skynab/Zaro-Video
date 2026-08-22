@@ -1202,6 +1202,60 @@ public:
         return true;
     }
 
+    /// Save as the next version beside this one, and carry on in it.
+    ///
+    /// Carrying on in the new file rather than staying in the old one is the
+    /// point: a version is a line somebody draws under what they had, and the
+    /// next hour's work belongs after the line. The previous file is left
+    /// exactly as it was, which is the other half of the point.
+    Result<std::string> saveNewVersion() {
+        if (path_.empty()) {
+            // Nowhere to count from. Asking where to put it is the honest
+            // answer, and after that there is a version one to count from.
+            return Error{ErrorCode::InvalidData, "save this project once before versioning it"};
+        }
+        const std::string next = io::nextVersionPath(path_);
+        if (Status written = io::saveProject(project_, next, loaded_.unknown); !written) {
+            return written.error();
+        }
+        setProjectPath(next);
+        commands_.markSaved();
+        std::error_code code;
+        std::filesystem::remove(io::autosavePath(next), code);
+        updateTitle();
+        return next;
+    }
+
+    /// The versions beside this project, to jump between.
+    void openVersionMenu() {
+        if (path_.empty()) {
+            QMessageBox::information(this, "Version", "This project has not been saved yet.");
+            return;
+        }
+        QMenu menu;
+        std::map<QAction*, std::string> paths;
+        for (const std::string& version : io::versionsOf(path_)) {
+            const bool current = version == path_;
+            QAction* action = menu.addAction(
+                QString::fromStdString(std::filesystem::path{version}.filename().string()));
+            action->setCheckable(true);
+            action->setChecked(current);
+            action->setEnabled(!current);
+            paths.emplace(action, version);
+        }
+        if (paths.empty()) {
+            menu.addAction("No other versions")->setEnabled(false);
+        }
+        QAction* chosen = menu.exec(QCursor::pos());
+        const auto found = paths.find(chosen);
+        if (found == paths.end()) {
+            return;
+        }
+        if (Status opened = openProject(found->second); !opened) {
+            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+        }
+    }
+
     void openDialog() {
         const QString chosen =
             QFileDialog::getOpenFileName(this, "Open project", {}, "Zaro projects (*.zaro)");
@@ -1646,6 +1700,26 @@ private:
             file, "Save", [this] { static_cast<void>(save()); }, QKeySequence::Save,
             "save-project");
         menuItem(file, "Save As…", [this] { static_cast<void>(saveAs()); }, QKeySequence::SaveAs);
+        menuItem(
+            file, "Save a New Version",
+            [this] {
+                auto saved = saveNewVersion();
+                if (!saved) {
+                    QMessageBox::information(this, "Version",
+                                             QString::fromStdString(saved.error().message()));
+                    return;
+                }
+                // Said out loud: the window title changes too, but a version
+                // that appeared to do nothing is one people press twice.
+                QMessageBox::information(
+                    this, "Version",
+                    QString("Now working in %1")
+                        .arg(QString::fromStdString(
+                            std::filesystem::path{*saved}.filename().string())));
+            },
+            QKeySequence("Ctrl+Alt+S"), "save-version");
+        menuItem(
+            file, "Open a Version…", [this] { openVersionMenu(); }, QKeySequence{}, "open-version");
         file->addSeparator();
         menuItem(
             file, "Import Media…", [this] { bin_->importFiles(); }, QKeySequence("Ctrl+I"),
@@ -8267,6 +8341,67 @@ int main(int argc, char** argv) {
             }
             window.monitor()->update();
             QApplication::processEvents();
+        }
+
+        // Versioning: save a new version and carry on in it.
+        {
+            const std::filesystem::path versionRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-versions";
+            std::filesystem::remove_all(versionRoot);
+            std::filesystem::create_directories(versionRoot);
+            const std::string first = (versionRoot / "cut.zaro").string();
+
+            window.setProjectPath(first);
+            if (!window.save()) {
+                std::fprintf(stderr, "  FAIL: the project would not save\n");
+                return 1;
+            }
+
+            auto second = window.saveNewVersion();
+            if (!second) {
+                std::fprintf(stderr, "  FAIL: %s\n", second.error().toString().c_str());
+                return 1;
+            }
+            auto third = window.saveNewVersion();
+            if (!third) {
+                std::fprintf(stderr, "  FAIL: %s\n", third.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  versions: %s then %s\n",
+                        std::filesystem::path{*second}.filename().string().c_str(),
+                        std::filesystem::path{*third}.filename().string().c_str());
+
+            if (std::filesystem::path{*second}.filename() != "cut_v002.zaro" ||
+                std::filesystem::path{*third}.filename() != "cut_v003.zaro") {
+                std::fprintf(stderr, "  FAIL: the versions are not numbered in order\n");
+                return 1;
+            }
+            // Every earlier version still there: that is what versioning is.
+            if (!std::filesystem::exists(first) || !std::filesystem::exists(*second)) {
+                std::fprintf(stderr, "  FAIL: a new version overwrote an old one\n");
+                return 1;
+            }
+            // And the window is working in the newest one, so the next save
+            // does not go back into the version somebody drew a line under.
+            if (window.projectPath() != *third) {
+                std::fprintf(stderr, "  FAIL: the window is still in the old version\n");
+                return 1;
+            }
+            if (window.commands().isModified()) {
+                std::fprintf(stderr, "  FAIL: a freshly versioned project reads as modified\n");
+                return 1;
+            }
+            const auto listed = zaro::io::versionsOf(*third);
+            if (listed.size() != 3) {
+                std::fprintf(stderr, "  FAIL: %zu versions listed, not three\n", listed.size());
+                return 1;
+            }
+            // An older version still opens, which is the reason to keep them.
+            if (Status back = window.openProject(first); !back) {
+                std::fprintf(stderr, "  FAIL: %s\n", back.error().toString().c_str());
+                return 1;
+            }
+            std::filesystem::remove_all(versionRoot);
         }
 
         // New and Open, through the real window.

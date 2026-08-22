@@ -93,6 +93,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 7c | Making proxies, not just attaching them | **done** |
 | 7d | Metadata and search: find a file by what it is | **done** |
 | 7e | Smart rendering: export by copying, where nothing was done | **done** |
+| 7f | Project versions: save one, jump between them | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

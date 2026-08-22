@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "zaro/core/Error.h"
 #include "zaro/core/model/Project.h"
@@ -60,6 +61,26 @@ struct LoadedProject {
 /// grade. What does not: its id, and where it sat.
 [[nodiscard]] Status saveGraphicTemplate(const model::Clip& clip, const std::string& path);
 [[nodiscard]] Result<model::Clip> loadGraphicTemplate(const std::string& path);
+
+/// The next version of a project file, as a path.
+///
+/// `cut.zaro` becomes `cut_v002.zaro`, and `cut_v002.zaro` becomes
+/// `cut_v003.zaro` -- the unnumbered original counts as version one, because
+/// that is what somebody who has not been versioning has.
+///
+/// **The number comes from the folder, not from this file.** Somebody working
+/// on v002 while v005 exists is looking at an old version, and a "new version"
+/// that overwrote v003 would destroy work. The highest version beside it plus
+/// one is the only answer that cannot.
+///
+/// **The width is kept.** `cut_v02.zaro` gives `cut_v03.zaro`, not
+/// `cut_v003.zaro`: the padding is somebody's convention, and a tool that
+/// silently changed it makes a folder that no longer sorts.
+[[nodiscard]] std::string nextVersionPath(const std::string& projectPath);
+
+/// Every version of a project beside it, oldest first, including the one
+/// passed in and the unnumbered original if there is one.
+[[nodiscard]] std::vector<std::string> versionsOf(const std::string& projectPath);
 
 /// Where the recovery file for a project lives.
 ///
