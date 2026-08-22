@@ -757,6 +757,41 @@ public:
         return report;
     }
 
+    /// Make a proxy for one media reference and attach it.
+    ///
+    /// Beside the original by default, named after it. Not in a temporary
+    /// folder: a proxy the system might delete under a project is worse than
+    /// no proxy, and one nobody can find is one everybody remakes.
+    Result<platform::ffmpeg::ProxySummary> buildProxy(model::MediaRefId mediaId,
+                                                      std::int32_t width = 960) {
+        const model::MediaRef* media = project_.findMedia(mediaId);
+        if (media == nullptr) {
+            return Error{ErrorCode::NotFound, "no such media in this project"};
+        }
+        const std::filesystem::path original{media->path};
+        platform::ffmpeg::ProxySettings settings;
+        settings.source = media->path;
+        settings.destination =
+            (original.parent_path() / (original.stem().string() + "-proxy.mov")).string();
+        settings.width = width;
+
+        auto made = platform::ffmpeg::makeProxy(settings);
+        if (!made) {
+            return made;
+        }
+        for (model::MediaRef& entry : project_.mediaMutable()) {
+            if (entry.id == mediaId) {
+                entry.proxyPath = made->path;
+            }
+        }
+        // Not switched on by anything here: making one and using one are
+        // separate decisions, and somebody who makes proxies for a long import
+        // does not necessarily want the picture to change under them now.
+        bin_->refresh();
+        updateTitle();
+        return made;
+    }
+
     /// Gather the project's media into one folder and point it at the copies.
     ///
     /// The copying and the relinking are one action here and two underneath:
@@ -2666,11 +2701,7 @@ private:
         scopes_->setScopes(render::measure(*frame, options));
     }
 
-    /// Attach proxies, and switch between them and the originals.
-    ///
-    /// Attaching rather than generating: making a proxy is a transcode, and a
-    /// transcode belongs to whatever tool the footage came out of. What this
-    /// has to get right is the swap.
+    /// Attach proxies, make them, and switch between them and the originals.
     void proxyMenu() {
         QMenu menu;
         QAction* toggle = menu.addAction("Use proxies");
@@ -2690,10 +2721,20 @@ private:
         // One entry per media reference, so a file can be given its proxy
         // without a second panel to manage.
         std::map<QAction*, model::MediaRefId> attach;
+        std::map<QAction*, model::MediaRefId> build;
         for (const model::MediaRef& media : project_.media()) {
             QAction* action = menu.addAction(
                 QString("Attach proxy for %1…").arg(QString::fromStdString(media.name)));
             attach.emplace(action, media.id);
+        }
+        menu.addSeparator();
+        for (const model::MediaRef& media : project_.media()) {
+            if (!media.proxyPath.empty()) {
+                continue;  // it has one; making a second is not a thing to offer
+            }
+            QAction* action = menu.addAction(
+                QString("Make a proxy for %1").arg(QString::fromStdString(media.name)));
+            build.emplace(action, media.id);
         }
 
         QAction* chosen = menu.exec(QCursor::pos());
@@ -2711,6 +2752,27 @@ private:
             }
             monitor_->update();
             refresh();
+            return;
+        }
+        if (const auto making = build.find(chosen); making != build.end()) {
+            QApplication::setOverrideCursor(Qt::WaitCursor);
+            auto made = buildProxy(making->second);
+            QApplication::restoreOverrideCursor();
+            if (!made) {
+                QMessageBox::warning(this, "Proxies",
+                                     QString::fromStdString(made.error().message()));
+                return;
+            }
+            QMessageBox::information(
+                this, "Proxies",
+                QString("Made a %1x%2 proxy of %3 frames, %4% of the size.")
+                    .arg(made->width)
+                    .arg(made->height)
+                    .arg(made->frames)
+                    .arg(made->sourceBytes == 0 ? 0.0
+                                                : (100.0 * static_cast<double>(made->proxyBytes) /
+                                                   static_cast<double>(made->sourceBytes)),
+                         0, 'f', 1));
             return;
         }
         const auto found = attach.find(chosen);
@@ -7584,6 +7646,115 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Making a proxy, then editing against it.
+        {
+            const std::filesystem::path proxyRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-proxy";
+            std::filesystem::remove_all(proxyRoot);
+            std::filesystem::create_directories(proxyRoot);
+            const std::filesystem::path heavyPath = proxyRoot / "proxied_clip.mov";
+            std::filesystem::copy_file("testdata/media/shaky_texture.mov", heavyPath);
+
+            auto probed = zaro::platform::ffmpeg::probe(heavyPath.string());
+            if (!probed) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probed.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef heavy;
+            heavy.path = heavyPath.string();
+            heavy.name = "proxied_clip";
+            heavy.info = *probed;
+            auto imported = zaro::edit::makeImportMedia(window.project(), heavy);
+            if (!imported) {
+                std::fprintf(stderr, "  FAIL: %s\n", imported.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*imported));
+            const auto heavyId = window.project().media().back().id;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            auto made = window.buildProxy(heavyId, 160);
+            if (!made) {
+                std::fprintf(stderr, "  FAIL: %s\n", made.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  proxy: %dx%d, %lld frames, %.0f%% of the size\n", made->width,
+                        made->height, static_cast<long long>(made->frames),
+                        100.0 * static_cast<double>(made->proxyBytes) /
+                            static_cast<double>(made->sourceBytes));
+
+            const auto* proxied = window.project().findMedia(heavyId);
+            if (proxied == nullptr || proxied->proxyPath != made->path) {
+                std::fprintf(stderr, "  FAIL: the proxy was not attached\n");
+                return 1;
+            }
+            // Smaller, or it is not a proxy. The first version defaulted to
+            // the container's codec and produced a file eight times the size
+            // of the original.
+            if (!(made->proxyBytes < made->sourceBytes / 2)) {
+                std::fprintf(stderr, "  FAIL: the proxy is not smaller than the media\n");
+                return 1;
+            }
+            // The one thing a proxy must not do: change how long the media is.
+            const auto proxyInfo = zaro::platform::ffmpeg::probe(made->path);
+            if (!proxyInfo || proxyInfo->primaryVideo() == nullptr) {
+                std::fprintf(stderr, "  FAIL: the proxy does not probe\n");
+                return 1;
+            }
+            if (proxyInfo->primaryVideo()->durationInFrames().frames() !=
+                    probed->primaryVideo()->durationInFrames().frames() ||
+                proxyInfo->primaryVideo()->frameRate != probed->primaryVideo()->frameRate) {
+                std::fprintf(stderr, "  FAIL: the proxy is a different length from the media\n");
+                return 1;
+            }
+
+            // And switching to proxies really reads the smaller file.
+            const auto probeAt = zaro::time::RationalTime{3, zaro::time::rates::fps25};
+            window.project().setUsingProxies(true);
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            auto onProxy = window.frameSource().imageFor(heavyId, probeAt);
+            if (!onProxy) {
+                std::fprintf(stderr, "  FAIL: the proxy does not decode\n");
+                return 1;
+            }
+            const std::int32_t proxyWidth = (*onProxy)->width();
+            window.project().setUsingProxies(false);
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            auto onOriginal = window.frameSource().imageFor(heavyId, probeAt);
+            if (!onOriginal) {
+                std::fprintf(stderr, "  FAIL: the original does not decode\n");
+                return 1;
+            }
+            if (!(proxyWidth < (*onOriginal)->width())) {
+                std::fprintf(stderr,
+                             "  FAIL: reading proxies gave the same size picture (%d vs %d)\n",
+                             proxyWidth, (*onOriginal)->width());
+                return 1;
+            }
+
+            std::filesystem::remove_all(proxyRoot);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.renderCache().clear();
             window.monitor()->update();

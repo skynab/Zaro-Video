@@ -101,6 +101,51 @@ struct RenderProgress {
     const std::function<bool()>& keepGoing = {}, RenderSummary* summary = nullptr,
     render::TextRasterizer* text = nullptr);
 
+/// What a proxy should be, and where it goes.
+struct ProxySettings {
+    std::string source;
+    std::string destination;
+
+    /// The width to aim for; the height follows the source's shape. Both are
+    /// rounded to even numbers, because every codec worth making a proxy in
+    /// subsamples chroma and cannot represent an odd one.
+    std::int32_t width{960};
+
+    /// Empty means H.264, not the container's default: a .mov defaults to
+    /// ProRes, which is right for a deliverable and absurd for a proxy.
+    std::string videoCodec;
+    std::int64_t videoBitRate{0};
+};
+
+struct ProxySummary {
+    std::string path;
+    std::int32_t width{0};
+    std::int32_t height{0};
+    std::int64_t frames{0};
+    std::uint64_t sourceBytes{0};
+    std::uint64_t proxyBytes{0};
+};
+
+/// Make a smaller copy of a media file, frame for frame.
+///
+/// **The same rate and the same number of frames, always.** A proxy is a
+/// stand-in, and the one thing a stand-in must not do is change where the cuts
+/// land: `MediaRef::proxyPath` says two files have to describe the same thing,
+/// and a proxy a frame shorter would silently retime every clip that used it.
+/// So the frame count is taken from the source and the loop writes exactly
+/// that many, whatever the decoder does at the end of the file.
+///
+/// **Audio comes too.** Proxies are switched on for the whole project at once,
+/// and a video-only proxy would mean turning them on silences the timeline.
+///
+/// **Through the same decode and encode path as an export.** A proxy made by a
+/// second, simpler pipeline would be a second place for colour handling to be
+/// wrong, and the case where it was wrong would be the one where somebody was
+/// editing against the proxy and grading against the original.
+[[nodiscard]] Result<ProxySummary> makeProxy(const ProxySettings& settings,
+                                             const std::function<void(double)>& onProgress = {},
+                                             const std::function<bool()>& keepGoing = {});
+
 struct EncodeSettings {
     std::string path;
     std::int32_t width{1920};

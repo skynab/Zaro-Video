@@ -3438,6 +3438,56 @@ leaving the project pointing at a path with nothing behind it.
 Not gathered yet: proxies, and the ability to trim media to the ranges the cut
 actually uses.
 
+### Phase 7c — making proxies §7.5 ✅
+
+The half of the proxy workflow Phase 5s left out. 5s said a transcode belongs
+to whatever tool the footage came out of; that was true when there was no
+encoder here, and there has been one since Phase 3.
+
+**The same rate and the same number of frames, always.** A proxy is a stand-in,
+and the one thing a stand-in must not do is move the cuts: `MediaRef::proxyPath`
+says the two files describe the same thing, and a proxy a frame short would
+silently retime every clip that used it. The frame count comes from the source
+and the loop writes exactly that many; a frame that will not decode is written
+as the previous one, because a repeated frame is visible and a short file is
+not. Both the media test and the self-test compare the proxy's length and rate
+against the original's, and the revert check for this phase is a proxy three
+frames short.
+
+**H.264 by default, not the container's choice.** A `.mov` defaults to ProRes
+and PCM, which is right for a deliverable and absurd for a proxy: the first
+version produced files *eight times the size* of the H.264 originals they stood
+in for. The self-test now insists a proxy is at most half the size of its
+media, so that cannot come back quietly.
+
+**Audio comes too.** Proxies are switched on for the whole project at once, so
+a video-only proxy would mean turning them on silences the timeline.
+
+**Through the same decode and encode path as an export.** A proxy made by a
+second, simpler pipeline would be a second place for colour handling to be
+wrong — and the case where it was wrong would be the one where somebody edits
+against the proxy and grades against the original. No transfer override is set
+on the throwaway one-file project, so the decode reads the file's own tag and
+the encode writes the same one back: the round trip carries the original's code
+values rather than reinterpreting them, and whatever the editor says the
+footage really is then applies to both files the same way.
+
+**Area averaging, not bilinear** (`render::resizeInto`). A bilinear sample
+reads four pixels however far apart they are, so halving a frame twice keeps
+whichever pixels the grid landed on — which is what makes a shrunk still of a
+brick wall shimmer. The test checks the proxy's *spread* as well as its mean: a
+flat frame has no spread, and a badly resampled one has noticeably less.
+
+**Even dimensions.** Every codec worth making a proxy in subsamples chroma, and
+an odd dimension fails halfway through a long job rather than at the start.
+
+**Made and used are separate decisions.** Building a proxy attaches it and
+changes nothing on screen; somebody making proxies for a long import has not
+asked for the picture to change under them right now.
+
+Not done: proxies for a whole bin at once, and a background queue — this runs
+on the calling thread with a wait cursor.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
