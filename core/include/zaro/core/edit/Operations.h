@@ -370,6 +370,18 @@ enum class PlaceMode {
                                               model::ClipId clip, model::Param param,
                                               const model::Curve& curve);
 
+/// Where a tracked mask goes: both offset curves at once.
+///
+/// One command rather than two, because a track produces one answer. Two
+/// commands would leave an undo that moved the mask back horizontally and not
+/// vertically, which is a state nothing asked for and nothing can draw
+/// sensibly. Empty curves clear the track and put the mask back where it was
+/// drawn.
+
+[[nodiscard]] Result<CommandPtr> makeTrackMask(model::Project& project, const EditTarget& target,
+                                               model::ClipId clip, const model::Curve& x,
+                                               const model::Curve& y);
+
 /// What a clip's sound is for.
 [[nodiscard]] Result<CommandPtr> makeSetAudioRole(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::AudioRole role);

@@ -19,11 +19,15 @@ bool GpuRenderGraph::drawClipImage(const model::Clip& clip, const render::RgbaIm
     const render::LutTable* lut =
         clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     const render::KeyerConstants keyer = render::keyerConstantsFor(clip.keyer, transfer_);
+    // Sampled, not read off the clip: a tracked mask moves frame by frame, and
+    // the preview showing it where it was drawn while the export shows it where
+    // it was tracked to is the worst of both.
+    const model::Mask mask = clip.maskAt(at);
     return compositor_
         ->draw(image, transform, clip.blend,
                render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
                &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
-               static_cast<float>(clip.lut.amount), clip.mask.isSet() ? &clip.mask : nullptr,
+               static_cast<float>(clip.lut.amount), mask.isSet() ? &mask : nullptr,
                keyer.isActive() ? &keyer : nullptr,
                clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
         .ok();
@@ -37,11 +41,12 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
     const render::LutTable* lut =
         clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     const render::KeyerConstants keyer = render::keyerConstantsFor(clip.keyer, transfer_);
+    const model::Mask mask = clip.maskAt(at);
     return compositor_
         ->drawSource(frame, transform, render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
                      clip.blend, &curves_.tableFor(clip.id.value(), clip.curves, transfer_),
                      &secondary, lut, static_cast<float>(clip.lut.amount),
-                     clip.mask.isSet() ? &clip.mask : nullptr, keyer.isActive() ? &keyer : nullptr,
+                     mask.isSet() ? &mask : nullptr, keyer.isActive() ? &keyer : nullptr,
                      clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
         .ok();
 }

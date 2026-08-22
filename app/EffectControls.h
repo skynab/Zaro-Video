@@ -75,6 +75,10 @@ signals:
     /// draws on the picture, so it asks rather than reaching for it.
     void drawMaskRequested(bool drawing);
 
+    /// Follow the mask through the rest of the clip. The panel has the mask
+    /// but not the pictures, so this is asked for rather than done here.
+    void trackMaskRequested();
+
 private:
     /// One animatable parameter: its spin box, its stopwatch, and the button
     /// that adds or removes a keyframe at the playhead.
@@ -153,6 +157,7 @@ private:
     QCheckBox* maskInverted_{nullptr};
     QPushButton* maskToPath_{nullptr};
     QPushButton* maskDraw_{nullptr};
+    QPushButton* maskTrack_{nullptr};
     void convertMaskToPath();
     QWidget* graphicGroup_{nullptr};
     QComboBox* shapeKind_{nullptr};

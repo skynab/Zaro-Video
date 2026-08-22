@@ -27,6 +27,28 @@ using FlatPath = std::vector<std::pair<double, double>>;
 /// closest a cubic gets to a circle and closer than the rasteriser can tell.
 [[nodiscard]] model::MaskPath pathForShape(const model::Mask& mask);
 
+/// The box a mask occupies, in output coordinates from the frame centre.
+///
+/// The path's *points*, not its curves: a handle can pull a segment a little
+/// outside the hull of the points it joins, so this can be slightly tight. It
+/// is used to say which bit of picture a mask is sitting on, where a few pixels
+/// either way is not the question -- a bound that had to be exact would mean
+/// flattening the path to answer it.
+struct MaskBounds {
+    double left{0.0};
+    double top{0.0};
+    double right{0.0};
+    double bottom{0.0};
+
+    [[nodiscard]] double centreX() const { return (left + right) / 2.0; }
+    [[nodiscard]] double centreY() const { return (top + bottom) / 2.0; }
+    [[nodiscard]] double width() const { return right - left; }
+    [[nodiscard]] double height() const { return bottom - top; }
+    [[nodiscard]] bool isEmpty() const { return !(width() > 0.0) || !(height() > 0.0); }
+};
+
+[[nodiscard]] MaskBounds maskBounds(const model::Mask& mask);
+
 /// Turn a path's cubic segments into a polyline.
 ///
 /// Subdivided by how far each segment strays from its chord, not by a fixed

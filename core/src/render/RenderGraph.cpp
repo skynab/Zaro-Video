@@ -55,11 +55,14 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     }
 
     const KeyerConstants keyer = keyerConstantsFor(clip.keyer, transfer_);
+    // Sampled here rather than read off the clip: a tracked mask moves frame
+    // by frame, and everything below this line has to see where it is now.
+    const model::Mask mask = clip.maskAt(at);
     // A mask alone is reason enough to take the slow path: it changes which
     // pixels are drawn even when nothing about their colour does. So is a key,
     // which changes whether they are drawn at all.
     const bool active = !grade.isIdentity() || !table.isIdentity() || secondary.isActive() ||
-                        lut != nullptr || clip.mask.isSet() || keyer.isActive() ||
+                        lut != nullptr || mask.isSet() || keyer.isActive() ||
                         clip.vignette.isSet() || (wipe != nullptr && wipe->isSet());
     ClipShading shading;
     shading.grade = active ? &grade : nullptr;
@@ -67,11 +70,11 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     shading.secondary = active ? &secondary : nullptr;
     shading.lut = lut;
     shading.lutAmount = static_cast<float>(clip.lut.amount);
-    shading.mask = clip.mask.isSet() ? &clip.mask : nullptr;
+    shading.mask = mask.isSet() ? &mask : nullptr;
     shading.keyer = keyer.isActive() ? &keyer : nullptr;
     shading.vignette = clip.vignette.isSet() ? &clip.vignette : nullptr;
     shading.wipe = wipe;
-    if (const std::vector<float>* coverage = coverageFor(clip.mask, out.width(), out.height())) {
+    if (const std::vector<float>* coverage = coverageFor(mask, out.width(), out.height())) {
         // A path answers coverage from a buffer, so the analytic mask slot is
         // left alone rather than being handed a shape it cannot describe.
         shading.mask = nullptr;
@@ -97,6 +100,7 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
         return;
     }
 
+    const model::Mask mask = clip.maskAt(at);
     // In place, over what is already there. An adjustment layer is not drawn
     // and then composited -- it changes what has been composited, which is why
     // it cannot be expressed as a clip that draws something.
@@ -108,8 +112,8 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
                 continue;  // nothing underneath to adjust
             }
             float coverage = opacity;
-            if (clip.mask.isSet()) {
-                coverage *= maskCoverage(clip.mask, out.width(), out.height(), x, y);
+            if (mask.isSet()) {
+                coverage *= maskCoverage(mask, out.width(), out.height(), x, y);
             }
             if (coverage <= 0.0F) {
                 continue;

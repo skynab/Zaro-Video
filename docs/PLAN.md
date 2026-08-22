@@ -3053,6 +3053,75 @@ one of them is not.
 Not done: inserting a point into an existing path, feather handles on the
 picture, and mask tracking.
 
+### Phase 6s — mask tracking §7.4 ✅
+
+A mask that follows what it was put on, instead of one somebody has to keyframe
+by hand.
+
+**The track is an offset, not the mask's position.** Two curves, `maskX` and
+`maskY`, added to wherever the mask was drawn. A path has no centre to animate
+— it carries its position in its points — so animating "the mask's position"
+would mean animating every point of it, and clearing a track would have nothing
+to restore. As an offset, clearing the curves puts the mask back where somebody
+drew it with the drawing untouched, and the same two curves mean the same thing
+for a rectangle, an ellipse and a path.
+
+**Zero-mean normalised cross-correlation, not sum of differences.** A shot that
+brightens between two frames — an exposure step, a lamp, a dissolve starting —
+shifts every pixel of the patch by the same amount, and a difference metric
+reads that as the patch having gone somewhere. Correlation subtracts the mean
+and divides by the spread, so a gain or lift change scores identically to no
+change. There is a test that does exactly that: a stop up and a lift, on a patch
+that also moved four pixels, and the four pixels are what comes back.
+
+**A box around the mask, not the mask's own outline.** What is being followed is
+a piece of texture, and the box is the cheapest honest description of one. A
+track that sampled only the pixels inside a bezier would spend its time on the
+shape rather than the motion and would still have to fall back to a box the
+moment the shape had no detail in it.
+
+**Blur before subsampling.** The patch is sampled on a bounded grid — at most 64
+by 64 samples however big the mask is — so one track costs the same on a mask
+covering half the frame as on a small one. That sparse sampling is aliasing:
+reading every nineteenth pixel of a sharp picture makes the samples land on
+different parts of an edge at each candidate offset, and the correlation surface
+grows a texture of its own that has nothing to do with where anything went. The
+first version of this tracked a title moving six pixels a frame as moving two.
+Blurring each frame once by the amount the sampling skips fixes it, and costs
+one pass over the frame against the alternative's one pass per candidate.
+
+**Frame to frame, not against the first frame.** A reference frame does not
+drift, but it stops matching the moment the subject turns, moves under a
+different light, or is partly covered — which is most shots worth tracking.
+Frame to frame follows all of that and accumulates a little error instead. Over
+eight frames of a known 6,-4 per frame the self-test lands within half a pixel,
+and the tolerance in the test says how much drift is still a working tracker.
+
+**Refusals are reported, and what was found is kept.** A flat patch and a patch
+that left the frame are both refused by name rather than answered with a
+confident number. A track that held for two seconds and then lost its subject
+is worth two seconds of keyframes and a note saying where to look, not a
+refusal — so the keyframes up to that point are written and the message says
+where it stopped.
+
+**Every offset in the search window, no pyramid.** A coarse pass on a
+downsampled frame is the usual speed-up and it is also how a tracker learns to
+prefer a wrong answer: the coarse level cannot see the detail that
+distinguishes two similar places, and the fine level only refines what the
+coarse one chose. The patch is already subsampled, so exhaustive is affordable.
+The window is capped at 48 pixels, because the cost is its square and a window
+wide enough for a whip pan is wide enough to find the wrong lamppost.
+
+**The preview had to be taught too.** The GPU graph read `clip.mask` directly,
+so the tracked mask moved in an export and sat still on screen. That is the
+worst of both and the self-test caught it: the picture check fails with the GPU
+path reverted even though every keyframe is correct.
+
+Not done: rotation and scale (one patch cannot separate them from translation;
+several patches solving a similarity together is a different feature),
+tracking backwards from the playhead, and a tracker somebody can nudge
+mid-track.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

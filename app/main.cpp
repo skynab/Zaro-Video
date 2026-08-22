@@ -67,12 +67,14 @@
 #include "zaro/core/render/BakeLut.h"
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Compare.h"
+#include "zaro/core/render/PathRaster.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
 #include "zaro/core/render/Scopes.h"
 #include "zaro/core/render/ShotMatch.h"
 #include "zaro/core/render/ToneMap.h"
+#include "zaro/core/render/Tracker.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
@@ -167,6 +169,7 @@ public:
                 &app::MaskOverlay::setDrawing);
         connect(maskOverlay_, &app::MaskOverlay::drawingChanged, effects_,
                 &app::EffectControls::setDrawingMask);
+        connect(effects_, &app::EffectControls::trackMaskRequested, this, [this] { trackMask(); });
         scopes_ = new app::ScopesPanel(this);
         mixer_ = new app::MixerPanel(this);
         effects_->setMinimumWidth(250);
@@ -517,6 +520,130 @@ public:
         updateCacheBar();
         updateTitle();
         return match;
+    }
+
+    /// What tracking a mask through the shot came to.
+    struct MaskTrack {
+        int frames{0};
+        double confidence{1.0};
+        /// Set when the track stopped early, saying why. The keyframes found
+        /// before it stopped are kept: a track that held for two seconds and
+        /// then lost the thing it was on is worth two seconds of keyframes and
+        /// a note, not a refusal.
+        std::string stopped;
+    };
+
+    /// Follow the selected clip's mask through the rest of the clip.
+    ///
+    /// **Frame to frame, not against the first frame.** A reference frame does
+    /// not drift, but it also stops matching the moment the thing turns, moves
+    /// under a different light, or is partly covered -- which is most shots
+    /// worth tracking. Frame to frame follows all of that and accumulates a
+    /// little error instead, which is the trade every tracker makes and the one
+    /// people can correct by hand afterwards.
+    ///
+    /// **On the composited picture, not on the decoded source.** The mask lives
+    /// in output coordinates over whatever is on screen, so what it has to
+    /// follow is what is on screen.
+    Result<MaskTrack> trackMaskForward() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the clip whose mask should be tracked"};
+        }
+        if (!clip->mask.isSet()) {
+            return Error{ErrorCode::InvalidData, "that clip has no mask to track"};
+        }
+        const time::RationalTime from = position_;
+        if (from < clip->start() || from >= clip->endExclusive()) {
+            return Error{ErrorCode::InvalidData, "put the playhead over the clip first"};
+        }
+
+        const render::MaskBounds bounds = render::maskBounds(clip->maskAt(from));
+        if (bounds.isEmpty()) {
+            return Error{ErrorCode::InvalidData, "that mask has no area to track"};
+        }
+
+        render::RenderGraph graph{*media_};
+        graph.setProject(&project_);
+        graph.setTextRasterizer(&text_);
+        graph.setRenderCache(&renderCache_);
+
+        const auto rate = sequence->frameRate();
+        const auto step = time::RationalTime{1, rate};
+        render::RgbaImage previous;
+        if (Status status = graph.compositeInto(*sequence, from, previous); !status) {
+            return status.error();
+        }
+
+        // The search window scales with the frame rather than being a fixed
+        // number of pixels: twenty pixels is a big move at 720p and a twitch at
+        // 4K, and what somebody means by "it moves about this fast" is the
+        // former. Capped, because the cost is the square of it and a window
+        // wide enough to cover a whipping pan is also wide enough to find the
+        // wrong lamppost.
+        render::PatchWindow window;
+        window.search = std::clamp(static_cast<double>(sequence->width()) * 0.02, 8.0, 48.0);
+
+        model::Curve xs;
+        model::Curve ys;
+        double dx = clip->parameterAt(model::Param::MaskX, from);
+        double dy = clip->parameterAt(model::Param::MaskY, from);
+        // Both curves start with where the mask already is, so the frames
+        // before the track are not dragged along by the first keyframe.
+        xs.set(model::Keyframe{clip->sourceTimeAt(from), dx, model::Interpolation::Linear, {}, {}});
+        ys.set(model::Keyframe{clip->sourceTimeAt(from), dy, model::Interpolation::Linear, {}, {}});
+
+        MaskTrack result;
+        result.confidence = 1.0;
+        for (time::RationalTime at = from + step; at < clip->endExclusive(); at = at + step) {
+            render::RgbaImage current;
+            if (Status status = graph.compositeInto(*sequence, at, current); !status) {
+                return status.error();
+            }
+            window.centreX = (static_cast<double>(sequence->width()) / 2.0) + bounds.centreX() + dx;
+            window.centreY =
+                (static_cast<double>(sequence->height()) / 2.0) + bounds.centreY() + dy;
+            window.halfWidth = std::max(8.0, bounds.width() / 2.0);
+            window.halfHeight = std::max(8.0, bounds.height() / 2.0);
+
+            const render::PatchTrack moved = render::trackPatch(previous, current, window);
+            if (!moved.usable) {
+                result.stopped = moved.reason;
+                break;
+            }
+            dx += moved.dx;
+            dy += moved.dy;
+            result.confidence = std::min(result.confidence, moved.confidence);
+            ++result.frames;
+            const time::RationalTime when = clip->sourceTimeAt(at);
+            xs.set(model::Keyframe{when, dx, model::Interpolation::Linear, {}, {}});
+            ys.set(model::Keyframe{when, dy, model::Interpolation::Linear, {}, {}});
+            previous = std::move(current);
+        }
+
+        if (result.frames == 0) {
+            return Error{ErrorCode::InvalidData,
+                         result.stopped.empty() ? "there is nothing after this frame to track into"
+                                                : result.stopped};
+        }
+
+        auto built =
+            edit::makeTrackMask(project_, {sequence->id(), selectedTrack_}, selectedClip_, xs, ys);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+        return result;
     }
 
     /// Hold a frame and show the current one against it.
@@ -1768,6 +1895,29 @@ private:
             QMessageBox::warning(this, "OpenTimelineIO",
                                  QString::fromStdString(saved.error().toString()));
         }
+    }
+
+    void trackMask() {
+        // Every frame of the rest of the clip gets composited, which is not
+        // instant on a long one.
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto tracked = trackMaskForward();
+        QApplication::restoreOverrideCursor();
+        if (!tracked) {
+            QMessageBox::information(this, "Track mask",
+                                     QString::fromStdString(tracked.error().message()));
+            return;
+        }
+        QString said = QString("Tracked %1 frame%2, weakest match %3.")
+                           .arg(tracked->frames)
+                           .arg(tracked->frames == 1 ? "" : "s")
+                           .arg(tracked->confidence, 0, 'f', 2);
+        if (!tracked->stopped.empty()) {
+            // Said plainly, with the keyframes kept: where a track gave up is
+            // exactly where somebody needs to look.
+            said += QString("\nStopped early: %1").arg(QString::fromStdString(tracked->stopped));
+        }
+        QMessageBox::information(this, "Track mask", said);
     }
 
     void matchShot() {
@@ -3659,6 +3809,172 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
             if (overlay->isDrawing() || !window.commands().canRedo()) {
                 std::fprintf(stderr, "  FAIL: escape did not abandon the drawing cleanly\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Mask tracking, against motion with a known answer.
+        //
+        // A title moving a fixed number of pixels a frame, so the tracker's
+        // answer can be checked rather than merely looked at: real footage
+        // would only tell us the mask went roughly the right way.
+        {
+            const auto trackSequenceId = window.project().activeSequence();
+            const auto* trackSequence = window.project().findSequence(trackSequenceId);
+            const auto trackTrackId = trackSequence->videoTracks().back().id();
+            const auto trackRate = trackSequence->frameRate();
+            constexpr int kTrackedFrames = 8;
+            constexpr double kPerFrameX = 6.0;
+            constexpr double kPerFrameY = -4.0;
+
+            zaro::model::Graphic mark;
+            mark.kind = zaro::model::GraphicKind::Text;
+            mark.text = "TRACK ME";
+            mark.pointSize = 60.0;
+            mark.bold = true;
+            mark.width = 300.0;
+            mark.height = 120.0;
+            mark.red = 1.0;
+            mark.green = 1.0;
+            mark.blue = 1.0;
+            auto placed = zaro::edit::makeAddGraphic(
+                window.project(), {trackSequenceId, trackTrackId}, mark,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, trackRate},
+                                      zaro::time::RationalTime{kTrackedFrames + 2, trackRate}});
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            // Found by what it is, not by where it landed: the track already
+            // has clips on it, so "the last one" is not necessarily ours.
+            zaro::model::ClipId markId;
+            zaro::time::RationalTime markStart;
+            for (const auto& candidate :
+                 window.project().findSequence(trackSequenceId)->findTrack(trackTrackId)->clips()) {
+                if (candidate.graphic.text == "TRACK ME") {
+                    markId = candidate.id;
+                    markStart = candidate.start();
+                }
+            }
+            if (!markId.isValid()) {
+                std::fprintf(stderr, "  FAIL: the title to track was not added\n");
+                return 1;
+            }
+
+            // Two linear keyframes across the tracked span, so the motion per
+            // frame is exactly what the check expects.
+            for (const auto& [param, perFrame] :
+                 {std::pair{zaro::model::Param::PositionX, kPerFrameX},
+                  std::pair{zaro::model::Param::PositionY, kPerFrameY}}) {
+                zaro::model::Curve moving;
+                moving.set(zaro::model::Keyframe{zaro::time::RationalTime{0, trackRate},
+                                                 0.0,
+                                                 zaro::model::Interpolation::Linear,
+                                                 {},
+                                                 {}});
+                moving.set(
+                    zaro::model::Keyframe{zaro::time::RationalTime{kTrackedFrames, trackRate},
+                                          perFrame * kTrackedFrames,
+                                          zaro::model::Interpolation::Linear,
+                                          {},
+                                          {}});
+                auto animated = zaro::edit::makeSetCurve(
+                    window.project(), {trackSequenceId, trackTrackId}, markId, param, moving);
+                if (!animated) {
+                    std::fprintf(stderr, "  FAIL: %s\n", animated.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*animated));
+            }
+
+            // A box over the letters where they start.
+            zaro::model::Mask over;
+            over.shape = zaro::model::MaskShape::Rectangle;
+            over.width = 150.0;
+            over.height = 90.0;
+            auto boxed = zaro::edit::makeSetMask(window.project(), {trackSequenceId, trackTrackId},
+                                                 markId, over);
+            if (!boxed) {
+                std::fprintf(stderr, "  FAIL: %s\n", boxed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*boxed));
+
+            timeline->selectOnlyForTest(trackTrackId, markId);
+            window.effects()->setSelection(trackTrackId, markId);
+            window.setPosition(markStart);
+            QApplication::processEvents();
+
+            auto* trackButton = window.effects()->findChild<QPushButton*>("mask-track");
+            if (trackButton == nullptr || !trackButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: there is no usable track-mask button\n");
+                return 1;
+            }
+
+            auto tracked = window.trackMaskForward();
+            if (!tracked) {
+                std::fprintf(stderr, "  FAIL: %s\n", tracked.error().toString().c_str());
+                return 1;
+            }
+            const auto* followed = window.project()
+                                       .findSequence(trackSequenceId)
+                                       ->findTrack(trackTrackId)
+                                       ->find(markId);
+            const auto end = markStart + zaro::time::RationalTime{kTrackedFrames, trackRate};
+            const double gotX = followed->parameterAt(zaro::model::Param::MaskX, end);
+            const double gotY = followed->parameterAt(zaro::model::Param::MaskY, end);
+            const double wantX = kPerFrameX * kTrackedFrames;
+            const double wantY = kPerFrameY * kTrackedFrames;
+            std::printf(
+                "  mask track: %d frames, weakest %.2f, ended at %.1f,%.1f (wanted "
+                "%.1f,%.1f)\n",
+                tracked->frames, tracked->confidence, gotX, gotY, wantX, wantY);
+            if (tracked->frames < kTrackedFrames) {
+                std::fprintf(stderr, "  FAIL: the track stopped after %d frames: %s\n",
+                             tracked->frames, tracked->stopped.c_str());
+                return 1;
+            }
+            // Within a pixel and a half after eight frames of accumulating:
+            // frame-to-frame tracking drifts, and the test says how much drift
+            // is still a working tracker.
+            if (std::fabs(gotX - wantX) > 1.5 || std::fabs(gotY - wantY) > 1.5) {
+                std::fprintf(stderr, "  FAIL: the mask did not follow the picture\n");
+                return 1;
+            }
+            // And the mask really moved with it: masked to the letters, the
+            // frame at the end would go dark if the mask had stayed put.
+            window.setPosition(end);
+            window.renderCache().clear();
+            const double lit = meanGray(settledGrab(window.monitor()));
+            window.commands().undo(window.project());  // the track, in one step
+            const auto* untracked = window.project()
+                                        .findSequence(trackSequenceId)
+                                        ->findTrack(trackTrackId)
+                                        ->find(markId);
+            if (untracked->animation.find(zaro::model::Param::MaskX) != nullptr ||
+                untracked->animation.find(zaro::model::Param::MaskY) != nullptr) {
+                std::fprintf(stderr, "  FAIL: undoing the track left keyframes behind\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            const double stranded = meanGray(settledGrab(window.monitor()));
+            // Five per cent of the whole grab: the mask is a fifth of the
+            // frame and the frame is a fraction of the widget, so a mask that
+            // moved off what it was on cannot change the average by much. What
+            // matters is that it changes it at all and in the right direction.
+            if (!(lit > stranded * 1.05)) {
+                std::fprintf(stderr,
+                             "  FAIL: tracking the mask showed no more of the picture than "
+                             "leaving it behind did (%.2f vs %.2f)\n",
+                             lit, stranded);
                 return 1;
             }
 

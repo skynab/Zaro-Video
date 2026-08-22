@@ -208,6 +208,13 @@ double Clip::parameterValue(Param param) const {
             return color.contrast;
         case Param::Saturation:
             return color.saturation;
+        case Param::MaskX:
+        case Param::MaskY:
+            // No static value either: the mask already records where it is,
+            // and a second place for that would be a second thing to keep
+            // agreeing with the first. These curves say how far it has been
+            // moved from there, which is nothing until something moves it.
+            return 0.0;
         case Param::TimeRemap:
             // No static value, on purpose. Every other parameter has a value
             // the clip holds when nothing is animated; a time remap that is not
@@ -267,6 +274,8 @@ void Clip::setParameterValue(Param param, double value) {
         case Param::Saturation:
             color.saturation = value;
             return;
+        case Param::MaskX:
+        case Param::MaskY:
         case Param::TimeRemap:
             // Nothing to set: see parameterValue.
             return;
@@ -295,6 +304,28 @@ ColorCorrection Clip::colorAt(const time::RationalTime& timelineTime) const {
     graded.saturation =
         Curve::valueOr(animation.find(Param::Saturation), seconds, color.saturation);
     return graded;
+}
+
+Mask Clip::maskAt(const time::RationalTime& timelineTime) const {
+    if (!mask.isSet() || animation.empty()) {
+        return mask;
+    }
+    const double seconds = sourceSecondsAt(timelineTime);
+    const double dx = Curve::valueOr(animation.find(Param::MaskX), seconds, 0.0);
+    const double dy = Curve::valueOr(animation.find(Param::MaskY), seconds, 0.0);
+    if (dx == 0.0 && dy == 0.0) {
+        return mask;
+    }
+    Mask moved = mask;
+    moved.centreX += dx;
+    moved.centreY += dy;
+    for (MaskPoint& point : moved.path.points) {
+        // The point only: the handles are offsets from it, so moving them as
+        // well would move them twice and open the curve out as it travelled.
+        point.x += dx;
+        point.y += dy;
+    }
+    return moved;
 }
 
 double Clip::gainDbAt(const time::RationalTime& timelineTime) const {

@@ -295,6 +295,11 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     maskForm->addRow(maskDraw_);
     connect(maskDraw_, &QPushButton::toggled, this,
             [this](bool on) { emit drawMaskRequested(on); });
+    maskTrack_ = new QPushButton("Track mask", this);
+    maskTrack_->setObjectName("mask-track");
+    maskTrack_->setToolTip("Follow what the mask is on through the rest of the clip");
+    maskForm->addRow(maskTrack_);
+    connect(maskTrack_, &QPushButton::clicked, this, [this] { emit trackMaskRequested(); });
     maskGroup_ = maskBox;
 
     for (QDoubleSpinBox* spin :
@@ -787,6 +792,7 @@ void EffectControls::applyToWidgets() {
     // once it is already a path.
     maskToPath_->setEnabled(clip->mask.isSet() && clip->mask.shape != model::MaskShape::Path);
     maskDraw_->setEnabled(true);
+    maskTrack_->setEnabled(clip->mask.isSet());
 
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {

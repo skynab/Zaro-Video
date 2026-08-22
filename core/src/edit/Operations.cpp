@@ -1162,6 +1162,31 @@ Result<CommandPtr> makeSetCurve(Project& project, const EditTarget& target, Clip
         });
 }
 
+Result<CommandPtr> makeTrackMask(Project& project, const EditTarget& target, ClipId clipId,
+                                 const model::Curve& x, const model::Curve& y) {
+    for (const model::Curve* curve : {&x, &y}) {
+        for (const model::Keyframe& key : curve->keyframes()) {
+            if (!std::isfinite(key.value)) {
+                return Error{ErrorCode::InvalidData, "a keyframe has to be a real number"};
+            }
+        }
+    }
+    const bool clearing = x.empty() && y.empty();
+    return modifyClip(project, target, clipId, clearing ? "Clear mask track" : "Track mask",
+                      "masktrack:" + idText(clipId), [x, y](Clip& clip) {
+                          if (x.empty()) {
+                              clip.animation.erase(model::Param::MaskX);
+                          } else {
+                              clip.animation.curve(model::Param::MaskX) = x;
+                          }
+                          if (y.empty()) {
+                              clip.animation.erase(model::Param::MaskY);
+                          } else {
+                              clip.animation.curve(model::Param::MaskY) = y;
+                          }
+                      });
+}
+
 Result<CommandPtr> makeSetAudioRole(Project& project, const EditTarget& target, ClipId clipId,
                                     model::AudioRole role) {
     return modifyClip(project, target, clipId, "Set role", "role:" + idText(clipId),

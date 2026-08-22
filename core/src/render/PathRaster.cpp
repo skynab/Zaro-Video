@@ -55,6 +55,34 @@ void subdivide(FlatPath& out, double x0, double y0, double cx1, double cy1, doub
 
 }  // namespace
 
+MaskBounds maskBounds(const model::Mask& mask) {
+    MaskBounds bounds;
+    if (mask.shape == model::MaskShape::Path) {
+        if (!mask.path.isSet()) {
+            return bounds;
+        }
+        bounds.left = mask.path.points.front().x;
+        bounds.right = bounds.left;
+        bounds.top = mask.path.points.front().y;
+        bounds.bottom = bounds.top;
+        for (const model::MaskPoint& point : mask.path.points) {
+            bounds.left = std::min(bounds.left, point.x);
+            bounds.right = std::max(bounds.right, point.x);
+            bounds.top = std::min(bounds.top, point.y);
+            bounds.bottom = std::max(bounds.bottom, point.y);
+        }
+        return bounds;
+    }
+    if (!mask.isSet()) {
+        return bounds;
+    }
+    bounds.left = mask.centreX - (mask.width / 2.0);
+    bounds.right = mask.centreX + (mask.width / 2.0);
+    bounds.top = mask.centreY - (mask.height / 2.0);
+    bounds.bottom = mask.centreY + (mask.height / 2.0);
+    return bounds;
+}
+
 model::MaskPath pathForShape(const model::Mask& mask) {
     model::MaskPath out;
     if (mask.shape == model::MaskShape::Path) {

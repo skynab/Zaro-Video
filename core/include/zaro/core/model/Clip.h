@@ -239,6 +239,11 @@ struct Clip {
     /// The correction at a moment, curves applied.
     [[nodiscard]] ColorCorrection colorAt(const time::RationalTime& timelineTime) const;
 
+    /// The mask at a moment: the drawn one, moved by whatever the mask offset
+    /// curves say. A shape moves its centre and a path moves every point, so
+    /// the offset means the same thing either way.
+    [[nodiscard]] Mask maskAt(const time::RationalTime& timelineTime) const;
+
     /// The static value of one parameter, by name rather than by field.
     ///
     /// The keyframe operations and the parameter panel both need to treat

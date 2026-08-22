@@ -141,6 +141,17 @@ enum class Param : std::uint8_t {
     Contrast,
     Saturation,
 
+    /// Where the mask sits, as an offset in output pixels from where it was
+    /// drawn.
+    ///
+    /// An offset rather than the mask's own centre, because a path has no
+    /// centre -- it carries its position in its points -- and a tracked mask
+    /// has to be able to be a path. It is also what makes tracking reversible:
+    /// clearing the curves puts the mask back where somebody drew it, with the
+    /// drawing itself untouched.
+    MaskX,
+    MaskY,
+
     /// Which frame of the media is shown, in seconds of source time.
     ///
     /// The odd one out, and deliberately so. Every other parameter answers
