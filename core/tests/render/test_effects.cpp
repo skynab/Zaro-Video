@@ -396,3 +396,124 @@ TEST_CASE("An effect's keyframes survive a round trip", "[render][effects][io]")
     CHECK(curve->keyframes()[1].interpolation == model::Interpolation::Hold);
     CHECK(back[0].valueAt(model::EffectParam::Radius, 1.5) == Approx(3.0));
 }
+
+namespace {
+
+/// A single lit pixel, so where the picture went can be read off directly
+/// rather than inferred from an average.
+render::RgbaImage dotAt(std::int32_t width, std::int32_t height, std::int32_t x, std::int32_t y) {
+    render::RgbaImage image{width, height};
+    image.fill(render::Rgba{0.0F, 0.0F, 0.0F, 1.0F});
+    image.at(x, y) = render::Rgba{1.0F, 1.0F, 1.0F, 1.0F};
+    return image;
+}
+
+/// Where the brightest pixel ended up, and how bright it is.
+std::tuple<std::int32_t, std::int32_t, float> brightest(const render::RgbaImage& image) {
+    std::int32_t bestX = 0;
+    std::int32_t bestY = 0;
+    float best = -1.0F;
+    for (std::int32_t y = 0; y < image.height(); ++y) {
+        for (std::int32_t x = 0; x < image.width(); ++x) {
+            if (image.at(x, y).r > best) {
+                best = image.at(x, y).r;
+                bestX = x;
+                bestY = y;
+            }
+        }
+    }
+    return {bestX, bestY, best};
+}
+
+}  // namespace
+
+TEST_CASE("no curvature and no zoom leaves the picture alone", "[effects][distort]") {
+    render::RgbaImage image = dotAt(81, 61, 60, 20);
+    const render::RgbaImage before = image.clone();
+    render::RgbaImage scratch;
+
+    render::distort(image, scratch, 0.0F, 1.0F);
+
+    for (std::int32_t y = 0; y < image.height(); ++y) {
+        for (std::int32_t x = 0; x < image.width(); ++x) {
+            REQUIRE(image.at(x, y) == before.at(x, y));
+        }
+    }
+}
+
+TEST_CASE("curvature bends by the radial formula", "[effects][distort]") {
+    // A ramp rather than a dot: resampling a single lit pixel spreads it over
+    // its neighbours and the peak stops meaning "where the picture went". A
+    // ramp is linear, so bilinear sampling reproduces it exactly and each
+    // output pixel says precisely which source pixel it read.
+    constexpr std::int32_t kCentreX = 40;
+    constexpr std::int32_t kCentreY = 30;
+    const double unit = std::hypot(static_cast<double>(kCentreX), static_cast<double>(kCentreY));
+
+    auto ramp = [] {
+        render::RgbaImage image{81, 61};
+        for (std::int32_t y = 0; y < image.height(); ++y) {
+            for (std::int32_t x = 0; x < image.width(); ++x) {
+                const auto value = static_cast<float>(x) / 100.0F;
+                image.at(x, y) = render::Rgba{value, value, value, 1.0F};
+            }
+        }
+        return image;
+    };
+
+    for (const float curvature : {-0.3F, 0.4F}) {
+        render::RgbaImage image = ramp();
+        render::RgbaImage scratch;
+        render::distort(image, scratch, curvature, 1.0F);
+
+        for (const std::int32_t probe : {50, 60, 70}) {
+            const double dx = probe - kCentreX;
+            const double r = dx / unit;
+            const double read = kCentreX + (dx * (1.0 + (static_cast<double>(curvature) * r * r)));
+            const double got = static_cast<double>(image.at(probe, kCentreY).r) * 100.0;
+            CHECK(got == Approx(read).margin(0.05));
+        }
+    }
+}
+
+TEST_CASE("the sign of the curvature says which way the corners go", "[effects][distort]") {
+    // A dot on the mid-line, read as the brightest pixel: which side of where
+    // it started it lands is all this asks, and that survives the smearing a
+    // resample gives a single pixel.
+    for (const auto& [curvature, expectFurther] :
+         {std::pair{-0.3F, true}, std::pair{0.4F, false}}) {
+        render::RgbaImage image = dotAt(81, 61, 73, 30);
+        render::RgbaImage scratch;
+        render::distort(image, scratch, curvature, 1.0F);
+
+        const auto [outX, outY, level] = brightest(image);
+        CHECK(outY == 30);
+        CHECK(level > 0.2F);
+        CHECK((outX > 73) == expectFurther);
+    }
+}
+
+TEST_CASE("zoom scales about the centre", "[effects][distort]") {
+    render::RgbaImage image = dotAt(81, 61, 60, 30);  // 20 pixels out
+    render::RgbaImage scratch;
+    render::distort(image, scratch, 0.0F, 2.0F);
+
+    const auto [outX, outY, level] = brightest(image);
+    CHECK(outY == 30);
+    CHECK(level > 0.5F);
+    // Twice as far out: the picture is twice the size.
+    CHECK(outX == 80);
+}
+
+TEST_CASE("what the bend pulls in from outside is transparent, not smeared", "[effects][distort]") {
+    render::RgbaImage image{81, 61};
+    image.fill(render::Rgba{0.5F, 0.5F, 0.5F, 1.0F});
+    render::RgbaImage scratch;
+
+    // Straightening the picture means the corners read from beyond the source.
+    render::distort(image, scratch, 0.6F, 1.0F);
+
+    CHECK(image.at(0, 0).a < 0.5F);
+    // And the middle, which reads from inside, is untouched.
+    CHECK(image.at(40, 30).a == Approx(1.0F).margin(0.001));
+}

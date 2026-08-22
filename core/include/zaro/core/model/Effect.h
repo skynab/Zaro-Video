@@ -16,6 +16,8 @@ namespace zaro::model {
 enum class EffectKind : std::uint8_t {
     Blur,
     Sharpen,
+    /// Radial lens distortion: barrel out, pincushion in.
+    Distort,
 };
 
 [[nodiscard]] const char* toString(EffectKind kind) noexcept;
@@ -32,6 +34,18 @@ enum class EffectParam : std::uint8_t {
     Radius,
     /// How strongly the effect applies, 0 to 1 or beyond.
     Amount,
+    /// How much the picture bends away from straight, as the coefficient of a
+    /// radial term.
+    ///
+    /// Positive draws the picture in towards the centre, which is what
+    /// straightens the bulge of a wide lens; negative pushes it out, which is
+    /// how a pincushion is corrected or a fisheye is faked.
+    Curvature,
+    /// A scale about the centre, applied with the bend. Straightening a barrel
+    /// leaves the corners empty, and this is what fills them back in -- kept as
+    /// its own control rather than derived, because how much of the frame to
+    /// give up is a decision about the shot.
+    Zoom,
 };
 
 [[nodiscard]] const char* toString(EffectParam param) noexcept;

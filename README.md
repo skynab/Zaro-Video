@@ -84,6 +84,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 6r | The pen tool: draw a mask path from nothing | **done** |
 | 6s | Mask tracking: follow what the mask is on | **done** |
 | 6t | Stabilisation: hold a shaky shot still | **done** |
+| 6u | Lens distortion, as an effect | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

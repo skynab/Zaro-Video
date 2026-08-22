@@ -25,6 +25,27 @@ namespace zaro::render {
 /// blur is nothing but averages.
 void blur(RgbaImage& image, RgbaImage& scratch, float radius);
 
+/// Bend the picture radially about its centre, and scale it while doing so.
+///
+/// **One radial term, not a lens profile.** `r' = r * (1 + curvature * r^2)`,
+/// with r measured in half-diagonals so the corners sit at 1 and the
+/// coefficient means the same thing whatever the frame size is. Real lenses
+/// need more terms and a decentring pair to model exactly; one term is what
+/// straightens the barrel on a wide shot, which is what this is for. A profile
+/// per lens is a database, not an effect.
+///
+/// **Resampled from a copy, once.** Every output pixel reads one bilinear
+/// sample of the original, so the distortion is applied once rather than
+/// accumulated -- resampling in place would smear each pixel through the ones
+/// already moved.
+///
+/// **Outside the source is transparent, not clamped.** Straightening a barrel
+/// means the corners read from beyond the frame edge, where there is nothing;
+/// a clamped read would smear the border pixel outwards into a streak instead.
+/// Empty corners are honest about what is missing, and `Zoom` is how somebody
+/// fills them.
+void distort(RgbaImage& image, RgbaImage& scratch, float curvature, float zoom);
+
 /// Apply a clip's effects to its image, in order.
 ///
 /// `scratch` is kept by the caller between frames, because these allocate

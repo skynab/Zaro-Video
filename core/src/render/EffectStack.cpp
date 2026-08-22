@@ -88,6 +88,34 @@ void blur(RgbaImage& image, RgbaImage& scratch, float radius) {
     blurAxis(scratch, image, weights, false);
 }
 
+void distort(RgbaImage& image, RgbaImage& scratch, float curvature, float zoom) {
+    if (!image.isValid() || (curvature == 0.0F && zoom == 1.0F) || zoom <= 0.0F) {
+        return;
+    }
+    scratch = image.clone();
+    const auto width = static_cast<float>(image.width());
+    const auto height = static_cast<float>(image.height());
+    const float centreX = (width - 1.0F) / 2.0F;
+    const float centreY = (height - 1.0F) / 2.0F;
+    // Half the diagonal: the radius at which the corners sit, so a curvature of
+    // 0.1 means the same bend on a 4K frame as on a preview-sized one.
+    const float unit = std::sqrt((centreX * centreX) + (centreY * centreY));
+    if (unit <= 0.0F) {
+        return;
+    }
+
+    for (std::int32_t y = 0; y < image.height(); ++y) {
+        Rgba* row = image.row(y);
+        for (std::int32_t x = 0; x < image.width(); ++x) {
+            const float dx = (static_cast<float>(x) - centreX) / zoom;
+            const float dy = (static_cast<float>(y) - centreY) / zoom;
+            const float radius = std::sqrt((dx * dx) + (dy * dy)) / unit;
+            const float bend = 1.0F + (curvature * radius * radius);
+            row[x] = scratch.sampleBilinear(centreX + (dx * bend), centreY + (dy * bend));
+        }
+    }
+}
+
 void applyEffects(const std::vector<model::Effect>& effects, RgbaImage& image, RgbaImage& scratch,
                   RgbaImage& scratch2, double seconds) {
     if (!image.isValid()) {
@@ -102,6 +130,14 @@ void applyEffects(const std::vector<model::Effect>& effects, RgbaImage& image, R
             case model::EffectKind::Blur:
                 blur(image, scratch, radius);
                 break;
+            case model::EffectKind::Distort: {
+                const auto curvature =
+                    static_cast<float>(effect.valueAt(model::EffectParam::Curvature, seconds));
+                const auto zoom =
+                    static_cast<float>(effect.valueAt(model::EffectParam::Zoom, seconds));
+                distort(image, scratch, curvature, zoom);
+                break;
+            }
             case model::EffectKind::Sharpen: {
                 const auto amount =
                     static_cast<float>(effect.valueAt(model::EffectParam::Amount, seconds));

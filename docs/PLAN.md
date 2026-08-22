@@ -3185,6 +3185,48 @@ pixels becomes 1.5.
 Not done: rolling shutter, rotation and scale (the tracker is translation
 only), and a stabiliser that reframes rather than zooms.
 
+### Phase 6u — lens distortion §7.4 ✅
+
+Bending the picture radially, to straighten what a wide lens bulged — or to
+bulge it deliberately.
+
+**An effect, not a clip property.** The effect stack already answers the
+questions this needs answered: where in the order it applies, whether it is
+switched off, and whether its parameters are keyframed. Adding it there was two
+table entries, a resample and the switch case that calls it — the panel needed
+no new widgets, which is the claim Phase 5 made when it said adding an effect
+was data. The self-test drives it through the same generic controls the blur
+uses to prove that claim rather than restate it.
+
+**One radial term, not a lens profile.** `r' = r * (1 + curvature * r²)`, with
+r in half-diagonals so the corners sit at 1 and a curvature of 0.1 means the
+same bend on a 4K frame as on a preview-sized one. Real lenses need more terms
+and a decentring pair to match exactly; one term is what straightens a wide
+shot, and a profile per lens is a database rather than an effect.
+
+**Resampled from a copy, once.** Every output pixel takes one bilinear sample
+of the original. In place, each pixel would be read through the ones already
+moved, and the picture would smear along whichever direction the loop happened
+to run.
+
+**Outside the source is transparent, not clamped.** Straightening a barrel
+makes the corners read from beyond the frame edge, where there is nothing. A
+clamped read would streak the border pixel outwards, which looks like a
+rendering fault; empty corners are honest, and the zoom control is how somebody
+fills them. Zoom is its own parameter rather than derived from the curvature,
+because how much of the frame to give up is a decision about the shot.
+
+**A ramp, not a dot, for testing the mapping.** The first test put one lit
+pixel in the frame and looked for it afterwards: resampling spreads a single
+pixel across its neighbours, so the peak stopped meaning "where the picture
+went" and the test failed on arithmetic that was correct. A linear ramp
+survives bilinear sampling exactly, so every output pixel says precisely which
+source pixel it read, and the formula can be checked to a twentieth of a pixel.
+
+Not done: decentring, chromatic aberration, per-lens profiles, and a GPU path —
+an effect already forces the CPU graph, which the render cache makes
+affordable.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

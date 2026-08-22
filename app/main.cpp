@@ -26,6 +26,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QMap>
 #include <QMenu>
 #include <QMenuBar>
@@ -3578,6 +3579,66 @@ int main(int argc, char** argv) {
                 rampStart, rampEnd);
             if (!(rampEnd < rampStart * 9 / 10)) {
                 std::fprintf(stderr, "  FAIL: the keyframed blur is not ramping\n");
+                return 1;
+            }
+
+            // Lens distortion, added through the same generic controls: if
+            // adding an effect is really data, this needed no new widgets.
+            enabledBox->setChecked(false);  // put the blur out of the way
+            QApplication::processEvents();
+            kindBox->setCurrentIndex(
+                kindBox->findData(static_cast<int>(zaro::model::EffectKind::Distort)));
+            addButton->click();
+            QApplication::processEvents();
+            auto* effectList = window.effects()->findChild<QListWidget*>("effect-list");
+            if (effectList == nullptr || effectList->count() != 2) {
+                std::fprintf(stderr, "  FAIL: adding a distortion did not reach the stack\n");
+                return 1;
+            }
+            effectList->setCurrentRow(1);
+            QApplication::processEvents();
+            const auto* distorted =
+                window.project().findSequence(fxSequenceId)->findTrack(fxTop)->find(fxClipId);
+            if (distorted->effects.back().kind != zaro::model::EffectKind::Distort) {
+                std::fprintf(stderr, "  FAIL: the second effect is not the distortion\n");
+                return 1;
+            }
+
+            window.setPosition(zaro::time::RationalTime{2, sequence.frameRate()});
+            window.renderCache().clear();
+            QApplication::processEvents();
+            const int straight = brightPixels(settledGrab(window.monitor()), 200);
+
+            // Pulling the picture in towards the centre shrinks the rectangle,
+            // so fewer pixels are lit. The parameter rows are the generic ones:
+            // curvature is the first parameter of a distortion, where radius is
+            // the first parameter of a blur.
+            firstParam->setValue(0.8);
+            window.renderCache().clear();
+            QApplication::processEvents();
+            const int bent = brightPixels(settledGrab(window.monitor()), 200);
+
+            std::printf("  lens distortion: %d bright pixels straight, %d bent in\n", straight,
+                        bent);
+            if (!(bent < straight * 9 / 10)) {
+                std::fprintf(stderr, "  FAIL: the distortion did not reach the picture\n");
+                return 1;
+            }
+            // And the zoom, the second parameter, puts the size back.
+            auto* secondParam = window.effects()->findChild<QDoubleSpinBox*>("effect-param-1");
+            if (secondParam == nullptr) {
+                std::fprintf(stderr, "  FAIL: the distortion has no second parameter\n");
+                return 1;
+            }
+            secondParam->setValue(1.6);
+            window.renderCache().clear();
+            QApplication::processEvents();
+            const int refilled = brightPixels(settledGrab(window.monitor()), 200);
+            if (!(refilled > bent)) {
+                std::fprintf(stderr,
+                             "  FAIL: zooming a distorted clip did not fill the frame back "
+                             "(%d vs %d)\n",
+                             refilled, bent);
                 return 1;
             }
 

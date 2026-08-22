@@ -10,12 +10,15 @@ const char* toString(EffectKind kind) noexcept {
             return "blur";
         case EffectKind::Sharpen:
             return "sharpen";
+        case EffectKind::Distort:
+            return "distort";
     }
     return "";
 }
 
 std::span<const EffectKind> allEffectKinds() noexcept {
-    static constexpr EffectKind kAll[] = {EffectKind::Blur, EffectKind::Sharpen};
+    static constexpr EffectKind kAll[] = {EffectKind::Blur, EffectKind::Sharpen,
+                                          EffectKind::Distort};
     return kAll;
 }
 
@@ -38,6 +41,10 @@ const char* toString(EffectParam param) noexcept {
             return "radius";
         case EffectParam::Amount:
             return "amount";
+        case EffectParam::Curvature:
+            return "curvature";
+        case EffectParam::Zoom:
+            return "zoom";
     }
     return "";
 }
@@ -46,7 +53,8 @@ bool effectParamFromString(const char* name, EffectParam& out) noexcept {
     if (name == nullptr) {
         return false;
     }
-    for (const EffectParam candidate : {EffectParam::Radius, EffectParam::Amount}) {
+    for (const EffectParam candidate :
+         {EffectParam::Radius, EffectParam::Amount, EffectParam::Curvature, EffectParam::Zoom}) {
         if (std::strcmp(name, toString(candidate)) == 0) {
             out = candidate;
             return true;
@@ -67,11 +75,19 @@ std::span<const EffectParamInfo> parametersOf(EffectKind kind) noexcept {
         {EffectParam::Radius, 1.0, 0.1, 50.0, 0.1},
         {EffectParam::Amount, 0.0, 0.0, 4.0, 0.05},
     };
+    // A curvature of zero and a zoom of one are the identity, so a distortion
+    // somebody has added and not yet set changes nothing.
+    static constexpr EffectParamInfo kDistort[] = {
+        {EffectParam::Curvature, 0.0, -1.0, 1.0, 0.01},
+        {EffectParam::Zoom, 1.0, 0.25, 4.0, 0.01},
+    };
     switch (kind) {
         case EffectKind::Blur:
             return kBlur;
         case EffectKind::Sharpen:
             return kSharpen;
+        case EffectKind::Distort:
+            return kDistort;
     }
     return {};
 }
@@ -119,6 +135,12 @@ bool anyActive(const std::vector<Effect>& effects) {
             case EffectKind::Sharpen:
                 if (effect.value(EffectParam::Amount) > 0.0 &&
                     effect.value(EffectParam::Radius) > 0.0) {
+                    return true;
+                }
+                break;
+            case EffectKind::Distort:
+                if (effect.value(EffectParam::Curvature) != 0.0 ||
+                    effect.value(EffectParam::Zoom) != 1.0) {
                     return true;
                 }
                 break;
