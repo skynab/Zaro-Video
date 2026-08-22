@@ -2,11 +2,33 @@
 
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderGraph.h"
+#include "zaro/core/render/SmartRender.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 
 #include "Ffi.h"
 
 namespace zaro::platform::ffmpeg {
+
+namespace {
+
+/// The name a *decoder* would have for what this export encodes with.
+///
+/// Encoder names and codec names are not the same thing -- `prores_ks` writes
+/// `prores` -- and the file being copied is described by the codec name. One
+/// place converts, so the comparison in `smartRenderPlan` is between two names
+/// of the same kind.
+[[nodiscard]] std::string decoderNameFor(const EncodeSettings& settings) {
+    const bool isMov =
+        settings.path.size() > 4 && settings.path.compare(settings.path.size() - 4, 4, ".mov") == 0;
+    const std::string encoderName =
+        !settings.videoCodec.empty() ? settings.videoCodec : (isMov ? "prores_ks" : "libx264");
+    if (const AVCodec* encoder = avcodec_find_encoder_by_name(encoderName.c_str())) {
+        return avcodec_get_name(encoder->id);
+    }
+    return {};
+}
+
+}  // namespace
 
 Status renderSequence(const model::Project& project, const RenderRequest& request,
                       const std::function<void(const RenderProgress&)>& onProgress,
@@ -60,6 +82,63 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
     // picture nobody is going to see.
     settings.transfer = sequence->output().transfer;
     settings.highlightKnee = sequence->output().highlightKnee;
+
+    // A copy, where the export turns out to be a piece of a file and nothing
+    // has been done to it. Decided here rather than inside the encoder: what
+    // makes a copy legal is a question about the edit, and the answer has to
+    // be reportable whichever way it goes.
+    if (request.allowCopy && (!keepGoing || keepGoing())) {
+        render::SmartRenderTarget wanted;
+        wanted.width = settings.width;
+        wanted.height = settings.height;
+        wanted.frameRate = settings.frameRate;
+        wanted.videoCodec = decoderNameFor(settings);
+        wanted.includeAudio = settings.includeAudio;
+        wanted.audioSampleRate = settings.audioSampleRate;
+        wanted.audioChannels = settings.audioChannels;
+
+        const render::SmartRenderPlan plan =
+            render::smartRenderPlan(forDelivery, *sequence, request.startFrame, frameCount, wanted);
+        if (summary != nullptr) {
+            summary->copyReason = plan.reason;
+        }
+        if (plan.possible) {
+            const model::MediaRef* media = forDelivery.findMedia(plan.media);
+            if (media != nullptr) {
+                const auto began = std::chrono::steady_clock::now();
+                auto copied = copyRange(
+                    media->path, request.outputPath, plan.sourceStart, plan.frames, plan.copyAudio,
+                    [&](std::int64_t done) {
+                        if (onProgress) {
+                            const double elapsed = std::chrono::duration<double>(
+                                                       std::chrono::steady_clock::now() - began)
+                                                       .count();
+                            onProgress(RenderProgress{done, frameCount, elapsed});
+                        }
+                    },
+                    keepGoing);
+                if (!copied && copied.error().code() == ErrorCode::Cancelled) {
+                    // Abandoning is not a reason to fall through and re-encode
+                    // the very thing somebody just cancelled.
+                    return copied.error();
+                }
+                if (copied) {
+                    if (summary != nullptr) {
+                        summary->copied = true;
+                        summary->framesEncoded = plan.frames;
+                        summary->videoPacketsWritten = copied->videoPackets;
+                    }
+                    return {};
+                }
+                // Something about the file itself said no -- most often a cut
+                // that is not on a keyframe. Falling through re-encodes, which
+                // always works, and the reason is reported either way.
+                if (summary != nullptr) {
+                    summary->copyReason = copied.error().message();
+                }
+            }
+        }
+    }
 
     auto encoderOpened = Encoder::open(settings);
     if (!encoderOpened) {

@@ -62,6 +62,10 @@ struct RenderRequest {
     std::size_t cacheBudgetBytes{64u * 1024u * 1024u};
     /// Composite on the GPU where it is available. Falls back on its own.
     bool preferGpu{true};
+    /// Copy the source's packets when the export turns out to be a piece of a
+    /// file with nothing done to it. Off is how somebody forces a re-encode --
+    /// for a file another program will not accept, say.
+    bool allowCopy{true};
 };
 
 /// What the encoder actually wrote.
@@ -78,6 +82,14 @@ struct RenderSummary {
     std::int64_t audioSamplesExpected{0};
     std::uint64_t cacheHits{0};
     std::uint64_t cacheMisses{0};
+
+    /// Whether the export was a copy rather than a re-encode.
+    bool copied{false};
+    /// Why it was or was not, in words. Always filled in: an export that
+    /// quietly re-encoded would leave somebody wondering why it took twenty
+    /// minutes, and one that quietly copied would leave them wondering why the
+    /// grade is missing.
+    std::string copyReason;
 };
 
 struct RenderProgress {
@@ -100,6 +112,37 @@ struct RenderProgress {
     const std::function<void(const RenderProgress&)>& onProgress = {},
     const std::function<bool()>& keepGoing = {}, RenderSummary* summary = nullptr,
     render::TextRasterizer* text = nullptr);
+
+/// What a copy wrote.
+struct CopySummary {
+    std::int64_t videoPackets{0};
+    std::int64_t audioPackets{0};
+};
+
+/// Copy a range of a file into a new one without decoding it.
+///
+/// The packets are written as they are, with their timestamps rebased so the
+/// output starts at zero. Nothing is re-encoded, so the picture is the file's
+/// own picture and the export costs what a file copy costs.
+///
+/// Refuses when the range does not start on a keyframe: beginning anywhere else
+/// would hand a decoder frames that refer back to pictures the new file does
+/// not contain. The caller falls back to an ordinary render, which is always
+/// able to produce the frames.
+///
+/// Whether a copy is *allowed* -- whether the export is really just a piece of
+/// this file -- is `render::smartRenderPlan`, in core, where it can be tested
+/// without a media file.
+/// `onFrames` is called as picture packets go out and `keepGoing` is polled per
+/// packet: a copy of an hour-long file is fast but not instant, and neither a
+/// progress bar that jumps from nothing to done nor a cancel that takes effect
+/// at the end is worth having.
+[[nodiscard]] Result<CopySummary> copyRange(const std::string& sourcePath,
+                                            const std::string& outputPath,
+                                            const time::RationalTime& sourceStart,
+                                            std::int64_t frames, bool includeAudio,
+                                            const std::function<void(std::int64_t)>& onFrames = {},
+                                            const std::function<bool()>& keepGoing = {});
 
 /// What a proxy should be, and where it goes.
 struct ProxySettings {

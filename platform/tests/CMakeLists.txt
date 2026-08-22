@@ -4,6 +4,7 @@ add_executable(zaro_media_tests
     test_gpu_compositor.cpp
     test_probe.cpp
     test_make_proxy.cpp
+    test_smart_export.cpp
     test_render_sequence.cpp
     test_video_decoder.cpp
     test_audio_decoder.cpp

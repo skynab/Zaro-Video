@@ -140,6 +140,8 @@ int main(int argc, char** argv) {
             std::printf("  WARNING: %lld text layers were not drawn\n",
                         static_cast<long long>(summary.textLayersSkipped));
         }
+        std::printf("  %s: %s\n", summary.copied ? "copied" : "re-encoded",
+                    summary.copyReason.c_str());
         std::printf("  %lld frames encoded, %lld packets written\n",
                     static_cast<long long>(summary.framesEncoded),
                     static_cast<long long>(summary.videoPacketsWritten));

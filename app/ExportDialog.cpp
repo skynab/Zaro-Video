@@ -143,11 +143,20 @@ void ExportDialog::start() {
         // on screen. A dialog that rendered without one would produce a file
         // quietly missing its titles.
         platform::qtext::QtTextRasterizer text;
+        platform::ffmpeg::RenderSummary summary;
         const Status status = platform::ffmpeg::renderSequence(*project_, request, onProgress,
-                                                               keepGoing, nullptr, &text);
+                                                               keepGoing, &summary, &text);
         const bool cancelled = !status && status.error().code() == ErrorCode::Cancelled;
-        const QString message =
-            status ? QString("Done.") : QString::fromStdString(status.error().toString());
+        // Said either way. An export that quietly copied would leave somebody
+        // wondering where the grade went, and one that quietly re-encoded
+        // would leave them wondering why it took twenty minutes.
+        const QString how =
+            summary.copied ? QString("Done — copied without re-encoding.")
+                           : QString("Done — re-encoded (%1).")
+                                 .arg(QString::fromStdString(summary.copyReason.empty()
+                                                                 ? std::string{"nothing to copy"}
+                                                                 : summary.copyReason));
+        const QString message = status ? how : QString::fromStdString(status.error().toString());
 
         if (cancelled || !status) {
             // A partial file looks exactly like a finished one until someone

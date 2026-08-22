@@ -3533,6 +3533,61 @@ distinguishable answers.
 Not done in §7.5: smart rendering, a media browser, transcode on ingest,
 project versioning, shared projects with locking, and review.
 
+### Phase 7e — smart rendering §7.5 ✅
+
+Exporting a piece of a file by copying its packets, when that is honestly what
+the export is.
+
+**The decision is in core, the copying is in the platform.** `smartRenderPlan`
+is a question about the edit — is anything on screen but this clip, has
+anything been done to it, do the export settings match the file — and it is
+answered without opening a media file, so it is tested exhaustively and
+cheaply. `copyRange` is the FFmpeg remux, and is the only part that needs a
+real file.
+
+**A list of defaults, not a judgement.** One grade, one transform, one opacity
+keyframe, one active effect, a retime, a reverse, a pin, responsive timing —
+each is checked by name, and each refusal says which. A field added to `Clip`
+and forgotten here would make a copy that silently dropped whatever it does,
+which is why the reason is always reported and never inferred.
+
+**An effect at its defaults does not stop a copy.** Somebody who added a blur
+and left the radius at zero has changed nothing, and refusing there would be an
+export they cannot explain.
+
+**Being on proxies stops a copy.** Copying a proxy into a deliverable is the
+one mistake here that ships at the wrong quality with nothing to notice. The
+ordinary export path already forces proxies off; this refuses outright rather
+than relying on that.
+
+**Audio too, or not at all.** Copying the picture while re-encoding the sound is
+a third path with its own timestamp arithmetic. Where the audio does not match,
+the whole export re-encodes and says so.
+
+**Keyframes decide where a copy can start.** Beginning anywhere else hands a
+decoder frames referring back to pictures the new file does not contain, so a
+cut that is not on a keyframe is refused — and the caller falls through to the
+ordinary render, which can always produce the frames.
+
+**What it is checked against.** The frame ladder encodes each frame's index in
+its own luma, so "the same frames, in the same order" is checked from the
+pixels rather than inferred from a packet count — and, because nothing is
+decoded and re-encoded, the comparison is bit for bit.
+
+**Cancelling.** The first version reported success when a render was abandoned:
+the copy path ignored `keepGoing`, and the existing cancellation test caught it
+immediately. Progress is reported per picture packet now and cancelling removes
+the partial file, which is also what a copy of an hour of ProRes needs to be
+usable at all.
+
+**Said either way.** The export dialog reports "copied without re-encoding" or
+"re-encoded (the clip is graded)". An export that quietly copied would leave
+somebody wondering where the grade went; one that quietly re-encoded would
+leave them wondering why it took twenty minutes.
+
+Not done: copying the untouched parts of a longer timeline and re-encoding only
+the rest, which is where the packet arithmetic gets genuinely hard.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
