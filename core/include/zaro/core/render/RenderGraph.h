@@ -103,6 +103,15 @@ private:
     RgbaImage generated_;
     /// A second buffer, so both halves of a transition can be generated.
     RgbaImage generatedB_;
+    /// A path mask's coverage, kept between frames. Rasterising one is a
+    /// scanline fill of the whole frame, and a mask that has not changed does
+    /// not need it done again.
+    std::vector<float> pathCoverage_;
+    model::Mask pathCoverageFor_;
+    std::int32_t pathCoverageWidth_{0};
+    std::int32_t pathCoverageHeight_{0};
+    [[nodiscard]] const std::vector<float>* coverageFor(const model::Mask& mask, std::int32_t width,
+                                                        std::int32_t height);
     /// The same, for the effect stack: a blur needs the clip's image and two
     /// buffers of its size, and allocating three of those per frame would cost
     /// more than the filter.

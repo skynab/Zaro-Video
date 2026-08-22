@@ -631,6 +631,23 @@ json encode(const model::Clip& clip) {
         if (clip.mask.inverted) {
             mask["inverted"] = true;
         }
+        if (clip.mask.shape == model::MaskShape::Path && clip.mask.path.isSet()) {
+            json points = json::array();
+            for (const model::MaskPoint& point : clip.mask.path.points) {
+                // Handles written only when they are not zero, so a polygon of
+                // corners -- which is most masks -- reads as a list of pairs
+                // rather than a wall of zeroes.
+                json encoded{{"x", point.x}, {"y", point.y}};
+                if (point.inX != 0.0 || point.inY != 0.0) {
+                    encoded["in"] = json{{"x", point.inX}, {"y", point.inY}};
+                }
+                if (point.outX != 0.0 || point.outY != 0.0) {
+                    encoded["out"] = json{{"x", point.outX}, {"y", point.outY}};
+                }
+                points.push_back(std::move(encoded));
+            }
+            mask["path"] = std::move(points);
+        }
         out["mask"] = std::move(mask);
     }
     if (clip.graphic.isSet()) {
@@ -1028,6 +1045,25 @@ Result<model::Clip> decodeClip(const json& node) {
         into.cornerRadius = mask.value("cornerRadius", into.cornerRadius);
         into.feather = mask.value("feather", into.feather);
         into.inverted = mask.value("inverted", false);
+        if (mask.contains("path") && mask.at("path").is_array()) {
+            for (const json& encoded : mask.at("path")) {
+                if (!encoded.is_object()) {
+                    continue;
+                }
+                model::MaskPoint point;
+                point.x = encoded.value("x", 0.0);
+                point.y = encoded.value("y", 0.0);
+                const auto handle = [&encoded](const char* which, double& hx, double& hy) {
+                    if (encoded.contains(which) && encoded.at(which).is_object()) {
+                        hx = encoded.at(which).value("x", 0.0);
+                        hy = encoded.at(which).value("y", 0.0);
+                    }
+                };
+                handle("in", point.inX, point.inY);
+                handle("out", point.outX, point.outY);
+                into.path.points.push_back(point);
+            }
+        }
     }
     if (node.contains("graphic") && node.at("graphic").is_object()) {
         const json& graphic = node.at("graphic");

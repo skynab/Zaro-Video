@@ -2766,6 +2766,62 @@ need from it.
 
 ---
 
+### Phase 6p — bezier masks §7.4 ✅
+
+An arbitrary closed path as a mask shape, alongside the rectangle and the
+ellipse.
+
+**A corner is both handles at zero, not a flag.** A segment leaving a point with
+no outgoing handle is a straight line to the next one, which is exactly what a
+cubic with coincident controls degenerates to — so there is one evaluation path
+rather than two, and a polygon is a special case of a path rather than a
+separate thing that has to behave the same.
+
+**Handles are stored, not derived.** A path is edited by dragging them, and a
+curve reconstructed from its neighbours would move when a *different* point
+moved — which is not what dragging one handle means.
+
+**Always closed.** A mask is a question about what is inside, and an open path
+has no inside; the alternative is a stroke, which is a different tool.
+
+**Nonzero winding, not even-odd.** A five-pointed star traced in one direction
+winds twice around its own middle: under even-odd it comes out hollow. Writing
+that test is where a first attempt went wrong — a bow tie *looks* like the case
+that distinguishes the two rules and is not, because its halves only touch at a
+point, so the pixel there is genuinely half covered under either rule. The test
+is a star now, and it fails under even-odd.
+
+**Flattening follows the curve.** Subdivision by how far a segment strays from
+its chord, not by a fixed count: a fixed count is wasteful on a nearly straight
+segment and visibly faceted on a tight one, and a mask's edge is exactly where
+facets show. There is a depth limit as well, because a degenerate curve from a
+corrupt file would otherwise subdivide until the stack ran out.
+
+**Antialiased in the fill, not by blurring afterwards.** Four sample rows per
+pixel vertically and the exact span horizontally. A hard fill softened with a
+blur moves the edge by half the blur, which is visible on a mask somebody has
+lined up against something. Feather *is* a blur — of the coverage, using the
+same separable Gaussian the effect stack uses, so a feathered path and a
+feathered rectangle soften at the same rate.
+
+**Coverage is a buffer, and the GPU falls back.** A path's coverage cannot be
+answered per pixel from a handful of uniforms the way a rectangle's can, so a
+clip with one composites on the CPU — the same bargain adjustment layers (5v)
+and comparison view (6m) make, and the same render cache (5w) keeps it
+affordable. The buffer is kept between frames and re-rasterised only when the
+mask or the frame size changes.
+
+**Not done: an editor.** Points are placed by an operation, not by dragging them
+on the monitor, and everything above is what makes that editor possible rather
+than a substitute for it. Tone curves and HSL secondaries both shipped this way
+and got their editors in the phase after.
+
+**Not done: the coverage texture.** Handing the GPU a mask texture per clip per
+frame is the fast path and is worth having; nothing above changes when it lands,
+because the coverage it would upload is the coverage the CPU already computes.
+
+---
+
 ## 4. Effort and risk, stated plainly
 
 Premiere Pro is roughly three decades of work by a large team. Feature parity is not a

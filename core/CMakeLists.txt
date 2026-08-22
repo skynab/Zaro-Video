@@ -39,6 +39,7 @@ add_library(zaro_core
     src/render/Grade.cpp
     src/render/Keyer.cpp
     src/render/LutTable.cpp
+    src/render/PathRaster.cpp
     src/render/Qualifier.cpp
     src/render/ShapeRaster.cpp
     src/render/TextRasterizer.cpp

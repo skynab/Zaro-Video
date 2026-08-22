@@ -79,6 +79,7 @@ headless: there is no window yet.
 | 6m | Comparison view | **done** |
 | 6n | Shot matching | **done** |
 | 6o | Wipes and slides, and transitions on generated clips | **done** |
+| 6p | Bezier masks: engine, not yet an editor | **done** |
 
 ## Building
 

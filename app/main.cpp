@@ -2732,6 +2732,89 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // A bezier mask, through the real preview.
+        //
+        // A path is the one mask shape the GPU compositor cannot answer from
+        // uniforms, so this is also a check that the fallback to the CPU graph
+        // is wired: if it were not, a clip with a path mask would show
+        // unmasked, which looks like the mask having no effect rather than like
+        // a path that never reached the shader.
+        {
+            const auto pathSequenceId = window.project().activeSequence();
+            const auto& pathTracks = window.project().findSequence(pathSequenceId)->videoTracks();
+            const auto pathTrackId =
+                pathTracks.size() > 1 ? pathTracks[1].id() : pathTracks.front().id();
+            const auto pathRate = window.project().findSequence(pathSequenceId)->frameRate();
+
+            zaro::model::Graphic panel;
+            panel.kind = zaro::model::GraphicKind::Rectangle;
+            panel.width = 4000.0;
+            panel.height = 4000.0;
+            panel.red = 1.0;
+            panel.green = 1.0;
+            panel.blue = 1.0;
+            auto added = zaro::edit::makeAddGraphic(
+                window.project(), {pathSequenceId, pathTrackId}, panel,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, pathRate},
+                                      zaro::time::RationalTime{40, pathRate}});
+            if (!added) {
+                std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*added));
+            const auto panelId = window.project()
+                                     .findSequence(pathSequenceId)
+                                     ->findTrack(pathTrackId)
+                                     ->clips()
+                                     .front()
+                                     .id;
+
+            window.setPosition(zaro::time::RationalTime{10, pathRate});
+            window.renderCache().clear();
+            const double whole = meanGray(settledGrab(window.monitor()));
+
+            // A triangle: a shape neither a rectangle nor an ellipse can make.
+            zaro::model::Mask triangle;
+            triangle.shape = zaro::model::MaskShape::Path;
+            const auto* shaped = window.project().findSequence(pathSequenceId);
+            const double halfW = shaped->width() / 2.0;
+            const double halfH = shaped->height() / 2.0;
+            zaro::model::MaskPoint a;
+            a.x = -halfW;
+            a.y = -halfH;
+            zaro::model::MaskPoint b;
+            b.x = halfW;
+            b.y = -halfH;
+            zaro::model::MaskPoint c;
+            c.x = -halfW;
+            c.y = halfH;
+            triangle.path.points = {a, b, c};
+            auto masked = zaro::edit::makeSetMask(window.project(), {pathSequenceId, pathTrackId},
+                                                  panelId, triangle);
+            if (!masked) {
+                std::fprintf(stderr, "  FAIL: %s\n", masked.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*masked));
+            window.renderCache().clear();
+            const double halved = meanGray(settledGrab(window.monitor()));
+
+            std::printf("  bezier mask: %.1f whole, %.1f through a triangle\n", whole, halved);
+            // A triangle covering half the frame leaves about half the light.
+            if (!(halved < whole * 0.75) || !(halved > whole * 0.25)) {
+                std::fprintf(stderr,
+                             "  FAIL: the path mask did not reach the picture as a triangle\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Wipes and slides, through the real timeline and the real compositor.
         //
         // Between two generated clips rather than the footage: this fixture is

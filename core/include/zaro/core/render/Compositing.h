@@ -47,12 +47,27 @@ struct ClipShading {
     /// whichever came second.
     const model::Mask* wipe{nullptr};
 
+    /// A path mask's coverage, already rasterised, one float per output pixel.
+    ///
+    /// A buffer rather than a shape, because a path's coverage cannot be
+    /// answered from a formula per pixel the way a rectangle's can: it is a
+    /// scanline fill, done once for the frame. `pathWidth` is its stride.
+    const float* pathCoverage{nullptr};
+    std::int32_t pathWidth{0};
+
     [[nodiscard]] bool keying() const noexcept { return keyer != nullptr && keyer->isActive(); }
     [[nodiscard]] bool masking() const noexcept { return mask != nullptr && mask->isSet(); }
     [[nodiscard]] bool vignetting() const noexcept {
         return vignette != nullptr && vignette->isSet();
     }
     [[nodiscard]] bool wiping() const noexcept { return wipe != nullptr && wipe->isSet(); }
+    [[nodiscard]] bool pathMasking() const noexcept {
+        return pathCoverage != nullptr && pathWidth > 0;
+    }
+    [[nodiscard]] float pathAt(std::int32_t x, std::int32_t y) const {
+        return pathCoverage[(static_cast<std::size_t>(y) * static_cast<std::size_t>(pathWidth)) +
+                            static_cast<std::size_t>(x)];
+    }
 };
 
 void drawTransformed(const RgbaImage& source, RgbaImage& destination,

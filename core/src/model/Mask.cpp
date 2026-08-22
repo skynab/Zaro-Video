@@ -12,6 +12,8 @@ const char* toString(MaskShape shape) noexcept {
             return "rectangle";
         case MaskShape::Ellipse:
             return "ellipse";
+        case MaskShape::Path:
+            return "path";
     }
     return "none";
 }
@@ -25,6 +27,9 @@ MaskShape maskShapeFromString(const char* name) noexcept {
     }
     if (std::strcmp(name, "ellipse") == 0) {
         return MaskShape::Ellipse;
+    }
+    if (std::strcmp(name, "path") == 0) {
+        return MaskShape::Path;
     }
     return MaskShape::None;
 }

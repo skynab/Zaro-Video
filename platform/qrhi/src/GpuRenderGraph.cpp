@@ -99,7 +99,14 @@ bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
         // needs a pixel's neighbours, which this compositor's single sampling
         // pass cannot reach. Both are things the CPU graph already does
         // correctly, and neither is on the path that delivers.
-        if (clip->adjustment || model::anyActive(clip->effects)) {
+        // A path mask is a third: its coverage is a scanline fill of the whole
+        // frame, not a formula a fragment shader can answer per pixel from a
+        // handful of uniforms. Handing the GPU a coverage texture per clip per
+        // frame is the fast path and is worth having; the CPU graph already
+        // produces exactly the right answer, and Phase 5w's render cache is
+        // what keeps that affordable in the meantime.
+        if (clip->adjustment || model::anyActive(clip->effects) ||
+            clip->mask.shape == model::MaskShape::Path) {
             return true;
         }
     }

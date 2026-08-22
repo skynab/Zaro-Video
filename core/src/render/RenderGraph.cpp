@@ -3,6 +3,7 @@
 #include "zaro/core/render/EffectStack.h"
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/Keyer.h"
+#include "zaro/core/render/PathRaster.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/TextRasterizer.h"
@@ -17,6 +18,24 @@ namespace zaro::render {
 /// themselves, and they drifted: the outgoing half of a transition went two
 /// phases without its colour correction, because a patch that was meant to add
 /// it silently did not match that copy of the code.
+const std::vector<float>* RenderGraph::coverageFor(const model::Mask& mask, std::int32_t width,
+                                                   std::int32_t height) {
+    if (mask.shape != model::MaskShape::Path || !mask.path.isSet()) {
+        return nullptr;
+    }
+    // Kept until the mask or the frame size changes. Grading through a path
+    // mask means re-rasterising it on every frame otherwise, and a scanline
+    // fill of a 4K frame is not something to do for a mask nobody has touched.
+    if (pathCoverageWidth_ != width || pathCoverageHeight_ != height ||
+        !(pathCoverageFor_ == mask)) {
+        rasteriseMaskPath(mask.path, mask.feather, mask.inverted, width, height, pathCoverage_);
+        pathCoverageFor_ = mask;
+        pathCoverageWidth_ = width;
+        pathCoverageHeight_ = height;
+    }
+    return &pathCoverage_;
+}
+
 void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, RgbaImage& out,
                            const model::Transform& transform, const time::RationalTime& at,
                            const model::Mask* wipe) {
@@ -52,6 +71,13 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     shading.keyer = keyer.isActive() ? &keyer : nullptr;
     shading.vignette = clip.vignette.isSet() ? &clip.vignette : nullptr;
     shading.wipe = wipe;
+    if (const std::vector<float>* coverage = coverageFor(clip.mask, out.width(), out.height())) {
+        // A path answers coverage from a buffer, so the analytic mask slot is
+        // left alone rather than being handed a shape it cannot describe.
+        shading.mask = nullptr;
+        shading.pathCoverage = coverage->data();
+        shading.pathWidth = out.width();
+    }
     drawTransformed(*source, out, transform, clip.blend, shading);
 }
 
