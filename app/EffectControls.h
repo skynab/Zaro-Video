@@ -45,6 +45,11 @@ public:
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
 
+    /// Show whether the pen is out. Called back when the overlay turns it off
+    /// by itself -- the path closed, or was abandoned -- so the button and the
+    /// picture never disagree about what a click will do.
+    void setDrawingMask(bool drawing);
+
     /// Where the dialogue is read from when ducking. Not owned.
     void setAudioSource(render::AudioSource* audio) { audio_ = audio; }
 
@@ -65,6 +70,10 @@ signals:
     /// Keyframes were added, removed or moved, so the timeline's keyframe lane
     /// needs redrawing even though no picture changed.
     void keyframesChanged();
+
+    /// The pen was turned on or off. The panel does not own the overlay that
+    /// draws on the picture, so it asks rather than reaching for it.
+    void drawMaskRequested(bool drawing);
 
 private:
     /// One animatable parameter: its spin box, its stopwatch, and the button
@@ -143,6 +152,7 @@ private:
     QDoubleSpinBox* maskFeather_{nullptr};
     QCheckBox* maskInverted_{nullptr};
     QPushButton* maskToPath_{nullptr};
+    QPushButton* maskDraw_{nullptr};
     void convertMaskToPath();
     QWidget* graphicGroup_{nullptr};
     QComboBox* shapeKind_{nullptr};

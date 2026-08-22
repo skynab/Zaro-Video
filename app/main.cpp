@@ -82,6 +82,7 @@
 #include "CurveEditor.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
+#include "Icons.h"
 #include "MaskOverlay.h"
 #include "MixerPanel.h"
 #include "ProgramMonitor.h"
@@ -162,6 +163,10 @@ public:
 
         timeline_ = new app::TimelineWidget(this);
         effects_ = new app::EffectControls(this);
+        connect(effects_, &app::EffectControls::drawMaskRequested, maskOverlay_,
+                &app::MaskOverlay::setDrawing);
+        connect(maskOverlay_, &app::MaskOverlay::drawingChanged, effects_,
+                &app::EffectControls::setDrawingMask);
         scopes_ = new app::ScopesPanel(this);
         mixer_ = new app::MixerPanel(this);
         effects_->setMinimumWidth(250);
@@ -1373,17 +1378,17 @@ private:
         // the two that move the view rather than the cut.
         struct ToolEntry {
             app::TimelineWidget::Tool tool;
-            const char* letter;
+            app::icons::Glyph glyph;
             const char* name;
             const char* key;
         };
         static const ToolEntry kTools[] = {
-            {app::TimelineWidget::Tool::Select, "V", "Select", "V"},
-            {app::TimelineWidget::Tool::Blade, "B", "Blade", "B"},
-            {app::TimelineWidget::Tool::Trim, "T", "Trim", "T"},
-            {app::TimelineWidget::Tool::Slip, "Y", "Slip", "Y"},
-            {app::TimelineWidget::Tool::Hand, "H", "Hand", "H"},
-            {app::TimelineWidget::Tool::Zoom, "Z", "Zoom", "Z"},
+            {app::TimelineWidget::Tool::Select, app::icons::Glyph::Cursor, "Select", "V"},
+            {app::TimelineWidget::Tool::Blade, app::icons::Glyph::Scissors, "Blade", "B"},
+            {app::TimelineWidget::Tool::Trim, app::icons::Glyph::TrimEdges, "Trim", "T"},
+            {app::TimelineWidget::Tool::Slip, app::icons::Glyph::SlipArrows, "Slip", "Y"},
+            {app::TimelineWidget::Tool::Hand, app::icons::Glyph::Hand, "Hand", "H"},
+            {app::TimelineWidget::Tool::Zoom, app::icons::Glyph::Magnifier, "Zoom", "Z"},
         };
         auto* toolGroup = new QWidget(bar);
         toolGroup->setObjectName("tool-group");
@@ -1391,12 +1396,13 @@ private:
         toolRow->setContentsMargins(2, 2, 2, 2);
         toolRow->setSpacing(2);
         for (const ToolEntry& entry : kTools) {
-            // A letter rather than a picture, and the letter is the key that
-            // picks the tool: with no icon font vendored, a labelled button
-            // that teaches its own shortcut beats a glyph that renders
-            // differently on every platform.
-            QPushButton* button = chromeButton(
-                entry.letter, QString("%1 tool (%2)").arg(entry.name, entry.key), true);
+            // The tooltip carries the key. A tool palette is aimed at rather
+            // than read -- the shape is what somebody learns -- and the letter
+            // is one hover away for as long as it takes to learn it.
+            QPushButton* button =
+                chromeButton({}, QString("%1 tool (%2)").arg(entry.name, entry.key), true);
+            button->setIcon(app::icons::toolIcon(entry.glyph));
+            button->setIconSize(QSize(17, 17));
             button->setFixedSize(30, 28);
             const auto tool = entry.tool;
             connect(button, &QPushButton::clicked, this,
@@ -3567,6 +3573,92 @@ int main(int argc, char** argv) {
                                      ->find(panelId);
             if (std::fabs(undone->mask.path.points.front().x - corner.x) > 0.5) {
                 std::fprintf(stderr, "  FAIL: one drag was not one undo step\n");
+                return 1;
+            }
+
+            // The pen: draw a fresh path with clicks on the picture, and
+            // close it by clicking the first point again.
+            auto* pen = window.effects()->findChild<QPushButton*>("mask-draw");
+            if (pen == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no draw-path button\n");
+                return 1;
+            }
+            auto clickOverlay = [&](const QPointF& at) {
+                QMouseEvent down(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton,
+                                 Qt::NoModifier);
+                QCoreApplication::sendEvent(overlay, &down);
+                QMouseEvent up(QEvent::MouseButtonRelease, at, at, Qt::LeftButton, Qt::NoButton,
+                               Qt::NoModifier);
+                QCoreApplication::sendEvent(overlay, &up);
+            };
+            // A triangle across most of the frame, so it lets through
+            // noticeably more than the quarter-frame rectangle did.
+            const QPointF penPoints[] = {{picture.center().x(), picture.top() + 4.0},
+                                         {picture.right() - 4.0, picture.bottom() - 4.0},
+                                         {picture.left() + 4.0, picture.bottom() - 4.0}};
+
+            pen->setChecked(true);
+            QApplication::processEvents();
+            if (!overlay->isDrawing()) {
+                std::fprintf(stderr, "  FAIL: the pen button did not start the pen\n");
+                return 1;
+            }
+            for (const QPointF& at : penPoints) {
+                clickOverlay(at);
+            }
+            // Still nothing written: the path is not a mask until it closes.
+            const auto* midDraw = window.project()
+                                      .findSequence(pathSequenceId)
+                                      ->findTrack(pathTrackId)
+                                      ->find(panelId);
+            if (midDraw->mask.path.points.size() != 4) {
+                std::fprintf(stderr, "  FAIL: laying down points changed the clip's mask\n");
+                return 1;
+            }
+            clickOverlay(penPoints[0]);
+            QApplication::processEvents();
+
+            const auto* drawn = window.project()
+                                    .findSequence(pathSequenceId)
+                                    ->findTrack(pathTrackId)
+                                    ->find(panelId);
+            if (drawn->mask.shape != zaro::model::MaskShape::Path ||
+                drawn->mask.path.points.size() != 3) {
+                std::fprintf(stderr, "  FAIL: the pen did not close a three-point path\n");
+                return 1;
+            }
+            if (overlay->isDrawing() || pen->isChecked()) {
+                std::fprintf(stderr, "  FAIL: closing the path left the pen out\n");
+                return 1;
+            }
+            window.renderCache().clear();
+            const double penned = meanGray(settledGrab(window.monitor()));
+            std::printf("  pen tool: %zu points drawn, %.1f masked before, %.1f after\n",
+                        drawn->mask.path.points.size(), afterDrag, penned);
+            if (!(penned > afterDrag + 5.0)) {
+                std::fprintf(stderr, "  FAIL: the drawn path did not replace the old mask\n");
+                return 1;
+            }
+            // One drawing, one undo step.
+            window.commands().undo(window.project());
+            const auto* unpenned = window.project()
+                                       .findSequence(pathSequenceId)
+                                       ->findTrack(pathTrackId)
+                                       ->find(panelId);
+            if (unpenned->mask.path.points.size() != 4) {
+                std::fprintf(stderr, "  FAIL: drawing a path was not one undo step\n");
+                return 1;
+            }
+
+            // Escape abandons without writing anything.
+            pen->setChecked(true);
+            clickOverlay(penPoints[0]);
+            clickOverlay(penPoints[1]);
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QCoreApplication::sendEvent(overlay, &escape);
+            QApplication::processEvents();
+            if (overlay->isDrawing() || !window.commands().canRedo()) {
+                std::fprintf(stderr, "  FAIL: escape did not abandon the drawing cleanly\n");
                 return 1;
             }
 

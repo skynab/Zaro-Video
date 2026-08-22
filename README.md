@@ -81,6 +81,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 6o | Wipes and slides, and transitions on generated clips | **done** |
 | 6p | Bezier masks: engine, not yet an editor | **done** |
 | 6q | The mask editor: convert a shape, drag the points | **done** |
+| 6r | The pen tool: draw a mask path from nothing | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

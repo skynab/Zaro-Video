@@ -287,6 +287,14 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     maskToPath_->setToolTip("Turn this shape into points you can drag on the picture");
     maskForm->addRow(maskToPath_);
     connect(maskToPath_, &QPushButton::clicked, this, [this] { convertMaskToPath(); });
+    maskDraw_ = new QPushButton("Draw path", this);
+    maskDraw_->setObjectName("mask-draw");
+    maskDraw_->setCheckable(true);
+    maskDraw_->setToolTip(
+        "Click on the picture to lay down points; click the first one again to close");
+    maskForm->addRow(maskDraw_);
+    connect(maskDraw_, &QPushButton::toggled, this,
+            [this](bool on) { emit drawMaskRequested(on); });
     maskGroup_ = maskBox;
 
     for (QDoubleSpinBox* spin :
@@ -778,6 +786,7 @@ void EffectControls::applyToWidgets() {
     // Nothing to convert from without a shape, and nothing to convert *to*
     // once it is already a path.
     maskToPath_->setEnabled(clip->mask.isSet() && clip->mask.shape != model::MaskShape::Path);
+    maskDraw_->setEnabled(true);
 
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {
@@ -1541,6 +1550,12 @@ void EffectControls::pushKeyer() {
 /// same pixels the rectangle or ellipse did, which is what makes it safe to
 /// offer without a warning. What changes is that the outline now has points on
 /// it somebody can drag.
+void EffectControls::setDrawingMask(bool drawing) {
+    if (maskDraw_->isChecked() != drawing) {
+        maskDraw_->setChecked(drawing);
+    }
+}
+
 void EffectControls::convertMaskToPath() {
     const model::Clip* selected = selectedClip();
     if (selected == nullptr || commands_ == nullptr || !selected->mask.isSet()) {

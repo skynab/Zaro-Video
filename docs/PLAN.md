@@ -2999,14 +2999,59 @@ invisible to every test. The strips scroll now. The meters are narrow bars in
 the accent, and keep amber and red for the two states that are a warning: a
 level that is simply fine should look like the rest of the interface.
 
-**Letters, not icons.** The design's tool palette is a row of Phosphor glyphs.
-Nothing is vendored here, and a glyph that renders as a colour emoji on one
-platform and an empty box on another is worse than a letter — so each tool
-shows the key that picks it. The transport keeps to shapes every font has.
+**Icons are drawn, not fetched.** The design's tool palette is a row of
+Phosphor glyphs. Vendoring an icon font is a build dependency and a licence;
+taking the glyphs from whatever font happens to be installed gives a colour
+emoji on one platform and an empty box on another. `app/Icons` paints the six
+as painter paths at Phosphor's regular weight instead — stroked rather than
+filled, so a cursor beside a magnifier reads as one set — in three colours for
+the states a toolbar button has. The tooltip carries the shortcut: a palette is
+aimed at rather than read, and the letter is one hover away for as long as it
+takes to learn the shape. The transport keeps to characters, which are shapes
+every font has.
+
+The first version of the arrowheads had the sign of their barbs backwards, so
+Trim and Slip drew their heads a pixel outside the box and came out as blobs.
+It is the kind of mistake a unit test cannot see and a screenshot shows
+immediately, which is the argument for looking at the window as part of
+building it.
 
 Not done: the design's media browser with thumbnails, bins as a tree, and
 filter chips; a floating panel system; and the Deliver workspace is the export
 dialog's neighbours rather than a page of its own.
+
+### Phase 6r — the pen tool §7.4 ✅
+
+Drawing a mask path from nothing, rather than only bending one converted from
+a shape.
+
+**The points live in the overlay until the path closes.** A mask needs three
+points to enclose anything, so a partial path written straight to the clip
+would switch masking on halfway through drawing it — and undo would then replay
+the drawing click by click instead of undoing "the mask I just drew". One
+command when the path closes, and Escape abandons a half-drawn path with
+nothing to undo because nothing was written.
+
+**Click for a corner, drag for a curve.** The press places the point and the
+button staying down pulls its outgoing handle out; the incoming handle mirrors
+it, so the curve runs smoothly through the point. Breaking that symmetry is
+what dragging a handle afterwards is for, which the editor already does.
+
+**The gesture that ends the path is visible.** A ring appears on the first
+point once there are three, and the chasing segment is dashed so it reads as
+not-placed-yet. A pen whose only way out is a keystroke you have to know is a
+pen people get stuck in — Escape and Return work too, but neither is the
+advertised route.
+
+**Switching clips abandons the drawing.** Clicking a different clip is not a
+request to move a half-drawn path onto it.
+
+The old outline is hidden while the pen is out: it is about to be replaced, and
+two outlines on the picture would be two things that look equally editable when
+one of them is not.
+
+Not done: inserting a point into an existing path, feather handles on the
+picture, and mask tracking.
 
 ## 7. Feature inventory (Premiere parity checklist)
 
