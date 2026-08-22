@@ -102,6 +102,24 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     // no meaningful value halfway between Multiply and Screen.
     motionForm->addRow("Blend", blend_);
 
+    // Stabilisation sits with Motion because that is what it changes, and next
+    // to its own undo because an analysis somebody cannot throw away is one
+    // they will not risk running.
+    stabilise_ = new QPushButton("Stabilise", this);
+    stabilise_->setObjectName("stabilise");
+    stabilise_->setToolTip("Analyse this clip's own frames and hold the picture still");
+    unstabilise_ = new QPushButton("Clear", this);
+    unstabilise_->setObjectName("stabilise-clear");
+    unstabilise_->setToolTip("Throw the stabilisation away and put the framing back");
+    auto* stabiliseRow = new QHBoxLayout;
+    stabiliseRow->setContentsMargins(0, 0, 0, 0);
+    stabiliseRow->addWidget(stabilise_);
+    stabiliseRow->addWidget(unstabilise_);
+    motionForm->addRow(stabiliseRow);
+    connect(stabilise_, &QPushButton::clicked, this, [this] { emit stabiliseRequested(); });
+    connect(unstabilise_, &QPushButton::clicked, this,
+            [this] { emit clearStabilisationRequested(); });
+
     // Time remapping is a switch, not a stopwatch. Every other parameter has a
     // value the clip holds when nothing is animated; a remap that is not
     // animated is the clip's ordinary mapping, so there is nothing for a
@@ -793,6 +811,10 @@ void EffectControls::applyToWidgets() {
     maskToPath_->setEnabled(clip->mask.isSet() && clip->mask.shape != model::MaskShape::Path);
     maskDraw_->setEnabled(true);
     maskTrack_->setEnabled(clip->mask.isSet());
+    const bool stabilised = clip->animation.find(model::Param::StabiliseX) != nullptr;
+    stabilise_->setEnabled(clip->graphic.kind == model::GraphicKind::None &&
+                           !clip->nested.isValid());
+    unstabilise_->setEnabled(stabilised);
 
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {

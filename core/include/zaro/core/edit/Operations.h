@@ -382,6 +382,14 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y);
 
+/// What the stabiliser found: both counter-movement curves and the zoom, in
+/// one command. Three commands would leave undo able to stop somewhere that
+/// holds the picture still and shows its edges. Empty curves and a zoom of one
+/// clear the stabilisation.
+[[nodiscard]] Result<CommandPtr> makeStabilise(model::Project& project, const EditTarget& target,
+                                               model::ClipId clip, const model::Curve& x,
+                                               const model::Curve& y, double zoom);
+
 /// What a clip's sound is for.
 [[nodiscard]] Result<CommandPtr> makeSetAudioRole(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::AudioRole role);

@@ -194,12 +194,14 @@ double Curve::valueAtSeconds(double seconds) const {
 }
 
 std::span<const Param> allParams() noexcept {
-    static constexpr Param kAll[] = {Param::PositionX, Param::PositionY,   Param::ScaleX,
-                                     Param::ScaleY,    Param::Opacity,     Param::RotationDegrees,
-                                     Param::AnchorX,   Param::AnchorY,     Param::GainDb,
-                                     Param::Pan,       Param::Temperature, Param::Tint,
-                                     Param::Exposure,  Param::Contrast,    Param::Saturation,
-                                     Param::MaskX,     Param::MaskY,       Param::TimeRemap};
+    static constexpr Param kAll[] = {
+        Param::PositionX,  Param::PositionY,     Param::ScaleX,
+        Param::ScaleY,     Param::Opacity,       Param::RotationDegrees,
+        Param::AnchorX,    Param::AnchorY,       Param::GainDb,
+        Param::Pan,        Param::Temperature,   Param::Tint,
+        Param::Exposure,   Param::Contrast,      Param::Saturation,
+        Param::MaskX,      Param::MaskY,         Param::StabiliseX,
+        Param::StabiliseY, Param::StabiliseZoom, Param::TimeRemap};
     return kAll;
 }
 
@@ -239,6 +241,12 @@ const char* toString(Param param) noexcept {
             return "maskX";
         case Param::MaskY:
             return "maskY";
+        case Param::StabiliseX:
+            return "stabiliseX";
+        case Param::StabiliseY:
+            return "stabiliseY";
+        case Param::StabiliseZoom:
+            return "stabiliseZoom";
         case Param::TimeRemap:
             return "timeRemap";
     }

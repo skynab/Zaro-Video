@@ -69,6 +69,22 @@ q -f lavfi -i "color=c=black:s=320x240:r=25:d=10" \
   -c:v libx264 -preset veryfast -crf 10 -g 25 \
   -c:a pcm_s16le "$out/sync_click_flash.mov"
 
+# --- Camera shake -------------------------------------------------------------
+# A detailed pattern seen through a window that jitters: the content is still,
+# the framing is not, which is what hand-held footage is. The pattern is drawn
+# from X and Y alone with no frame number in it -- a moving test pattern, which
+# is what the obvious sources are, would put motion in the content and there
+# would be no way to tell a stabiliser's mistakes from the fixture's. The jitter is two
+# sines with different periods, so it is neither periodic at the frame rate nor
+# random -- a stabiliser can be measured against it because the shake is known.
+#
+# Cropped out of a larger frame so the jitter never reaches an edge and there is
+# always real picture to track, rather than a border sliding in.
+echo "  shaky_texture.mov   (still content, shaky framing)"
+q -f lavfi -i "color=c=black:s=400x320:r=25:d=4" \
+  -vf "geq=lum='128+90*sin(X/9)*cos(Y/7)+40*sin((X+Y)/3)':cb=128:cr=128,crop=320:240:x='40+8*sin(n*0.9)':y='40+6*cos(n*1.3)',format=yuv420p" \
+  -frames:v 100 -c:v libx264 -preset veryfast -crf 10 -g 25 "$out/shaky_texture.mov"
+
 # --- Variable frame rate ------------------------------------------------------
 # Dropping three frames out of every ten leaves uneven PTS deltas -- 1/30s
 # within a run, 4/30s across the gap -- which is what phone footage looks like

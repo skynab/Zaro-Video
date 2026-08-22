@@ -173,6 +173,15 @@ Transform Clip::transformAt(const time::RationalTime& timelineTime) const {
     animated.anchorX = Curve::valueOr(animation.find(Param::AnchorX), seconds, transform.anchorX);
     animated.anchorY = Curve::valueOr(animation.find(Param::AnchorY), seconds, transform.anchorY);
     animated.opacity = Curve::valueOr(animation.find(Param::Opacity), seconds, transform.opacity);
+
+    // The stabiliser's answer, added on top rather than written into the
+    // curves above: whatever somebody framed or animated stays theirs, and
+    // clearing the analysis restores it exactly.
+    animated.positionX += Curve::valueOr(animation.find(Param::StabiliseX), seconds, 0.0);
+    animated.positionY += Curve::valueOr(animation.find(Param::StabiliseY), seconds, 0.0);
+    const double zoom = Curve::valueOr(animation.find(Param::StabiliseZoom), seconds, 1.0);
+    animated.scaleX *= zoom;
+    animated.scaleY *= zoom;
     return animated;
 }
 
@@ -208,6 +217,13 @@ double Clip::parameterValue(Param param) const {
             return color.contrast;
         case Param::Saturation:
             return color.saturation;
+        case Param::StabiliseZoom:
+            // One, not zero: this one multiplies. A stabilise zoom of zero
+            // would collapse the picture to nothing, which is not what "no
+            // stabilisation" means.
+            return 1.0;
+        case Param::StabiliseX:
+        case Param::StabiliseY:
         case Param::MaskX:
         case Param::MaskY:
             // No static value either: the mask already records where it is,
@@ -276,6 +292,9 @@ void Clip::setParameterValue(Param param, double value) {
             return;
         case Param::MaskX:
         case Param::MaskY:
+        case Param::StabiliseX:
+        case Param::StabiliseY:
+        case Param::StabiliseZoom:
         case Param::TimeRemap:
             // Nothing to set: see parameterValue.
             return;

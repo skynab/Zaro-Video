@@ -1187,6 +1187,37 @@ Result<CommandPtr> makeTrackMask(Project& project, const EditTarget& target, Cli
                       });
 }
 
+Result<CommandPtr> makeStabilise(Project& project, const EditTarget& target, ClipId clipId,
+                                 const model::Curve& x, const model::Curve& y, double zoom) {
+    for (const model::Curve* curve : {&x, &y}) {
+        for (const model::Keyframe& key : curve->keyframes()) {
+            if (!std::isfinite(key.value)) {
+                return Error{ErrorCode::InvalidData, "a keyframe has to be a real number"};
+            }
+        }
+    }
+    if (!std::isfinite(zoom) || zoom <= 0.0) {
+        return Error{ErrorCode::InvalidData, "a stabilise zoom has to be above zero"};
+    }
+    const bool clearing = x.empty() && y.empty();
+    return modifyClip(
+        project, target, clipId, clearing ? "Clear stabilisation" : "Stabilise",
+        "stabilise:" + idText(clipId), [x, y, zoom, clearing](Clip& clip) {
+            if (clearing) {
+                clip.animation.erase(model::Param::StabiliseX);
+                clip.animation.erase(model::Param::StabiliseY);
+                clip.animation.erase(model::Param::StabiliseZoom);
+                return;
+            }
+            clip.animation.curve(model::Param::StabiliseX) = x;
+            clip.animation.curve(model::Param::StabiliseY) = y;
+            model::Curve held;
+            held.set(model::Keyframe{
+                x.keyframes().front().time, zoom, model::Interpolation::Hold, {}, {}});
+            clip.animation.curve(model::Param::StabiliseZoom) = held;
+        });
+}
+
 Result<CommandPtr> makeSetAudioRole(Project& project, const EditTarget& target, ClipId clipId,
                                     model::AudioRole role) {
     return modifyClip(project, target, clipId, "Set role", "role:" + idText(clipId),

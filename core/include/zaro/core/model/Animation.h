@@ -152,6 +152,22 @@ enum class Param : std::uint8_t {
     MaskX,
     MaskY,
 
+    /// What the stabiliser added: a counter-movement in source pixels, and
+    /// the zoom that hides the edges it exposes.
+    ///
+    /// Kept apart from `PositionX` and `ScaleX` rather than folded into them,
+    /// for the same reason the mask offset is kept apart from the mask: a
+    /// stabiliser that wrote into the position curve would destroy any move
+    /// somebody had animated, and clearing it would have nothing to put back.
+    /// These add to the transform instead, so analysing again, or throwing the
+    /// analysis away, leaves the framing untouched.
+    StabiliseX,
+    StabiliseY,
+    /// A multiplier on the clip's own scale. Absent means 1, not 0 -- the odd
+    /// one out among the parameters, and the reason this one has a static
+    /// value where the other analysis parameters do not.
+    StabiliseZoom,
+
     /// Which frame of the media is shown, in seconds of source time.
     ///
     /// The odd one out, and deliberately so. Every other parameter answers

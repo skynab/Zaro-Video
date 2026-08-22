@@ -79,6 +79,11 @@ signals:
     /// but not the pictures, so this is asked for rather than done here.
     void trackMaskRequested();
 
+    /// Hold this clip still, or throw the analysis away. The panel has neither
+    /// the frames nor the decoder, so it asks.
+    void stabiliseRequested();
+    void clearStabilisationRequested();
+
 private:
     /// One animatable parameter: its spin box, its stopwatch, and the button
     /// that adds or removes a keyframe at the playhead.
@@ -158,6 +163,8 @@ private:
     QPushButton* maskToPath_{nullptr};
     QPushButton* maskDraw_{nullptr};
     QPushButton* maskTrack_{nullptr};
+    QPushButton* stabilise_{nullptr};
+    QPushButton* unstabilise_{nullptr};
     void convertMaskToPath();
     QWidget* graphicGroup_{nullptr};
     QComboBox* shapeKind_{nullptr};

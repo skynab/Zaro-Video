@@ -73,6 +73,7 @@
 #include "zaro/core/render/SceneDetect.h"
 #include "zaro/core/render/Scopes.h"
 #include "zaro/core/render/ShotMatch.h"
+#include "zaro/core/render/Stabilise.h"
 #include "zaro/core/render/ToneMap.h"
 #include "zaro/core/render/Tracker.h"
 #include "zaro/core/time/Timecode.h"
@@ -170,6 +171,9 @@ public:
         connect(maskOverlay_, &app::MaskOverlay::drawingChanged, effects_,
                 &app::EffectControls::setDrawingMask);
         connect(effects_, &app::EffectControls::trackMaskRequested, this, [this] { trackMask(); });
+        connect(effects_, &app::EffectControls::stabiliseRequested, this, [this] { stabilise(); });
+        connect(effects_, &app::EffectControls::clearStabilisationRequested, this,
+                [this] { clearStabilisation(); });
         scopes_ = new app::ScopesPanel(this);
         mixer_ = new app::MixerPanel(this);
         effects_->setMinimumWidth(250);
@@ -644,6 +648,71 @@ public:
         updateCacheBar();
         updateTitle();
         return result;
+    }
+
+    /// Hold the selected clip still.
+    ///
+    /// **On the clip's own frames, not on the composite.** What is being
+    /// measured is how the camera moved, and the composite already has this
+    /// clip's transform applied to it -- including the correction being
+    /// computed, which would make the analysis chase its own tail. It also has
+    /// whatever is layered over the clip in it, which moved for reasons of its
+    /// own.
+    Result<render::StabiliseResult> stabiliseClip() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the clip to stabilise"};
+        }
+        if (clip->graphic.kind != model::GraphicKind::None || clip->nested.isValid() ||
+            !clip->activeSource().isValid()) {
+            return Error{ErrorCode::InvalidData,
+                         "there is nothing to stabilise: this clip is generated, not filmed"};
+        }
+
+        const auto step = time::RationalTime{1, sequence->frameRate()};
+        std::vector<time::RationalTime> times;
+        std::vector<time::RationalTime> timeline;
+        for (time::RationalTime at = clip->start(); at < clip->endExclusive(); at = at + step) {
+            timeline.push_back(at);
+            times.push_back(clip->activeSourceTimeAt(at));
+        }
+
+        auto analysed = render::stabilise(*media_, clip->activeSource(), times);
+        if (!analysed) {
+            return analysed;
+        }
+
+        model::Curve xs;
+        model::Curve ys;
+        for (std::size_t i = 0; i < analysed->x.size() && i < timeline.size(); ++i) {
+            // Keyframes at the clip's own source times, like every other curve
+            // in the project: a stabilised clip that is then trimmed or moved
+            // keeps its correction glued to the frames it was measured from.
+            const time::RationalTime when = clip->sourceTimeAt(timeline[i]);
+            xs.set(model::Keyframe{when, analysed->x[i], model::Interpolation::Linear, {}, {}});
+            ys.set(model::Keyframe{when, analysed->y[i], model::Interpolation::Linear, {}, {}});
+        }
+        if (xs.empty()) {
+            return Error{ErrorCode::InvalidData, "there is not enough of this clip to stabilise"};
+        }
+
+        auto built = edit::makeStabilise(project_, {sequence->id(), selectedTrack_}, selectedClip_,
+                                         xs, ys, analysed->zoom);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+        return analysed;
     }
 
     /// Hold a frame and show the current one against it.
@@ -1918,6 +1987,43 @@ private:
             said += QString("\nStopped early: %1").arg(QString::fromStdString(tracked->stopped));
         }
         QMessageBox::information(this, "Track mask", said);
+    }
+
+    void stabilise() {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto held = stabiliseClip();
+        QApplication::restoreOverrideCursor();
+        if (!held) {
+            QMessageBox::information(this, "Stabilise",
+                                     QString::fromStdString(held.error().message()));
+            return;
+        }
+        QString said = QString("Stabilised %1 frames, zoomed in %2%.")
+                           .arg(held->measured)
+                           .arg((held->zoom - 1.0) * 100.0, 0, 'f', 1);
+        if (!held->stopped.empty()) {
+            said += QString("\nStopped early: %1").arg(QString::fromStdString(held->stopped));
+        }
+        QMessageBox::information(this, "Stabilise", said);
+    }
+
+    void clearStabilisation() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || !selectedClip_.isValid()) {
+            return;
+        }
+        auto built = edit::makeStabilise(project_, {sequence->id(), selectedTrack_}, selectedClip_,
+                                         model::Curve{}, model::Curve{}, 1.0);
+        if (!built) {
+            return;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
     }
 
     void matchShot() {
@@ -3980,6 +4086,194 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Stabilisation, end to end on a clip that really shakes.
+        //
+        // Whether the arithmetic holds a synthetic camera path still is settled
+        // headlessly. What is checked here is the whole chain: decode the
+        // clip's own frames, analyse them, write curves, and have the picture
+        // that comes out of the compositor move less than it did.
+        {
+            auto probed = zaro::platform::ffmpeg::probe("testdata/media/shaky_texture.mov");
+            if (!probed) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probed.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef shaky;
+            shaky.path = probed->path;
+            shaky.name = "shaky";
+            shaky.info = *probed;
+            auto imported = zaro::edit::makeImportMedia(window.project(), shaky);
+            if (!imported) {
+                std::fprintf(stderr, "  FAIL: %s\n", imported.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*imported));
+            const auto shakyId = window.project().media().back().id;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            const auto stabSequenceId = window.project().activeSequence();
+            const auto* stabSequence = window.project().findSequence(stabSequenceId);
+            const auto stabRate = stabSequence->frameRate();
+            const auto stabTrackId = stabSequence->videoTracks().back().id();
+            constexpr int kStabFrames = 20;
+            const auto mediaRate = probed->primaryVideo()->frameRate;
+            auto placed = zaro::edit::makePlaceFromSource(
+                window.project(), {stabSequenceId, stabTrackId}, shakyId,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, mediaRate},
+                                      zaro::time::RationalTime{kStabFrames, mediaRate}},
+                zaro::time::RationalTime{0, stabRate}, zaro::edit::PlaceMode::Overwrite);
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            zaro::model::ClipId stabClipId;
+            for (const auto& candidate :
+                 window.project().findSequence(stabSequenceId)->findTrack(stabTrackId)->clips()) {
+                if (candidate.source == shakyId) {
+                    stabClipId = candidate.id;
+                }
+            }
+            if (!stabClipId.isValid()) {
+                std::fprintf(stderr, "  FAIL: the shaky clip was not placed\n");
+                return 1;
+            }
+            const auto stabStart = window.project()
+                                       .findSequence(stabSequenceId)
+                                       ->findTrack(stabTrackId)
+                                       ->find(stabClipId)
+                                       ->start();
+            const auto stabAt = stabStart + zaro::time::RationalTime{2, stabRate};
+
+            // How much the composited picture moves frame to frame, measured
+            // the same way both times.
+            auto shakiness = [&]() {
+                zaro::render::RenderGraph graph{window.frameSource()};
+                graph.setProject(&window.project());
+                zaro::render::RgbaImage previous;
+                double worst = 0.0;
+                const auto* live = window.project().findSequence(stabSequenceId);
+                for (int f = 0; f < kStabFrames; ++f) {
+                    zaro::render::RgbaImage current;
+                    const auto when = stabStart + zaro::time::RationalTime{f, stabRate};
+                    if (Status ok = graph.compositeInto(*live, when, current); !ok) {
+                        return -1.0;
+                    }
+                    if (previous.isValid()) {
+                        zaro::render::PatchWindow centre;
+                        centre.centreX = static_cast<double>(current.width()) / 2.0;
+                        centre.centreY = static_cast<double>(current.height()) / 2.0;
+                        centre.halfWidth = static_cast<double>(current.width()) / 4.0;
+                        centre.halfHeight = static_cast<double>(current.height()) / 4.0;
+                        centre.search = 24.0;
+                        const auto moved = zaro::render::trackPatch(previous, current, centre);
+                        if (moved.usable) {
+                            worst = std::max(worst, std::hypot(moved.dx, moved.dy));
+                        }
+                    }
+                    previous = std::move(current);
+                }
+                return worst;
+            };
+
+            const double shookBefore = shakiness();
+
+            timeline->selectOnlyForTest(stabTrackId, stabClipId);
+            window.effects()->setSelection(stabTrackId, stabClipId);
+            window.setPosition(stabAt);
+            QApplication::processEvents();
+
+            auto* stabButton = window.effects()->findChild<QPushButton*>("stabilise");
+            auto* clearButton = window.effects()->findChild<QPushButton*>("stabilise-clear");
+            if (stabButton == nullptr || clearButton == nullptr || !stabButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: there is no usable stabilise button\n");
+                return 1;
+            }
+            if (clearButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: an unstabilised clip offers to clear nothing\n");
+                return 1;
+            }
+
+            const double scaleBefore = window.project()
+                                           .findSequence(stabSequenceId)
+                                           ->findTrack(stabTrackId)
+                                           ->find(stabClipId)
+                                           ->transformAt(stabAt)
+                                           .scaleX;
+            auto held = window.stabiliseClip();
+            if (!held) {
+                std::fprintf(stderr, "  FAIL: %s\n", held.error().toString().c_str());
+                return 1;
+            }
+            const auto* steadied = window.project()
+                                       .findSequence(stabSequenceId)
+                                       ->findTrack(stabTrackId)
+                                       ->find(stabClipId);
+            if (steadied->animation.find(zaro::model::Param::StabiliseX) == nullptr ||
+                steadied->animation.find(zaro::model::Param::StabiliseZoom) == nullptr) {
+                std::fprintf(stderr, "  FAIL: stabilising wrote no curves\n");
+                return 1;
+            }
+            const double scaleAfter = steadied->transformAt(stabAt).scaleX;
+            if (!(scaleAfter > scaleBefore)) {
+                std::fprintf(stderr,
+                             "  FAIL: the stabilise zoom never reached the transform "
+                             "(%.4f -> %.4f)\n",
+                             scaleBefore, scaleAfter);
+                return 1;
+            }
+
+            window.renderCache().clear();
+            const double shookAfter = shakiness();
+            std::printf("  stabilise: %d frames, zoom %.3f, worst move %.1f px -> %.1f px\n",
+                        held->measured, held->zoom, shookBefore, shookAfter);
+            if (shookBefore < 4.0) {
+                std::fprintf(stderr, "  FAIL: the shaky fixture does not shake (%.1f px)\n",
+                             shookBefore);
+                return 1;
+            }
+            if (!(shookAfter < shookBefore / 2.0)) {
+                std::fprintf(stderr, "  FAIL: stabilising did not steady the picture\n");
+                return 1;
+            }
+
+            window.effects()->setSelection(stabTrackId, stabClipId);
+            QApplication::processEvents();
+            if (!clearButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: a stabilised clip offers no way to clear it\n");
+                return 1;
+            }
+            // Clearing is exactly what it says: the framing, back.
+            clearButton->click();
+            QApplication::processEvents();
+            const auto* cleared = window.project()
+                                      .findSequence(stabSequenceId)
+                                      ->findTrack(stabTrackId)
+                                      ->find(stabClipId);
+            if (cleared->animation.find(zaro::model::Param::StabiliseX) != nullptr ||
+                cleared->transformAt(stabAt).scaleX != scaleBefore) {
+                std::fprintf(stderr, "  FAIL: clearing the stabilisation left it in\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            // Importing is a command too, so undo has already taken the file
+            // back out; the decoder has to be told.
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.renderCache().clear();
             window.monitor()->update();

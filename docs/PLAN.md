@@ -3122,6 +3122,69 @@ several patches solving a similarity together is a different feature),
 tracking backwards from the playhead, and a tracker somebody can nudge
 mid-track.
 
+### Phase 6t — stabilisation §7.4 ✅
+
+Holding a shaky shot still: the warp stabiliser's job, built on the tracker
+Phase 6s already needed.
+
+**A grid of patches, reduced by the median.** One patch follows whatever
+happens to be under it, which on a real shot is as likely to be somebody
+walking as the background. Nine patches and the median of what they say is the
+camera: a subject can dominate a few of them without moving the answer, and a
+median needs no threshold to tune, unlike discarding outliers.
+
+**Integrate, smooth, subtract.** The measured motion is integrated into a
+camera path, the path is smoothed, and the difference is the correction.
+Smoothing the *motion* instead would leave the path free to wander, which is
+exactly the low-frequency drift that makes stabilised footage look like it is
+floating. The window is half a second by default — shorter leaves the shake in,
+longer fights the pan, and a stabiliser that flattens a deliberate move has
+taken the shot away from whoever framed it. There is a test for each failure:
+shake on a static shot comes out three times smaller, and a steady two-pixel
+pan is followed rather than fought.
+
+**The window is clamped at the ends, not shortened.** A window that shrank
+towards the ends would smooth the first and last frames less than the middle,
+so a clip would start shaky, settle, and end shaky — which looks like the
+stabiliser giving up rather than like a shot.
+
+**Three curves, one command.** `stabiliseX`, `stabiliseY` and a held
+`stabiliseZoom`, added on top of the clip's own transform rather than written
+into its position and scale. A stabiliser that wrote into the position curve
+would destroy any move somebody had animated and would have nothing to put back
+when cleared. Three separate commands would let undo stop somewhere that holds
+the picture still and shows its edges.
+
+**One zoom for the clip, not a curve.** A zoom that changed while the
+correction did would be a slow breathing that reads as a focus pull, and is far
+more noticeable than a slightly tighter frame.
+
+**Refusing beats answering zero.** Footage with nothing trackable in it — the
+flat-field fixtures, a shot of fog — used to come back as "no correction
+needed", which is indistinguishable from a shot that really was steady and much
+more misleading. It is an error now, by name. A cut mid-clip stops the analysis
+and says so, keeping the keyframes found before it; the test for that had to
+make the cut a *different picture*, because a very large jump in the same
+picture is something a tracker cannot tell from a nearby match on a repeating
+pattern.
+
+**The measurement runs on the clip's own frames.** The composite already has
+this clip's transform applied to it — including the correction being computed,
+which would make the analysis chase its own tail — and whatever is layered over
+it, which moved for reasons of its own.
+
+**A fixture that really shakes.** `testdata/generate.sh` grows
+`shaky_texture.mov`: a detailed still pattern seen through a jittering crop, so
+the shake is known exactly. The first attempt used a moving test pattern, whose
+content drifts upwards on its own — the analysis was measuring the fixture's
+motion as faithfully as the camera's, and there was no way to tell them apart.
+The pattern is drawn from X and Y alone now. End to end, the self-test measures
+how far the composited picture moves frame to frame before and after: 8.5
+pixels becomes 1.5.
+
+Not done: rolling shutter, rotation and scale (the tracker is translation
+only), and a stabiliser that reframes rather than zooms.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
