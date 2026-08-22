@@ -93,8 +93,8 @@ private:
 
     /// Composite a nested sequence and draw it. False when it cannot be
     /// resolved, which the caller treats as a clip that drew nothing.
-    [[nodiscard]] bool compositeNested(const model::Clip& clip, RgbaImage& out,
-                                       const time::RationalTime& at);
+    [[nodiscard]] bool compositeNested(const model::Sequence& sequence, const model::Clip& clip,
+                                       RgbaImage& out, const time::RationalTime& at);
     /// Grade what has already been composited, in place.
     void applyAdjustment(const model::Clip& clip, RgbaImage& out, const time::RationalTime& at);
 

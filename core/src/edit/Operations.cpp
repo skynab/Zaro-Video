@@ -1672,6 +1672,36 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makePinTo(Project& project, const EditTarget& target, ClipId clipId,
+                             ClipId hostId) {
+    const model::Sequence* sequence = project.findSequence(target.sequence);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (hostId.isValid()) {
+        if (hostId == clipId) {
+            return Error{ErrorCode::InvalidData, "a clip cannot be pinned to itself"};
+        }
+        const model::Clip* host = model::findClip(*sequence, hostId);
+        if (host == nullptr) {
+            return Error{ErrorCode::NotFound, "there is no such clip to pin to"};
+        }
+        // Walk the chain the pin would create. Bounded by the number of clips
+        // that could be in it, so a file that already contains a cycle cannot
+        // make this loop either.
+        const model::Clip* step = host;
+        for (std::size_t guard = 0; step != nullptr && guard < 64; ++guard) {
+            if (step->id == clipId) {
+                return Error{ErrorCode::InvalidData,
+                             "that would pin these clips to each other in a loop"};
+            }
+            step = model::findClip(*sequence, step->pinnedTo);
+        }
+    }
+    return modifyClip(project, target, clipId, hostId.isValid() ? "Pin to clip" : "Unpin",
+                      "pin:" + idText(clipId), [hostId](Clip& clip) { clip.pinnedTo = hostId; });
+}
+
 Result<CommandPtr> makePlaceGraphicTemplate(Project& project, const EditTarget& target,
                                             const Clip& templateClip,
                                             const time::TimeRange& range) {

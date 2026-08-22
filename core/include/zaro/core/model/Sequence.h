@@ -127,4 +127,20 @@ private:
     Output output_;
 };
 
+/// The transform to draw a clip with, following whatever it is pinned to.
+///
+/// The host's transform is composed with the clip's own: the clip's position is
+/// scaled and rotated by the host's, so a title sitting in the corner of a shot
+/// stays in the corner when the shot is scaled or turned. Opacity is not
+/// inherited -- see `Clip::pinnedTo`.
+///
+/// Chains are followed, with a depth limit: a pin cycle cannot be made through
+/// the edit operations, but a project file can arrive with one and must not
+/// take the renderer down.
+[[nodiscard]] Transform pinnedTransformAt(const Sequence& sequence, const Clip& clip,
+                                          const time::RationalTime& at);
+
+/// The clip with this id, on whichever track it is on.
+[[nodiscard]] const Clip* findClip(const Sequence& sequence, ClipId id);
+
 }  // namespace zaro::model

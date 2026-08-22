@@ -390,6 +390,16 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y, double zoom);
 
+/// Pin a clip to another, so it follows that clip's position and scale.
+///
+/// An invalid host unpins. Refuses a pin to itself, to a clip in another
+/// sequence, or one that would close a loop: a cycle would be a picture whose
+/// position is defined by its own position, and the renderer's depth limit is
+/// a backstop for files that arrive with one rather than a licence to make
+/// them here.
+[[nodiscard]] Result<CommandPtr> makePinTo(model::Project& project, const EditTarget& target,
+                                           model::ClipId clip, model::ClipId host);
+
 /// Drop a graphic template onto the timeline at a length of its own choosing.
 ///
 /// The template keeps everything about the graphic and gives up only where it

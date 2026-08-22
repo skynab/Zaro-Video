@@ -28,8 +28,8 @@ void mixMedia(std::uint64_t& hash, const model::Project* project, model::MediaRe
     }
 }
 
-void mixClip(std::uint64_t& hash, const model::Project* project, const model::Clip& clip,
-             const time::RationalTime& at, std::int32_t depth);
+void mixClip(std::uint64_t& hash, const model::Project* project, const model::Sequence* pinHost,
+             const model::Clip& clip, const time::RationalTime& at, std::int32_t depth);
 
 /// Everything one video track contributes at `at`.
 ///
@@ -50,19 +50,28 @@ void mixTrack(std::uint64_t& hash, const model::Project* project, const model::S
         const model::Clip* incoming = track.find(transition->to);
         if (outgoing != nullptr && incoming != nullptr) {
             mix(hash, io::fingerprint(*transition));
-            mixClip(hash, project, *outgoing, at, depth);
-            mixClip(hash, project, *incoming, at, depth);
+            mixClip(hash, project, &sequence, *outgoing, at, depth);
+            mixClip(hash, project, &sequence, *incoming, at, depth);
             return;
         }
     }
     if (const model::Clip* clip = track.clipAt(at)) {
-        mixClip(hash, project, *clip, at, depth);
+        mixClip(hash, project, &sequence, *clip, at, depth);
     }
 }
 
-void mixClip(std::uint64_t& hash, const model::Project* project, const model::Clip& clip,
-             const time::RationalTime& at, std::int32_t depth) {
+void mixClip(std::uint64_t& hash, const model::Project* project, const model::Sequence* pinHost,
+             const model::Clip& clip, const time::RationalTime& at, std::int32_t depth) {
     mix(hash, io::fingerprint(clip));
+    if (clip.pinnedTo.isValid() && pinHost != nullptr) {
+        // A pinned clip's picture depends on where its host is, and the host
+        // may be on a hidden track or off under the playhead's other side --
+        // in which case nothing else in this recipe mentions it. Without this
+        // line, moving the shot would leave the title cached where it was.
+        if (const model::Clip* host = model::findClip(*pinHost, clip.pinnedTo)) {
+            mix(hash, io::fingerprint(*host));
+        }
+    }
     if (clip.nested.isValid()) {
         // The same depth limit the renderer uses, for the same reason: a
         // project that arrived with a cycle in it must not take this down

@@ -3307,6 +3307,54 @@ Not done: responsive design in *position* — pinning a graphic to another
 layer's bounds — which is the remaining Essential Graphics item, and a browser
 for templates rather than a file dialog.
 
+### Phase 6x — pin to clip §7.4 ✅
+
+Responsive design in position, and the last of the Essential Graphics line: a
+title pinned to the shot it is over moves and scales with it, so repositioning
+the shot does not leave the title behind.
+
+**Composed, not copied.** The host's transform is applied to the clip's own:
+the clip's position is scaled *and rotated* by the host's, so a badge in the
+corner of a shot stays in the corner when the shot is scaled or turned. The
+rotation is what a lazier version would leave out, and it is exactly the case
+where the mistake is obvious.
+
+**Opacity is not inherited.** A title over a dissolve is usually meant to
+survive it. Inheriting opacity would make the two decisions -- how the shot
+fades and whether the title goes with it -- impossible to separate, and the
+common case would be the one nobody could express.
+
+**A pin applies only where the host is.** Outside the host's own range there is
+no transform to follow, and extrapolating one would put the title somewhere
+nothing on the timeline explains. Same for a deleted host: the pin is inert
+rather than an error, because the alternative is a project that will not open.
+
+**Cycles refused at the edit, bounded at the render.** A loop would be a
+position defined by its own position. The command walks the chain the pin would
+create and refuses; the renderer still caps the chain length, because a file
+can arrive from somewhere else with a loop already in it.
+
+**The render cache had to be taught.** A pinned clip's picture depends on
+another clip's transform, and the frame recipe is built from the clips visible
+at that moment -- so a host on a *hidden* track contributed nothing but the
+word "hidden", and moving it would have left the pinned title cached where it
+was. The recipe mixes the host in explicitly now. The first version of this
+check did not test anything: the host was on a visible track, so its
+fingerprint was already in the recipe by another route and the check passed
+with the feature removed. Hiding the host's track is what makes it bite.
+
+**Where the button pins to.** "Pin to clip below" takes the topmost clip on a
+lower track at the playhead -- the one somebody can actually see. Pinning to
+something hidden behind another picture would be pinning to a thing that is
+not there as far as they are concerned.
+
+Writing the self-test also re-taught an old lesson: adding a track invalidates
+the long-held track references earlier blocks still use, so the block sits
+after the point where those references stop being live.
+
+§7.4 is complete apart from feather handles on the picture and rotation and
+scale in the tracker, both noted where they belong.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

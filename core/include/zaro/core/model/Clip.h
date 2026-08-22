@@ -189,6 +189,18 @@ struct Clip {
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;
 
+    /// The clip this one is pinned to, if any.
+    ///
+    /// A title pinned to the shot it is over moves and scales with it, so
+    /// repositioning the shot does not leave the title behind. Position and
+    /// scale only: opacity is deliberately not inherited, because a title over
+    /// a dissolve is usually meant to survive it.
+    ///
+    /// The pin applies only where the host is actually under the playhead.
+    /// Outside that, there is no transform to follow and the clip draws with
+    /// its own -- which is also what happens when the host has been deleted.
+    ClipId pinnedTo;
+
     /// Which parts of that animation survive a trim unstretched. See
     /// `ResponsiveTime`; empty means the animation stretches with the clip,
     /// which is what everything but a title wants.

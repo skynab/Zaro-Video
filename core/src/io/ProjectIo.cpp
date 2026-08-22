@@ -650,6 +650,9 @@ json encode(const model::Clip& clip) {
         }
         out["mask"] = std::move(mask);
     }
+    if (clip.pinnedTo.isValid()) {
+        out["pinnedTo"] = clip.pinnedTo.value();
+    }
     if (clip.responsive.isSet()) {
         out["responsive"] = json{{"intro", encode(clip.responsive.intro)},
                                  {"outro", encode(clip.responsive.outro)},
@@ -1070,6 +1073,7 @@ Result<model::Clip> decodeClip(const json& node) {
             }
         }
     }
+    clip.pinnedTo = model::ClipId{node.value("pinnedTo", std::uint64_t{0})};
     if (node.contains("responsive") && node.at("responsive").is_object()) {
         const json& responsive = node.at("responsive");
         const auto part = [&responsive](const char* key, time::RationalTime& into) {

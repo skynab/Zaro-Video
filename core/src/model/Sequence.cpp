@@ -1,6 +1,8 @@
 #include "zaro/core/model/Sequence.h"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
 #include "zaro/core/Check.h"
 
@@ -110,6 +112,55 @@ bool Sequence::isAudible(const Track& track) const {
         return false;
     }
     return track.isSoloed() || !hasSolo();
+}
+
+const Clip* findClip(const Sequence& sequence, ClipId id) {
+    if (!id.isValid()) {
+        return nullptr;
+    }
+    for (const auto* list : {&sequence.videoTracks(), &sequence.audioTracks()}) {
+        for (const Track& track : *list) {
+            if (const Clip* found = track.find(id)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
+}
+
+Transform pinnedTransformAt(const Sequence& sequence, const Clip& clip,
+                            const time::RationalTime& at) {
+    Transform own = clip.transformAt(at);
+    // Bounded rather than recursive without limit: the edit operations refuse
+    // to make a cycle, and a file that arrived with one still must not spin.
+    constexpr int kMaxChain = 8;
+    const Clip* following = &clip;
+    for (int step = 0; step < kMaxChain; ++step) {
+        const Clip* host = findClip(sequence, following->pinnedTo);
+        if (host == nullptr || !host->enabled) {
+            break;
+        }
+        // Only where the host is actually on screen: outside its own range
+        // there is no transform to follow, and extrapolating one would put the
+        // title somewhere nothing on the timeline explains.
+        if (at < host->start() || at >= host->endExclusive()) {
+            break;
+        }
+        const Transform outer = host->transformAt(at);
+        const double radians = outer.rotationDegrees * std::numbers::pi / 180.0;
+        const double cosine = std::cos(radians);
+        const double sine = std::sin(radians);
+        const double scaledX = own.positionX * outer.scaleX;
+        const double scaledY = own.positionY * outer.scaleY;
+        own.positionX = outer.positionX + (scaledX * cosine) - (scaledY * sine);
+        own.positionY = outer.positionY + (scaledX * sine) + (scaledY * cosine);
+        own.scaleX *= outer.scaleX;
+        own.scaleY *= outer.scaleY;
+        own.rotationDegrees += outer.rotationDegrees;
+        // Opacity is not inherited: see Clip::pinnedTo.
+        following = host;
+    }
+    return own;
 }
 
 }  // namespace zaro::model

@@ -171,8 +171,8 @@ const RgbaImage* RenderGraph::clipImage(const model::Clip& clip, const time::Rat
     return *image;
 }
 
-bool RenderGraph::compositeNested(const model::Clip& clip, RgbaImage& out,
-                                  const time::RationalTime& at) {
+bool RenderGraph::compositeNested(const model::Sequence& sequence, const model::Clip& clip,
+                                  RgbaImage& out, const time::RationalTime& at) {
     if (project_ == nullptr) {
         return false;
     }
@@ -212,7 +212,7 @@ bool RenderGraph::compositeNested(const model::Clip& clip, RgbaImage& out,
         return false;
     }
 
-    drawClip(clip, buffer, out, clip.transformAt(at), at);
+    drawClip(clip, buffer, out, pinnedTransformAt(sequence, clip, at), at);
     return true;
 }
 
@@ -277,7 +277,8 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 if (outgoing->enabled) {
                     if (const RgbaImage* image =
                             clipImage(*outgoing, at, generated_, out.width(), out.height())) {
-                        drawClip(*outgoing, *image, out, outgoing->transformAt(at), at);
+                        drawClip(*outgoing, *image, out, pinnedTransformAt(sequence, *outgoing, at),
+                                 at);
                         ++lastClipCount_;
                     }
                 }
@@ -291,7 +292,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                         // part way through, and both render paths call it.
                         const TransitionShape shape =
                             transitionShapeFor(*transition, progress, out.width(), out.height());
-                        model::Transform moving = incoming->transformAt(at);
+                        model::Transform moving = pinnedTransformAt(sequence, *incoming, at);
                         moving.opacity *= shape.opacity;
                         moving.positionX += shape.offsetX;
                         moving.positionY += shape.offsetY;
@@ -316,7 +317,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
         }
 
         if (clip->nested.isValid()) {
-            if (!compositeNested(*clip, out, at)) {
+            if (!compositeNested(sequence, *clip, out, at)) {
                 continue;
             }
             ++lastClipCount_;
@@ -342,7 +343,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             } else {
                 drawShape(clip->graphic, generated_);
             }
-            drawClip(*clip, generated_, out, clip->transformAt(at), at);
+            drawClip(*clip, generated_, out, pinnedTransformAt(sequence, *clip, at), at);
             ++lastClipCount_;
             continue;
         }
@@ -354,7 +355,7 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
             // render is a stalled edit.
             continue;
         }
-        drawClip(*clip, **image, out, clip->transformAt(at), at);
+        drawClip(*clip, **image, out, pinnedTransformAt(sequence, *clip, at), at);
         ++lastClipCount_;
     }
 

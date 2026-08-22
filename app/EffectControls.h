@@ -75,6 +75,12 @@ signals:
     /// draws on the picture, so it asks rather than reaching for it.
     void drawMaskRequested(bool drawing);
 
+    /// Pin this clip to whatever is under it, or let it go. The panel knows
+    /// the clip but not what is beneath it at the playhead, which is a
+    /// question about the whole sequence.
+    void pinRequested();
+    void unpinRequested();
+
     /// Follow the mask through the rest of the clip. The panel has the mask
     /// but not the pictures, so this is asked for rather than done here.
     void trackMaskRequested();
@@ -166,6 +172,8 @@ private:
     QDoubleSpinBox* introSeconds_{nullptr};
     QDoubleSpinBox* outroSeconds_{nullptr};
     void pushResponsive();
+    QPushButton* pin_{nullptr};
+    QPushButton* unpin_{nullptr};
     QPushButton* stabilise_{nullptr};
     QPushButton* unstabilise_{nullptr};
     void convertMaskToPath();

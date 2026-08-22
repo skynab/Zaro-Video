@@ -6,6 +6,8 @@
 
 namespace zaro::platform::qrhi {
 
+using model::pinnedTransformAt;
+
 /// Draw one clip, with everything that applies to it.
 ///
 /// A single place, for the same reason the CPU graph has one: the three call
@@ -169,8 +171,9 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 const double progress = transition->progressAt(at);
 
                 if (outgoing->enabled &&
-                    drawTransitionSide(*outgoing, sequence, outgoing->transformAt(at), at,
-                                       generated_, nullptr)) {
+                    drawTransitionSide(*outgoing, sequence,
+                                       pinnedTransformAt(sequence, *outgoing, at), at, generated_,
+                                       nullptr)) {
                     ++lastClipCount_;
                 }
                 if (incoming->enabled) {
@@ -178,7 +181,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                     // come to different answers about where a wipe's edge is.
                     const render::TransitionShape shape = render::transitionShapeFor(
                         *transition, progress, sequence.width(), sequence.height());
-                    model::Transform moving = incoming->transformAt(at);
+                    model::Transform moving = pinnedTransformAt(sequence, *incoming, at);
                     moving.opacity *= shape.opacity;
                     moving.positionX += shape.offsetX;
                     moving.positionY += shape.offsetY;
@@ -214,7 +217,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             if (!frame) {
                 continue;
             }
-            if (drawClipImage(*clip, *frame, clip->transformAt(at), at)) {
+            if (drawClipImage(*clip, *frame, pinnedTransformAt(sequence, *clip, at), at)) {
                 ++lastClipCount_;
             }
             continue;
@@ -237,7 +240,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             } else {
                 render::drawShape(clip->graphic, generated_);
             }
-            if (drawClipImage(*clip, generated_, clip->transformAt(at), at)) {
+            if (drawClipImage(*clip, generated_, pinnedTransformAt(sequence, *clip, at), at)) {
                 ++lastClipCount_;
             }
             continue;
@@ -249,7 +252,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
             // same as on the CPU path.
             continue;
         }
-        if (!drawClip(*clip, **frame, clip->transformAt(at), at)) {
+        if (!drawClip(*clip, **frame, pinnedTransformAt(sequence, *clip, at), at)) {
             continue;
         }
         ++lastClipCount_;

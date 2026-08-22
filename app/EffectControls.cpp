@@ -103,6 +103,21 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     // no meaningful value halfway between Multiply and Screen.
     motionForm->addRow("Blend", blend_);
 
+    // Pinning sits with Motion for the same reason stabilisation does: what it
+    // changes is where the picture ends up.
+    pin_ = new QPushButton("Pin to clip below", this);
+    pin_->setObjectName("pin-to-clip");
+    pin_->setToolTip("Follow the position and scale of whatever is under this at the playhead");
+    unpin_ = new QPushButton("Unpin", this);
+    unpin_->setObjectName("unpin");
+    auto* pinRow = new QHBoxLayout;
+    pinRow->setContentsMargins(0, 0, 0, 0);
+    pinRow->addWidget(pin_);
+    pinRow->addWidget(unpin_);
+    motionForm->addRow(pinRow);
+    connect(pin_, &QPushButton::clicked, this, [this] { emit pinRequested(); });
+    connect(unpin_, &QPushButton::clicked, this, [this] { emit unpinRequested(); });
+
     // Stabilisation sits with Motion because that is what it changes, and next
     // to its own undo because an analysis somebody cannot throw away is one
     // they will not risk running.
@@ -827,6 +842,8 @@ void EffectControls::applyToWidgets() {
     maskToPath_->setEnabled(clip->mask.isSet() && clip->mask.shape != model::MaskShape::Path);
     maskDraw_->setEnabled(true);
     maskTrack_->setEnabled(clip->mask.isSet());
+    pin_->setEnabled(isVideo);
+    unpin_->setEnabled(clip->pinnedTo.isValid());
     const bool stabilised = clip->animation.find(model::Param::StabiliseX) != nullptr;
     stabilise_->setEnabled(clip->graphic.kind == model::GraphicKind::None &&
                            !clip->nested.isValid());

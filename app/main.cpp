@@ -172,6 +172,14 @@ public:
         connect(maskOverlay_, &app::MaskOverlay::drawingChanged, effects_,
                 &app::EffectControls::setDrawingMask);
         connect(effects_, &app::EffectControls::trackMaskRequested, this, [this] { trackMask(); });
+        connect(effects_, &app::EffectControls::pinRequested, this, [this] {
+            if (auto pinned = pinToClipBelow(); !pinned) {
+                QMessageBox::information(this, "Pin",
+                                         QString::fromStdString(pinned.error().message()));
+            }
+        });
+        connect(effects_, &app::EffectControls::unpinRequested, this,
+                [this] { static_cast<void>(pinTo(model::ClipId{})); });
         connect(effects_, &app::EffectControls::stabiliseRequested, this, [this] { stabilise(); });
         connect(effects_, &app::EffectControls::clearStabilisationRequested, this,
                 [this] { clearStabilisation(); });
@@ -714,6 +722,56 @@ public:
         updateCacheBar();
         updateTitle();
         return analysed;
+    }
+
+    /// Pin the selected clip to one on a lower track, or to nothing.
+    Result<model::ClipId> pinTo(model::ClipId host) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || !selectedClip_.isValid()) {
+            return Error{ErrorCode::InvalidData, "select the clip to pin first"};
+        }
+        auto built =
+            edit::makePinTo(project_, {sequence->id(), selectedTrack_}, selectedClip_, host);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+        return host;
+    }
+
+    /// Pin to whatever is underneath at the playhead.
+    ///
+    /// The topmost clip on a lower track, because that is the one somebody can
+    /// see: pinning to something hidden behind another picture would be
+    /// pinning to a thing that is not there as far as they are concerned.
+    Result<model::ClipId> pinToClipBelow() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr || !selectedClip_.isValid()) {
+            return Error{ErrorCode::InvalidData, "select the clip to pin first"};
+        }
+        const model::Clip* found = nullptr;
+        for (const model::Track& track : sequence->videoTracks()) {
+            if (track.id() == selectedTrack_) {
+                break;  // tracks are listed bottom-up, so this is where "below" ends
+            }
+            if (!sequence->isAudible(track)) {
+                continue;
+            }
+            if (const model::Clip* candidate = track.clipAt(position_)) {
+                found = candidate;
+            }
+        }
+        if (found == nullptr) {
+            return Error{ErrorCode::InvalidData, "there is nothing under this clip to pin it to"};
+        }
+        return pinTo(found->id);
     }
 
     /// Save the selected graphic on its own, so it can be used again.
@@ -7226,6 +7284,176 @@ int main(int argc, char** argv) {
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Pinning a title to the shot under it, through the real panel.
+        {
+            const auto pinSequenceId = window.project().activeSequence();
+            if (window.project().findSequence(pinSequenceId)->videoTracks().size() < 2) {
+                auto added = zaro::edit::makeAddTrack(window.project(), pinSequenceId,
+                                                      zaro::model::TrackKind::Video, "V2");
+                if (!added) {
+                    std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*added));
+            }
+            const auto* pinSequence = window.project().findSequence(pinSequenceId);
+            const auto pinRate = pinSequence->frameRate();
+            const auto lowerTrack = pinSequence->videoTracks().front().id();
+            const auto upperTrack = pinSequence->videoTracks().back().id();
+            const auto pinAt = zaro::time::RationalTime{6, pinRate};
+            const auto* under = pinSequence->findTrack(lowerTrack)->clipAt(pinAt);
+            if (under == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no shot to pin to\n");
+                return 1;
+            }
+            const auto hostId = under->id;
+
+            zaro::model::Graphic badge;
+            badge.kind = zaro::model::GraphicKind::Rectangle;
+            badge.width = 60.0;
+            badge.height = 40.0;
+            badge.red = 1.0;
+            badge.green = 1.0;
+            badge.blue = 1.0;
+            badge.centreX = 0.0;
+            auto placed = zaro::edit::makeAddGraphic(
+                window.project(), {pinSequenceId, upperTrack}, badge,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, pinRate},
+                                      zaro::time::RationalTime{20, pinRate}});
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            zaro::model::ClipId badgeId;
+            for (const auto& candidate :
+                 window.project().findSequence(pinSequenceId)->findTrack(upperTrack)->clips()) {
+                if (candidate.graphic.width == 60.0) {
+                    badgeId = candidate.id;
+                }
+            }
+            if (!badgeId.isValid()) {
+                std::fprintf(stderr, "  FAIL: the badge was not added\n");
+                return 1;
+            }
+            // Offset from the middle, so following a scale is visible as a
+            // move rather than only as a size.
+            auto offset = zaro::edit::makeSetTransform(window.project(),
+                                                       {pinSequenceId, upperTrack}, badgeId, [] {
+                                                           zaro::model::Transform transform;
+                                                           transform.positionX = 60.0;
+                                                           return transform;
+                                                       }());
+            if (!offset) {
+                std::fprintf(stderr, "  FAIL: %s\n", offset.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*offset));
+
+            timeline->selectOnlyForTest(upperTrack, badgeId);
+            window.effects()->setSelection(upperTrack, badgeId);
+            window.setPosition(pinAt);
+            QApplication::processEvents();
+            auto* pinButton = window.effects()->findChild<QPushButton*>("pin-to-clip");
+            auto* unpinButton = window.effects()->findChild<QPushButton*>("unpin");
+            if (pinButton == nullptr || unpinButton == nullptr || !pinButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: the pin controls are not in the panel\n");
+                return 1;
+            }
+            if (unpinButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: an unpinned clip offers to unpin\n");
+                return 1;
+            }
+            pinButton->click();
+            QApplication::processEvents();
+            const auto* pinnedBadge =
+                window.project().findSequence(pinSequenceId)->findTrack(upperTrack)->find(badgeId);
+            if (pinnedBadge->pinnedTo != hostId) {
+                std::fprintf(stderr, "  FAIL: the button pinned it to the wrong thing\n");
+                return 1;
+            }
+
+            // Now move and scale the shot, and the badge has to come with it.
+            const auto badgeBefore = zaro::model::pinnedTransformAt(
+                *window.project().findSequence(pinSequenceId), *pinnedBadge, pinAt);
+            auto shifted = zaro::edit::makeSetTransform(window.project(),
+                                                        {pinSequenceId, lowerTrack}, hostId, [] {
+                                                            zaro::model::Transform transform;
+                                                            transform.positionX = 40.0;
+                                                            transform.positionY = -30.0;
+                                                            transform.scaleX = 1.5;
+                                                            transform.scaleY = 1.5;
+                                                            return transform;
+                                                        }());
+            if (!shifted) {
+                std::fprintf(stderr, "  FAIL: %s\n", shifted.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*shifted));
+            const zaro::model::Sequence* movedSequence =
+                window.project().findSequence(pinSequenceId);
+            const auto badgeAfter = zaro::model::pinnedTransformAt(
+                *movedSequence, *movedSequence->findTrack(upperTrack)->find(badgeId), pinAt);
+            std::printf("  pin to clip: badge at %.0f,%.0f scale %.2f -> %.0f,%.0f scale %.2f\n",
+                        badgeBefore.positionX, badgeBefore.positionY, badgeBefore.scaleX,
+                        badgeAfter.positionX, badgeAfter.positionY, badgeAfter.scaleX);
+            if (std::fabs(badgeAfter.positionX - (40.0 + (60.0 * 1.5))) > 0.01 ||
+                std::fabs(badgeAfter.positionY + 30.0) > 0.01 ||
+                std::fabs(badgeAfter.scaleX - 1.5) > 0.01) {
+                std::fprintf(stderr, "  FAIL: the pinned badge did not follow the shot\n");
+                return 1;
+            }
+
+            // The cache has to know where the host is, even when nothing else
+            // in the frame mentions it. With the host's own track hidden, the
+            // recipe records only that the track is hidden -- so without the
+            // pin being mixed in, moving the host would leave the pinned clip
+            // cached where it was.
+            window.project().findSequence(pinSequenceId)->findTrack(lowerTrack)->setMuted(true);
+            movedSequence = window.project().findSequence(pinSequenceId);
+            const std::uint64_t recipeAfter =
+                zaro::render::frameRecipe(&window.project(), *movedSequence, pinAt);
+            auto unshifted = zaro::edit::makeSetTransform(
+                window.project(), {pinSequenceId, lowerTrack}, hostId, zaro::model::Transform{});
+            if (!unshifted) {
+                std::fprintf(stderr, "  FAIL: %s\n", unshifted.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*unshifted));
+            const std::uint64_t recipeBack = zaro::render::frameRecipe(
+                &window.project(), *window.project().findSequence(pinSequenceId), pinAt);
+            window.project().findSequence(pinSequenceId)->findTrack(lowerTrack)->setMuted(false);
+            if (recipeAfter == recipeBack) {
+                std::fprintf(stderr,
+                             "  FAIL: moving the host did not change the pinned clip's recipe\n");
+                return 1;
+            }
+
+            window.effects()->setSelection(upperTrack, badgeId);
+            QApplication::processEvents();
+            if (!unpinButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: a pinned clip offers no way to unpin\n");
+                return 1;
+            }
+            unpinButton->click();
+            QApplication::processEvents();
+            if (window.project()
+                    .findSequence(pinSequenceId)
+                    ->findTrack(upperTrack)
+                    ->find(badgeId)
+                    ->pinnedTo.isValid()) {
+                std::fprintf(stderr, "  FAIL: unpinning did not take\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
             window.monitor()->update();
             QApplication::processEvents();
         }
