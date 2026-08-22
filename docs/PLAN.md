@@ -3654,6 +3654,46 @@ clips its labels at that width.
 
 Not done in §7.5: a media browser, shared projects with locking, and review.
 
+### Phase 7h — shared projects §7.5 ✅
+
+A lock file beside the project, so two people on one volume do not quietly
+overwrite each other.
+
+**A file, not a service.** The projects this has to work across live on a
+shared volume, and the only thing every machine mounting that volume agrees on
+is the filesystem. It is advisory — nothing here can stop another program
+writing the project — and that is the honest scope: it prevents two people
+losing each other's work by accident, not a determined one.
+
+**A lock from another machine is never called stale.** A process id means
+nothing on another host, so the liveness check only runs where it can: same
+machine, dead process. Calling a foreign lock stale would mean stealing it from
+somebody whose machine was merely slow to answer, which is the exact failure
+this exists to prevent. Both the headless test and the self-test put a
+not-running pid in a foreign lock, so what keeps it standing is the rule and
+not the accident of the pid matching something live — the first version of the
+self-test got that wrong and its revert check passed happily.
+
+**A lock nobody can parse is treated as somebody's.** The safe reading of "I do
+not understand this file" is that another program wrote it, not that the
+project is free.
+
+**Read-only is a state of the window, said in the title.** Finding out at the
+moment of saving is finding out too late. Saving is refused with the useful
+thing to do instead — Phase 7f's "save a new version" — rather than a question
+nobody can answer well under pressure.
+
+**Opening a held project is a question, not a refusal.** Open read-only, take
+over, or cancel: often enough the answer is "let me look anyway", and often
+enough the other machine went home hours ago. Taking over has to be asked for;
+`removeLock` refuses to remove somebody else's without being forced.
+
+**Handed back on the way out**, and the self-test checks the lock file is gone,
+because a self-test that left one beside the fixture would make the next run
+look like somebody else had the project open.
+
+Not done in §7.5: a media browser, and review.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

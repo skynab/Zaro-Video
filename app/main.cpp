@@ -63,6 +63,7 @@
 #include "zaro/core/io/CubeLut.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
+#include "zaro/core/io/ProjectLock.h"
 #include "zaro/core/io/Relink.h"
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
@@ -1124,7 +1125,18 @@ public:
     /// Reports rather than reports *and* decides how to tell somebody. The
     /// button below puts the message on screen; a caller with no screen -- the
     /// self-test -- gets the same answer without a dialog it cannot dismiss.
-    [[nodiscard]] Status openProject(const std::string& path) {
+    /// How to treat a project somebody else already has open.
+    enum class Sharing : std::uint8_t {
+        /// Take the lock if it is free or stale; refuse to open otherwise.
+        Exclusive,
+        /// Open it anyway, without saving over their work.
+        ReadOnly,
+        /// Their lock is stale or they have gone home: take it.
+        TakeOver,
+    };
+
+    [[nodiscard]] Status openProject(const std::string& path,
+                                     Sharing sharing = Sharing::Exclusive) {
         auto loaded = io::loadProject(path);
         if (!loaded) {
             return loaded.error();
@@ -1132,8 +1144,51 @@ public:
         if (loaded->project.findSequence(loaded->project.activeSequence()) == nullptr) {
             return Error{ErrorCode::InvalidData, "that project has no active sequence"};
         }
+
+        // Whether anybody else is in it, decided before anything is replaced:
+        // refusing after the window has already changed would be worse than
+        // not opening at all.
+        bool readOnly = false;
+        if (auto held = io::readLock(path); held && !io::isOurs(*held)) {
+            const bool free = io::isStale(*held);
+            if (!free && sharing == Sharing::Exclusive) {
+                return Error{ErrorCode::InvalidData,
+                             held->user + " has this project open on " + held->host};
+            }
+            readOnly = !free && sharing == Sharing::ReadOnly;
+        }
+
+        releaseLock();
         adopt(std::move(loaded->project), std::move(*loaded), path);
+        readOnly_ = readOnly;
+        if (!readOnly_) {
+            // Advisory, so a volume that will not take one is not a reason to
+            // refuse to work: the failure is ignored on purpose.
+            static_cast<void>(io::writeLock(path, io::thisProcess()));
+        }
+        updateTitle();
         return {};
+    }
+
+    /// Whether this window may write over the project it has open.
+    [[nodiscard]] bool isReadOnly() const noexcept { return readOnly_; }
+
+    /// Who else has this project, if anybody. Empty when it is ours or free.
+    [[nodiscard]] std::string heldBy() const {
+        if (path_.empty()) {
+            return {};
+        }
+        auto held = io::readLock(path_);
+        if (!held || io::isOurs(*held) || io::isStale(*held)) {
+            return {};
+        }
+        return held->user + " on " + held->host;
+    }
+
+    void releaseLock() {
+        if (!path_.empty() && !readOnly_) {
+            static_cast<void>(io::removeLock(path_));
+        }
     }
 
     /// Start again, with somewhere to put something.
@@ -1186,6 +1241,15 @@ public:
     bool save() {
         if (path_.empty()) {
             return saveAs();
+        }
+        if (readOnly_) {
+            // Refused rather than asked about: somebody else is in this file,
+            // and the useful thing to offer is the way to keep the work.
+            QMessageBox::information(
+                this, "Read only",
+                QString("%1 has this project open.\nSave a new version to keep your work.")
+                    .arg(QString::fromStdString(heldBy().empty() ? "Somebody else" : heldBy())));
+            return false;
         }
         if (Status written = io::saveProject(project_, path_, loaded_.unknown); !written) {
             QMessageBox::warning(this, "Save", QString::fromStdString(written.error().toString()));
@@ -1262,7 +1326,41 @@ public:
         if (chosen.isEmpty()) {
             return;
         }
-        if (Status opened = openProject(chosen.toStdString()); !opened) {
+        const std::string path = chosen.toStdString();
+
+        // Somebody else's lock is a question, not a refusal: often enough the
+        // answer is "let me look at it anyway", and often enough the other
+        // machine went home hours ago.
+        if (auto held = io::readLock(path); held && !io::isOurs(*held) && !io::isStale(*held)) {
+            QMessageBox ask{this};
+            ask.setWindowTitle("Open project");
+            ask.setText(
+                QString("%1 has this project open on %2.")
+                    .arg(QString::fromStdString(held->user), QString::fromStdString(held->host)));
+            ask.setInformativeText(
+                "Opening it read-only lets you look without saving over "
+                "their work.");
+            QPushButton* readOnly = ask.addButton("Open Read-Only", QMessageBox::AcceptRole);
+            QPushButton* takeOver = ask.addButton("Take Over", QMessageBox::DestructiveRole);
+            ask.addButton(QMessageBox::Cancel);
+            ask.exec();
+
+            Sharing sharing = Sharing::Exclusive;
+            if (ask.clickedButton() == readOnly) {
+                sharing = Sharing::ReadOnly;
+            } else if (ask.clickedButton() == takeOver) {
+                sharing = Sharing::TakeOver;
+            } else {
+                return;
+            }
+            if (Status opened = openProject(path, sharing); !opened) {
+                QMessageBox::warning(this, "Open",
+                                     QString::fromStdString(opened.error().toString()));
+            }
+            return;
+        }
+
+        if (Status opened = openProject(path); !opened) {
             QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
         }
     }
@@ -1304,7 +1402,12 @@ public:
     void updateTitle() {
         const QString name = path_.empty() ? QString{"Untitled"}
                                            : QFileInfo(QString::fromStdString(path_)).fileName();
-        setWindowTitle(QString("%1%2 — Zaro").arg(name, commands_.isModified() ? "*" : ""));
+        // Said in the title, because read-only is a fact about the whole
+        // window and finding out at the moment of saving is finding out too
+        // late.
+        setWindowTitle(
+            QString("%1%2%3 — Zaro")
+                .arg(name, commands_.isModified() ? "*" : "", readOnly_ ? " [read only]" : ""));
         if (statusLeft_ != nullptr) {
             updateChrome();
         }
@@ -1618,6 +1721,9 @@ protected:
     }
 
     void closeEvent(QCloseEvent* event) override {
+        // Handed back on the way out, so the next person is not told a machine
+        // that has gone home still has it.
+        releaseLock();
         // Never a dialog on the way out.
         //
         // "You have unsaved changes -- save?" is a question whose answer is
@@ -3144,6 +3250,8 @@ private:
     render::AudioGraph::Meters latestMeters_;
     QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
+    /// Somebody else has this project open, so it must not be written over.
+    bool readOnly_{false};
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
     QSplitter* mainSplitter_{nullptr};
@@ -8421,6 +8529,97 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Sharing: a lock beside the project, and what it stops.
+        {
+            const std::filesystem::path lockRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-locks";
+            std::filesystem::remove_all(lockRoot);
+            std::filesystem::create_directories(lockRoot);
+            const std::string shared = (lockRoot / "shared.zaro").string();
+
+            window.setProjectPath(shared);
+            if (!window.save()) {
+                std::fprintf(stderr, "  FAIL: the project would not save\n");
+                return 1;
+            }
+            // Opening it takes the lock.
+            if (Status opened = window.openProject(shared); !opened) {
+                std::fprintf(stderr, "  FAIL: %s\n", opened.error().toString().c_str());
+                return 1;
+            }
+            if (!std::filesystem::exists(zaro::io::lockPath(shared))) {
+                std::fprintf(stderr, "  FAIL: opening a project took no lock\n");
+                return 1;
+            }
+            if (window.isReadOnly()) {
+                std::fprintf(stderr, "  FAIL: our own project opened read-only\n");
+                return 1;
+            }
+
+            // Now somebody else has it, from a machine we cannot ask about.
+            zaro::io::ProjectLock theirs = zaro::io::thisProcess();
+            theirs.user = "someone";
+            theirs.host = "another-machine";
+            // A process id that is not running here, so what keeps this lock
+            // standing is the rule that a pid from another machine means
+            // nothing -- not the accident of it matching a live process.
+            theirs.pid = 99999999;
+            if (Status written = zaro::io::writeLock(shared, theirs); !written) {
+                std::fprintf(stderr, "  FAIL: %s\n", written.error().toString().c_str());
+                return 1;
+            }
+            if (Status refused = window.openProject(shared); refused) {
+                std::fprintf(stderr, "  FAIL: a project somebody else has open still opened\n");
+                return 1;
+            }
+            if (Status looked = window.openProject(shared, PreviewWindow::Sharing::ReadOnly);
+                !looked) {
+                std::fprintf(stderr, "  FAIL: %s\n", looked.error().toString().c_str());
+                return 1;
+            }
+            if (!window.isReadOnly() || window.heldBy().find("someone") == std::string::npos) {
+                std::fprintf(stderr, "  FAIL: it did not open read-only (%s)\n",
+                             window.heldBy().c_str());
+                return 1;
+            }
+            // And read-only means it: the other machine's file is not written
+            // over, and the lock is still theirs.
+            const auto beforeSave = std::filesystem::last_write_time(shared);
+            static_cast<void>(window.save());
+            if (std::filesystem::last_write_time(shared) != beforeSave) {
+                std::fprintf(stderr, "  FAIL: a read-only project was saved over\n");
+                return 1;
+            }
+            auto stillTheirs = zaro::io::readLock(shared);
+            if (!stillTheirs || stillTheirs->user != "someone") {
+                std::fprintf(stderr, "  FAIL: read-only took somebody else's lock\n");
+                return 1;
+            }
+
+            // A stale lock -- their machine crashed -- is not in the way.
+            zaro::io::ProjectLock dead = zaro::io::thisProcess();
+            dead.pid = 99999999;
+            if (Status written = zaro::io::writeLock(shared, dead); !written) {
+                std::fprintf(stderr, "  FAIL: %s\n", written.error().toString().c_str());
+                return 1;
+            }
+            if (Status opened = window.openProject(shared); !opened) {
+                std::fprintf(stderr, "  FAIL: a stale lock blocked opening: %s\n",
+                             opened.error().toString().c_str());
+                return 1;
+            }
+            if (window.isReadOnly()) {
+                std::fprintf(stderr, "  FAIL: a stale lock made the project read-only\n");
+                return 1;
+            }
+            std::printf(
+                "  sharing: locked, refused, read-only, then taken back from a stale "
+                "lock\n");
+
+            window.releaseLock();
+            std::filesystem::remove_all(lockRoot);
+        }
+
         // Versioning: save a new version and carry on in it.
         {
             const std::filesystem::path versionRoot =
@@ -8611,6 +8810,15 @@ int main(int argc, char** argv) {
             }
             if (window.project().media().size() != mediaBeforeBadOpen) {
                 std::fprintf(stderr, "  FAIL: a failed open half-replaced the window\n");
+                return 1;
+            }
+
+            // Handed back, and checked: a self-test that left a lock beside
+            // the fixture would make the next run look like somebody else had
+            // the project open.
+            window.releaseLock();
+            if (std::filesystem::exists(zaro::io::lockPath(originalPath))) {
+                std::fprintf(stderr, "  FAIL: closing left a lock behind\n");
                 return 1;
             }
         }

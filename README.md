@@ -95,6 +95,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 7e | Smart rendering: export by copying, where nothing was done | **done** |
 | 7f | Project versions: save one, jump between them | **done** |
 | 7g | Transcode on ingest | **done** |
+| 7h | Shared projects: an advisory lock, and read-only | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building
