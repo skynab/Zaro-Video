@@ -86,6 +86,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 6t | Stabilisation: hold a shaky shot still | **done** |
 | 6u | Lens distortion, as an effect | **done** |
 | 6v | Responsive timing: intros and outros that survive a trim | **done** |
+| 6w | Motion graphics templates | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

@@ -43,6 +43,24 @@ struct LoadedProject {
 [[nodiscard]] Status saveProject(const model::Project& project, const std::string& path,
                                  const std::shared_ptr<const UnknownFields>& unknown = nullptr);
 
+/// One graphic saved on its own, to be dropped into another sequence or
+/// another project: a motion graphics template.
+///
+/// **The same encoder the project file uses.** A template is a clip, and a
+/// second serialiser for clips would be a second thing to remember whenever a
+/// field is added -- the failure being silent, since a template written by a
+/// forgetful encoder loads perfectly and quietly lacks whatever was left out.
+///
+/// **Only graphics.** A template referring to media would carry a path that
+/// means nothing in the project it lands in, and a template that silently
+/// arrived empty is worse than one that refused to be made.
+///
+/// What travels with it: the shape or text, the transform, every curve on the
+/// clip, the responsive intro and outro, the effect stack, the mask and the
+/// grade. What does not: its id, and where it sat.
+[[nodiscard]] Status saveGraphicTemplate(const model::Clip& clip, const std::string& path);
+[[nodiscard]] Result<model::Clip> loadGraphicTemplate(const std::string& path);
+
 /// Where the recovery file for a project lives.
 ///
 /// Beside it, and named after it. Not in a temporary directory: a recovery file

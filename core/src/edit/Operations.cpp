@@ -1672,6 +1672,26 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     return makeOverwrite(project, target, clip);
 }
 
+Result<CommandPtr> makePlaceGraphicTemplate(Project& project, const EditTarget& target,
+                                            const Clip& templateClip,
+                                            const time::TimeRange& range) {
+    if (range.isEmpty()) {
+        return Error{ErrorCode::InvalidData, "a graphic needs a duration"};
+    }
+    if (!templateClip.graphic.isSet()) {
+        return Error{ErrorCode::InvalidData, "that template has no graphic in it"};
+    }
+    Clip clip = templateClip;
+    // A new identity and a new place. Everything else -- the animation, the
+    // responsive timing, the effects, the mask -- is what was saved, because
+    // that is what somebody saved a template for.
+    clip.id = project.ids().next<model::ClipTag>();
+    clip.timelineRange = range;
+    clip.sourceRange =
+        time::TimeRange{time::RationalTime{0, range.start().rate()}, range.duration()};
+    return makeOverwrite(project, target, clip);
+}
+
 Result<CommandPtr> makeSetTimeRemapped(Project& project, const EditTarget& target, ClipId clipId,
                                        bool remapped) {
     auto found = lookupClip(project, target, clipId);

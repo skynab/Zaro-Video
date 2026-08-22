@@ -716,6 +716,63 @@ public:
         return analysed;
     }
 
+    /// Save the selected graphic on its own, so it can be used again.
+    Status saveGraphicTemplate(const std::string& path) {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the title or shape to save"};
+        }
+        return io::saveGraphicTemplate(*clip, path);
+    }
+
+    /// Drop a saved graphic in at the playhead, on the selected track.
+    Result<model::ClipId> placeGraphicTemplate(const std::string& path,
+                                               const time::RationalTime& duration) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return Error{ErrorCode::InvalidData, "there is no sequence to place it in"};
+        }
+        const model::TrackId trackId =
+            selectedTrack_.isValid() ? selectedTrack_ : sequence->videoTracks().front().id();
+        auto loaded = io::loadGraphicTemplate(path);
+        if (!loaded) {
+            return loaded.error();
+        }
+        // As long as it was designed to be, unless somebody says otherwise: a
+        // template dropped in at some arbitrary length is a template whose
+        // timing nobody chose.
+        time::RationalTime length = duration;
+        if (length.toSecondsDouble() <= 0.0) {
+            length = loaded->responsive.authored.toSecondsDouble() > 0.0
+                         ? loaded->responsive.authored
+                         : loaded->sourceRange.duration();
+        }
+        const time::TimeRange range{position_, length.rescaledTo(position_.rate())};
+        auto built =
+            edit::makePlaceGraphicTemplate(project_, {sequence->id(), trackId}, *loaded, range);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        updateCacheBar();
+        updateTitle();
+
+        const model::Track* track = project_.findSequence(sequence->id())->findTrack(trackId);
+        for (const model::Clip& candidate : track->clips()) {
+            if (candidate.start() == range.start()) {
+                return candidate.id;
+            }
+        }
+        return Error{ErrorCode::InvalidData, "the template did not land anywhere"};
+    }
+
     /// Hold a frame and show the current one against it.
     void setComparing(bool on, const time::RationalTime& reference) {
         comparing_ = on;
@@ -1434,6 +1491,13 @@ private:
             file, "Export…", [this] { exportDialog(); }, QKeySequence("Ctrl+E"), "export-sequence");
         menuItem(file, "Export OpenTimelineIO…", [this] { exportOtio(); });
         file->addSeparator();
+        menuItem(
+            file, "Save Graphic as Template…", [this] { saveTemplateDialog(); }, QKeySequence{},
+            "save-template");
+        menuItem(
+            file, "Place Graphic Template…", [this] { placeTemplateDialog(); }, QKeySequence{},
+            "place-template");
+        file->addSeparator();
         menuItem(file, "Close Window", [this] { close(); }, QKeySequence::Close);
 
         QMenu* edit = menuBar_->addMenu("Edit");
@@ -2025,6 +2089,30 @@ private:
         effects_->refresh();
         updateCacheBar();
         updateTitle();
+    }
+
+    void saveTemplateDialog() {
+        const QString path = QFileDialog::getSaveFileName(this, "Save graphic as template", {},
+                                                          "Graphic template (*.zarograph)");
+        if (path.isEmpty()) {
+            return;
+        }
+        if (Status saved = saveGraphicTemplate(path.toStdString()); !saved) {
+            QMessageBox::warning(this, "Template", QString::fromStdString(saved.error().message()));
+        }
+    }
+
+    void placeTemplateDialog() {
+        const QString path = QFileDialog::getOpenFileName(this, "Place graphic template", {},
+                                                          "Graphic template (*.zarograph)");
+        if (path.isEmpty()) {
+            return;
+        }
+        auto placed = placeGraphicTemplate(path.toStdString(), time::RationalTime{});
+        if (!placed) {
+            QMessageBox::warning(this, "Template",
+                                 QString::fromStdString(placed.error().message()));
+        }
     }
 
     void matchShot() {
@@ -4468,6 +4556,147 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Motion graphics templates: save a title, drop it in somewhere else.
+        {
+            const auto tplSequenceId = window.project().activeSequence();
+            const auto* tplSequence = window.project().findSequence(tplSequenceId);
+            const auto tplRate = tplSequence->frameRate();
+            const auto tplTrackId = tplSequence->videoTracks().back().id();
+            constexpr int kDesigned = 48;
+
+            zaro::model::Graphic lower;
+            lower.kind = zaro::model::GraphicKind::Text;
+            lower.text = "TEMPLATE";
+            lower.pointSize = 40.0;
+            lower.bold = true;
+            lower.width = 280.0;
+            lower.height = 90.0;
+            lower.red = 1.0;
+            lower.green = 1.0;
+            lower.blue = 1.0;
+            auto made = zaro::edit::makeAddGraphic(
+                window.project(), {tplSequenceId, tplTrackId}, lower,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, tplRate},
+                                      zaro::time::RationalTime{kDesigned, tplRate}});
+            if (!made) {
+                std::fprintf(stderr, "  FAIL: %s\n", made.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*made));
+            zaro::model::ClipId designedId;
+            for (const auto& candidate :
+                 window.project().findSequence(tplSequenceId)->findTrack(tplTrackId)->clips()) {
+                if (candidate.graphic.text == "TEMPLATE") {
+                    designedId = candidate.id;
+                }
+            }
+            if (!designedId.isValid()) {
+                std::fprintf(stderr, "  FAIL: the template source was not added\n");
+                return 1;
+            }
+
+            // Designed with a fade on and off, and both ends protected.
+            zaro::model::Curve fade;
+            for (const auto& [frame, value] : {std::pair{0, 0.0}, std::pair{12, 1.0},
+                                               std::pair{36, 1.0}, std::pair{kDesigned, 0.0}}) {
+                fade.set(zaro::model::Keyframe{zaro::time::RationalTime{frame, tplRate},
+                                               value,
+                                               zaro::model::Interpolation::Linear,
+                                               {},
+                                               {}});
+            }
+            auto animated = zaro::edit::makeSetCurve(window.project(), {tplSequenceId, tplTrackId},
+                                                     designedId, zaro::model::Param::Opacity, fade);
+            if (!animated) {
+                std::fprintf(stderr, "  FAIL: %s\n", animated.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*animated));
+            auto responsive = zaro::edit::makeSetResponsive(
+                window.project(), {tplSequenceId, tplTrackId}, designedId,
+                zaro::time::RationalTime{12, tplRate}, zaro::time::RationalTime{12, tplRate});
+            if (!responsive) {
+                std::fprintf(stderr, "  FAIL: %s\n", responsive.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*responsive));
+
+            timeline->selectOnlyForTest(tplTrackId, designedId);
+            window.effects()->setSelection(tplTrackId, designedId);
+            QApplication::processEvents();
+
+            const std::string templatePath =
+                (std::filesystem::temp_directory_path() / "zaro-selftest-lower-third.zarograph")
+                    .string();
+            std::filesystem::remove(templatePath);
+            if (Status saved = window.saveGraphicTemplate(templatePath); !saved) {
+                std::fprintf(stderr, "  FAIL: %s\n", saved.error().toString().c_str());
+                return 1;
+            }
+
+            // Dropped in later on the timeline, at half the length it was
+            // designed at.
+            const auto dropAt = zaro::time::RationalTime{120, tplRate};
+            window.setPosition(dropAt);
+            QApplication::processEvents();
+            auto dropped =
+                window.placeGraphicTemplate(templatePath, zaro::time::RationalTime{24, tplRate});
+            if (!dropped) {
+                std::fprintf(stderr, "  FAIL: %s\n", dropped.error().toString().c_str());
+                return 1;
+            }
+            const auto* copy =
+                window.project().findSequence(tplSequenceId)->findTrack(tplTrackId)->find(*dropped);
+            if (copy == nullptr || copy->graphic.text != "TEMPLATE" || copy->id == designedId) {
+                std::fprintf(stderr, "  FAIL: the template did not arrive as its own clip\n");
+                return 1;
+            }
+            if (copy->timelineRange.duration().frames() != 24 ||
+                copy->responsive.authored.frames() != kDesigned) {
+                std::fprintf(stderr,
+                             "  FAIL: the placed template took the wrong length or lost its "
+                             "responsive timing\n");
+                return 1;
+            }
+
+            // The animation came with it and still runs at the speed it was
+            // drawn at: dark on the first frame, up twelve frames in, dark
+            // again on the last.
+            const double onEntry = copy->transformAt(dropAt).opacity;
+            const double held =
+                copy->transformAt(dropAt + zaro::time::RationalTime{12, tplRate}).opacity;
+            const double onExit =
+                copy->transformAt(dropAt + zaro::time::RationalTime{24, tplRate}).opacity;
+            std::printf("  graphic template: opacity %.2f in, %.2f held, %.2f out\n", onEntry, held,
+                        onExit);
+            if (!(onEntry < 0.1 && held > 0.9 && onExit < 0.1)) {
+                std::fprintf(stderr, "  FAIL: the placed template does not animate\n");
+                return 1;
+            }
+
+            // And it reaches the picture, not just the model.
+            window.setPosition(dropAt + zaro::time::RationalTime{12, tplRate});
+            window.renderCache().clear();
+            const double litTemplate = meanGray(settledGrab(window.monitor()));
+            window.setPosition(dropAt);
+            window.renderCache().clear();
+            const double darkTemplate = meanGray(settledGrab(window.monitor()));
+            if (!(litTemplate > darkTemplate)) {
+                std::fprintf(stderr,
+                             "  FAIL: the placed template is not on screen (%.1f vs %.1f)\n",
+                             litTemplate, darkTemplate);
+                return 1;
+            }
+
+            std::filesystem::remove(templatePath);
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }

@@ -1502,20 +1502,16 @@ Result<std::string> saveProjectToString(const model::Project& project,
     return document.dump(2) + "\n";
 }
 
-Status saveProject(const model::Project& project, const std::string& path,
-                   const std::shared_ptr<const UnknownFields>& unknown) {
-    auto text = saveProjectToString(project, unknown);
-    if (!text) {
-        return text.error();
-    }
-    // Written beside the file and renamed over it, never into it.
-    //
-    // A truncating write destroys the old project the instant it opens the
-    // file, so a crash, a full disk or a pulled cable partway through leaves
-    // neither the old version nor the new -- and the moment somebody is most
-    // likely to lose a day's work is the moment they were saving it. Rename
-    // within a directory is atomic: either the new file is there whole or the
-    // old one still is.
+namespace {
+
+/// Write a file beside the target and rename over it.
+///
+/// A truncating write destroys the old file the instant it opens it, so a
+/// crash, a full disk or a pulled cable partway through leaves neither the old
+/// version nor the new -- and the moment somebody is most likely to lose a
+/// day's work is the moment they were saving it. Rename within a directory is
+/// atomic: either the new file is there whole or the old one still is.
+Status writeAtomically(const std::string& path, const std::string& text) {
     std::error_code code;
     const std::filesystem::path target{path};
     std::filesystem::path temporary = target;
@@ -1525,7 +1521,7 @@ Status saveProject(const model::Project& project, const std::string& path,
         if (!file) {
             return Error{ErrorCode::Io, "cannot open " + temporary.string() + " for writing"};
         }
-        file << *text;
+        file << text;
         file.flush();
         if (!file) {
             std::filesystem::remove(temporary, code);
@@ -1542,6 +1538,50 @@ Status saveProject(const model::Project& project, const std::string& path,
         return Error{ErrorCode::Io, "cannot replace " + path + ": " + code.message()};
     }
     return {};
+}
+
+}  // namespace
+
+Status saveProject(const model::Project& project, const std::string& path,
+                   const std::shared_ptr<const UnknownFields>& unknown) {
+    auto text = saveProjectToString(project, unknown);
+    if (!text) {
+        return text.error();
+    }
+    return writeAtomically(path, *text);
+}
+
+Status saveGraphicTemplate(const model::Clip& clip, const std::string& path) {
+    if (!clip.graphic.isSet()) {
+        return Error{ErrorCode::InvalidData, "only a title or a shape can be saved as a template"};
+    }
+    json out{{"zaroTemplate", 1}, {"clip", encode(clip)}};
+    return writeAtomically(path, out.dump(2));
+}
+
+Result<model::Clip> loadGraphicTemplate(const std::string& path) {
+    std::ifstream file{path, std::ios::binary};
+    if (!file) {
+        return Error{ErrorCode::NotFound, "cannot open " + path};
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+
+    json parsed = json::parse(buffer.str(), nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("zaroTemplate")) {
+        return Error{ErrorCode::InvalidData, path + " is not a graphic template"};
+    }
+    if (!parsed.contains("clip") || !parsed.at("clip").is_object()) {
+        return Error{ErrorCode::InvalidData, "that template has no graphic in it"};
+    }
+    auto clip = decodeClip(parsed.at("clip"));
+    if (!clip) {
+        return clip.error();
+    }
+    if (!clip->graphic.isSet()) {
+        return Error{ErrorCode::InvalidData, "that template has no graphic in it"};
+    }
+    return clip;
 }
 
 std::string autosavePath(const std::string& projectPath) {

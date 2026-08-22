@@ -34,6 +34,7 @@ add_executable(zaro_core_tests
     edit/test_operations.cpp
     edit/test_snapping.cpp
     edit/test_fuzz.cpp
+    io/test_templates.cpp
     io/test_cube_lut.cpp
     io/test_otio.cpp
     io/test_subtitles.cpp

@@ -390,6 +390,18 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y, double zoom);
 
+/// Drop a graphic template onto the timeline at a length of its own choosing.
+///
+/// The template keeps everything about the graphic and gives up only where it
+/// used to sit. Its responsive intro and outro come with it and are *not*
+/// rescaled to the new length -- that is the point of them: a lower third
+/// dropped in at half its original length still animates on and off at the
+/// speed it was designed at.
+[[nodiscard]] Result<CommandPtr> makePlaceGraphicTemplate(model::Project& project,
+                                                          const EditTarget& target,
+                                                          const model::Clip& templateClip,
+                                                          const time::TimeRange& range);
+
 /// Protect the first and last stretch of a clip's animation from being
 /// stretched with the clip.
 ///

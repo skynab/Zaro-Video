@@ -3266,6 +3266,47 @@ Not done: responsive design in *position* — pinning a graphic to another
 layer's bounds — and motion graphics templates, which are the rest of §7.4's
 Essential Graphics line.
 
+### Phase 6w — motion graphics templates §7.4 ✅
+
+A title saved on its own, to be dropped into another sequence or another
+project: the last piece of the Essential Graphics line except pinning.
+
+**The same encoder the project file uses.** A template is a clip, and the
+clip encoder already exists. A second serialiser would be a second thing to
+remember whenever a field is added — and the failure would be silent, because a
+template written by a forgetful encoder loads perfectly and quietly lacks
+whatever was left out. The round-trip test compares `io::fingerprint` of the
+original against the loaded clip rather than listing fields, so a field added to
+`Clip` is covered the moment it is written.
+
+**Only graphics.** A template referring to media would carry a path that means
+nothing in the project it lands in. Refusing to save one beats a template that
+arrives empty, and the refusal leaves no file behind.
+
+**What travels, and what does not.** The shape or text, the transform, every
+curve, the responsive intro and outro, the effect stack, the mask and the
+grade travel. The id and the place it sat do not: a fresh id, because two clips
+sharing one are two clips the timeline cannot tell apart, and a fresh range,
+because where it used to sit is the one thing about it that is certainly wrong.
+
+**The responsive timing is not rescaled to the new length.** That is the whole
+point of it, and it is what makes a template reusable rather than merely
+copyable: a lower third designed at two seconds and dropped in at one still
+animates on and off at the speed it was designed at. Phase 6v is what makes
+this phase worth having.
+
+**A length of its own choosing.** Placed with no duration, a template arrives
+at the length it was designed at, because a template dropped in at some
+arbitrary length is a template whose timing nobody chose.
+
+While extracting this, the project save's atomic write-and-rename became a
+helper both writers share, rather than the second writer getting a plain
+truncating write nobody would notice was less careful.
+
+Not done: responsive design in *position* — pinning a graphic to another
+layer's bounds — which is the remaining Essential Graphics item, and a browser
+for templates rather than a file dialog.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
