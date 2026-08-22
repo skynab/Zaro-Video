@@ -159,3 +159,91 @@ TEST_CASE("relinking to a file that is not there is refused", "[relink]") {
     const auto id = addMedia(project, (scratch.root / "gone" / "shot.mov").string(), {});
     CHECK_FALSE(edit::makeRelinkMedia(project, id, (scratch.root / "nope.mov").string()));
 }
+
+TEST_CASE("consolidating gathers every file into one folder", "[relink][consolidate]") {
+    Scratch scratch;
+    const std::string first = scratch.write("cards/a/shot.mov", "the first take");
+    const std::string second = scratch.write("cards/b/other.mov", "another one");
+    const std::filesystem::path into = scratch.root / "gathered";
+
+    model::Project project;
+    const auto firstId = addMedia(project, first, {});
+    const auto secondId = addMedia(project, second, {});
+
+    auto report = io::consolidate(project, into.string());
+    REQUIRE(report);
+    REQUIRE(report->files.size() == 2);
+    CHECK(report->missing.empty());
+    CHECK(report->bytes > 0);
+    for (const io::ConsolidatedFile& file : report->files) {
+        CHECK(std::filesystem::path{file.to}.parent_path() == into);
+        CHECK(std::filesystem::exists(file.to));
+        // Copied, never moved: the original is somebody's rushes.
+        CHECK(std::filesystem::exists(file.from));
+    }
+    static_cast<void>(firstId);
+    static_cast<void>(secondId);
+}
+
+TEST_CASE("two files with the same name do not overwrite each other", "[relink][consolidate]") {
+    Scratch scratch;
+    const std::string fromCardA = scratch.write("a/C0001.MP4", "card A");
+    const std::string fromCardB = scratch.write("b/C0001.MP4", "card B");
+    const std::filesystem::path into = scratch.root / "gathered";
+
+    model::Project project;
+    addMedia(project, fromCardA, {});
+    addMedia(project, fromCardB, {});
+
+    auto report = io::consolidate(project, into.string());
+    REQUIRE(report);
+    REQUIRE(report->files.size() == 2);
+    CHECK(report->files[0].to != report->files[1].to);
+    // The suffix goes before the extension, so the file is still a .MP4 to
+    // everything that reads names.
+    CHECK(std::filesystem::path{report->files[1].to}.extension() == ".MP4");
+
+    const auto contentsOf = [](const std::string& path) {
+        std::ifstream file{path, std::ios::binary};
+        return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    };
+    CHECK(contentsOf(report->files[0].to) == "card A");
+    CHECK(contentsOf(report->files[1].to) == "card B");
+}
+
+TEST_CASE("a file already in the folder is left where it is", "[relink][consolidate]") {
+    Scratch scratch;
+    const std::filesystem::path into = scratch.root / "gathered";
+    std::filesystem::create_directories(into);
+    const std::string already = scratch.write("gathered/shot.mov", "already here");
+
+    model::Project project;
+    addMedia(project, already, {});
+
+    auto report = io::consolidate(project, into.string());
+    REQUIRE(report);
+    REQUIRE(report->files.size() == 1);
+    CHECK(report->files.front().alreadyThere);
+    CHECK(report->files.front().to == already);
+    CHECK(report->bytes == 0);
+    // Consolidating twice must not produce shot-2.mov.
+    auto again = io::consolidate(project, into.string());
+    REQUIRE(again);
+    CHECK(again->files.front().to == already);
+    CHECK(std::distance(std::filesystem::directory_iterator{into},
+                        std::filesystem::directory_iterator{}) == 1);
+}
+
+TEST_CASE("media that is not there is reported rather than gathered", "[relink][consolidate]") {
+    Scratch scratch;
+    const std::filesystem::path into = scratch.root / "gathered";
+
+    model::Project project;
+    const auto id = addMedia(project, (scratch.root / "gone" / "shot.mov").string(), {});
+
+    auto report = io::consolidate(project, into.string());
+    REQUIRE(report);
+    CHECK(report->files.empty());
+    REQUIRE(report->missing.size() == 1);
+    CHECK(report->missing.front() == id);
+}

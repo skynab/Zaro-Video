@@ -52,4 +52,48 @@ struct RelinkReport {
 [[nodiscard]] Result<RelinkReport> findRelinks(const model::Project& project,
                                                const std::string& root);
 
+/// One file gathered into the destination folder.
+struct ConsolidatedFile {
+    model::MediaRefId media;
+    std::string from;
+    std::string to;
+    /// True when the file was already inside the destination and was left
+    /// where it was rather than copied beside itself.
+    bool alreadyThere{false};
+    std::uint64_t bytes{0};
+};
+
+struct ConsolidateReport {
+    std::vector<ConsolidatedFile> files;
+    /// Media that could not be copied because it is not where the project says
+    /// it is. Relink first; consolidating a file nobody can find would mean
+    /// writing an empty one and calling it gathered.
+    std::vector<model::MediaRefId> missing;
+    std::uint64_t bytes{0};
+};
+
+/// Copy every file the project uses into one folder.
+///
+/// **Copies, never moves.** The originals are somebody's rushes. A consolidate
+/// that moved them would be a consolidate that lost them the first time it was
+/// pointed at the wrong folder.
+///
+/// **Names that collide are suffixed, not overwritten.** Two cards both
+/// containing `C0001.MP4` is the ordinary case, not the exotic one, and the
+/// second one silently replacing the first is the worst thing this could do.
+///
+/// **A file already inside the destination stays where it is.** Consolidating
+/// twice should not produce `shot-2.mov`, and copying a file beside itself is
+/// how a project's folder doubles in size for no reason.
+///
+/// **Nothing is relinked here.** The report says what landed where and the
+/// caller points the project at it, for the same reason relinking is two steps:
+/// the filesystem work and the edit are separately undoable, and only one of
+/// them is.
+///
+/// Proxies are not gathered yet, and a media reference that has one keeps
+/// pointing at wherever that proxy is.
+[[nodiscard]] Result<ConsolidateReport> consolidate(const model::Project& project,
+                                                    const std::string& destination);
+
 }  // namespace zaro::io

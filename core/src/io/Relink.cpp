@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <set>
 
 #include "zaro/core/media/Waveform.h"
 
@@ -90,6 +91,67 @@ Result<RelinkReport> findRelinks(const model::Project& project, const std::strin
             }
         }
         report.matches.push_back(std::move(match));
+    }
+    return report;
+}
+
+Result<ConsolidateReport> consolidate(const model::Project& project,
+                                      const std::string& destination) {
+    std::error_code code;
+    std::filesystem::create_directories(destination, code);
+    if (!std::filesystem::is_directory(destination, code)) {
+        return Error{ErrorCode::Io, "cannot use " + destination + " as a folder"};
+    }
+    const std::filesystem::path into = std::filesystem::absolute(destination, code);
+
+    ConsolidateReport report;
+    // What the folder already holds, plus what this run has put there, so a
+    // name is claimed once whether it arrived now or last time.
+    std::set<std::string> taken;
+    for (const auto& entry : std::filesystem::directory_iterator{into, code}) {
+        taken.insert(entry.path().filename().string());
+    }
+
+    for (const model::MediaRef& media : project.media()) {
+        if (media.path.empty()) {
+            continue;
+        }
+        const std::filesystem::path from = std::filesystem::absolute(media.path, code);
+        if (!std::filesystem::is_regular_file(from, code)) {
+            report.missing.push_back(media.id);
+            continue;
+        }
+
+        ConsolidatedFile gathered;
+        gathered.media = media.id;
+        gathered.from = from.string();
+        gathered.bytes = static_cast<std::uint64_t>(std::filesystem::file_size(from, code));
+
+        if (from.parent_path() == into) {
+            gathered.to = from.string();
+            gathered.alreadyThere = true;
+            report.files.push_back(std::move(gathered));
+            continue;
+        }
+
+        // A name nobody else has. The suffix goes before the extension so the
+        // file is still recognisably a .mov to everything that looks at names.
+        const std::string stem = from.stem().string();
+        const std::string extension = from.extension().string();
+        std::string name = stem + extension;
+        for (int attempt = 2; taken.count(name) != 0; ++attempt) {
+            name = stem + "-" + std::to_string(attempt) + extension;
+        }
+        const std::filesystem::path to = into / name;
+        std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing,
+                                   code);
+        if (code) {
+            return Error{ErrorCode::Io, "cannot copy " + from.string() + ": " + code.message()};
+        }
+        taken.insert(name);
+        gathered.to = to.string();
+        report.bytes += gathered.bytes;
+        report.files.push_back(std::move(gathered));
     }
     return report;
 }

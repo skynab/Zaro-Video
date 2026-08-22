@@ -3398,6 +3398,46 @@ watches it stop decoding, relinks it, and watches it decode again.
 Not done in §7.5: consolidate, a media browser, transcode on ingest, smart
 rendering, metadata and search, versioning, shared projects and review.
 
+### Phase 7b — consolidate §7.5 ✅
+
+Gathering everything a project uses into one folder, so it can be archived,
+handed over or moved to another machine.
+
+**Copies, never moves.** The originals are somebody's rushes. A consolidate
+that moved them would be a consolidate that lost them the first time it was
+pointed at the wrong folder.
+
+**Names that collide are suffixed, not overwritten.** Two cards both containing
+`C0001.MP4` is the ordinary case, not the exotic one, and the second silently
+replacing the first is the worst thing this could do. The suffix goes before
+the extension so the file is still a `.MP4` to everything that reads names, and
+the test checks the *contents* of both copies rather than only their names —
+two files with different names and the same bytes would pass a name check.
+
+**A file already in the destination stays where it is.** Consolidating twice
+must not produce `shot-2.mov`, and copying a file beside itself is how a
+project folder doubles in size for no reason. The test consolidates twice and
+counts the directory.
+
+**Missing media is reported, not invented.** Consolidating a file nobody can
+find would mean writing an empty one and calling it gathered; the dialog says
+how many and suggests relinking first, because an archive somebody discovers is
+incomplete much later is the failure this feature exists to prevent.
+
+**The copy and the relink are two things.** Core copies and reports; the app
+applies the relinks as ordinary commands. So undo puts the project back on the
+originals and leaves the copies where they are — the honest half to be able to
+take back, since no undo can unwrite a file. This split is also what let the
+relink command stay exactly as Phase 7a wrote it.
+
+The relink command refusing to point at a file that is not there turned out to
+be load-bearing: the revert check for this phase — a consolidate that reports
+copies it never made — fails because the relink then refuses, rather than
+leaving the project pointing at a path with nothing behind it.
+
+Not gathered yet: proxies, and the ability to trim media to the ranges the cut
+actually uses.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

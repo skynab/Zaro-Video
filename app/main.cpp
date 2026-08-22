@@ -757,6 +757,41 @@ public:
         return report;
     }
 
+    /// Gather the project's media into one folder and point it at the copies.
+    ///
+    /// The copying and the relinking are one action here and two underneath:
+    /// the copy is a filesystem change nothing can undo, and the relink is an
+    /// edit like any other. Undo therefore puts the project back on the
+    /// originals and leaves the copies where they are, which is the honest
+    /// half to be able to take back.
+    Result<io::ConsolidateReport> consolidateMedia(const std::string& destination) {
+        auto report = io::consolidate(project_, destination);
+        if (!report) {
+            return report;
+        }
+        for (const io::ConsolidatedFile& file : report->files) {
+            if (file.alreadyThere) {
+                continue;
+            }
+            auto built = edit::makeRelinkMedia(project_, file.media, file.to);
+            if (!built) {
+                continue;
+            }
+            commands_.execute(project_, std::move(*built));
+        }
+        commands_.breakMerge();
+        if (Status reopened = openMedia(); !reopened) {
+            return reopened.error();
+        }
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        bin_->refresh();
+        updateCacheBar();
+        updateTitle();
+        return report;
+    }
+
     /// Pin the selected clip to one on a lower track, or to nothing.
     Result<model::ClipId> pinTo(model::ClipId host) {
         const model::Sequence* sequence = liveSequence();
@@ -1580,6 +1615,9 @@ private:
             "import-media");
         menuItem(file, "Relink Media…", [this] { relinkDialog(); }, QKeySequence{}, "relink-media");
         menuItem(
+            file, "Consolidate Media…", [this] { consolidateDialog(); }, QKeySequence{},
+            "consolidate-media");
+        menuItem(
             file, "Export…", [this] { exportDialog(); }, QKeySequence("Ctrl+E"), "export-sequence");
         menuItem(file, "Export OpenTimelineIO…", [this] { exportOtio(); });
         file->addSeparator();
@@ -2214,6 +2252,33 @@ private:
                 QString("\n%1 matched by name only -- check they are the right takes.").arg(byName);
         }
         QMessageBox::information(this, "Relink", said);
+    }
+
+    void consolidateDialog() {
+        const QString into =
+            QFileDialog::getExistingDirectory(this, "Gather the project's media into");
+        if (into.isEmpty()) {
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto report = consolidateMedia(into.toStdString());
+        QApplication::restoreOverrideCursor();
+        if (!report) {
+            QMessageBox::warning(this, "Consolidate",
+                                 QString::fromStdString(report.error().message()));
+            return;
+        }
+        QString said = QString("Gathered %1 file%2, %3 MB copied.")
+                           .arg(report->files.size())
+                           .arg(report->files.size() == 1 ? "" : "s")
+                           .arg(static_cast<double>(report->bytes) / (1024.0 * 1024.0), 0, 'f', 1);
+        if (!report->missing.empty()) {
+            // Named, because a consolidate that quietly left files behind is
+            // an archive somebody will discover is incomplete much later.
+            said += QString("\n%1 could not be found -- relink them first.")
+                        .arg(report->missing.size());
+        }
+        QMessageBox::information(this, "Consolidate", said);
     }
 
     void saveTemplateDialog() {
@@ -7519,6 +7584,86 @@ int main(int argc, char** argv) {
 
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Consolidating: gather the project's media into one folder.
+        {
+            const std::filesystem::path gatherRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-consolidate";
+            std::filesystem::remove_all(gatherRoot);
+            std::filesystem::create_directories(gatherRoot / "cards");
+            const std::filesystem::path scattered = gatherRoot / "cards" / "gathered_clip.mov";
+            std::filesystem::copy_file("testdata/media/shaky_texture.mov", scattered);
+
+            auto probed = zaro::platform::ffmpeg::probe(scattered.string());
+            if (!probed) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probed.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef loose;
+            loose.path = scattered.string();
+            loose.name = "gathered_clip";
+            loose.info = *probed;
+            auto imported = zaro::edit::makeImportMedia(window.project(), loose);
+            if (!imported) {
+                std::fprintf(stderr, "  FAIL: %s\n", imported.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*imported));
+            const auto looseId = window.project().media().back().id;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            const std::filesystem::path into = gatherRoot / "project media";
+            auto gathered = window.consolidateMedia(into.string());
+            if (!gathered) {
+                std::fprintf(stderr, "  FAIL: %s\n", gathered.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  consolidate: %zu files gathered, %.1f MB copied, %zu missing\n",
+                        gathered->files.size(),
+                        static_cast<double>(gathered->bytes) / (1024.0 * 1024.0),
+                        gathered->missing.size());
+
+            const auto* moved = window.project().findMedia(looseId);
+            if (moved == nullptr || std::filesystem::path{moved->path}.parent_path() != into) {
+                std::fprintf(stderr, "  FAIL: the project does not point into the folder\n");
+                return 1;
+            }
+            if (!std::filesystem::exists(scattered)) {
+                std::fprintf(stderr,
+                             "  FAIL: consolidating moved the original instead of "
+                             "copying it\n");
+                return 1;
+            }
+            // And the copy is the thing that plays now.
+            const auto probeAt = zaro::time::RationalTime{2, zaro::time::rates::fps25};
+            if (!window.frameSource().imageFor(looseId, probeAt)) {
+                std::fprintf(stderr, "  FAIL: the consolidated media does not decode\n");
+                return 1;
+            }
+            // The fixture media the project came with is in there too: what is
+            // gathered is the project, not the selection.
+            if (gathered->files.size() < 2) {
+                std::fprintf(stderr, "  FAIL: only the new file was gathered (%zu)\n",
+                             gathered->files.size());
+                return 1;
+            }
+
+            std::filesystem::remove_all(gatherRoot);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
             }
             window.renderCache().clear();
             window.monitor()->update();
