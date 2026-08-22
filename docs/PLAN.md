@@ -3694,6 +3694,46 @@ look like somebody else had the project open.
 
 Not done in §7.5: a media browser, and review.
 
+### Phase 7i — review comments §7.5 ✅
+
+Notes from a viewing, ticked off as they are dealt with, and a list to send
+back.
+
+**Built on markers, not beside them.** A comment is a note on the timeline at a
+time, which is what a marker already is. Two kinds of note would mean two
+things to navigate, two things to draw and two things to export. Markers gained
+an author and a resolved flag, and a marker with neither an author nor a note
+is still an ordinary working marker.
+
+**Resolved comments are kept and marked, never deleted.** "What did they ask
+for, and what did we do" is the question a review answers, and a note that
+vanished when it was actioned takes half the answer with it. The revert check
+for this phase is a version that drops them.
+
+**Working markers are left out of the list.** Somebody's own "check this" flags
+are not what the producer asked about, and a review list padded with them is
+one nobody reads twice.
+
+**Markdown, not a private format.** What the list is for is leaving a
+conversation — an email, a printout, a task list — and anything needing an
+importer is a worse answer to all three. Timecode rather than seconds, because
+the number has to be typeable into whatever the other person is watching in.
+Ordered by time rather than by when they were written, because a review is
+walked through in the order the picture happens.
+
+**Resolving is a toggle on one keystroke.** The mistake people make is ticking
+off the wrong one, and the fix for that has to be the same key again.
+
+**An empty list says "no review comments".** A blank file looks like the export
+having failed, and "nothing outstanding" is a real answer.
+
+Writing the self-test turned up the usual trap in a new place: markers are kept
+in time order, so the one just added is not the last in the list. It finds them
+by the frame they sit on.
+
+§7.5 has one item left, a media browser — a panel for looking through folders
+without a file dialog. §7.6 is next.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

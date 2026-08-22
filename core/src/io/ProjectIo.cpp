@@ -832,6 +832,12 @@ json encode(const model::Marker& marker) {
     if (marker.colour != 0) {
         out["colour"] = marker.colour;
     }
+    if (!marker.author.empty()) {
+        out["author"] = marker.author;
+    }
+    if (marker.resolved) {
+        out["resolved"] = true;
+    }
     return out;
 }
 
@@ -849,6 +855,8 @@ Result<model::Marker> decodeMarker(const json& node) {
     marker.name = node.value("name", std::string{});
     marker.note = node.value("note", std::string{});
     marker.colour = node.value("colour", 0);
+    marker.author = node.value("author", std::string{});
+    marker.resolved = node.value("resolved", false);
     return marker;
 }
 

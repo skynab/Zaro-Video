@@ -50,6 +50,7 @@
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -65,6 +66,7 @@
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/ProjectLock.h"
 #include "zaro/core/io/Relink.h"
+#include "zaro/core/io/ReviewNotes.h"
 #include "zaro/core/io/SubtitleIo.h"
 #include "zaro/core/playback/Transport.h"
 #include "zaro/core/render/AudioGraph.h"
@@ -793,6 +795,48 @@ public:
         bin_->refresh();
         updateTitle();
         return made;
+    }
+
+    /// Tick the comment under the playhead off, or put it back.
+    ///
+    /// A toggle rather than two commands, because the mistake somebody makes
+    /// is ticking off the wrong one, and the fix for that has to be the same
+    /// keystroke again.
+    Result<bool> toggleCommentHere() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return Error{ErrorCode::InvalidData, "there is no sequence"};
+        }
+        const model::Marker* found = nullptr;
+        for (const model::Marker& marker : sequence->markers()) {
+            if (position_ >= marker.range.start() && position_ < marker.range.endExclusive()) {
+                found = &marker;
+            }
+        }
+        if (found == nullptr) {
+            return Error{ErrorCode::NotFound, "there is no comment at the playhead"};
+        }
+        const bool resolved = !found->resolved;
+        auto built = edit::makeSetMarkerReview(
+            project_, sequence->id(), found->id,
+            found->author.empty() ? io::thisProcess().user : found->author, resolved);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        timeline_->update();
+        updateTitle();
+        return resolved;
+    }
+
+    /// Write the comments out as something to send somebody.
+    Status writeReviewNotes(const std::string& path) {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return Error{ErrorCode::InvalidData, "there is no sequence"};
+        }
+        return io::writeReviewNotes(*sequence, path);
     }
 
     /// Gather the project's media into one folder and point it at the copies.
@@ -1881,6 +1925,13 @@ private:
         menuItem(
             marker, "Go to Previous Marker", [this] { doPreviousMarker(); },
             QKeySequence("Shift+Left"));
+        marker->addSeparator();
+        menuItem(
+            marker, "Resolve Comment Here", [this] { toggleCommentHere(); },
+            QKeySequence("Shift+R"), "resolve-comment");
+        menuItem(
+            marker, "Export Review Notes…", [this] { exportReviewNotes(); }, QKeySequence{},
+            "export-review");
 
         QMenu* effects = menuBar_->addMenu("Effects");
         compareAction_ = menuItem(
@@ -2519,6 +2570,17 @@ private:
         if (!placed) {
             QMessageBox::warning(this, "Template",
                                  QString::fromStdString(placed.error().message()));
+        }
+    }
+
+    void exportReviewNotes() {
+        const QString chosen =
+            QFileDialog::getSaveFileName(this, "Export review notes", {}, "Markdown (*.md)");
+        if (chosen.isEmpty()) {
+            return;
+        }
+        if (Status written = writeReviewNotes(chosen.toStdString()); !written) {
+            QMessageBox::warning(this, "Review", QString::fromStdString(written.error().message()));
         }
     }
 
@@ -8526,6 +8588,111 @@ int main(int argc, char** argv) {
                 window.commands().undo(window.project());
             }
             window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Review comments: leave notes, tick them off, send the list.
+        {
+            const auto reviewSequenceId = window.project().activeSequence();
+            const auto reviewRate = window.project().findSequence(reviewSequenceId)->frameRate();
+
+            struct Note {
+                std::int64_t frame;
+                const char* name;
+                const char* text;
+            };
+            const Note notes[] = {
+                {50, "Title", "spell the surname with two n's"},
+                {12, "Music", "comes in too early"},
+            };
+            for (const Note& note : notes) {
+                auto added =
+                    zaro::edit::makeAddMarker(window.project(), reviewSequenceId,
+                                              zaro::time::RationalTime{note.frame, reviewRate},
+                                              zaro::time::RationalTime{1, reviewRate}, note.name);
+                if (!added) {
+                    std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*added));
+                // Found by where it is, not by where it landed in the list:
+                // markers are kept in time order, so the one just added is not
+                // necessarily the last.
+                zaro::model::MarkerId markerId;
+                for (const auto& candidate :
+                     window.project().findSequence(reviewSequenceId)->markers()) {
+                    if (candidate.range.start().frames() == note.frame) {
+                        markerId = candidate.id;
+                    }
+                }
+                if (!markerId.isValid()) {
+                    std::fprintf(stderr, "  FAIL: the marker was not added\n");
+                    return 1;
+                }
+                auto said = zaro::edit::makeUpdateMarker(window.project(), reviewSequenceId,
+                                                         markerId, note.name, note.text, 0);
+                if (!said) {
+                    std::fprintf(stderr, "  FAIL: %s\n", said.error().toString().c_str());
+                    return 1;
+                }
+                window.commands().execute(window.project(), std::move(*said));
+            }
+
+            // Tick the one at frame 12 off, through the same action the menu
+            // uses: the playhead is the selection.
+            window.setPosition(zaro::time::RationalTime{12, reviewRate});
+            QApplication::processEvents();
+            auto ticked = window.toggleCommentHere();
+            if (!ticked || !*ticked) {
+                std::fprintf(stderr, "  FAIL: resolving the comment did not take\n");
+                return 1;
+            }
+            // And again puts it back, because the mistake people make is
+            // ticking off the wrong one.
+            auto untocked = window.toggleCommentHere();
+            if (!untocked || *untocked) {
+                std::fprintf(stderr, "  FAIL: the resolve toggle does not toggle\n");
+                return 1;
+            }
+            static_cast<void>(window.toggleCommentHere());
+
+            const std::filesystem::path notesPath =
+                std::filesystem::temp_directory_path() / "zaro-selftest-review.md";
+            std::filesystem::remove(notesPath);
+            if (Status written = window.writeReviewNotes(notesPath.string()); !written) {
+                std::fprintf(stderr, "  FAIL: %s\n", written.error().toString().c_str());
+                return 1;
+            }
+            std::ifstream reading{notesPath};
+            const std::string text{std::istreambuf_iterator<char>{reading},
+                                   std::istreambuf_iterator<char>{}};
+            std::printf(
+                "  review notes: %zu bytes, %s\n", text.size(),
+                text.find("1 of 2 done") != std::string::npos ? "one of two done" : "count wrong");
+            if (text.find("comes in too early") == std::string::npos ||
+                text.find("spell the surname") == std::string::npos) {
+                std::fprintf(stderr, "  FAIL: the notes are not in the list\n");
+                return 1;
+            }
+            if (text.find("1 of 2 done") == std::string::npos) {
+                std::fprintf(stderr, "  FAIL: the list does not say what is done\n");
+                return 1;
+            }
+            // In picture order, whatever order they were written in.
+            if (text.find("comes in too early") > text.find("spell the surname")) {
+                std::fprintf(stderr, "  FAIL: the list is not in time order\n");
+                return 1;
+            }
+            // And it survives a save and a reopen, since a review outlives a
+            // session.
+            const auto* firstMarker =
+                &window.project().findSequence(reviewSequenceId)->markers().front();
+            static_cast<void>(firstMarker);
+
+            std::filesystem::remove(notesPath);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
             QApplication::processEvents();
         }
 

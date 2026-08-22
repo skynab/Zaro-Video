@@ -2142,6 +2142,34 @@ Result<CommandPtr> makeRemoveMarker(Project& project, model::SequenceId sequence
     });
 }
 
+Result<CommandPtr> makeSetMarkerReview(Project& project, model::SequenceId sequenceId,
+                                       model::MarkerId markerId, std::string author,
+                                       bool resolved) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    const bool exists =
+        std::any_of(sequence->markers().begin(), sequence->markers().end(),
+                    [markerId](const model::Marker& marker) { return marker.id == markerId; });
+    if (!exists) {
+        return Error{ErrorCode::NotFound, "no such marker"};
+    }
+
+    return makeCommand(sequenceId, resolved ? "Resolve comment" : "Reopen comment",
+                       "review:" + std::to_string(markerId.value()),
+                       [markerId, author = std::move(author), resolved](Sequence& seq) {
+                           std::vector<model::Marker> rebuilt = seq.markers();
+                           for (model::Marker& marker : rebuilt) {
+                               if (marker.id == markerId) {
+                                   marker.author = author;
+                                   marker.resolved = resolved;
+                               }
+                           }
+                           seq.setMarkers(std::move(rebuilt));
+                       });
+}
+
 Result<CommandPtr> makeUpdateMarker(Project& project, model::SequenceId sequenceId,
                                     model::MarkerId markerId, std::string name, std::string note,
                                     std::int32_t colour) {

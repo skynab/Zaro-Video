@@ -43,6 +43,7 @@ add_library(zaro_core
     src/model/MediaSearch.cpp
     src/io/ProjectLock.cpp
     src/io/Relink.cpp
+    src/io/ReviewNotes.cpp
     src/render/Resample.cpp
     src/render/SmartRender.cpp
     src/render/Stabilise.cpp

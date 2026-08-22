@@ -520,6 +520,16 @@ enum class PlaceMode {
                                                   model::MarkerId marker, std::string name,
                                                   std::string note, std::int32_t colour);
 
+/// Say who left a marker and whether it has been dealt with.
+///
+/// Separate from `makeUpdateMarker` because these are the two fields a review
+/// changes and the others are not: ticking a comment off should not be able to
+/// rewrite what it said.
+[[nodiscard]] Result<CommandPtr> makeSetMarkerReview(model::Project& project,
+                                                     model::SequenceId sequence,
+                                                     model::MarkerId marker, std::string author,
+                                                     bool resolved);
+
 // --- Linking ----------------------------------------------------------------
 
 /// Join clips into a link group, so they move, trim and are removed together.
