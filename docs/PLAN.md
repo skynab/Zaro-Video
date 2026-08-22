@@ -2650,6 +2650,50 @@ compositor checking its own preconditions instead of trusting callers.
 
 ---
 
+#### Phase 6n — shot matching ✅
+
+Working out the correction that puts one shot where another sits.
+
+**Three anchors per channel, not the average.** Matching means alone moves a
+shot bodily and leaves its contrast wrong; matching means and spreads gets the
+contrast and pins nothing in particular. A shadow, a midtone and a highlight are
+what a colourist is actually looking at — and they land exactly on the three
+terms of a CDL: slope and offset put the two ends where they belong, and the
+power takes the middle. So the answer comes back as the same three wheels
+somebody would have set by hand, and can be nudged afterwards rather than
+accepted or thrown away.
+
+**Percentiles, not extremes.** One clipped highlight or one dead pixel would
+otherwise decide the whole correction.
+
+**It reports rather than pronounces.** Both distances come back — how far apart
+the two shots were, and how far apart they are now — because "how much did this
+move" is the question somebody actually has. When the correction is one no
+colourist would dial, the answer is marked unusable and *nothing is applied*.
+The numbers are still there for anyone who wants them anyway: refusing to
+answer is different from refusing to act.
+
+**Writing the self-test found a real defect.** This fixture's lit frames are
+flat white, and a match built from three anchors needs three distinguishable
+anchors — but the first version measured no range in any channel, corrected
+nothing, and reported itself *usable*. Two frames half a stop apart, a
+correction that does nothing, and a confident green light: precisely the
+confidently-wrong outcome the design exists to avoid. It now says "there is no
+range in those frames to match on" and applies nothing.
+
+**And then the fixture had to earn its keep.** With that fixed, nothing in this
+project's test footage could exercise a real match — flat white and flat black
+throughout. A vignette makes a gradient out of a flat frame, so the self-test
+puts one on both clips and matches through the real window: two shots 0.2509
+apart, 0.0000 after. Using a feature already here beat inventing a fixture, and
+kept the measurement on the real pipeline.
+
+**Not done: matching a whole timeline to one shot.** The analysis is per pair;
+applying it across a sequence is a loop and a question about which shot is the
+reference, and that question is better answered by somebody looking at the cut.
+
+---
+
 #### §7.3 — where colour stands
 
 Done: the working space and its rationale (ADR-005), primary correction, tone

@@ -61,6 +61,7 @@
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
 #include "zaro/core/render/Scopes.h"
+#include "zaro/core/render/ShotMatch.h"
 #include "zaro/core/render/ToneMap.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
@@ -180,6 +181,29 @@ public:
             // "against this" -- asking them to nominate one first would be a
             // step between the thought and the thing.
             setComparing(on, on ? position_ : referenceAt_);
+        });
+
+        auto* matchButton = new QPushButton("Match", this);
+        matchButton->setObjectName("match-shot");
+        matchButton->setToolTip("Match the selected clip to the held frame");
+        matchButton->setMinimumWidth(matchButton->sizeHint().width());
+        transportRow->addWidget(matchButton);
+        connect(matchButton, &QPushButton::clicked, this, [this] {
+            auto match = matchToReference();
+            if (!match) {
+                QMessageBox::information(this, "Match",
+                                         QString::fromStdString(match.error().message()));
+                return;
+            }
+            if (!match->usable) {
+                // Said, not applied. The person looking at both frames decides.
+                QMessageBox::information(this, "Match", QString::fromStdString(match->reason));
+                return;
+            }
+            QMessageBox::information(this, "Match",
+                                     QString("Matched: the two shots were %1 apart and are now %2.")
+                                         .arg(match->before, 0, 'f', 3)
+                                         .arg(match->after, 0, 'f', 3));
         });
 
         auto* deliveryButton = new QPushButton("Delivery…", this);
@@ -414,6 +438,7 @@ public:
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
     [[nodiscard]] render::AudioSource& media() { return *media_; }
     [[nodiscard]] render::SourceFrameProvider* frames() { return media_.get(); }
+    [[nodiscard]] render::FrameSource& frameSource() { return *media_; }
     [[nodiscard]] Status reopenMedia() { return openMedia(); }
 
     /// Re-seat everything that holds a pointer to the active sequence.
@@ -482,6 +507,62 @@ public:
 
     [[nodiscard]] edit::CommandStack& commands() { return commands_; }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
+
+    /// Match the selected clip to the frame being held as the reference.
+    ///
+    /// Returns the match so a caller can say what happened. Nothing is applied
+    /// when the two shots are too unalike: an automatic grade that is confidently
+    /// wrong is worse than none, and the person looking at both frames is better
+    /// placed to decide than a distance measure is.
+    Result<render::ShotMatch> matchToReference() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the clip to match first"};
+        }
+        if (!comparing_) {
+            return Error{ErrorCode::InvalidData, "hold a frame to match against first"};
+        }
+
+        // Both frames composited the same way, through the CPU graph the
+        // comparison already uses -- so what is matched is what is on screen.
+        render::RenderGraph graph{*media_};
+        graph.setProject(&project_);
+        graph.setTextRasterizer(&text_);
+        graph.setRenderCache(&renderCache_);
+
+        render::RgbaImage reference;
+        if (Status status = graph.compositeInto(*sequence, referenceAt_, reference); !status) {
+            return status.error();
+        }
+        render::RgbaImage current;
+        if (Status status = graph.compositeInto(*sequence, position_, current); !status) {
+            return status.error();
+        }
+
+        auto match = render::matchShot(reference, current);
+        if (!match) {
+            return match.error();
+        }
+        if (!match->usable) {
+            return match;
+        }
+
+        auto built = edit::makeSetWheels(project_, {sequence->id(), selectedTrack_}, selectedClip_,
+                                         match->wheels);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        updateCacheBar();
+        updateTitle();
+        return match;
+    }
 
     /// Hold a frame and show the current one against it.
     void setComparing(bool on, const time::RationalTime& reference) {
@@ -2647,6 +2728,115 @@ int main(int argc, char** argv) {
             while (window.commands().canUndo()) {
                 window.commands().undo(window.project());
             }
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // Shot matching, through the real window.
+        //
+        // This fixture's lit frames are flat white, and three anchors cannot be
+        // built from a frame with no range in it. A vignette makes one: the
+        // same flat frame with its corners pulled down is a gradient, which is
+        // enough to match on. Using a feature already here beats inventing a
+        // fixture, and it keeps what is measured to the real pipeline.
+        {
+            const auto matchSequenceId = window.project().activeSequence();
+            const auto matchTrackId =
+                window.project().findSequence(matchSequenceId)->videoTracks().front().id();
+            const auto matchClipId = window.project()
+                                         .findSequence(matchSequenceId)
+                                         ->findTrack(matchTrackId)
+                                         ->clips()
+                                         .front()
+                                         .id;
+            const auto matchRate = window.project().findSequence(matchSequenceId)->frameRate();
+
+            zaro::model::Vignette gradient;
+            gradient.amount = -0.9;
+            gradient.midpoint = 0.1;
+            gradient.feather = 1.2;
+            auto shaped = zaro::edit::makeSetVignette(
+                window.project(), {matchSequenceId, matchTrackId}, matchClipId, gradient);
+            if (!shaped) {
+                std::fprintf(stderr, "  FAIL: %s\n", shaped.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*shaped));
+
+            // A second clip of the same material, same gradient, graded away.
+            zaro::model::Clip second = *window.project()
+                                            .findSequence(matchSequenceId)
+                                            ->findTrack(matchTrackId)
+                                            ->find(matchClipId);
+            second.id = window.project().ids().next<zaro::model::ClipTag>();
+            second.timelineRange = zaro::time::TimeRange{zaro::time::RationalTime{600, matchRate},
+                                                         zaro::time::RationalTime{40, matchRate}};
+            second.sourceRange = zaro::time::TimeRange{second.sourceRange.start(),
+                                                       zaro::time::RationalTime{40, matchRate}};
+            second.color.exposure = -1.0;
+            second.color.temperature = 25.0;
+            const auto secondId = second.id;
+            auto placed = zaro::edit::makeOverwrite(window.project(),
+                                                    {matchSequenceId, matchTrackId}, second);
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            window.renderCache().clear();
+
+            // Hold a frame of the first, stand on the second, and match.
+            timeline->selectOnlyForTest(matchTrackId, secondId);
+            window.effects()->setSelection(matchTrackId, secondId);
+            window.setComparing(true, zaro::time::RationalTime{0, matchRate});
+            window.setPosition(zaro::time::RationalTime{600, matchRate});
+            QApplication::processEvents();
+
+            auto apart = window.matchToReference();
+            if (!apart) {
+                std::fprintf(stderr, "  FAIL: %s\n", apart.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  shot match: two shots were %.4f apart, now %.4f (%s)\n", apart->before,
+                        apart->after, apart->usable ? "applied" : apart->reason.c_str());
+            if (!apart->usable) {
+                std::fprintf(stderr,
+                             "  FAIL: two shots of the same material were called "
+                             "unmatchable: %s\n",
+                             apart->reason.c_str());
+                return 1;
+            }
+            if (!(apart->after < apart->before)) {
+                std::fprintf(stderr, "  FAIL: the match did not bring them closer\n");
+                return 1;
+            }
+            const auto* corrected = window.project()
+                                        .findSequence(matchSequenceId)
+                                        ->findTrack(matchTrackId)
+                                        ->find(secondId);
+            if (corrected == nullptr || corrected->wheels.isIdentity()) {
+                std::fprintf(stderr, "  FAIL: the match reached nothing\n");
+                return 1;
+            }
+
+            // And a refusal is a refusal: two frames with no range in them
+            // cannot be matched, and nothing is applied on somebody's behalf.
+            window.commands().undo(window.project());  // take the wheels back off
+            zaro::render::RgbaImage flatDim{16, 16};
+            flatDim.fill(zaro::render::Rgba{0.5F, 0.5F, 0.5F, 1.0F});
+            zaro::render::RgbaImage flatBright{16, 16};
+            flatBright.fill(zaro::render::Rgba{1.0F, 1.0F, 1.0F, 1.0F});
+            auto refused = zaro::render::matchShot(flatDim, flatBright);
+            if (!refused || refused->usable || refused->reason.empty()) {
+                std::fprintf(stderr, "  FAIL: two flat frames were reported as matchable\n");
+                return 1;
+            }
+
+            window.setComparing(false, zaro::time::RationalTime{0, matchRate});
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
             window.monitor()->update();
             QApplication::processEvents();
         }

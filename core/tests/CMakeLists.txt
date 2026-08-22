@@ -54,6 +54,7 @@ add_executable(zaro_core_tests
     render/test_keyer.cpp
     render/test_render_cache.cpp
     render/test_scene_detect.cpp
+    render/test_shot_match.cpp
     render/test_vignette.cpp
     render/test_wheels.cpp
     render/test_render_graph.cpp

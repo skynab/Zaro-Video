@@ -45,6 +45,7 @@ add_library(zaro_core
     src/render/RenderGraph.cpp
     src/render/SceneDetect.cpp
     src/render/Scopes.cpp
+    src/render/ShotMatch.cpp
     src/render/ToneMap.cpp
     src/render/RgbaImage.cpp
     src/model/Animation.cpp
