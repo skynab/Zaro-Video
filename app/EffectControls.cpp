@@ -16,6 +16,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 
 #include "zaro/core/edit/Operations.h"
@@ -571,6 +572,21 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     graphicForm->addRow("Red", shapeRed_);
     graphicForm->addRow("Green", shapeGreen_);
     graphicForm->addRow("Blue", shapeBlue_);
+
+    // Responsive timing lives with the shape because it is a title's problem:
+    // a graphic is the thing whose animation has a beginning and an end that
+    // are supposed to stay put while the middle takes up the slack.
+    introSeconds_ = makeSpin(0.0, 60.0, 0.1, 2, " s");
+    introSeconds_->setObjectName("responsive-intro");
+    outroSeconds_ = makeSpin(0.0, 60.0, 0.1, 2, " s");
+    outroSeconds_->setObjectName("responsive-outro");
+    introSeconds_->setToolTip("Keep this much of the animation glued to the start of the clip");
+    outroSeconds_->setToolTip("Keep this much of the animation glued to the end of the clip");
+    graphicForm->addRow("Intro", introSeconds_);
+    graphicForm->addRow("Outro", outroSeconds_);
+    for (QDoubleSpinBox* spin : {introSeconds_, outroSeconds_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushResponsive(); });
+    }
     graphicGroup_ = graphic;
 
     for (QDoubleSpinBox* spin : {shapeWidth_, shapeHeight_, shapeCorner_, shapeFeather_, shapeRed_,
@@ -826,6 +842,8 @@ void EffectControls::applyToWidgets() {
         shapeRed_->setValue(clip->graphic.red);
         shapeGreen_->setValue(clip->graphic.green);
         shapeBlue_->setValue(clip->graphic.blue);
+        introSeconds_->setValue(clip->responsive.intro.toSecondsDouble());
+        outroSeconds_->setValue(clip->responsive.outro.toSecondsDouble());
     }
 
     curves_->setCurves(clip->curves);
@@ -1578,6 +1596,28 @@ void EffectControls::pushKeyer() {
 /// same pixels the rectangle or ellipse did, which is what makes it safe to
 /// offer without a warning. What changes is that the outline now has points on
 /// it somebody can drag.
+void EffectControls::pushResponsive() {
+    const model::Clip* clip = selectedClip();
+    if (updating_ || clip == nullptr || commands_ == nullptr) {
+        return;
+    }
+    // Whole frames: a protected stretch that ended between two frames would
+    // be a boundary nothing on the timeline could line up with.
+    const auto rate = clip->sourceRange.duration().rate();
+    const auto frames = [&rate](double seconds) {
+        return time::RationalTime{
+            static_cast<std::int64_t>(std::llround(seconds * rate.toDouble())), rate};
+    };
+    auto built =
+        edit::makeSetResponsive(*project_, {sequenceId_, track_}, clip_,
+                                frames(introSeconds_->value()), frames(outroSeconds_->value()));
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
 void EffectControls::setDrawingMask(bool drawing) {
     if (maskDraw_->isChecked() != drawing) {
         maskDraw_->setChecked(drawing);

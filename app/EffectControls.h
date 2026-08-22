@@ -163,6 +163,9 @@ private:
     QPushButton* maskToPath_{nullptr};
     QPushButton* maskDraw_{nullptr};
     QPushButton* maskTrack_{nullptr};
+    QDoubleSpinBox* introSeconds_{nullptr};
+    QDoubleSpinBox* outroSeconds_{nullptr};
+    void pushResponsive();
     QPushButton* stabilise_{nullptr};
     QPushButton* unstabilise_{nullptr};
     void convertMaskToPath();

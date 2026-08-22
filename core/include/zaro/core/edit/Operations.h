@@ -390,6 +390,18 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y, double zoom);
 
+/// Protect the first and last stretch of a clip's animation from being
+/// stretched with the clip.
+///
+/// The clip's current duration is recorded as the authored length at the same
+/// time, because that is what the intro and outro are measured against. Zero
+/// for both turns it off, and the animation goes back to stretching with the
+/// clip -- which is what a trim does to everything else on it.
+[[nodiscard]] Result<CommandPtr> makeSetResponsive(model::Project& project,
+                                                   const EditTarget& target, model::ClipId clip,
+                                                   const time::RationalTime& intro,
+                                                   const time::RationalTime& outro);
+
 /// What a clip's sound is for.
 [[nodiscard]] Result<CommandPtr> makeSetAudioRole(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, model::AudioRole role);

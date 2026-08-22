@@ -50,7 +50,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     if (model::anyActive(clip.effects)) {
         effected_ = image.clone();
         applyEffects(clip.effects, effected_, effectScratch_, effectScratchB_,
-                     clip.sourceSecondsAt(at));
+                     clip.animationSecondsAt(at));
         source = &effected_;
     }
 

@@ -4341,6 +4341,141 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
+        // Responsive timing, through the real panel and a real trim.
+        //
+        // A title that fades up and away, trimmed shorter: without the
+        // protection the exit is simply cut off, and the point of the feature
+        // is that the last frame goes dark either way.
+        {
+            const auto respSequenceId = window.project().activeSequence();
+            const auto* respSequence = window.project().findSequence(respSequenceId);
+            const auto respRate = respSequence->frameRate();
+            const auto respTrackId = respSequence->videoTracks().back().id();
+            constexpr int kAuthored = 48;
+            constexpr int kTrimmed = 24;
+
+            zaro::model::Graphic card;
+            card.kind = zaro::model::GraphicKind::Rectangle;
+            card.width = 200.0;
+            card.height = 150.0;
+            card.red = 1.0;
+            card.green = 1.0;
+            card.blue = 1.0;
+            auto added = zaro::edit::makeAddGraphic(
+                window.project(), {respSequenceId, respTrackId}, card,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, respRate},
+                                      zaro::time::RationalTime{kAuthored, respRate}});
+            if (!added) {
+                std::fprintf(stderr, "  FAIL: %s\n", added.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*added));
+            zaro::model::ClipId cardId;
+            for (const auto& candidate :
+                 window.project().findSequence(respSequenceId)->findTrack(respTrackId)->clips()) {
+                if (candidate.graphic.kind == zaro::model::GraphicKind::Rectangle &&
+                    candidate.graphic.width == 200.0) {
+                    cardId = candidate.id;
+                }
+            }
+            if (!cardId.isValid()) {
+                std::fprintf(stderr, "  FAIL: the card was not added\n");
+                return 1;
+            }
+
+            // Up over twelve frames, hold, away over the last twelve.
+            zaro::model::Curve fade;
+            for (const auto& [frame, value] : {std::pair{0, 0.0}, std::pair{12, 1.0},
+                                               std::pair{36, 1.0}, std::pair{kAuthored, 0.0}}) {
+                fade.set(zaro::model::Keyframe{zaro::time::RationalTime{frame, respRate},
+                                               value,
+                                               zaro::model::Interpolation::Linear,
+                                               {},
+                                               {}});
+            }
+            auto animated =
+                zaro::edit::makeSetCurve(window.project(), {respSequenceId, respTrackId}, cardId,
+                                         zaro::model::Param::Opacity, fade);
+            if (!animated) {
+                std::fprintf(stderr, "  FAIL: %s\n", animated.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*animated));
+
+            timeline->selectOnlyForTest(respTrackId, cardId);
+            window.effects()->setSelection(respTrackId, cardId);
+            QApplication::processEvents();
+            auto* introBox = window.effects()->findChild<QDoubleSpinBox*>("responsive-intro");
+            auto* outroBox = window.effects()->findChild<QDoubleSpinBox*>("responsive-outro");
+            if (introBox == nullptr || outroBox == nullptr) {
+                std::fprintf(stderr, "  FAIL: the responsive controls are not in the panel\n");
+                return 1;
+            }
+            const double half = 12.0 / respRate.toDouble();
+            introBox->setValue(half);
+            outroBox->setValue(half);
+            QApplication::processEvents();
+            const auto* protectedCard =
+                window.project().findSequence(respSequenceId)->findTrack(respTrackId)->find(cardId);
+            if (!protectedCard->responsive.isSet() ||
+                protectedCard->responsive.authored.frames() != kAuthored) {
+                std::fprintf(stderr, "  FAIL: the panel did not set the responsive timing\n");
+                return 1;
+            }
+
+            // Trim the tail, the way a trim tool does.
+            auto cut = zaro::edit::makeTrim(
+                window.project(), {respSequenceId, respTrackId}, cardId, zaro::edit::Edge::Out,
+                zaro::time::RationalTime{kTrimmed - kAuthored, respRate});
+            if (!cut) {
+                std::fprintf(stderr, "  FAIL: %s\n", cut.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*cut));
+
+            const auto* trimmedCard =
+                window.project().findSequence(respSequenceId)->findTrack(respTrackId)->find(cardId);
+            const auto endFrame =
+                trimmedCard->endExclusive() - zaro::time::RationalTime{1, respRate};
+            const double lastOpacity = trimmedCard->transformAt(endFrame).opacity;
+            const double midOpacity =
+                trimmedCard
+                    ->transformAt(trimmedCard->start() + zaro::time::RationalTime{12, respRate})
+                    .opacity;
+            std::printf("  responsive timing: %.2f opacity mid-clip, %.2f on the last frame\n",
+                        midOpacity, lastOpacity);
+            if (!(midOpacity > 0.9)) {
+                std::fprintf(stderr, "  FAIL: the protected intro did not finish\n");
+                return 1;
+            }
+            if (!(lastOpacity < 0.2)) {
+                std::fprintf(stderr, "  FAIL: the exit did not follow the trim\n");
+                return 1;
+            }
+
+            // And on the picture: the last frame of a title that has faded out
+            // is darker than the middle of it.
+            window.setPosition(trimmedCard->start() + zaro::time::RationalTime{12, respRate});
+            window.renderCache().clear();
+            const double litMiddle = meanGray(settledGrab(window.monitor()));
+            window.setPosition(endFrame);
+            window.renderCache().clear();
+            const double litEnd = meanGray(settledGrab(window.monitor()));
+            if (!(litEnd < litMiddle)) {
+                std::fprintf(stderr,
+                             "  FAIL: the faded-out last frame is not darker (%.1f vs %.1f)\n",
+                             litEnd, litMiddle);
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.renderCache().clear();
+            window.monitor()->update();
+            QApplication::processEvents();
+        }
+
         // Wipes and slides, through the real timeline and the real compositor.
         //
         // Between two generated clips rather than the footage: this fixture is

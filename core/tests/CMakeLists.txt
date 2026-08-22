@@ -23,6 +23,7 @@ add_executable(zaro_core_tests
     time/test_time_range.cpp
     time/test_timecode.cpp
     model/test_animation.cpp
+    model/test_responsive.cpp
     model/test_track.cpp
     edit/test_command_stack.cpp
     edit/test_multicam.cpp

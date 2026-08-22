@@ -1218,6 +1218,23 @@ Result<CommandPtr> makeStabilise(Project& project, const EditTarget& target, Cli
         });
 }
 
+Result<CommandPtr> makeSetResponsive(Project& project, const EditTarget& target, ClipId clipId,
+                                     const time::RationalTime& intro,
+                                     const time::RationalTime& outro) {
+    if (intro.toSecondsDouble() < 0.0 || outro.toSecondsDouble() < 0.0) {
+        return Error{ErrorCode::InvalidData, "an intro or outro cannot be negative"};
+    }
+    return modifyClip(project, target, clipId, "Set responsive timing",
+                      "responsive:" + idText(clipId), [intro, outro](Clip& clip) {
+                          clip.responsive.intro = intro;
+                          clip.responsive.outro = outro;
+                          // Recorded now: the length the keyframes are being
+                          // protected against is the length they were drawn at,
+                          // which is whatever the clip is at this moment.
+                          clip.responsive.authored = clip.sourceRange.duration();
+                      });
+}
+
 Result<CommandPtr> makeSetAudioRole(Project& project, const EditTarget& target, ClipId clipId,
                                     model::AudioRole role) {
     return modifyClip(project, target, clipId, "Set role", "role:" + idText(clipId),

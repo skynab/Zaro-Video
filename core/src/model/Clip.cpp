@@ -156,11 +156,56 @@ double Clip::sourceSecondsAt(const time::RationalTime& timelineTime) const {
     return sourceStart + (offset * rate);
 }
 
+double Clip::animationSecondsAt(const time::RationalTime& timelineTime) const {
+    const double seconds = sourceSecondsAt(timelineTime);
+    if (!responsive.isSet()) {
+        return seconds;
+    }
+    const double authored = responsive.authored.toSecondsDouble();
+    const double length = sourceRange.duration().toSecondsDouble();
+    const double intro = responsive.intro.toSecondsDouble();
+    const double outro = responsive.outro.toSecondsDouble();
+    if (length <= 0.0 || authored <= 0.0) {
+        return seconds;
+    }
+    const double start = sourceRange.start().toSecondsDouble();
+    const double into = seconds - start;
+
+    // Too short to hold both ends: they are scaled down together rather than
+    // one of them winning. A title trimmed to less than its own animation is
+    // somebody asking for a faster animation, and dropping the exit entirely
+    // is not a faster animation, it is a missing one.
+    double head = intro;
+    double tail = outro;
+    if (head + tail > length) {
+        const double squeeze = length / (head + tail);
+        head *= squeeze;
+        tail *= squeeze;
+    }
+
+    if (into <= head) {
+        // Glued to the start: the intro runs at the speed it was drawn at.
+        return start + (into * (intro > 0.0 ? intro / std::max(head, 1e-9) : 1.0));
+    }
+    if (into >= length - tail) {
+        // Glued to the end, measured back from it, in the authored animation.
+        const double back = (length - into) * (outro > 0.0 ? outro / std::max(tail, 1e-9) : 1.0);
+        return start + authored - back;
+    }
+    // The middle, stretched to fill what is left between them.
+    const double middle = length - head - tail;
+    const double authoredMiddle = authored - intro - outro;
+    if (middle <= 0.0 || authoredMiddle <= 0.0) {
+        return start + intro;
+    }
+    return start + intro + (((into - head) / middle) * authoredMiddle);
+}
+
 Transform Clip::transformAt(const time::RationalTime& timelineTime) const {
     if (animation.empty()) {
         return transform;
     }
-    const double seconds = sourceSecondsAt(timelineTime);
+    const double seconds = animationSecondsAt(timelineTime);
     Transform animated = transform;
     animated.positionX =
         Curve::valueOr(animation.find(Param::PositionX), seconds, transform.positionX);
@@ -306,14 +351,14 @@ double Clip::parameterAt(Param param, const time::RationalTime& timelineTime) co
     if (curve == nullptr || curve->empty()) {
         return parameterValue(param);
     }
-    return curve->valueAtSeconds(sourceSecondsAt(timelineTime));
+    return curve->valueAtSeconds(animationSecondsAt(timelineTime));
 }
 
 ColorCorrection Clip::colorAt(const time::RationalTime& timelineTime) const {
     if (animation.empty()) {
         return color;
     }
-    const double seconds = sourceSecondsAt(timelineTime);
+    const double seconds = animationSecondsAt(timelineTime);
     ColorCorrection graded = color;
     graded.temperature =
         Curve::valueOr(animation.find(Param::Temperature), seconds, color.temperature);
@@ -329,7 +374,7 @@ Mask Clip::maskAt(const time::RationalTime& timelineTime) const {
     if (!mask.isSet() || animation.empty()) {
         return mask;
     }
-    const double seconds = sourceSecondsAt(timelineTime);
+    const double seconds = animationSecondsAt(timelineTime);
     const double dx = Curve::valueOr(animation.find(Param::MaskX), seconds, 0.0);
     const double dy = Curve::valueOr(animation.find(Param::MaskY), seconds, 0.0);
     if (dx == 0.0 && dy == 0.0) {
@@ -351,14 +396,14 @@ double Clip::gainDbAt(const time::RationalTime& timelineTime) const {
     if (animation.empty()) {
         return gainDb;
     }
-    return Curve::valueOr(animation.find(Param::GainDb), sourceSecondsAt(timelineTime), gainDb);
+    return Curve::valueOr(animation.find(Param::GainDb), animationSecondsAt(timelineTime), gainDb);
 }
 
 double Clip::panAt(const time::RationalTime& timelineTime) const {
     if (animation.empty()) {
         return pan;
     }
-    return Curve::valueOr(animation.find(Param::Pan), sourceSecondsAt(timelineTime), pan);
+    return Curve::valueOr(animation.find(Param::Pan), animationSecondsAt(timelineTime), pan);
 }
 
 }  // namespace zaro::model

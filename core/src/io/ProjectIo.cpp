@@ -650,6 +650,11 @@ json encode(const model::Clip& clip) {
         }
         out["mask"] = std::move(mask);
     }
+    if (clip.responsive.isSet()) {
+        out["responsive"] = json{{"intro", encode(clip.responsive.intro)},
+                                 {"outro", encode(clip.responsive.outro)},
+                                 {"authored", encode(clip.responsive.authored)}};
+    }
     if (clip.graphic.isSet()) {
         const model::Graphic defaults;
         json graphic{{"kind", model::toString(clip.graphic.kind)}};
@@ -1064,6 +1069,19 @@ Result<model::Clip> decodeClip(const json& node) {
                 into.path.points.push_back(point);
             }
         }
+    }
+    if (node.contains("responsive") && node.at("responsive").is_object()) {
+        const json& responsive = node.at("responsive");
+        const auto part = [&responsive](const char* key, time::RationalTime& into) {
+            if (responsive.contains(key)) {
+                if (auto decoded = decodeTime(responsive.at(key), "clip responsive")) {
+                    into = *decoded;
+                }
+            }
+        };
+        part("intro", clip.responsive.intro);
+        part("outro", clip.responsive.outro);
+        part("authored", clip.responsive.authored);
     }
     if (node.contains("graphic") && node.at("graphic").is_object()) {
         const json& graphic = node.at("graphic");

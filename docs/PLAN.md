@@ -3227,6 +3227,45 @@ Not done: decentring, chromatic aberration, per-lens profiles, and a GPU path �
 an effect already forces the CPU graph, which the render cache makes
 affordable.
 
+### Phase 6v — responsive timing §7.4 ✅
+
+The Essential Graphics "responsive design — time" idea: a title's entrance and
+exit stay glued to its ends, and the hold in the middle takes up the slack.
+
+**Why it is needed at all.** Keyframes are glued to the picture (ADR-008),
+which is right for a fade on a shot and wrong for a title: trimming a title
+shorter does not compress its animation, it removes the part that no longer
+fits — so the exit simply never happens and the card vanishes at full strength.
+The first version of the test asserted that a trim *stretched* the animation,
+which is what a retime does; the honest baseline is that the exit is cut off,
+and that is now what the test says.
+
+**Durations at each end, plus the length they were authored against.** The
+authored duration is stored rather than derived, because it is what the stretch
+is relative to. Without it a clip trimmed twice would stretch relative to its
+already-stretched self and drift further each time.
+
+**One mapping, in one place.** `animationSecondsAt` is `sourceSecondsAt` with
+the intro and outro applied, and every curve on a clip now reads through it —
+transform, colour, mask offset, audio gain, effect parameters. The single
+exception is the time remap, which defines the mapping the others are read at
+and so cannot be read through its own output.
+
+**Too short for both ends squeezes them together.** A title trimmed to less
+than its own animation is somebody asking for a faster animation; dropping the
+exit to protect the entrance would be a missing animation rather than a quick
+one, and which end wins would be a coin toss the user cannot see.
+
+**Whole frames.** A protected stretch ending between two frames would be a
+boundary nothing on the timeline could line up with.
+
+Off is exactly off: with both durations at zero the clip behaves as if the
+feature did not exist, which the tests check frame by frame rather than assume.
+
+Not done: responsive design in *position* — pinning a graphic to another
+layer's bounds — and motion graphics templates, which are the rest of §7.4's
+Essential Graphics line.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

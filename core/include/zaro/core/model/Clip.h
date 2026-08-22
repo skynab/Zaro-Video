@@ -11,6 +11,7 @@
 #include "zaro/core/model/Ids.h"
 #include "zaro/core/model/Keyer.h"
 #include "zaro/core/model/Mask.h"
+#include "zaro/core/model/Responsive.h"
 #include "zaro/core/model/Secondary.h"
 #include "zaro/core/model/ToneCurve.h"
 #include "zaro/core/model/Vignette.h"
@@ -188,6 +189,11 @@ struct Clip {
     /// Curves that override the static values above, where they exist.
     ClipAnimation animation;
 
+    /// Which parts of that animation survive a trim unstretched. See
+    /// `ResponsiveTime`; empty means the animation stretches with the clip,
+    /// which is what everything but a title wants.
+    ResponsiveTime responsive;
+
     [[nodiscard]] const time::RationalTime& start() const { return timelineRange.start(); }
     [[nodiscard]] time::RationalTime endExclusive() const { return timelineRange.endExclusive(); }
     [[nodiscard]] const time::RationalTime& duration() const { return timelineRange.duration(); }
@@ -230,6 +236,15 @@ struct Clip {
     /// 60fps timeline hold each animated value for two or three output frames,
     /// turning a smooth move into a stutter that no keyframe accounts for.
     [[nodiscard]] double sourceSecondsAt(const time::RationalTime& timelineTime) const;
+
+    /// Where in the *authored* animation a moment falls: `sourceSecondsAt`
+    /// with the responsive intro and outro applied.
+    ///
+    /// Every curve on a clip is read through this rather than through
+    /// `sourceSecondsAt` directly -- except the time remap, which defines the
+    /// mapping the others are read at and cannot be read through its own
+    /// output.
+    [[nodiscard]] double animationSecondsAt(const time::RationalTime& timelineTime) const;
 
     /// The transform to composite with at a moment, curves applied. Returns the
     /// static transform untouched when nothing is animated, which is the case
