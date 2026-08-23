@@ -3886,6 +3886,48 @@ used beats every 0.5s from zero, where an arithmetic cut that never looked at
 the beat list still lands on one — the revert check passed happily. The beats
 are at an offset tempo with two missing now, and it fails as it should.
 
+### Phase 7n — text-based editing §7.6 ✅
+
+Editing by deleting words: the transcript is the selection and the timeline
+follows it.
+
+**The transcript moves with the picture.** Removing a span ripples every
+unlocked track *and* takes the captions with it. A transcript that stayed where
+it was would describe a cut that no longer exists, and the panel somebody is
+reading it in would be lying to them. That is the part a ripple delete did not
+already do, and it is the whole reason this is a command of its own.
+
+**A caption straddling the cut keeps what was outside it.** The words either
+side of a removed piece are still the words either side of it; dropping the
+whole line because one word went would take out speech nobody asked to remove.
+
+**One command, however many lines.** Deleting four is one thing somebody did
+and one thing they will undo — and four commands would be four chances to be
+interrupted halfway, leaving a cut nobody asked for.
+
+**Latest first, and overlapping spans merged first.** Closing one gap moves
+everything after it, so a span removed by position early would be somewhere
+else by the time its turn came — the rule Phase 4j's multi-selection had to
+learn, in a new place. Two selections that touch are one removal; taken
+separately they would remove the overlap twice.
+
+**Filler selection matches words, not substrings.** "um" is inside "number",
+"column" and "umbrella". The self-test has a line reading "um the number is
+nine" and requires exactly one match — a substring test picks that line for the
+wrong reason and would pick lines with no filler in them at all. The word list
+is deliberately short: "like" and "so" are ordinary words far more often than
+they are filler, and a tool that cut them would be cutting speech.
+
+**Transcription itself is still missing**, and this is the honest shape of that
+gap: everything downstream of a transcript now works on any transcript the
+project has — imported captions today, a local speech model later — and none of
+it has to change when one arrives.
+
+While debugging this, `stdout` became line buffered in the preview. The
+self-tests print as they go and are usually read from a redirected file; fully
+buffered, that file stays empty until the process exits, so a slow run and a
+hung one look exactly alike. They no longer do.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

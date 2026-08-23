@@ -778,6 +778,119 @@ Result<CommandPtr> makeRippleDelete(Project& project, const EditTarget& target,
         });
 }
 
+namespace {
+
+/// Take a span out of a caption track, moving what follows earlier.
+///
+/// A caption wholly inside the span goes; one straddling it keeps the parts
+/// outside, joined -- the words either side of a cut are still the words either
+/// side of it, and dropping the whole line because one word went would take
+/// out speech nobody removed.
+void removeSpanFromCaptions(model::CaptionTrack& captions, const TimeRange& span) {
+    std::vector<model::Caption> rebuilt;
+    const RationalTime length = span.duration();
+    for (const model::Caption& caption : captions.captions()) {
+        const RationalTime start = caption.range.start();
+        const RationalTime end = caption.range.endExclusive();
+        if (end <= span.start()) {
+            rebuilt.push_back(caption);
+            continue;
+        }
+        if (start >= span.endExclusive()) {
+            model::Caption moved = caption;
+            moved.range = TimeRange{start - length, caption.range.duration()};
+            rebuilt.push_back(std::move(moved));
+            continue;
+        }
+        // Overlapping. What survives is whatever sat outside the span, closed
+        // up: a caption that had two seconds before the cut and one after it
+        // becomes a three-second caption.
+        const RationalTime before =
+            start < span.start() ? span.start() - start : RationalTime{0, start.rate()};
+        const RationalTime after =
+            end > span.endExclusive() ? end - span.endExclusive() : RationalTime{0, start.rate()};
+        const RationalTime remaining = before + after;
+        if (remaining.frames() <= 0) {
+            continue;  // it was entirely inside the span
+        }
+        model::Caption kept = caption;
+        const RationalTime newStart = start < span.start() ? start : span.start();
+        kept.range = TimeRange{newStart, remaining};
+        rebuilt.push_back(std::move(kept));
+    }
+    // Rebuilt through add() rather than assigned: the track keeps its captions
+    // in order and non-overlapping, and that is its rule to enforce, not this
+    // function's to assume.
+    captions.clear();
+    for (const model::Caption& caption : rebuilt) {
+        captions.add(caption);
+    }
+}
+
+}  // namespace
+
+Result<CommandPtr> makeDeleteSpans(Project& project, model::SequenceId sequenceId,
+                                   const std::vector<TimeRange>& spans) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    const time::Rational& rate = sequence->frameRate();
+
+    std::vector<TimeRange> wanted;
+    for (const TimeRange& span : spans) {
+        const TimeRange at = span.rescaledTo(rate);
+        if (!at.isEmpty()) {
+            wanted.push_back(at);
+        }
+    }
+    if (wanted.empty()) {
+        return Error{ErrorCode::InvalidData, "there is nothing selected to delete"};
+    }
+    std::sort(wanted.begin(), wanted.end(),
+              [](const TimeRange& a, const TimeRange& b) { return a.start() < b.start(); });
+
+    // Merged before anything is removed: two selections that touch are one
+    // removal, and removing them separately would take the overlap out twice.
+    std::vector<TimeRange> merged;
+    for (const TimeRange& at : wanted) {
+        if (!merged.empty() && at.start() <= merged.back().endExclusive()) {
+            const RationalTime end = std::max(merged.back().endExclusive(), at.endExclusive());
+            merged.back() = TimeRange{merged.back().start(), end - merged.back().start()};
+            continue;
+        }
+        merged.push_back(at);
+    }
+
+    model::IdGenerator& ids = project.ids();
+    return makeCommand(sequenceId, merged.size() == 1 ? "Delete span" : "Delete spans", {},
+                       [merged, &ids](Sequence& sequence) {
+                           // Latest first: closing one gap moves everything after it, so a
+                           // span removed by position early would be somewhere else by the
+                           // time its turn came.
+                           for (auto span = merged.rbegin(); span != merged.rend(); ++span) {
+                               Track* first = nullptr;
+                               for (const model::TrackKind kind :
+                                    {model::TrackKind::Video, model::TrackKind::Audio}) {
+                                   for (Track& track : sequence.tracksMutable(kind)) {
+                                       if (track.isLocked()) {
+                                           continue;
+                                       }
+                                       clearRange(track, *span, ids);
+                                       if (first == nullptr) {
+                                           first = &track;
+                                       }
+                                   }
+                               }
+                               if (first != nullptr) {
+                                   rippleFrom(sequence, *first, span->endExclusive(),
+                                              -span->duration(), true);
+                               }
+                               removeSpanFromCaptions(sequence.captions(), *span);
+                           }
+                       });
+}
+
 // --- Trimming ---------------------------------------------------------------
 
 namespace {

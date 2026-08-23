@@ -101,6 +101,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 7k | Locking off by default, and two read-only bugs fixed | **done** |
 | 7l | Auto-reframe for vertical and square | **done** |
 | 7m | Remix: fitting music to a length, on its beats | **done** |
+| 7n | Text-based editing: delete words, the cut follows | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

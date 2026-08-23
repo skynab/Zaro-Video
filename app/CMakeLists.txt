@@ -6,6 +6,7 @@ add_executable(zaro-preview
     main.cpp
     MaskOverlay.cpp
     MediaBrowser.cpp
+    Transcript.cpp
     ProgramMonitor.cpp
     ProgramMonitor.h
     TimelineWidget.cpp

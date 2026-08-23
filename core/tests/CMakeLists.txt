@@ -27,6 +27,7 @@ add_executable(zaro_core_tests
     model/test_pinning.cpp
     model/test_responsive.cpp
     model/test_track.cpp
+    edit/test_delete_spans.cpp
     edit/test_command_stack.cpp
     edit/test_multicam.cpp
     edit/test_source_links.cpp

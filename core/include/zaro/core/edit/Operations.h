@@ -118,6 +118,32 @@ enum class PlaceMode {
                                                   const time::TimeRange& range,
                                                   bool rippleAllTracks = false);
 
+/// Remove several spans of the sequence at once, closing every gap, and take
+/// the transcript with them.
+///
+/// This is what "editing by deleting words" is underneath: somebody selects
+/// lines of a transcript and the picture, the sound and the remaining text all
+/// come out shorter together.
+///
+/// **One command, however many spans.** Deleting four lines is one thing
+/// somebody did and one thing they will undo. Four commands would also mean
+/// four chances to be interrupted halfway, leaving a cut nobody asked for.
+///
+/// **Latest first.** Closing one gap moves everything after it, so a span
+/// removed early by position would be somewhere else by the time its turn came
+/// -- the same rule multi-selection had to learn in Phase 4j.
+///
+/// **Overlapping spans are merged first.** Two selections that touch are one
+/// removal; removing them separately would take out the overlap twice.
+///
+/// **The captions move with the picture.** A transcript that stayed where it
+/// was would be a transcript describing a cut that no longer exists, and the
+/// panel somebody is reading it in would be lying to them. Captions inside a
+/// removed span go; ones straddling it are trimmed to what is left.
+[[nodiscard]] Result<CommandPtr> makeDeleteSpans(model::Project& project,
+                                                 model::SequenceId sequence,
+                                                 const std::vector<time::TimeRange>& spans);
+
 // --- Trimming ---------------------------------------------------------------
 
 /// Move one edge of a clip. Neighbours stay put, so this opens or closes a gap.

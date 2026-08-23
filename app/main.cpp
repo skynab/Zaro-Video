@@ -103,6 +103,7 @@
 #include "SourceMonitor.h"
 #include "Theme.h"
 #include "TimelineWidget.h"
+#include "Transcript.h"
 #include "ViewerOverlay.h"
 
 namespace {
@@ -952,6 +953,27 @@ public:
         updateCacheBar();
         updateTitle();
         return report;
+    }
+
+    /// Show the transcript, and edit by it.
+    app::Transcript* showTranscript() {
+        if (transcript_ == nullptr) {
+            transcript_ = new app::Transcript(this);
+            connect(transcript_, &app::Transcript::edited, this, [this] {
+                renderCache_.clear();
+                timeline_->update();
+                monitor_->update();
+                updateCacheBar();
+                updateTitle();
+                refresh();
+            });
+            connect(transcript_, &app::Transcript::scrubbed, this,
+                    [this](time::RationalTime at) { setPosition(at); });
+        }
+        transcript_->setProject(&project_, sequenceId_, &commands_);
+        transcript_->show();
+        transcript_->raise();
+        return transcript_;
     }
 
     /// Fit the selected music clip to a length by taking a piece out of it.
@@ -2132,6 +2154,11 @@ private:
         menuItem(sequence, "Render Range…", [this] { renderMenu(); }, {}, "render-range");
         menuItem(sequence, "Delivery…", [this] { deliveryMenu(); }, {}, "delivery");
         menuItem(sequence, "Loudness…", [this] { loudnessMenu(); }, {}, "loudness");
+
+        QMenu* text = menuBar_->addMenu("Text");
+        menuItem(
+            text, "Transcript…", [this] { showTranscript(); }, QKeySequence("Ctrl+T"),
+            "show-transcript");
 
         QMenu* audio = menuBar_->addMenu("Audio");
         menuItem(
@@ -3556,6 +3583,7 @@ private:
     QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
     app::MediaBrowser* browser_{nullptr};
+    app::Transcript* transcript_{nullptr};
     /// Somebody else has this project open, so it must not be written over.
     bool readOnly_{false};
     static inline bool locking_{false};
@@ -3654,6 +3682,11 @@ void dragOnTimeline(app::TimelineWidget* timeline, int fromX, int toX, int y,
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Line buffered, always. The self-tests print as they go and are usually
+    // read from a redirected file; fully buffered, that file stays empty until
+    // the process exits, so a run that hangs looks exactly like a run that has
+    // not started -- which cost an hour of looking in the wrong place once.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     QApplication application(argc, argv);
     // Before any window exists: the palette and the sheet decide what every
     // widget looks like the moment it is constructed, and a window built first
@@ -8271,6 +8304,107 @@ int main(int argc, char** argv) {
             binSearch->setText("");
             QApplication::processEvents();
             window.bin()->refresh();
+            QApplication::processEvents();
+        }
+
+        // Text-based editing: delete words, and the picture goes with them.
+        {
+            const auto textSequenceId = window.project().activeSequence();
+            const auto textRate = window.project().findSequence(textSequenceId)->frameRate();
+            const auto textTrack =
+                window.project().findSequence(textSequenceId)->videoTracks().front().id();
+
+            // A transcript over whatever is on the timeline, with a filler word
+            // in one line of it.
+            zaro::model::CaptionTrack said;
+            const struct Line {
+                std::int64_t from;
+                std::int64_t frames;
+                const char* text;
+            } lines[] = {{0, 20, "so here we are"},
+                         {20, 20, "um the number is nine"},
+                         {40, 20, "and that is that"}};
+            for (const Line& line : lines) {
+                zaro::model::Caption caption;
+                caption.range =
+                    zaro::time::TimeRange{zaro::time::RationalTime{line.from, textRate},
+                                          zaro::time::RationalTime{line.frames, textRate}};
+                caption.text = line.text;
+                said.add(caption);
+            }
+            auto captioned = zaro::edit::makeSetCaptions(window.project(), textSequenceId, said);
+            if (!captioned) {
+                std::fprintf(stderr, "  FAIL: %s\n", captioned.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*captioned));
+
+            auto* transcript = window.showTranscript();
+            if (transcript == nullptr || transcript->lineCount() != 3) {
+                std::fprintf(stderr, "  FAIL: the transcript shows %d lines, not three\n",
+                             transcript == nullptr ? -1 : transcript->lineCount());
+                return 1;
+            }
+
+            // "Select filler" finds the line with "um" in it, and not the one
+            // with "number": a substring test would take both, and cutting a
+            // line because it mentions a number is the kind of mistake nobody
+            // would forgive a transcript tool.
+            const int filler = transcript->selectContaining({"um", "uh"});
+            if (filler != 1) {
+                std::fprintf(stderr, "  FAIL: filler selection matched %d lines, not one\n",
+                             filler);
+                return 1;
+            }
+
+            const auto* beforeTrack =
+                window.project().findSequence(textSequenceId)->findTrack(textTrack);
+            const auto lengthBefore = beforeTrack->clips().back().endExclusive();
+
+            auto gone = transcript->deleteSelected();
+            if (!gone || *gone != 1) {
+                std::fprintf(stderr, "  FAIL: deleting the filler line removed %d lines\n",
+                             gone ? *gone : -1);
+                return 1;
+            }
+            const auto* afterTrack =
+                window.project().findSequence(textSequenceId)->findTrack(textTrack);
+            const auto lengthAfter = afterTrack->clips().back().endExclusive();
+            std::printf("  text editing: %lld frames became %lld, %d lines left\n",
+                        static_cast<long long>(lengthBefore.frames()),
+                        static_cast<long long>(lengthAfter.frames()), transcript->lineCount());
+
+            if (lengthAfter != lengthBefore - zaro::time::RationalTime{20, textRate}) {
+                std::fprintf(stderr, "  FAIL: the picture did not shorten with the words\n");
+                return 1;
+            }
+            if (transcript->lineCount() != 2) {
+                std::fprintf(stderr, "  FAIL: the transcript still shows %d lines\n",
+                             transcript->lineCount());
+                return 1;
+            }
+            // And what followed moved up: the last line now starts where the
+            // deleted one did.
+            const auto& left = window.project().findSequence(textSequenceId)->captions().captions();
+            if (left.size() != 2 || left.back().range.start().frames() != 20) {
+                std::fprintf(stderr, "  FAIL: the remaining transcript did not move up\n");
+                return 1;
+            }
+            // One undo puts the words and the picture back together.
+            window.commands().undo(window.project());
+            transcript->refresh();
+            const auto* undoneTrack =
+                window.project().findSequence(textSequenceId)->findTrack(textTrack);
+            if (undoneTrack->clips().back().endExclusive() != lengthBefore ||
+                transcript->lineCount() != 3) {
+                std::fprintf(stderr, "  FAIL: undo did not put both back\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            transcript->refresh();
             QApplication::processEvents();
         }
 
