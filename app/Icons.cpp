@@ -95,8 +95,25 @@ QPainterPath pathFor(Glyph glyph) {
             path.moveTo(10.2, 10.2);
             path.lineTo(14.0, 14.0);
             return path;
+
+        case Glyph::Heart:
+            path.moveTo(8.0, 13.8);
+            path.cubicTo(8.0, 13.8, 2.1, 10.3, 2.1, 6.3);
+            path.cubicTo(2.1, 4.3, 3.7, 2.8, 5.6, 2.8);
+            path.cubicTo(6.9, 2.8, 7.6, 3.7, 8.0, 4.4);
+            path.cubicTo(8.4, 3.7, 9.1, 2.8, 10.4, 2.8);
+            path.cubicTo(12.3, 2.8, 13.9, 4.3, 13.9, 6.3);
+            path.cubicTo(13.9, 10.3, 8.0, 13.8, 8.0, 13.8);
+            path.closeSubpath();
+            return path;
     }
     return path;
+}
+
+/// The one glyph the design draws filled. Phosphor calls this weight `ph-fill`,
+/// and a heart is the shape that reads as an outline the least.
+bool isFilled(Glyph glyph) {
+    return glyph == Glyph::Heart;
 }
 
 }  // namespace
@@ -118,12 +135,17 @@ QPixmap pixmap(Glyph glyph, int size, const QColor& ink) {
 
     // Stroked, not filled: Phosphor's regular weight is an outline, and a
     // filled cursor beside an outlined magnifier reads as two icon sets.
-    QPen pen{ink};
-    pen.setWidthF(1.5);
-    pen.setCapStyle(Qt::RoundCap);
-    pen.setJoinStyle(Qt::RoundJoin);
-    painter.setPen(pen);
-    painter.setBrush(Qt::NoBrush);
+    if (isFilled(glyph)) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(ink);
+    } else {
+        QPen pen{ink};
+        pen.setWidthF(1.5);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+    }
     painter.drawPath(pathFor(glyph));
     return canvas;
 }

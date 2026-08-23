@@ -21,6 +21,7 @@ enum class Glyph {
     SlipArrows,  ///< Slip: the same span with nothing pinning it
     Hand,        ///< Hand
     Magnifier,   ///< Zoom
+    Heart,       ///< Support: the one filled glyph, as the design draws it
 };
 
 /// One glyph, in one colour, at a size in logical pixels.

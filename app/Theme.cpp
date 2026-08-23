@@ -216,7 +216,7 @@ QLabel { background: transparent; }
 #chrome-brand { font-weight: 600; padding: 0 6px; }
 #viewer-well { background: %WELL%; }
 #timecode-big { color: %ACCENT300%; }
-#tool-group, #segment-group { border: 1px solid %DIVIDER%; border-radius: 8px; }
+#segment-group { border: 1px solid %DIVIDER%; border-radius: 8px; }
 #tab-group { background: %HOVER%; border-radius: 8px; }
 #tab-group QPushButton { border-color: transparent; color: %MUTED%; }
 #tab-group QPushButton:checked { background: %SURFACE%; color: %ACCENT200%; border-color: %DIVIDER%; }

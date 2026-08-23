@@ -17,6 +17,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -45,6 +46,7 @@
 #include <QSysInfo>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <atomic>
@@ -101,6 +103,7 @@
 #include "ProjectBin.h"
 #include "ScopesPanel.h"
 #include "SourceMonitor.h"
+#include "SupportButton.h"
 #include "Theme.h"
 #include "TimelineWidget.h"
 #include "Transcript.h"
@@ -121,6 +124,12 @@ const QStringList kWorkspaces{"Edit", "Color", "Audio", "Deliver"};
 
 /// What the status line says it is running on.
 const QString kPlatformLabel = QSysInfo::prettyProductName();
+
+/// Where Donate goes. One constant, because a project's funding page moves and
+/// the button should not have to be found again when it does. Until there is a
+/// funding page this is the project's own, which is at least somewhere a person
+/// who wants to help can start.
+const QString kSupportUrl = "https://github.com/skynab/Zaro-Video";
 
 // No Q_OBJECT: this declares no signals or slots of its own, and
 // QMetaObject::invokeMethod with a lambda needs only a QObject to bind the
@@ -2295,14 +2304,13 @@ private:
         return bar;
     }
 
-    QWidget* buildToolBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-toolbar");
-        bar->setFixedHeight(46);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(12, 0, 12, 0);
-        row->setSpacing(10);
-
+    /// The tool palette.
+    ///
+    /// On the timeline's own header rather than the window's tool bar: every
+    /// one of these tools acts on the timeline and nowhere else, and a control
+    /// two panels away from the thing it changes is one people stop reaching
+    /// for.
+    QWidget* buildToolPalette() {
         // The tools, in the order a cut is made: pick, cut, trim, slip, then
         // the two that move the view rather than the cut.
         struct ToolEntry {
@@ -2319,8 +2327,11 @@ private:
             {app::TimelineWidget::Tool::Hand, app::icons::Glyph::Hand, "Hand", "H"},
             {app::TimelineWidget::Tool::Zoom, app::icons::Glyph::Magnifier, "Zoom", "Z"},
         };
-        auto* toolGroup = new QWidget(bar);
-        toolGroup->setObjectName("tool-group");
+        // No box around it. In the tool bar it needed one to say where the
+        // group ended; on the timeline header it is among the other buttons
+        // that act on the timeline, and a border there would be drawing a line
+        // between things that belong together.
+        auto* toolGroup = new QWidget(this);
         auto* toolRow = new QHBoxLayout(toolGroup);
         toolRow->setContentsMargins(2, 2, 2, 2);
         toolRow->setSpacing(2);
@@ -2332,14 +2343,23 @@ private:
                 chromeButton({}, QString("%1 tool (%2)").arg(entry.name, entry.key), true);
             button->setIcon(app::icons::toolIcon(entry.glyph));
             button->setIconSize(QSize(17, 17));
-            button->setFixedSize(30, 28);
+            button->setFixedSize(29, 26);
             const auto tool = entry.tool;
             connect(button, &QPushButton::clicked, this,
                     [this, tool] { timeline_->setTool(tool); });
             toolButtons_.push_back(button);
             toolRow->addWidget(button);
         }
-        row->addWidget(toolGroup);
+        return toolGroup;
+    }
+
+    QWidget* buildToolBar() {
+        auto* bar = new QWidget(this);
+        bar->setObjectName("chrome-toolbar");
+        bar->setFixedHeight(46);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(12, 0, 12, 0);
+        row->setSpacing(10);
 
         snapButton_ = chromeButton("Snap", "Pull edits to the edit points near them (S)", true);
         snapButton_->setFixedHeight(28);
@@ -2383,6 +2403,15 @@ private:
         exportButton->setFixedHeight(30);
         connect(exportButton, &QPushButton::clicked, this, [this] { exportDialog(); });
         row->addWidget(exportButton);
+
+        auto* donate = new app::SupportButton(bar);
+        donate->setObjectName("donate");
+        donate->setText("Donate");
+        donate->setToolTip(QString("Support Zaro — opens %1").arg(kSupportUrl));
+        donate->setFixedHeight(30);
+        connect(donate, &QPushButton::clicked, this,
+                [] { static_cast<void>(QDesktopServices::openUrl(QUrl{kSupportUrl})); });
+        row->addWidget(donate);
         return bar;
     }
 
@@ -2504,6 +2533,7 @@ private:
         timelineLabel_ = mutedLabel();
         row->addWidget(timelineLabel_);
         row->addWidget(chromeSeparator());
+        row->addWidget(buildToolPalette());
 
         QPushButton* razor = chromeButton("Razor", "Cut every selected track at the playhead (C)");
         connect(razor, &QPushButton::clicked, this, [this] { timeline_->razorAtPlayhead(); });

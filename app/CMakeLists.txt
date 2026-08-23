@@ -27,6 +27,8 @@ add_executable(zaro-preview
     ProjectBin.h
     SourceMonitor.cpp
     SourceMonitor.h
+    SupportButton.cpp
+    SupportButton.h
     Icons.cpp
     Icons.h
     Theme.cpp

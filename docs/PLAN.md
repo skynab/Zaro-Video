@@ -2930,96 +2930,6 @@ they reach whatever is underneath.
 Not done: a pen tool for drawing a path from nothing, mask feather handles on
 the picture, and mask tracking.
 
-### Phase 6r — the Cutline chrome §7.1 ✅
-
-The window, dressed. Every phase since 4a added a panel and hung its controls
-off the transport row; by 6q that row held eighteen buttons under the picture
-and the application looked like what it was, a test harness with a compositor
-behind it. This phase takes a design — Cutline, on the Nocturne palette — and
-builds the furniture it asks for: a menu bar, a tool bar with a tool palette
-and workspaces, one viewer with two pages, a timeline header, and a status
-line.
-
-**One place decides what colour anything is.** `app/Theme` holds the design
-system's tokens — a ground, a surface, a text colour and two nine-step ramps
-generated on one shared lightness scale — and builds both the palette Qt hands
-to its own style and the stylesheet every control is drawn from. The panels
-that paint themselves (the timeline, the meters, the burn-in) ask Theme for the
-same tokens rather than keeping a second palette that drifts from it. The
-keyframe self-test used to hunt for a literal `226,226,236` in the grab; it
-asks the theme for the diamond's colour now, because a test that pins a
-literal is a test that has to be chased every time the palette moves.
-
-**Eighteen buttons became nine menus.** A row of buttons is fine at four and
-illegible at eighteen: it says nothing about which of them belong together, and
-it grows every phase. The menus are where the structure lives, and the actions
-carry the object names the self-tests were already using — so the test that
-saved a project by clicking a button now triggers the same action from the File
-menu. Only modified shortcuts live on actions. A single letter bound
-window-wide would fire while somebody was typing a title into a text field,
-which is why the tool keys stay in the timeline's own key handler.
-
-**Tools, because some gestures have no obvious chord.** Select, Blade, Trim,
-Slip, Hand and Zoom. Trimming and moving still work under Select — that is what
-a pointer is for — but cutting, slipping and panning are each somebody's whole
-session, and a tool that stays picked is what makes a run of them fluent. Slip
-finally reaches the interface: `makeSlip` has been in the edit engine since
-Phase 2 with nothing calling it. A slip drag is measured in time rather than in
-pixels, so it means the same thing at every zoom, and the anchor only advances
-once a whole frame has been consumed — otherwise a slow drag at a high zoom
-rounds itself away one mouse-move at a time.
-
-**Workspaces are which panels are up.** Four, because there are four things
-people do with an editor and each wants a different half of the window: the
-scopes are dead weight while somebody is assembling, and the bin is dead weight
-while they are grading. Each workspace remembers its own splitter state — one
-saved arrangement restored into a different set of visible panels is a
-collapsed bin and a mixer four pixels tall.
-
-**One viewer, two pages.** Source and program were side by side, each with half
-the width, which is not enough width to judge either on. They are one stack with
-a segmented control now, and opening a clip from the bin — or a match frame —
-switches to the source, because that is what the gesture asked for. It has a
-cost the self-test found immediately: a monitor that is not the current page
-does not repaint, so the render-cache check read zero hits until it asked for
-the program back. Grabbing a hidden monitor still works; leaving it hidden and
-expecting it to redraw does not.
-
-**The burn-in is a widget, not a render.** Clip name, timecode, format and safe
-guides sit on a transparent overlay over the monitor — the same argument Phase
-6q made for the mask handles. The picture that leaves this application is the
-picture, and an overlay that could reach an export is a flag somebody
-eventually forgets to clear. It takes no mouse events, so the mask editor above
-it still gets every click.
-
-**A Qt layout given less room than its children need does not clip them, it
-overlaps them.** The mixer strip is taller than the panel usually gets, and the
-result was a meter painted over the solo button — visible in a screenshot and
-invisible to every test. The strips scroll now. The meters are narrow bars in
-the accent, and keep amber and red for the two states that are a warning: a
-level that is simply fine should look like the rest of the interface.
-
-**Icons are drawn, not fetched.** The design's tool palette is a row of
-Phosphor glyphs. Vendoring an icon font is a build dependency and a licence;
-taking the glyphs from whatever font happens to be installed gives a colour
-emoji on one platform and an empty box on another. `app/Icons` paints the six
-as painter paths at Phosphor's regular weight instead — stroked rather than
-filled, so a cursor beside a magnifier reads as one set — in three colours for
-the states a toolbar button has. The tooltip carries the shortcut: a palette is
-aimed at rather than read, and the letter is one hover away for as long as it
-takes to learn the shape. The transport keeps to characters, which are shapes
-every font has.
-
-The first version of the arrowheads had the sign of their barbs backwards, so
-Trim and Slip drew their heads a pixel outside the box and came out as blobs.
-It is the kind of mistake a unit test cannot see and a screenshot shows
-immediately, which is the argument for looking at the window as part of
-building it.
-
-Not done: the design's media browser with thumbnails, bins as a tree, and
-filter chips; a floating panel system; and the Deliver workspace is the export
-dialog's neighbours rather than a page of its own.
-
 ### Phase 6r — the pen tool §7.4 ✅
 
 Drawing a mask path from nothing, rather than only bending one converted from
@@ -3927,6 +3837,125 @@ While debugging this, `stdout` became line buffered in the preview. The
 self-tests print as they go and are usually read from a redirected file; fully
 buffered, that file stays empty until the process exits, so a slow run and a
 hung one look exactly alike. They no longer do.
+
+### Phase 7o — the Cutline chrome §7.1 ✅
+
+The window, dressed. Every phase since 4a added a panel and hung its controls
+off the transport row; by 6q that row held eighteen buttons under the picture
+and the application looked like what it was, a test harness with a compositor
+behind it. This phase takes a design — Cutline, on the Nocturne palette — and
+builds the furniture it asks for: a menu bar, a tool bar with a tool palette
+and workspaces, one viewer with two pages, a timeline header, and a status
+line.
+
+**One place decides what colour anything is.** `app/Theme` holds the design
+system's tokens — a ground, a surface, a text colour and two nine-step ramps
+generated on one shared lightness scale — and builds both the palette Qt hands
+to its own style and the stylesheet every control is drawn from. The panels
+that paint themselves (the timeline, the meters, the burn-in) ask Theme for the
+same tokens rather than keeping a second palette that drifts from it. The
+keyframe self-test used to hunt for a literal `226,226,236` in the grab; it
+asks the theme for the diamond's colour now, because a test that pins a
+literal is a test that has to be chased every time the palette moves.
+
+**Eighteen buttons became nine menus.** A row of buttons is fine at four and
+illegible at eighteen: it says nothing about which of them belong together, and
+it grows every phase. The menus are where the structure lives, and the actions
+carry the object names the self-tests were already using — so the test that
+saved a project by clicking a button now triggers the same action from the File
+menu. Only modified shortcuts live on actions. A single letter bound
+window-wide would fire while somebody was typing a title into a text field,
+which is why the tool keys stay in the timeline's own key handler.
+
+**Tools, because some gestures have no obvious chord.** Select, Blade, Trim,
+Slip, Hand and Zoom. Trimming and moving still work under Select — that is what
+a pointer is for — but cutting, slipping and panning are each somebody's whole
+session, and a tool that stays picked is what makes a run of them fluent. Slip
+finally reaches the interface: `makeSlip` has been in the edit engine since
+Phase 2 with nothing calling it. A slip drag is measured in time rather than in
+pixels, so it means the same thing at every zoom, and the anchor only advances
+once a whole frame has been consumed — otherwise a slow drag at a high zoom
+rounds itself away one mouse-move at a time.
+
+**Workspaces are which panels are up.** Four, because there are four things
+people do with an editor and each wants a different half of the window: the
+scopes are dead weight while somebody is assembling, and the bin is dead weight
+while they are grading. Each workspace remembers its own splitter state — one
+saved arrangement restored into a different set of visible panels is a
+collapsed bin and a mixer four pixels tall.
+
+**One viewer, two pages.** Source and program were side by side, each with half
+the width, which is not enough width to judge either on. They are one stack with
+a segmented control now, and opening a clip from the bin — or a match frame —
+switches to the source, because that is what the gesture asked for. It has a
+cost the self-test found immediately: a monitor that is not the current page
+does not repaint, so the render-cache check read zero hits until it asked for
+the program back. Grabbing a hidden monitor still works; leaving it hidden and
+expecting it to redraw does not.
+
+**The burn-in is a widget, not a render.** Clip name, timecode, format and safe
+guides sit on a transparent overlay over the monitor — the same argument Phase
+6q made for the mask handles. The picture that leaves this application is the
+picture, and an overlay that could reach an export is a flag somebody
+eventually forgets to clear. It takes no mouse events, so the mask editor above
+it still gets every click.
+
+**A Qt layout given less room than its children need does not clip them, it
+overlaps them.** The mixer strip is taller than the panel usually gets, and the
+result was a meter painted over the solo button — visible in a screenshot and
+invisible to every test. The strips scroll now. The meters are narrow bars in
+the accent, and keep amber and red for the two states that are a warning: a
+level that is simply fine should look like the rest of the interface.
+
+**Icons are drawn, not fetched.** The design's tool palette is a row of
+Phosphor glyphs. Vendoring an icon font is a build dependency and a licence;
+taking the glyphs from whatever font happens to be installed gives a colour
+emoji on one platform and an empty box on another. `app/Icons` paints the six
+as painter paths at Phosphor's regular weight instead — stroked rather than
+filled, so a cursor beside a magnifier reads as one set — in three colours for
+the states a toolbar button has. The tooltip carries the shortcut: a palette is
+aimed at rather than read, and the letter is one hover away for as long as it
+takes to learn the shape. The transport keeps to characters, which are shapes
+every font has.
+
+The first version of the arrowheads had the sign of their barbs backwards, so
+Trim and Slip drew their heads a pixel outside the box and came out as blobs.
+It is the kind of mistake a unit test cannot see and a screenshot shows
+immediately, which is the argument for looking at the window as part of
+building it.
+
+Not done: the design's media browser with thumbnails, bins as a tree, and
+filter chips; a floating panel system; and the Deliver workspace is the export
+dialog's neighbours rather than a page of its own.
+
+### Phase 7p — the design's second pass §7.1 ✅
+
+Two changes came back from the design, and both are the kind that only show up
+once somebody has used the thing.
+
+**The tool palette belongs to the timeline.** It was on the window's tool bar,
+between the snap toggle and the workspaces. Every one of those six tools acts
+on the timeline and nothing else, and a control two panels away from what it
+changes is one people stop reaching for — so it moved to the timeline's own
+header, next to the razor and the dissolve, where the design puts it. It lost
+its box on the way: in the tool bar the border said where the group ended,
+while on the timeline header it sits among the other buttons that act on the
+timeline, and a line there separates things that belong together.
+
+**One colourful thing, once.** Donate is a hairline of spectrum around a button
+that is otherwise the ground it sits on. Asking for money should look like an
+invitation rather than another control — and it should look like it in exactly
+one place, or the rest of the interface starts competing with it. It is painted
+rather than styled: a Qt stylesheet can put a gradient *on* a border, but not a
+gradient ring around a fill of another colour, and faking that with a nested
+widget puts a second thing in the layout that has to be kept the same size as
+the first. The heart is the one filled glyph in `app/Icons`, which otherwise
+draws Phosphor's regular weight.
+
+Where the button points is one constant, `kSupportUrl`, and it currently points
+at the repository: there is no funding page yet, and inventing a URL that
+404s is worse than sending somebody to the project itself. One line to change
+when there is one.
 
 ## 7. Feature inventory (Premiere parity checklist)
 
