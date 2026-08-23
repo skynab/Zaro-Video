@@ -3734,6 +3734,40 @@ by the frame they sit on.
 §7.5 has one item left, a media browser — a panel for looking through folders
 without a file dialog. §7.6 is next.
 
+### Phase 7j — the media browser §7.5 ✅
+
+Looking through a card and taking what is wanted, without a file dialog in the
+way. The last of §7.5.
+
+**Media only, and the listing decides.** A card of footage also holds sidecar
+files, thumbnails and a manifest, none of which can be imported; listing them
+would make finding the footage harder, which is the one job here. Dot files
+stay hidden — a dot file is one somebody's tools made, not one they shot. The
+self-test puts a `MEDIAPRO.XML` and a `.DS_Store` on its card, and the revert
+check is a version that lists everything.
+
+**By extension, not by opening.** A browser that probed every file in a folder
+of camera media would take a minute to draw. Being wrong costs an import that
+fails with a clear message; being slow costs the feature.
+
+**Folders first, then files, each sorted without caring about case.** That is
+the order every file manager uses, and a browser that invented its own would be
+one people read rather than scan.
+
+**A window, not a docked panel.** Browsing a card is something somebody does
+for a minute at the start of a day; a permanent panel would spend the rest of
+the day taking space from the timeline. It stays open while importing, because
+taking three clips from three folders is one errand.
+
+**Importing the same file twice does nothing.** Two entries pointing at one
+file are two things to grade, relink and consolidate.
+
+**It opens where the media is.** A project that already has footage is nearly
+always getting more from the same place, so the browser starts in the folder
+the last import came from rather than at a home directory.
+
+§7.5 is complete. §7.6 — assistive and AI features — is next.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

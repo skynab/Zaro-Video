@@ -93,6 +93,7 @@
 #include "ExportDialog.h"
 #include "Icons.h"
 #include "MaskOverlay.h"
+#include "MediaBrowser.h"
 #include "MixerPanel.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
@@ -837,6 +838,40 @@ public:
             return Error{ErrorCode::InvalidData, "there is no sequence"};
         }
         return io::writeReviewNotes(*sequence, path);
+    }
+
+    /// Open the browser, on the folder the project's media came from.
+    ///
+    /// Starting there rather than at the home folder: somebody browsing for
+    /// media in a project that already has some is nearly always looking in
+    /// the same place they got the last lot.
+    app::MediaBrowser* browseMedia() {
+        if (browser_ == nullptr) {
+            browser_ = new app::MediaBrowser(this);
+            browser_->setProject(&project_, &commands_);
+            connect(browser_, &app::MediaBrowser::imported, this, [this] {
+                if (Status reopened = openMedia(); !reopened) {
+                    QMessageBox::warning(this, "Import",
+                                         QString::fromStdString(reopened.error().toString()));
+                }
+                bin_->refresh();
+                updateTitle();
+            });
+        }
+        if (browser_->folder().empty()) {
+            std::string start = std::filesystem::current_path().string();
+            for (const model::MediaRef& media : project_.media()) {
+                const std::filesystem::path parent =
+                    std::filesystem::path{media.path}.parent_path();
+                if (!parent.empty() && std::filesystem::is_directory(parent)) {
+                    start = parent.string();
+                }
+            }
+            static_cast<void>(browser_->showFolder(start));
+        }
+        browser_->show();
+        browser_->raise();
+        return browser_;
     }
 
     /// Gather the project's media into one folder and point it at the copies.
@@ -1874,6 +1909,9 @@ private:
         menuItem(
             file, "Import Media…", [this] { bin_->importFiles(); }, QKeySequence("Ctrl+I"),
             "import-media");
+        menuItem(
+            file, "Browse Media…", [this] { browseMedia(); }, QKeySequence("Ctrl+Shift+I"),
+            "browse-media");
         menuItem(file, "Relink Media…", [this] { relinkDialog(); }, QKeySequence{}, "relink-media");
         menuItem(
             file, "Consolidate Media…", [this] { consolidateDialog(); }, QKeySequence{},
@@ -3312,6 +3350,7 @@ private:
     render::AudioGraph::Meters latestMeters_;
     QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
+    app::MediaBrowser* browser_{nullptr};
     /// Somebody else has this project open, so it must not be written over.
     bool readOnly_{false};
     app::SourceMonitor* source_{nullptr};
@@ -8588,6 +8627,100 @@ int main(int argc, char** argv) {
                 window.commands().undo(window.project());
             }
             window.monitor()->update();
+            QApplication::processEvents();
+        }
+
+        // The media browser: look through a folder, take what is wanted.
+        {
+            const std::filesystem::path browseRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-browse";
+            std::filesystem::remove_all(browseRoot);
+            std::filesystem::create_directories(browseRoot / "DAY 2");
+            std::filesystem::copy_file("testdata/media/shaky_texture.mov",
+                                       browseRoot / "DAY 2" / "A001.mov");
+            std::filesystem::copy_file("testdata/media/wide_texture.mp4",
+                                       browseRoot / "DAY 2" / "A002.mp4");
+            // The things a card also holds, which are not footage.
+            {
+                std::ofstream junk{browseRoot / "DAY 2" / "MEDIAPRO.XML"};
+                junk << "<manifest/>";
+                std::ofstream hidden{browseRoot / "DAY 2" / ".DS_Store"};
+                hidden << "x";
+            }
+
+            auto* browser = window.browseMedia();
+            if (browser == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no media browser\n");
+                return 1;
+            }
+            if (Status shown = browser->showFolder(browseRoot.string()); !shown) {
+                std::fprintf(stderr, "  FAIL: %s\n", shown.error().toString().c_str());
+                return 1;
+            }
+            auto* browserList = browser->findChild<QListWidget*>("browser-list");
+            if (browserList == nullptr) {
+                std::fprintf(stderr, "  FAIL: the browser has no list\n");
+                return 1;
+            }
+            if (browserList->count() != 1) {
+                std::fprintf(stderr, "  FAIL: the top folder should hold one folder, not %d\n",
+                             browserList->count());
+                return 1;
+            }
+
+            // Into the folder, where the footage is and the junk is not.
+            if (Status shown = browser->showFolder((browseRoot / "DAY 2").string()); !shown) {
+                std::fprintf(stderr, "  FAIL: %s\n", shown.error().toString().c_str());
+                return 1;
+            }
+            if (browserList->count() != 2) {
+                std::fprintf(stderr,
+                             "  FAIL: the card should list two files, not %d -- the manifest "
+                             "and the dot file are not footage\n",
+                             browserList->count());
+                return 1;
+            }
+
+            const std::size_t mediaBeforeBrowse = window.project().media().size();
+            browser->selectAllFiles();
+            auto imported = browser->importSelected();
+            if (!imported) {
+                std::fprintf(stderr, "  FAIL: %s\n", imported.error().toString().c_str());
+                return 1;
+            }
+            if (*imported != 2 || window.project().media().size() != mediaBeforeBrowse + 2) {
+                std::fprintf(stderr, "  FAIL: %d files imported, not two\n", *imported);
+                return 1;
+            }
+            // Importing the same folder again adds nothing: two entries for one
+            // file would be two things to grade and relink.
+            auto again = browser->importSelected();
+            if (!again || *again != 0) {
+                std::fprintf(stderr, "  FAIL: importing twice made a second entry\n");
+                return 1;
+            }
+            std::printf("  media browser: %d imported, %zu now in the project\n", *imported,
+                        window.project().media().size());
+
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+            const auto justImported = window.project().media().back().id;
+            if (!window.frameSource().imageFor(
+                    justImported, zaro::time::RationalTime{1, zaro::time::rates::fps25})) {
+                std::fprintf(stderr, "  FAIL: what the browser imported does not decode\n");
+                return 1;
+            }
+
+            std::filesystem::remove_all(browseRoot);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
             QApplication::processEvents();
         }
 

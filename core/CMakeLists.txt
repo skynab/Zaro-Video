@@ -41,6 +41,7 @@ add_library(zaro_core
     src/render/LutTable.cpp
     src/render/PathRaster.cpp
     src/model/MediaSearch.cpp
+    src/io/MediaBrowser.cpp
     src/io/ProjectLock.cpp
     src/io/Relink.cpp
     src/io/ReviewNotes.cpp
