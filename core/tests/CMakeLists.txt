@@ -62,6 +62,7 @@ add_executable(zaro_core_tests
     render/test_effects.cpp
     render/test_keyer.cpp
     render/test_path_raster.cpp
+    render/test_reframe.cpp
     render/test_smart_render.cpp
     render/test_stabilise.cpp
     render/test_tracker.cpp

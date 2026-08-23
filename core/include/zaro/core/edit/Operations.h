@@ -382,6 +382,18 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y);
 
+/// What auto-reframe decided: a position curve on each axis and the scale that
+/// fills the frame.
+///
+/// It writes the clip's *own* position and scale rather than a second pair of
+/// parameters, because reframing is framing -- somebody is meant to look at the
+/// result and nudge it. Refuses when those are already animated: a clip with a
+/// move on it is one somebody composed by hand, and replacing that silently is
+/// the worst thing this could do.
+[[nodiscard]] Result<CommandPtr> makeReframe(model::Project& project, const EditTarget& target,
+                                             model::ClipId clip, const model::Curve& x,
+                                             const model::Curve& y, double scale);
+
 /// What the stabiliser found: both counter-movement curves and the zoom, in
 /// one command. Three commands would leave undo able to stop somewhere that
 /// holds the picture still and shows its edges. Empty curves and a zoom of one

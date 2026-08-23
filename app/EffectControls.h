@@ -85,6 +85,9 @@ signals:
     /// but not the pictures, so this is asked for rather than done here.
     void trackMaskRequested();
 
+    /// Recompose this clip for the sequence's shape.
+    void reframeRequested();
+
     /// Hold this clip still, or throw the analysis away. The panel has neither
     /// the frames nor the decoder, so it asks.
     void stabiliseRequested();
@@ -174,6 +177,7 @@ private:
     void pushResponsive();
     QPushButton* pin_{nullptr};
     QPushButton* unpin_{nullptr};
+    QPushButton* reframe_{nullptr};
     QPushButton* stabilise_{nullptr};
     QPushButton* unstabilise_{nullptr};
     void convertMaskToPath();

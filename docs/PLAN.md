@@ -3802,6 +3802,50 @@ A feature that is finished and correct in its own tests can still be one nobody
 can live with. Off by default until a lock can be cleared from the interface
 rather than from the filesystem.
 
+### Phase 7l — auto-reframe §7.6 ✅
+
+Putting a landscape shot into a portrait frame, following whatever is in it.
+The first of §7.6.
+
+**Scale to cover, then choose an offset.** Filling the new frame is not
+negotiable — an empty edge is a mistake rather than a look — so the only free
+parameter is where the window sits along whichever axis has slack. The revert
+check is a version that contains instead of covering, and the self-test counts
+transparent pixels in the composited frame: with cover there are none.
+
+**Interest is edge energy, not a face detector.** The sum of luminance
+gradients per column and per row: where the detail is. A face detector answers
+a narrower question better and a wider one worse — a landscape, a car, a hand,
+a graphic — and it is a model to ship, keep current and explain. Two profiles
+rather than a saliency map, because the window can only move along one axis at
+a time and a profile is a thousand numbers where a map is a million.
+
+**The window is centred on the interest, not merely around it.** Finding the
+window with the most interest is a running sum, which is fast and, on its own,
+wrong: a subject smaller than the window leaves every window containing it tied,
+and a plain maximum takes whichever tie the loop saw first — the leftmost. A
+subject a quarter of the way across the frame ended up at its right-hand edge.
+The centroid of the interest *inside* the best window is what the window is
+centred on, which is what "reframe on the subject" means.
+
+**Smoothed like a camera move.** The path is averaged over most of a second, so
+a subject flicking between two places does not make the frame flick with it —
+the test moves a subject 520 pixels every frame and checks the frame moves less
+than a fifth of that. A steady walk, though, is followed at the walk's own
+speed: smoothing removes jitter, not motion, and the first version of that test
+asserted otherwise and failed against arithmetic that was right.
+
+**It writes the clip's own position and scale**, not a private pair of
+parameters, because reframing is framing and somebody is meant to nudge the
+result. It refuses where those are already animated: a clip with a move on it
+was composed by hand, and replacing that silently is the worst thing this could
+do.
+
+Switching the window to another sequence turned out to leave the parameter
+panel and the bin pointed at the old one, so every control was disabled and the
+clip looked unselectable. They are rebound now — a bug that only a test working
+across two sequences would have found.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

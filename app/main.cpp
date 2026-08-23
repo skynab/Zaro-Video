@@ -74,6 +74,7 @@
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Compare.h"
 #include "zaro/core/render/PathRaster.h"
+#include "zaro/core/render/Reframe.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
@@ -187,6 +188,23 @@ public:
         connect(effects_, &app::EffectControls::unpinRequested, this,
                 [this] { static_cast<void>(pinTo(model::ClipId{})); });
         connect(effects_, &app::EffectControls::stabiliseRequested, this, [this] { stabilise(); });
+        connect(effects_, &app::EffectControls::reframeRequested, this, [this] {
+            QApplication::setOverrideCursor(Qt::WaitCursor);
+            auto framed = reframeClip();
+            QApplication::restoreOverrideCursor();
+            if (!framed) {
+                QMessageBox::information(this, "Auto-reframe",
+                                         QString::fromStdString(framed.error().message()));
+                return;
+            }
+            QString said = QString("Reframed %1 frames, scaled to %2%.")
+                               .arg(framed->measured)
+                               .arg(framed->scale * 100.0, 0, 'f', 0);
+            if (!framed->reason.empty()) {
+                said += QString("\n%1").arg(QString::fromStdString(framed->reason));
+            }
+            QMessageBox::information(this, "Auto-reframe", said);
+        });
         connect(effects_, &app::EffectControls::clearStabilisationRequested, this,
                 [this] { clearStabilisation(); });
         scopes_ = new app::ScopesPanel(this);
@@ -424,6 +442,32 @@ public:
     /// Adding a sequence reallocates the project's vector of them, so anything
     /// holding a pointer into it is looking at freed memory. This window looks
     /// its own up by id; the monitor is handed one, so it has to be told again.
+    /// Show a different sequence of the same project.
+    ///
+    /// The playhead goes back to the start rather than being carried across:
+    /// a position means "this far into this sequence", and keeping the number
+    /// while changing what it counts into is how a window ends up parked past
+    /// the end of something.
+    void setActiveSequence(model::SequenceId id) {
+        if (project_.findSequence(id) == nullptr) {
+            return;
+        }
+        project_.setActiveSequence(id);
+        sequenceId_ = id;
+        position_ = time::RationalTime{0, project_.findSequence(id)->frameRate()};
+        selectedTrack_ = model::TrackId{};
+        selectedClip_ = model::ClipId{};
+        renderCache_.clear();
+        // The panels hold which sequence they are about, so they have to be
+        // told too: a parameter panel still pointed at the sequence that has
+        // gone shows nothing and disables everything, which looks like the
+        // clip being unselectable rather than the panel being lost.
+        effects_->setProject(&project_, id, &commands_);
+        bin_->setProject(&project_, id, &commands_);
+        rebindSequence();
+        refresh();
+    }
+
     void rebindSequence() {
         monitor_->setSource(liveSequence(), media_.get());
         monitor_->setNesting(&project_, media_.get());
@@ -907,6 +951,66 @@ public:
         updateCacheBar();
         updateTitle();
         return report;
+    }
+
+    /// Recompose the selected clip to fill the sequence's frame.
+    ///
+    /// **On the clip's own frames**, like the stabiliser and for the same
+    /// reason: the composite already has this clip's transform on it, and the
+    /// transform is what is being decided.
+    Result<render::ReframeResult> reframeClip() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the clip to reframe"};
+        }
+        if (clip->graphic.kind != model::GraphicKind::None || clip->nested.isValid() ||
+            !clip->activeSource().isValid()) {
+            return Error{ErrorCode::InvalidData,
+                         "there is nothing to reframe: this clip is generated, not filmed"};
+        }
+
+        const auto step = time::RationalTime{1, sequence->frameRate()};
+        std::vector<time::RationalTime> times;
+        std::vector<time::RationalTime> timeline;
+        for (time::RationalTime at = clip->start(); at < clip->endExclusive(); at = at + step) {
+            timeline.push_back(at);
+            times.push_back(clip->activeSourceTimeAt(at));
+        }
+
+        auto framed = render::autoReframe(*media_, clip->activeSource(), times, sequence->width(),
+                                          sequence->height());
+        if (!framed) {
+            return framed;
+        }
+
+        model::Curve xs;
+        model::Curve ys;
+        for (std::size_t i = 0; i < framed->x.size() && i < timeline.size(); ++i) {
+            const time::RationalTime when = clip->sourceTimeAt(timeline[i]);
+            xs.set(model::Keyframe{when, framed->x[i], model::Interpolation::Linear, {}, {}});
+            ys.set(model::Keyframe{when, framed->y[i], model::Interpolation::Linear, {}, {}});
+        }
+        if (xs.empty()) {
+            return Error{ErrorCode::InvalidData, "there is not enough of this clip to reframe"};
+        }
+
+        auto built = edit::makeReframe(project_, {sequence->id(), selectedTrack_}, selectedClip_,
+                                       xs, ys, framed->scale);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+        return framed;
     }
 
     /// Pin the selected clip to one on a lower track, or to nothing.
@@ -8089,6 +8193,108 @@ int main(int argc, char** argv) {
             binSearch->setText("");
             QApplication::processEvents();
             window.bin()->refresh();
+            QApplication::processEvents();
+        }
+
+        // Auto-reframe, on a sequence whose shape does not match the footage.
+        {
+            const auto originalSequenceId = window.project().activeSequence();
+            // A tall sequence, which is what reframing is for: 320x240 footage
+            // in a 240x320 frame has to be scaled and then aimed.
+            zaro::model::Sequence tall{window.project().ids().next<zaro::model::SequenceTag>(),
+                                       "Vertical", zaro::time::rates::fps25};
+            tall.setSize(240, 320);
+            const auto tallId = tall.id();
+            const auto tallTrack = window.project().ids().next<zaro::model::TrackTag>();
+            tall.addTrack(tallTrack, zaro::model::TrackKind::Video, "V1");
+            window.project().addSequence(std::move(tall));
+            window.rebindSequence();
+
+            const auto& shakyMedia = window.project().media().front();
+            auto placed = zaro::edit::makePlaceFromSource(
+                window.project(), {tallId, tallTrack}, shakyMedia.id,
+                zaro::time::TimeRange{zaro::time::RationalTime{0, zaro::time::rates::fps25},
+                                      zaro::time::RationalTime{10, zaro::time::rates::fps25}},
+                zaro::time::RationalTime{0, zaro::time::rates::fps25},
+                zaro::edit::PlaceMode::Overwrite);
+            if (!placed) {
+                std::fprintf(stderr, "  FAIL: %s\n", placed.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*placed));
+            const auto tallClip =
+                window.project().findSequence(tallId)->findTrack(tallTrack)->clips().front().id;
+
+            window.setActiveSequence(tallId);
+            timeline->selectOnlyForTest(tallTrack, tallClip);
+            window.effects()->setSelection(tallTrack, tallClip);
+            QApplication::processEvents();
+
+            auto* reframeButton = window.effects()->findChild<QPushButton*>("auto-reframe");
+            if (reframeButton == nullptr || !reframeButton->isEnabled()) {
+                std::fprintf(stderr, "  FAIL: there is no usable auto-reframe button\n");
+                return 1;
+            }
+
+            auto framed = window.reframeClip();
+            if (!framed) {
+                std::fprintf(stderr, "  FAIL: %s\n", framed.error().toString().c_str());
+                return 1;
+            }
+            const auto* recomposed =
+                window.project().findSequence(tallId)->findTrack(tallTrack)->find(tallClip);
+            std::printf("  auto-reframe: %d frames, scaled to %.0f%%\n", framed->measured,
+                        framed->scale * 100.0);
+
+            // Scaled to cover: 320x240 into a 240x320 frame needs 320/240.
+            if (std::fabs(recomposed->transform.scaleX - (320.0 / 240.0)) > 0.01) {
+                std::fprintf(stderr, "  FAIL: the scale does not fill the frame (%.3f)\n",
+                             recomposed->transform.scaleX);
+                return 1;
+            }
+            if (recomposed->animation.find(zaro::model::Param::PositionX) == nullptr) {
+                std::fprintf(stderr, "  FAIL: reframing wrote no position keyframes\n");
+                return 1;
+            }
+            // And the frame is full: with the picture scaled to cover, no pixel
+            // of the output is left transparent.
+            window.setPosition(zaro::time::RationalTime{4, zaro::time::rates::fps25});
+            window.renderCache().clear();
+            zaro::render::RenderGraph graph{window.frameSource()};
+            graph.setProject(&window.project());
+            zaro::render::RgbaImage out;
+            if (Status drawn =
+                    graph.compositeInto(*window.project().findSequence(tallId),
+                                        zaro::time::RationalTime{4, zaro::time::rates::fps25}, out);
+                !drawn) {
+                std::fprintf(stderr, "  FAIL: %s\n", drawn.error().toString().c_str());
+                return 1;
+            }
+            int empty = 0;
+            for (std::int32_t downTheFrame = 0; downTheFrame < out.height(); ++downTheFrame) {
+                for (std::int32_t acrossIt = 0; acrossIt < out.width(); ++acrossIt) {
+                    empty += out.at(acrossIt, downTheFrame).a < 0.5F ? 1 : 0;
+                }
+            }
+            if (empty > 0) {
+                std::fprintf(stderr, "  FAIL: %d pixels of the reframed picture are empty\n",
+                             empty);
+                return 1;
+            }
+
+            // Refused where somebody has already composed the shot by hand.
+            auto again = zaro::edit::makeReframe(window.project(), {tallId, tallTrack}, tallClip,
+                                                 zaro::model::Curve{}, zaro::model::Curve{}, 1.0);
+            if (again) {
+                std::fprintf(stderr, "  FAIL: reframing over an animated clip was allowed\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            window.setActiveSequence(originalSequenceId);
+            window.renderCache().clear();
             QApplication::processEvents();
         }
 

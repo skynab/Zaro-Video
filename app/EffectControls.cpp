@@ -121,6 +121,12 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     // Stabilisation sits with Motion because that is what it changes, and next
     // to its own undo because an analysis somebody cannot throw away is one
     // they will not risk running.
+    reframe_ = new QPushButton("Auto-reframe", this);
+    reframe_->setObjectName("auto-reframe");
+    reframe_->setToolTip("Fill the sequence's frame with this shot, following what is in it");
+    motionForm->addRow(reframe_);
+    connect(reframe_, &QPushButton::clicked, this, [this] { emit reframeRequested(); });
+
     stabilise_ = new QPushButton("Stabilise", this);
     stabilise_->setObjectName("stabilise");
     stabilise_->setToolTip("Analyse this clip's own frames and hold the picture still");
@@ -848,6 +854,7 @@ void EffectControls::applyToWidgets() {
     stabilise_->setEnabled(clip->graphic.kind == model::GraphicKind::None &&
                            !clip->nested.isValid());
     unstabilise_->setEnabled(stabilised);
+    reframe_->setEnabled(isVideo);
 
     graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
     if (clip->graphic.isSet()) {

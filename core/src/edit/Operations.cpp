@@ -1189,6 +1189,52 @@ Result<CommandPtr> makeTrackMask(Project& project, const EditTarget& target, Cli
                       });
 }
 
+Result<CommandPtr> makeReframe(Project& project, const EditTarget& target, ClipId clipId,
+                               const model::Curve& x, const model::Curve& y, double scale) {
+    auto found = lookupClip(project, target, clipId);
+    if (!found) {
+        return found.error();
+    }
+    const Clip& existing = **found;
+    for (const model::Param param : {model::Param::PositionX, model::Param::PositionY,
+                                     model::Param::ScaleX, model::Param::ScaleY}) {
+        const model::Curve* curve = existing.animation.find(param);
+        if (curve != nullptr && !curve->empty()) {
+            return Error{ErrorCode::InvalidData,
+                         "this clip's position or scale is already animated -- clear it first"};
+        }
+    }
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        return Error{ErrorCode::InvalidData, "a reframe scale has to be above zero"};
+    }
+    for (const model::Curve* curve : {&x, &y}) {
+        for (const model::Keyframe& key : curve->keyframes()) {
+            if (!std::isfinite(key.value)) {
+                return Error{ErrorCode::InvalidData, "a keyframe has to be a real number"};
+            }
+        }
+    }
+
+    const bool clearing = x.empty() && y.empty();
+    return modifyClip(project, target, clipId, clearing ? "Clear reframe" : "Auto-reframe",
+                      "reframe:" + idText(clipId), [x, y, scale, clearing](Clip& clip) {
+                          if (clearing) {
+                              clip.animation.erase(model::Param::PositionX);
+                              clip.animation.erase(model::Param::PositionY);
+                              clip.transform.scaleX = 1.0;
+                              clip.transform.scaleY = 1.0;
+                              return;
+                          }
+                          clip.animation.curve(model::Param::PositionX) = x;
+                          clip.animation.curve(model::Param::PositionY) = y;
+                          // The scale is static: a frame that grew and shrank
+                          // while it moved would read as a zoom nobody asked
+                          // for.
+                          clip.transform.scaleX = scale;
+                          clip.transform.scaleY = scale;
+                      });
+}
+
 Result<CommandPtr> makeStabilise(Project& project, const EditTarget& target, ClipId clipId,
                                  const model::Curve& x, const model::Curve& y, double zoom) {
     for (const model::Curve* curve : {&x, &y}) {
