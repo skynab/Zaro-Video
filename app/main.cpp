@@ -1204,6 +1204,18 @@ public:
     /// Reports rather than reports *and* decides how to tell somebody. The
     /// button below puts the message on screen; a caller with no screen -- the
     /// self-test -- gets the same answer without a dialog it cannot dismiss.
+    /// Whether this build takes and honours project locks.
+    ///
+    /// **Off by default, for now.** The locking is finished and tested, but it
+    /// interrupts an ordinary run -- a lock left behind by a killed process, or
+    /// one written by a test, produces a dialog somebody has to answer before
+    /// they can carry on. Until there is a way to clear a lock from the
+    /// interface rather than from the filesystem, the interruption costs more
+    /// than the protection is worth. `ZARO_LOCKING=1` turns it back on, and
+    /// the self-test turns it on for the block that checks it.
+    static bool lockingEnabled() { return locking_; }
+    static void setLockingEnabled(bool enabled) { locking_ = enabled; }
+
     /// How to treat a project somebody else already has open.
     enum class Sharing : std::uint8_t {
         /// Take the lock if it is free or stale; refuse to open otherwise.
@@ -1228,7 +1240,7 @@ public:
         // refusing after the window has already changed would be worse than
         // not opening at all.
         bool readOnly = false;
-        if (auto held = io::readLock(path); held && !io::isOurs(*held)) {
+        if (auto held = io::readLock(path); lockingEnabled() && held && !io::isOurs(*held)) {
             const bool free = io::isStale(*held);
             if (!free && sharing == Sharing::Exclusive) {
                 return Error{ErrorCode::InvalidData,
@@ -1240,7 +1252,7 @@ public:
         releaseLock();
         adopt(std::move(loaded->project), std::move(*loaded), path);
         readOnly_ = readOnly;
-        if (!readOnly_) {
+        if (lockingEnabled() && !readOnly_) {
             // Advisory, so a volume that will not take one is not a reason to
             // refuse to work: the failure is ignored on purpose.
             static_cast<void>(io::writeLock(path, io::thisProcess()));
@@ -1288,6 +1300,10 @@ public:
         project_ = std::move(project);
         loaded_ = std::move(loaded);
         path_ = std::move(path);
+        // Read-only is a fact about the file that has just gone, not about the
+        // window. Left set, it would follow somebody into a new project and
+        // refuse to save it, naming a person who has nothing to do with it.
+        readOnly_ = false;
         sequenceId_ = project_.activeSequence();
         position_ = time::RationalTime{0, project_.findSequence(sequenceId_)->frameRate()};
         selectedTrack_ = model::TrackId{};
@@ -1362,6 +1378,8 @@ public:
             return written.error();
         }
         setProjectPath(next);
+        // A new version is a different file, which nobody else has open.
+        readOnly_ = false;
         commands_.markSaved();
         std::error_code code;
         std::filesystem::remove(io::autosavePath(next), code);
@@ -1451,7 +1469,12 @@ public:
         if (chosen.isEmpty()) {
             return false;
         }
+        // Saving somewhere else is exactly the way out of somebody else's
+        // lock, so it clears read-only rather than being refused by it -- the
+        // old advice was "save a new version to keep your work", which the
+        // program then would not let anybody do.
         setProjectPath(chosen.toStdString());
+        readOnly_ = false;
         return save();
     }
 
@@ -3353,6 +3376,7 @@ private:
     app::MediaBrowser* browser_{nullptr};
     /// Somebody else has this project open, so it must not be written over.
     bool readOnly_{false};
+    static inline bool locking_{false};
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
     QSplitter* mainSplitter_{nullptr};
@@ -3458,6 +3482,10 @@ int main(int argc, char** argv) {
     const bool selfTest = arguments.removeAll("--selftest") > 0;
     const bool editTest = arguments.removeAll("--selftest-edit") > 0;
     const bool quitTest = arguments.removeAll("--selftest-quit") > 0;
+    // Project locking is off unless asked for. See PreviewWindow::lockingEnabled.
+    const char* lockingWanted = std::getenv("ZARO_LOCKING");
+    PreviewWindow::setLockingEnabled(arguments.removeAll("--locking") > 0 ||
+                                     (lockingWanted != nullptr && *lockingWanted == '1'));
     QString capturePath;
     if (const auto at = arguments.indexOf("--capture"); at >= 0 && at + 1 < arguments.size()) {
         capturePath = arguments.at(at + 1);
@@ -3474,6 +3502,7 @@ int main(int argc, char** argv) {
         std::puts("  --capture <png>   with --selftest, save what the monitor showed");
         std::puts("  --selftest-edit   drive a trim and a drag through the timeline, exit");
         std::puts("  --selftest-quit   quit with background work in flight, exit");
+        std::puts("  --locking         take a lock on the project, and honour other people's");
         return 2;
     }
 
@@ -8830,7 +8859,12 @@ int main(int argc, char** argv) {
         }
 
         // Sharing: a lock beside the project, and what it stops.
+        //
+        // Turned on for this block only: locking is off by default because a
+        // lock left behind interrupts an ordinary run, and the feature it
+        // protects is worth testing anyway.
         {
+            PreviewWindow::setLockingEnabled(true);
             const std::filesystem::path lockRoot =
                 std::filesystem::temp_directory_path() / "zaro-selftest-locks";
             std::filesystem::remove_all(lockRoot);
@@ -8918,6 +8952,7 @@ int main(int argc, char** argv) {
 
             window.releaseLock();
             std::filesystem::remove_all(lockRoot);
+            PreviewWindow::setLockingEnabled(false);
         }
 
         // Versioning: save a new version and carry on in it.
@@ -9116,7 +9151,17 @@ int main(int argc, char** argv) {
             // Handed back, and checked: a self-test that left a lock beside
             // the fixture would make the next run look like somebody else had
             // the project open.
+            PreviewWindow::setLockingEnabled(true);
+            if (Status again = window.openProject(originalPath); !again) {
+                std::fprintf(stderr, "  FAIL: %s\n", again.error().toString().c_str());
+                return 1;
+            }
+            if (!std::filesystem::exists(zaro::io::lockPath(originalPath))) {
+                std::fprintf(stderr, "  FAIL: opening with locking on took no lock\n");
+                return 1;
+            }
             window.releaseLock();
+            PreviewWindow::setLockingEnabled(false);
             if (std::filesystem::exists(zaro::io::lockPath(originalPath))) {
                 std::fprintf(stderr, "  FAIL: closing left a lock behind\n");
                 return 1;

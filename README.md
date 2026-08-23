@@ -98,6 +98,7 @@ presenting about 47 of the 59.94 frames per second against the CPU path's 7.
 | 7h | Shared projects: an advisory lock, and read-only | **done** |
 | 7i | Review comments, and a list to send | **done** |
 | 7j | The media browser: look through a card, take what you want | **done** |
+| 7k | Locking off by default, and two read-only bugs fixed | **done** |
 | 6r | The Cutline chrome: menus, tools, workspaces | **done** |
 
 ## Building

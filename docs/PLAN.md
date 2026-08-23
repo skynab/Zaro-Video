@@ -3768,6 +3768,40 @@ the last import came from rather than at a home directory.
 
 §7.5 is complete. §7.6 — assistive and AI features — is next.
 
+### Phase 7k — locking paused, and what it was hiding §7.5 ✅
+
+Phase 7h's project locking interrupted ordinary runs: a lock left behind by a
+killed process, or one written by a test, produced a dialog somebody had to
+answer before they could carry on. It is off by default now — `ZARO_LOCKING=1`
+or `--locking` turns it back on, and the self-test turns it on for the block
+that checks it.
+
+The interruption was worth chasing rather than only silencing, because it was
+two real bugs standing next to each other:
+
+**"Save a new version to keep your work" was advice the program then refused to
+take.** `saveAs` routed through `save`, which refused while read-only — so the
+one way out of somebody else's lock was closed by the lock. Saving somewhere
+else clears read-only now, because a different file is not the file they have
+open. Saving a new version does too.
+
+**Read-only followed the window, not the file.** `adopt` never cleared it, so
+opening a locked project read-only and then starting a *new* project left the
+new one unsaveable, refusing in the name of somebody with nothing to do with
+it.
+
+Both are the same mistake: treating "somebody else has this file" as a property
+of the window rather than of the file it happens to have open. The fix is one
+line in each place and the feature is better for it — but the reason the bugs
+survived being tested is worth naming. The self-test drove `openProject` and
+`save` directly and never went near `saveAs`, `newProject` or the sequence
+"open theirs, then start your own", which is the path a person takes in about
+ten seconds.
+
+A feature that is finished and correct in its own tests can still be one nobody
+can live with. Off by default until a lock can be cleared from the interface
+rather than from the filesystem.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
