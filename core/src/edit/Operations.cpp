@@ -1189,6 +1189,90 @@ Result<CommandPtr> makeTrackMask(Project& project, const EditTarget& target, Cli
                       });
 }
 
+Result<CommandPtr> makeRemix(Project& project, const EditTarget& target, ClipId clipId,
+                             double cutAt, double resumeFrom, double joinFadeSeconds) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    const Clip* found = located->track->find(clipId);
+    if (found == nullptr) {
+        return Error{ErrorCode::NotFound, "no such clip"};
+    }
+    if (!(resumeFrom > cutAt) || cutAt < 0.0 || joinFadeSeconds < 0.0) {
+        return Error{ErrorCode::InvalidData, "that is not a piece to take out"};
+    }
+
+    const Clip& original = *found;
+    const time::Rational rate = original.sourceRange.start().rate();
+    const auto seconds = [rate](double value) {
+        return time::RationalTime{static_cast<std::int64_t>(std::llround(value * rate.toDouble())),
+                                  rate};
+    };
+    const time::RationalTime sourceStart = original.sourceRange.start();
+    const time::RationalTime cut = sourceStart + seconds(cutAt);
+    const time::RationalTime resume = sourceStart + seconds(resumeFrom);
+    const time::RationalTime sourceEnd = original.sourceRange.endExclusive();
+    if (cut <= sourceStart || resume >= sourceEnd) {
+        return Error{ErrorCode::InvalidData, "that cut falls outside the clip"};
+    }
+
+    const ClipId tailId = project.ids().next<model::ClipTag>();
+    const TrackId trackId = target.track;
+    const auto fade = seconds(joinFadeSeconds);
+
+    return makeCommand(
+        target.sequence, "Fit music to length", {},
+        [clipId, tailId, trackId, cut, resume, sourceEnd, fade](Sequence& sequence) {
+            Track* track = sequence.findTrack(trackId);
+            ZARO_CHECK(track != nullptr, "track vanished between build and apply");
+            const Clip* existing = track->find(clipId);
+            ZARO_CHECK(existing != nullptr, "clip vanished between build and apply");
+            const Clip original = *existing;
+
+            Clip head = original;
+            head.sourceRange =
+                time::TimeRange{original.sourceRange.start(), cut - original.sourceRange.start()};
+            head.timelineRange = time::TimeRange{original.start(), head.sourceRange.duration()};
+
+            Clip tail = original;
+            tail.id = tailId;
+            tail.sourceRange = time::TimeRange{resume, sourceEnd - resume};
+            // Butted, not overlapped: a track holds that its clips are in
+            // order and do not overlap, and two halves that overlapped would
+            // trip that the moment they were placed.
+            tail.timelineRange =
+                time::TimeRange{head.timelineRange.endExclusive(), tail.sourceRange.duration()};
+
+            // Written as gain rather than as a transition: a dip at a join is
+            // two level ramps, and the level curves already exist, are already
+            // keyframed in source time, and already survive a trim.
+            if (fade.toSecondsDouble() > 0.0) {
+                model::Curve down;
+                down.set(
+                    model::Keyframe{cut - fade, head.gainDb, model::Interpolation::Linear, {}, {}});
+                down.set(model::Keyframe{cut, -60.0, model::Interpolation::Linear, {}, {}});
+                head.animation.curve(model::Param::GainDb) = down;
+
+                model::Curve up;
+                up.set(model::Keyframe{resume, -60.0, model::Interpolation::Linear, {}, {}});
+                up.set(model::Keyframe{
+                    resume + fade, tail.gainDb, model::Interpolation::Linear, {}, {}});
+                tail.animation.curve(model::Param::GainDb) = up;
+            }
+
+            std::vector<Clip> rebuilt;
+            for (const Clip& other : track->clips()) {
+                if (other.id != clipId) {
+                    rebuilt.push_back(other);
+                }
+            }
+            rebuilt.push_back(std::move(head));
+            rebuilt.push_back(std::move(tail));
+            track->setClips(std::move(rebuilt));
+        });
+}
+
 Result<CommandPtr> makeReframe(Project& project, const EditTarget& target, ClipId clipId,
                                const model::Curve& x, const model::Curve& y, double scale) {
     auto found = lookupClip(project, target, clipId);

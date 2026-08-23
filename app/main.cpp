@@ -75,6 +75,7 @@
 #include "zaro/core/render/Compare.h"
 #include "zaro/core/render/PathRaster.h"
 #include "zaro/core/render/Reframe.h"
+#include "zaro/core/render/Remix.h"
 #include "zaro/core/render/RenderCache.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/core/render/SceneDetect.h"
@@ -951,6 +952,55 @@ public:
         updateCacheBar();
         updateTitle();
         return report;
+    }
+
+    /// Fit the selected music clip to a length by taking a piece out of it.
+    ///
+    /// The length wanted is the picture's: fitting music to a cut is the
+    /// errand, and asking for a number when the answer is on screen would be a
+    /// question with one sensible reply.
+    Result<render::RemixPlan> remixSelectedTo(double targetSeconds) {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        if (clip == nullptr || media_ == nullptr) {
+            return Error{ErrorCode::InvalidData, "select the music to fit"};
+        }
+        if (!clip->activeSource().isValid()) {
+            return Error{ErrorCode::InvalidData, "that clip has no media to look at"};
+        }
+        const model::MediaRef* media = project_.findMedia(clip->activeSource());
+        if (media == nullptr || media->info.primaryAudio() == nullptr) {
+            return Error{ErrorCode::InvalidData, "there is no sound in that clip"};
+        }
+
+        const double have = clip->sourceRange.duration().toSecondsDouble();
+        auto beats =
+            render::detectBeats(*media_, clip->activeSource(), have, sequence->audioSampleRate());
+        if (!beats) {
+            return beats.error();
+        }
+        // The beats are measured from the clip's own start, so a clip already
+        // trimmed into the middle of a track still cuts on its own beats.
+        auto plan = render::planRemix(*beats, have, targetSeconds);
+        if (!plan) {
+            return plan;
+        }
+
+        auto built = edit::makeRemix(project_, {sequence->id(), selectedTrack_}, selectedClip_,
+                                     plan->cutAt, plan->resumeFrom, plan->joinFade);
+        if (!built) {
+            return built.error();
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        timeline_->update();
+        monitor_->update();
+        updateCacheBar();
+        updateTitle();
+        return plan;
     }
 
     /// Recompose the selected clip to fill the sequence's frame.
@@ -2082,6 +2132,34 @@ private:
         menuItem(sequence, "Render Range…", [this] { renderMenu(); }, {}, "render-range");
         menuItem(sequence, "Delivery…", [this] { deliveryMenu(); }, {}, "delivery");
         menuItem(sequence, "Loudness…", [this] { loudnessMenu(); }, {}, "loudness");
+
+        QMenu* audio = menuBar_->addMenu("Audio");
+        menuItem(
+            audio, "Fit Music to the Picture",
+            [this] {
+                const model::Sequence* sequence = liveSequence();
+                if (sequence == nullptr) {
+                    return;
+                }
+                // The picture's length, less wherever the music starts: what
+                // has to be filled is what is left after it comes in.
+                const model::Track* track = sequence->findTrack(selectedTrack_);
+                const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+                const double from = clip != nullptr ? clip->start().toSecondsDouble() : 0.0;
+                const double wanted = sequence->duration().toSecondsDouble() - from;
+                auto plan = remixSelectedTo(wanted);
+                if (!plan) {
+                    QMessageBox::information(this, "Fit music",
+                                             QString::fromStdString(plan.error().message()));
+                    return;
+                }
+                QMessageBox::information(this, "Fit music",
+                                         QString("Cut %1 beats out at %2s, now %3s long.")
+                                             .arg(plan->beatsRemoved)
+                                             .arg(plan->cutAt, 0, 'f', 2)
+                                             .arg(plan->seconds, 0, 'f', 2));
+            },
+            QKeySequence{}, "fit-music");
 
         QMenu* marker = menuBar_->addMenu("Marker");
         menuItem(marker, "Add Marker", [this] { timeline_->addMarkerAtPlayhead(); });
@@ -8193,6 +8271,127 @@ int main(int argc, char** argv) {
             binSearch->setText("");
             QApplication::processEvents();
             window.bin()->refresh();
+            QApplication::processEvents();
+        }
+
+        // Fitting music to a length, on a track with a known beat.
+        {
+            auto probedClick = zaro::platform::ffmpeg::probe("testdata/media/click_track.wav");
+            if (!probedClick) {
+                std::fprintf(stderr, "  FAIL: %s (run testdata/generate.sh)\n",
+                             probedClick.error().toString().c_str());
+                return 1;
+            }
+            zaro::model::MediaRef music;
+            music.path = "testdata/media/click_track.wav";
+            music.name = "click track";
+            music.info = *probedClick;
+            auto broughtIn = zaro::edit::makeImportMedia(window.project(), music);
+            if (!broughtIn) {
+                std::fprintf(stderr, "  FAIL: %s\n", broughtIn.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*broughtIn));
+            const auto musicId = window.project().media().back().id;
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
+
+            const auto musicSequenceId = window.project().activeSequence();
+            const auto* musicSequence = window.project().findSequence(musicSequenceId);
+            const auto musicRate = musicSequence->frameRate();
+            const auto musicTrack = musicSequence->audioTracks().front().id();
+            auto laid = zaro::edit::makePlaceFromSource(
+                window.project(), {musicSequenceId, musicTrack}, musicId,
+                zaro::time::TimeRange{
+                    zaro::time::RationalTime{0, musicRate},
+                    zaro::time::RationalTime{static_cast<std::int64_t>(12 * musicRate.toDouble()),
+                                             musicRate}},
+                zaro::time::RationalTime{0, musicRate}, zaro::edit::PlaceMode::Overwrite);
+            if (!laid) {
+                std::fprintf(stderr, "  FAIL: %s\n", laid.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*laid));
+            zaro::model::ClipId musicClip;
+            for (const auto& candidate :
+                 window.project().findSequence(musicSequenceId)->findTrack(musicTrack)->clips()) {
+                if (candidate.source == musicId) {
+                    musicClip = candidate.id;
+                }
+            }
+            if (!musicClip.isValid()) {
+                std::fprintf(stderr, "  FAIL: the music was not placed\n");
+                return 1;
+            }
+
+            timeline->selectOnlyForTest(musicTrack, musicClip);
+            window.effects()->setSelection(musicTrack, musicClip);
+            QApplication::processEvents();
+
+            constexpr double kWanted = 7.0;
+            auto plan = window.remixSelectedTo(kWanted);
+            if (!plan) {
+                std::fprintf(stderr, "  FAIL: %s\n", plan.error().toString().c_str());
+                return 1;
+            }
+            std::printf("  fit music: cut %d beats at %.2fs, %.2fs long\n", plan->beatsRemoved,
+                        plan->cutAt, plan->seconds);
+            // Within a beat of what was asked for: landing exactly would mean
+            // cutting off the beat.
+            if (std::fabs(plan->seconds - kWanted) > 0.5) {
+                std::fprintf(stderr, "  FAIL: the remix is %.2fs, not %.2fs\n", plan->seconds,
+                             kWanted);
+                return 1;
+            }
+            // The cut lands on a click, not between them.
+            const double intoBeat = std::fmod(plan->cutAt + 0.005, 0.5);
+            if (std::min(intoBeat, 0.5 - intoBeat) > 0.05) {
+                std::fprintf(stderr, "  FAIL: the cut at %.3fs is not on a beat\n", plan->cutAt);
+                return 1;
+            }
+
+            // Two clips now, with the join crossfaded rather than butted.
+            const auto* remixed =
+                window.project().findSequence(musicSequenceId)->findTrack(musicTrack);
+            int pieces = 0;
+            bool hasFade = false;
+            double covered = 0.0;
+            for (const auto& piece : remixed->clips()) {
+                if (piece.source != musicId) {
+                    continue;
+                }
+                ++pieces;
+                covered = std::max(covered, piece.endExclusive().toSecondsDouble());
+                hasFade = hasFade || piece.animation.find(zaro::model::Param::GainDb) != nullptr;
+            }
+            if (pieces != 2) {
+                std::fprintf(stderr, "  FAIL: the remix made %d pieces, not two\n", pieces);
+                return 1;
+            }
+            if (!hasFade) {
+                std::fprintf(stderr, "  FAIL: the join has no fade on it\n");
+                return 1;
+            }
+            if (std::fabs(covered - plan->seconds) > 0.2) {
+                std::fprintf(stderr, "  FAIL: the timeline holds %.2fs, not %.2fs\n", covered,
+                             plan->seconds);
+                return 1;
+            }
+            // Asking for more than there is says so rather than looping.
+            if (auto longer = window.remixSelectedTo(30.0); longer) {
+                std::fprintf(stderr, "  FAIL: making the music longer was allowed\n");
+                return 1;
+            }
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            if (Status reopened = window.reopenMedia(); !reopened) {
+                std::fprintf(stderr, "  FAIL: %s\n", reopened.error().toString().c_str());
+                return 1;
+            }
             QApplication::processEvents();
         }
 

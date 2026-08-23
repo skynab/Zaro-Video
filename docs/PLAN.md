@@ -3846,6 +3846,46 @@ panel and the bin pointed at the old one, so every control was disabled and the
 clip looked unselectable. They are rebound now — a bug that only a test working
 across two sequences would have found.
 
+### Phase 7m — remix §7.6 ✅
+
+Making a piece of music the length the cut needs by taking a piece out of the
+middle of it, on the beat.
+
+**Onset strength, then peaks — not a tempo estimate.** The rise in energy from
+one ten-millisecond window to the next is what a beat is from outside the
+music: a drum, a chord change, a note starting. Rises only, because a fall is
+the end of something and nobody claps on those. A grid fitted to a tempo is a
+better answer for music that keeps one and a worse answer for music that does
+not, and the only thing this needs is somewhere to cut.
+
+**Both edges land on onsets.** Cutting on a beat is what stops the join being
+heard as a stumble. The result lands within a beat of the length asked for
+rather than exactly on it, because landing exactly means cutting off the beat —
+which is the one thing this exists to avoid.
+
+**An edit, not a new file.** The result is the same clip twice with a different
+piece of the track in each, which is what an editor would have done by hand: it
+can be trimmed, moved, undone and looked at. Rendering new audio would put the
+decision somewhere nobody can see.
+
+**Butted with a dip, not crossfaded.** The first version overlapped the two
+halves and tripped the timeline's own check — a track holds that its clips are
+in order and do not overlap, which is what keeps everything else about it
+simple. So the outgoing half fades down into the cut and the incoming half
+fades up out of it. That hides a chopped note tail; a true crossfade wants
+audio transitions, which this model does not have.
+
+**Making music longer is refused.** Looping to extend is a different operation
+with a different failure — the join is heard twice — and doing it silently
+under the name of "fit to length" would be a surprise.
+
+**A fixture with a beat in it, and a test that can fail.** The existing audio
+fixture is a continuous sine: nothing starts, so there is nothing to find.
+`click_track.wav` has a click every half second. And the *plan* tests originally
+used beats every 0.5s from zero, where an arithmetic cut that never looked at
+the beat list still lands on one — the revert check passed happily. The beats
+are at an offset tempo with two missing now, and it fails as it should.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

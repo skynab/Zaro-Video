@@ -382,6 +382,26 @@ enum class PlaceMode {
                                                model::ClipId clip, const model::Curve& x,
                                                const model::Curve& y);
 
+/// Fit a music clip to a length by taking a piece out of the middle of it.
+///
+/// **An edit, not a new file.** The result is the same clip twice with a
+/// different piece of the track in each, butted together, which is what an
+/// editor would have done by hand -- so it can be trimmed, moved, undone and
+/// looked at afterwards. Rendering a new audio file would put the decision
+/// somewhere nobody can see it.
+///
+/// **Butted, with a dip, rather than overlapped.** A crossfade needs the halves
+/// to overlap, and a track holds that its clips are in order and do not: the
+/// first attempt at this tripped exactly that check. The outgoing half fades
+/// down into the cut and the incoming half fades up out of it, which is what
+/// hides a chopped note tail.
+///
+/// `cutAt` and `resumeFrom` are in the media's own seconds, and the fade is
+/// written as gain keyframes on the two halves.
+[[nodiscard]] Result<CommandPtr> makeRemix(model::Project& project, const EditTarget& target,
+                                           model::ClipId clip, double cutAt, double resumeFrom,
+                                           double joinFadeSeconds);
+
 /// What auto-reframe decided: a position curve on each axis and the scale that
 /// fills the frame.
 ///

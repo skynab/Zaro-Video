@@ -94,6 +94,15 @@ q -f lavfi -i "color=c=black:s=1280x720:r=25:d=1" \
   -vf "geq=lum='128+90*sin(X/11)*cos(Y/9)':cb=128:cr=128,format=yuv420p" \
   -frames:v 24 -c:v libx264 -preset veryfast -crf 18 "$out/wide_texture.mp4"
 
+# --- Something with a beat in it ----------------------------------------------
+# A click every half second for twelve seconds. The tone fixture above is a
+# continuous sine, which has no onsets at all -- nothing starts, so there is
+# nothing to find and nothing to cut on. This one has a known beat, so "did it
+# find the beats" and "did it cut on one" both have answers.
+echo "  click_track.wav     (a beat every half second)"
+q -f lavfi -i "aevalsrc=0.7*sin(2*PI*880*t)*lt(mod(t\,0.5)\,0.03):s=48000:d=12" \
+  -c:a pcm_s16le "$out/click_track.wav"
+
 # --- Variable frame rate ------------------------------------------------------
 # Dropping three frames out of every ten leaves uneven PTS deltas -- 1/30s
 # within a run, 4/30s across the gap -- which is what phone footage looks like

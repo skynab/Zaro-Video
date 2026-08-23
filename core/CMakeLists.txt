@@ -46,6 +46,7 @@ add_library(zaro_core
     src/io/Relink.cpp
     src/io/ReviewNotes.cpp
     src/render/Reframe.cpp
+    src/render/Remix.cpp
     src/render/Resample.cpp
     src/render/SmartRender.cpp
     src/render/Stabilise.cpp
