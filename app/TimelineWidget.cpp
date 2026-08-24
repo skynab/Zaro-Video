@@ -1,5 +1,6 @@
 #include "TimelineWidget.h"
 
+#include <QEvent>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -13,6 +14,7 @@
 #include "zaro/core/model/Graphic.h"
 #include "zaro/core/time/Timecode.h"
 
+#include "Icons.h"
 #include "Theme.h"
 
 namespace zaro::app {
@@ -30,6 +32,11 @@ const QColor kAudioLane = theme::mix(theme::surface(), theme::bg(), 0.72);
 const QColor kGridLine = theme::textAt(0.14);
 const QColor kSelectedOutline = theme::accent(300);
 const QColor kBand = theme::accent(400);
+// The alignment guide and the blade's own line. Both in the accent, because
+// both are the interface saying "here", and told apart by how they are drawn
+// rather than by colour.
+const QColor kSnapGuide = theme::accent(300);
+const QColor kBladeLine = theme::accent(200);
 const QColor kPlayhead = theme::accent(200);
 // Green, and only green: a bar with green, yellow and red in it is three
 // claims, and only one of them -- "this will play" -- is one we can make. The
@@ -77,6 +84,23 @@ ClipPaint clipPaint(model::TrackKind kind, const model::Clip& clip) {
             theme::accent(100)};
 }
 
+/// The link badge, cached by colour.
+///
+/// Drawn once per colour rather than once per clip: a repaint of a busy
+/// timeline draws this on every clip in view, and rasterising the same nine
+/// pixels a hundred times a frame is work nobody asked for. Three colours can
+/// ever be asked for -- the three clip families -- so the cache is bounded by
+/// construction.
+const QPixmap& linkBadge(const QColor& ink) {
+    static std::map<QRgb, QPixmap> cache;
+    const QRgb key = ink.rgba();
+    auto found = cache.find(key);
+    if (found == cache.end()) {
+        found = cache.emplace(key, icons::pixmap(icons::Glyph::Link, 11, ink)).first;
+    }
+    return found->second;
+}
+
 }  // namespace
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget{parent} {
@@ -93,6 +117,7 @@ void TimelineWidget::setTool(Tool tool) {
     tool_ = tool;
     // Any half-finished gesture belongs to the tool that started it.
     finishDrag();
+    clearGestureMarks();
     unsetCursor();
     emit toolChanged();
     update();
@@ -286,6 +311,12 @@ void TimelineWidget::paintEvent(QPaintEvent* /*event*/) {
 
     paintTracks(painter);
     paintRuler(painter);
+    // Under the playhead, over the clips: the guide is about where an edit is
+    // going, and the playhead is where the picture is. When they coincide --
+    // which is the whole point of snapping to it -- the playhead should be the
+    // line you see.
+    paintBladePreview(painter);
+    paintSnapGuide(painter);
     paintPlayhead(painter);
 
     if (drag_ == Drag::Band && !band_.isNull()) {
@@ -550,6 +581,20 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             paintWaveform(painter, *clip, body);
         }
 
+        // Linked to something: said on the clip, because the consequence --
+        // that editing this also edits its partner -- is a surprise otherwise,
+        // and the only other place it shows is the outline that appears on
+        // the partner once this one is selected.
+        if (clip->link.isValid() && body.width() > 30.0 && body.height() > 18.0) {
+            QColor ink = paint.label;
+            ink.setAlpha(190);
+            const QPixmap& badge = linkBadge(ink);
+            painter.drawPixmap(
+                QPointF(body.right() - badge.width() / badge.devicePixelRatio() - 4.0,
+                        body.top() + 5.0),
+                badge);
+        }
+
         if (body.width() > 28.0) {
             painter.setPen(paint.label);
             // Along the top, under the strip, rather than through the middle:
@@ -736,12 +781,89 @@ void TimelineWidget::paintPlayhead(QPainter& painter) {
     painter.setBrush(Qt::NoBrush);
 }
 
+void TimelineWidget::paintSnapGuide(QPainter& painter) {
+    if (!snapMark_.active) {
+        return;
+    }
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const double x = layout_.xForTime(snapMark_.time);
+    if (x < layout_.metrics().headerWidth || x > width()) {
+        return;
+    }
+
+    // Down the whole stack of tracks rather than only the one being edited:
+    // the alignment being made is *with* the other tracks, and a line that
+    // stops at the clip under the pointer shows the half of it that was never
+    // in question.
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    QPen pen{kSnapGuide, 1.0, Qt::DashLine};
+    pen.setDashPattern({3.0, 3.0});
+    painter.setPen(pen);
+    painter.drawLine(QPointF(x, layout_.metrics().rulerHeight), QPointF(x, height()));
+
+    // A tick at the row the time came from, so a cut lined up with V2 says V2
+    // rather than leaving you to count. The playhead and the sequence start
+    // belong to no track and get a tick in the ruler instead.
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(kSnapGuide);
+    const auto tick = [&](double top, double bottom) {
+        painter.drawRect(QRectF(x - 1.5, top, 3.0, bottom - top));
+    };
+    if (snapMark_.track.isValid()) {
+        if (const auto row = rowFor(snapMark_.track)) {
+            tick(row->top + 2.0, row->top + row->height - 2.0);
+        }
+    } else {
+        tick(layout_.metrics().rulerHeight - 5.0, layout_.metrics().rulerHeight);
+    }
+    painter.setBrush(Qt::NoBrush);
+}
+
+void TimelineWidget::paintBladePreview(QPainter& painter) {
+    if (!bladeMark_.active) {
+        return;
+    }
+    const auto row = rowFor(bladeMark_.track);
+    if (!row) {
+        return;
+    }
+    const double x = layout_.xForTime(bladeMark_.time);
+    if (x < layout_.metrics().headerWidth || x > width()) {
+        return;
+    }
+
+    // Solid, and only across the track that would actually be cut: this is the
+    // edit itself, where the dashed guide beside it is only an alignment.
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(kBladeLine, 1.0));
+    painter.drawLine(QPointF(x, row->top + 1.0), QPointF(x, row->top + row->height - 1.0));
+
+    // Two nibs, top and bottom, so the line reads as a cut rather than as a
+    // second playhead.
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(kBladeLine);
+    QPolygonF top;
+    top << QPointF(x - 3.5, row->top + 1.0) << QPointF(x + 3.5, row->top + 1.0)
+        << QPointF(x, row->top + 6.0);
+    painter.drawPolygon(top);
+    QPolygonF bottom;
+    const double base = row->top + row->height - 1.0;
+    bottom << QPointF(x - 3.5, base) << QPointF(x + 3.5, base) << QPointF(x, base - 5.0);
+    painter.drawPolygon(bottom);
+    painter.setBrush(Qt::NoBrush);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+}
+
 // --- Input ------------------------------------------------------------------
 
-time::RationalTime TimelineWidget::maybeSnap(const time::RationalTime& t,
-                                             model::ClipId ignoring) const {
+time::RationalTime TimelineWidget::maybeSnap(const time::RationalTime& t, model::ClipId ignoring,
+                                             bool includePlayhead) {
     const model::Sequence* seq = sequence();
     if (seq == nullptr || !snapEnabled_) {
+        snapMark_ = {};
         return t;
     }
     // A fixed pixel radius becomes a shrinking time radius as you zoom in,
@@ -750,8 +872,22 @@ time::RationalTime TimelineWidget::maybeSnap(const time::RationalTime& t,
     const auto threshold = time::RationalTime::fromSeconds(
         time::Rational::approximate(thresholdSeconds), seq->frameRate());
 
-    const auto result = edit::snapTime(*seq, t, threshold, ignoring, &playhead_);
+    const auto result =
+        edit::snapTime(*seq, t, threshold, ignoring, includePlayhead ? &playhead_ : nullptr);
+    // Kept rather than discarded: `snapTime` returns what it latched onto and
+    // which track it came from precisely so this can be drawn, and until now
+    // the answer was thrown away at the call site.
+    snapMark_ = SnapMark{result.snapped(), result.time, result.kind, result.track};
     return result.time;
+}
+
+void TimelineWidget::clearGestureMarks() {
+    if (!snapMark_.active && !bladeMark_.active) {
+        return;
+    }
+    snapMark_ = {};
+    bladeMark_ = {};
+    update();
 }
 
 void TimelineWidget::scrubTo(int x) {
@@ -760,7 +896,10 @@ void TimelineWidget::scrubTo(int x) {
         return;
     }
     auto position = layout_.timeForX(x, seq->frameRate());
-    position = maybeSnap(position, {});
+    // Without the playhead among the candidates: it is the thing being moved,
+    // and it sits at zero distance from itself, so including it made every
+    // scrub shorter than the snap radius a scrub that went nowhere.
+    position = maybeSnap(position, {}, false);
     const std::int64_t last = std::max<std::int64_t>(0, seq->duration().frames() - 1);
     position =
         time::RationalTime{std::clamp<std::int64_t>(position.frames(), 0, last), seq->frameRate()};
@@ -984,6 +1123,9 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     }
     const auto hit = layout_.hitTest(*seq, x, y);
     applyCursor(hit ? &*hit : nullptr);
+    if (tool_ == Tool::Blade) {
+        updateBladeHover(x, y);
+    }
 }
 
 void TimelineWidget::updateDrag(int x) {
@@ -1044,6 +1186,10 @@ void TimelineWidget::finishDrag() {
     }
     drag_ = Drag::None;
     rippleTrim_ = false;
+    // The guide belongs to the gesture that made it. Left up, it becomes a
+    // line on the timeline that means nothing.
+    snapMark_ = {};
+    update();
 }
 
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
@@ -1052,11 +1198,16 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         // Never became a drag, so it was a click: put the playhead there.
         drag_ = Drag::None;
         scrubTo(static_cast<int>(event->position().x()));
+        // The guide belongs to the gesture, and the gesture is over -- these
+        // early returns skip finishDrag, which is where that normally happens.
+        snapMark_ = {};
+        update();
         return;
     }
     if (drag_ == Drag::Keyframe) {
         drag_ = Drag::None;
         keyframeDrag_ = {};
+        snapMark_ = {};
         if (commands_ != nullptr) {
             // One drag is one undo step; the next one is a new gesture.
             commands_->breakMerge();
@@ -1077,11 +1228,18 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         }
         band_ = QRect();
         drag_ = Drag::None;
+        snapMark_ = {};
         announceSelection();
         update();
         return;
     }
     finishDrag();
+}
+
+void TimelineWidget::leaveEvent(QEvent* event) {
+    // The pointer is somewhere else, so the blade is not about to cut anything.
+    clearGestureMarks();
+    QWidget::leaveEvent(event);
 }
 
 void TimelineWidget::wheelEvent(QWheelEvent* event) {
@@ -1142,8 +1300,12 @@ bool TimelineWidget::pressWithTool(const ui::TimelineLayout::Hit* hit, int x, in
                 return true;
             }
             // Snapped, so a cut aimed at a neighbouring edit point lands on it
-            // rather than a frame away from it.
+            // rather than a frame away from it -- and at exactly the time the
+            // preview line was drawn at, since both go through maybeSnap.
             razorAt(hit->track, maybeSnap(layout_.timeForX(x, seq->frameRate()), {}));
+            // The cut just made is an edit point of its own; the preview is
+            // now describing a boundary rather than a cut.
+            bladeMark_ = {};
             return true;
         }
 
@@ -1183,6 +1345,32 @@ bool TimelineWidget::pressWithTool(const ui::TimelineLayout::Hit* hit, int x, in
         }
     }
     return false;
+}
+
+void TimelineWidget::updateBladeHover(int x, int y) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || tool_ != Tool::Blade) {
+        return;
+    }
+    const auto hit = layout_.hitTest(*seq, x, y);
+    if (!hit) {
+        // Off a clip there is nothing to cut, so there is nothing to promise.
+        if (bladeMark_.active || snapMark_.active) {
+            bladeMark_ = {};
+            snapMark_ = {};
+            update();
+        }
+        return;
+    }
+
+    // The same call the press will make, so what is drawn is what will happen
+    // rather than a second opinion about it.
+    const time::RationalTime at = maybeSnap(layout_.timeForX(x, seq->frameRate()), {});
+    if (bladeMark_.active && bladeMark_.track == hit->track && bladeMark_.time == at) {
+        return;
+    }
+    bladeMark_ = BladeMark{true, hit->track, at};
+    update();
 }
 
 void TimelineWidget::updateSlip(int x) {

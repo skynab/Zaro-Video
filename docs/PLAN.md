@@ -3942,6 +3942,20 @@ its box on the way: in the tool bar the border said where the group ended,
 while on the timeline header it sits among the other buttons that act on the
 timeline, and a line there separates things that belong together.
 
+**Snapping and markers went down with them,** for the same reason and with
+icons of their own: both are about where an edit lands, and the timeline is
+where edits land. That left the tool bar holding what is genuinely about the
+window — the sequence's format, the workspaces, and the three buttons that
+bring things in and send them out — and the timeline holding everything that
+acts on the timeline.
+
+Four glyphs joined `app/Icons` to make that row read: a horseshoe magnet with
+banded poles for snapping (unbanded it is an arch, and an arch is a bridge), a
+bookmark for markers, two pieces pulled apart around a cut for the razor, and
+two crossing levels for the dissolve. The razor is deliberately *not* the
+scissors: the scissors is the blade tool, a centimetre away in the same row,
+and two buttons wearing the same glyph are two buttons nobody can tell apart.
+
 **One colourful thing, once.** Donate is a hairline of spectrum around a button
 that is otherwise the ground it sits on. Asking for money should look like an
 invitation rather than another control — and it should look like it in exactly
@@ -3956,6 +3970,107 @@ Where the button points is one constant, `kSupportUrl`, and it currently points
 at the repository: there is no funding page yet, and inventing a URL that
 404s is worse than sending somebody to the project itself. One line to change
 when there is one.
+
+### Phase 7q — alignment: the cut you meant §7.1 ✅
+
+Snapping was already there and nobody could tell. `edit::snapTime` has pulled
+times to the edit points around them since Phase 2, and it returns what it
+latched onto and which track that came from — `SnapKind` and a `TrackId`,
+documented as being for the indicator. The widget called it, took `.time`, and
+threw the rest away. So a cut *did* land on the neighbouring edit point, and
+looked exactly like a cut that happened to land near it.
+
+**The guide is the feature.** A dashed line at the snapped time, drawn down
+through every track rather than only the one being edited: the alignment is
+being made *with* the other tracks, and a line that stops at the clip under the
+pointer shows the half of it that was never in question. A tick on the row the
+time came from says which track it lined up with, so a cut aligned to V2 says
+V2 instead of leaving you to count. Times that belong to no track — the
+playhead, the start of the sequence — get their tick in the ruler.
+
+**The blade shows its cut before making it.** Hovering with the blade draws a
+solid line across the track it would cut, with a nib top and bottom so it reads
+as a cut rather than as a second playhead, at the position the press will
+actually use — both go through `maybeSnap`, so the preview cannot disagree with
+the edit. Where that line jumps to a neighbouring edit point, the dashed guide
+appears beside it saying what it jumped to.
+
+**The playhead was snapping to itself.** Scrubbing passed the playhead in as a
+snap candidate, and the playhead is at zero distance from where it already is
+— so any scrub shorter than the ten-pixel radius pulled straight back and did
+nothing. It reads as a sticky timeline rather than as a bug, which is probably
+why it survived. `maybeSnap` takes an `includePlayhead` flag now and the scrub
+passes false; every other gesture still snaps to the playhead, which is the
+half of this somebody asked for: park the playhead on the frame you want and
+cut near it.
+
+**A guide belongs to its gesture.** It comes down in `finishDrag`, and in the
+three release paths that return before reaching it — a click that never became
+a band, a keyframe drag, a rubber band — each of which had to be found by
+leaving a line on the timeline and wondering what it meant.
+
+The self-test drives it through real mouse events: a cut aimed two frames off
+an edit point on another track lands on the point, a cut aimed near the
+playhead lands on the playhead, a drag onto an edit point raises a guide at
+exactly that time and drops it on release, and with snapping off the same
+gestures land where the pointer actually was. The check refuses to run if eight
+pixels is under a frame at the current zoom — an alignment test that would pass
+without any snapping is worse than no test.
+
+### Phase 7r — cutting a linked pair §7.1 ✅
+
+`Clip::link` has said since Phase 2 that clips sharing a link are "moved,
+trimmed and removed as one". Move does it, trim does it, lift and extract do
+it. Razor did not: it cut the track under the pointer and left the other half
+of the take joined to itself. That is the worst of the four to get wrong,
+because nothing looks wrong until somebody drags one of the halves and the
+sound stays where it was.
+
+**The fix belongs in the operation, not the tool.** `makeRazor` plans a cut for
+every clip in the link group and applies them in one command, so the blade, the
+razor button, the `C` key and anything written later all get it, and one undo
+takes the whole thing back. Tail ids are handed out at build time, as
+`makeRazorAt` already did, so re-applying an undone cut produces the same clips
+rather than new ones.
+
+**Each partner is cut only where the cut is inside it.** A link group's clips
+need not span the same range — the sound of a take often runs past the picture,
+or stops short of it — so a partner the cut misses is left alone rather than
+cut at its own end, and rather than the whole edit being refused.
+
+**The tails become a link group of their own.** Left in the original group, the
+head of the picture would be linked to the tail of the sound: four clips in one
+group, and dragging either half taking the other half's audio with it. A fresh
+`LinkId` for everything right of the cut keeps the pairing that was there
+before — head with head, tail with tail. That only happens when more than one
+clip was actually cut; a lone linked clip whose partners were all missed keeps
+the link it had.
+
+**A clip says it is linked.** A small chain badge in the top right of every
+linked clip, in the clip's own label colour. Until now the only sign was the
+outline that appears on the *partner* once you have already selected
+something — which tells you after the fact, when what you want to know is
+before. The badge is rasterised once per colour and cached: three colours can
+ever be asked for, and a busy timeline would otherwise redraw the same nine
+pixels a hundred times a frame.
+
+**And the zoom buttons became a plus and a minus.** They were a `+` and a
+`−` typed as text, which sat at whatever weight and size the font felt like
+next to a row of drawn icons.
+
+The self-test drives one blade press through the widget and checks that both
+tracks gained a boundary at the same instant, that the two halves are two link
+groups rather than one of four, and — because a press is at a pixel and a pixel
+is about a frame wide — that where it landed is read from the model rather than
+assumed. Fixing that check found the older alignment test had quietly stopped
+proving anything: it made its reference edit point by cutting the audio, and
+with this change that cut the video at the same instant, so the blade was
+aiming at an edit point its own track already had. It unlinks the pair first
+now.
+
+Not done: scene detection still cuts one track. `makeRazorAt` takes a list of
+points on a single track, and giving it the same treatment means an id per
+partner per point; the argument for doing it is the same one as here.
 
 ## 7. Feature inventory (Premiere parity checklist)
 

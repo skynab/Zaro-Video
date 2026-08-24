@@ -10,6 +10,7 @@
 
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/edit/Snapping.h"
 #include "zaro/core/media/Waveform.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/time/RationalTime.h"
@@ -121,6 +122,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
@@ -137,6 +139,12 @@ private:
     void paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintMarkers(QPainter& painter);
     void paintPlayhead(QPainter& painter);
+    /// The alignment guide: where the current gesture latched, drawn across
+    /// every track so the alignment it made is visible on the tracks it was
+    /// made against.
+    void paintSnapGuide(QPainter& painter);
+    /// Where the blade would cut, while it is only hovering.
+    void paintBladePreview(QPainter& painter);
 
     /// Keep the playhead on screen, paging when it leaves.
     void followPlayhead();
@@ -148,8 +156,16 @@ private:
     void finishDrag();
 
     /// Pull a time to the nearest edit point, unless the modifier is held.
-    [[nodiscard]] time::RationalTime maybeSnap(const time::RationalTime& t,
-                                               model::ClipId ignoring) const;
+    ///
+    /// Not const: it remembers what the time latched onto, so the gesture that
+    /// asked can show it. A snap nobody can see is indistinguishable from a
+    /// hand that happened to be steady.
+    ///
+    /// `includePlayhead` is false when the playhead itself is what is moving:
+    /// it is a candidate at zero distance from where it already is, so leaving
+    /// it in makes a scrub of less than the snap radius do nothing at all.
+    [[nodiscard]] time::RationalTime maybeSnap(const time::RationalTime& t, model::ClipId ignoring,
+                                               bool includePlayhead = true);
 
     /// Cut a named track at a named time, which is what the blade does: the
     /// playhead is not involved, and neither is the selection.
@@ -160,12 +176,27 @@ private:
                        Qt::KeyboardModifiers modifiers);
     void updateSlip(int x);
     void updatePan(int x);
+    /// Follow the pointer with the blade, so where a cut would land -- and what
+    /// it would line up with -- is visible before the click rather than after.
+    void updateBladeHover(int x, int y);
+    void clearGestureMarks();
     /// The cursor this tool wants over this point.
     void applyCursor(const ui::TimelineLayout::Hit* hit);
     void removeSelected(bool ripple);
     void switchAngle(int angle);
 
 public:
+    /// Whether an alignment guide is up, and at what time.
+    ///
+    /// What the guide is painted from, so a test can ask whether the gesture
+    /// it just made actually latched onto anything -- the alternative is
+    /// counting dashed pixels, which tests the dash pattern as much as the
+    /// snap.
+    [[nodiscard]] bool showingSnapGuide() const noexcept { return snapMark_.active; }
+    [[nodiscard]] const time::RationalTime& snapGuideTime() const noexcept {
+        return snapMark_.time;
+    }
+
     /// Select one clip, for a self-test that needs a selection without a
     /// mouse. The keyboard paths all act on the selection, so a test that
     /// cannot make one cannot reach them.
@@ -246,6 +277,24 @@ private:
     int panAnchorX_{0};
     time::RationalTime panAnchorScroll_{};
     bool snapEnabled_{true};
+
+    /// What the last snapped time latched onto. `SnapKind` and the track come
+    /// straight from `edit::snapTime`, which returns them for exactly this.
+    struct SnapMark {
+        bool active{false};
+        time::RationalTime time{};
+        edit::SnapKind kind{edit::SnapKind::None};
+        model::TrackId track;
+    };
+    SnapMark snapMark_;
+
+    /// Where the blade is pointing, while it is pointing at something.
+    struct BladeMark {
+        bool active{false};
+        model::TrackId track;
+        time::RationalTime time{};
+    };
+    BladeMark bladeMark_;
     std::map<std::uint64_t, std::shared_ptr<const media::Waveform>> waveforms_;
     /// Fit once the widget knows how wide it really is.
     bool pendingFit_{false};

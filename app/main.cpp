@@ -2043,6 +2043,19 @@ private:
         return button;
     }
 
+    /// An icon button, which is what most of the timeline's own controls are.
+    ///
+    /// Same shape as the tool palette's buttons, so a row that mixes tools with
+    /// actions reads as one row rather than two.
+    QPushButton* chromeIconButton(app::icons::Glyph glyph, const QString& tip,
+                                  bool checkable = false) {
+        QPushButton* button = chromeButton({}, tip, checkable);
+        button->setIcon(app::icons::toolIcon(glyph));
+        button->setIconSize(QSize(17, 17));
+        button->setFixedSize(29, 26);
+        return button;
+    }
+
     QFrame* chromeSeparator() {
         auto* line = new QFrame(this);
         line->setFrameShape(QFrame::VLine);
@@ -2361,19 +2374,9 @@ private:
         row->setContentsMargins(12, 0, 12, 0);
         row->setSpacing(10);
 
-        snapButton_ = chromeButton("Snap", "Pull edits to the edit points near them (S)", true);
-        snapButton_->setFixedHeight(28);
-        connect(snapButton_, &QPushButton::clicked, this,
-                [this](bool on) { timeline_->setSnapEnabled(on); });
-        row->addWidget(snapButton_);
-
-        QPushButton* markerButton = chromeButton("Marker", "Add a marker at the playhead (M)");
-        markerButton->setFixedHeight(28);
-        connect(markerButton, &QPushButton::clicked, this,
-                [this] { timeline_->addMarkerAtPlayhead(); });
-        row->addWidget(markerButton);
-
-        row->addWidget(chromeSeparator());
+        // Snapping and markers used to be here. They belong with the timeline
+        // -- both of them are about where an edit lands, and the timeline is
+        // where edits land -- so they moved down with the tools.
         formatLabel_ = mutedLabel();
         row->addWidget(formatLabel_);
         row->addStretch(1);
@@ -2535,20 +2538,35 @@ private:
         row->addWidget(chromeSeparator());
         row->addWidget(buildToolPalette());
 
-        QPushButton* razor = chromeButton("Razor", "Cut every selected track at the playhead (C)");
+        QPushButton* razor =
+            chromeIconButton(app::icons::Glyph::Split, "Razor at the playhead (C)");
         connect(razor, &QPushButton::clicked, this, [this] { timeline_->razorAtPlayhead(); });
         row->addWidget(razor);
-        QPushButton* dissolve =
-            chromeButton("Dissolve", "Put a dissolve on the cut at the playhead");
+
+        QPushButton* dissolve = chromeIconButton(app::icons::Glyph::CrossFade,
+                                                 "Put a dissolve on the cut at the playhead");
         connect(dissolve, &QPushButton::clicked, this,
                 [this] { timeline_->addDissolveAtPlayhead(); });
         row->addWidget(dissolve);
 
+        row->addWidget(chromeSeparator());
+
+        snapButton_ = chromeIconButton(app::icons::Glyph::Magnet,
+                                       "Pull edits to the edit points near them (S)", true);
+        connect(snapButton_, &QPushButton::clicked, this,
+                [this](bool on) { timeline_->setSnapEnabled(on); });
+        row->addWidget(snapButton_);
+
+        QPushButton* markerButton =
+            chromeIconButton(app::icons::Glyph::Bookmark, "Add a marker at the playhead (M)");
+        connect(markerButton, &QPushButton::clicked, this,
+                [this] { timeline_->addMarkerAtPlayhead(); });
+        row->addWidget(markerButton);
+
         row->addStretch(1);
         snapLabel_ = mutedLabel();
         row->addWidget(snapLabel_);
-        auto* zoomOut = chromeButton("−", "Zoom out");
-        zoomOut->setFixedSize(24, 24);
+        auto* zoomOut = chromeIconButton(app::icons::Glyph::Minus, "Zoom out (−)");
         connect(zoomOut, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.0 / 1.4); });
         row->addWidget(zoomOut);
         zoomSlider_ = new QSlider(Qt::Horizontal, bar);
@@ -2561,8 +2579,7 @@ private:
             }
         });
         row->addWidget(zoomSlider_);
-        auto* zoomIn = chromeButton("+", "Zoom in");
-        zoomIn->setFixedSize(24, 24);
+        auto* zoomIn = chromeIconButton(app::icons::Glyph::Plus, "Zoom in (+)");
         connect(zoomIn, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.4); });
         row->addWidget(zoomIn);
 
@@ -3871,6 +3888,211 @@ int main(int argc, char** argv) {
                          "  FAIL: the drag left %zu undo steps; it should coalesce to one\n",
                          depthBefore);
             return 1;
+        }
+
+        // Linked cutting: picture and sound are one edit. The operation is
+        // unit-tested; what this checks is that the blade in the window
+        // reaches it, since a razor that cuts only the track under the pointer
+        // is the one edit whose damage shows up much later.
+        {
+            const auto& rate = sequence.frameRate();
+            const auto& videoStart = sequence.videoTracks().front();
+            if (videoStart.clips().empty() || sequence.audioTracks().empty() ||
+                !videoStart.clips().front().link.isValid()) {
+                std::fprintf(stderr, "  FAIL: this project has no linked pair to cut\n");
+                return 1;
+            }
+            const zaro::model::TrackId audioId = sequence.audioTracks().front().id();
+            const zaro::time::RationalTime cutAt{90, rate};
+
+            timeline->setTool(app::TimelineWidget::Tool::Blade);
+            const int cutX = static_cast<int>(timeline->layout().xForTime(cutAt));
+            dragOnTimeline(timeline, cutX, cutX, y);
+            timeline->setTool(app::TimelineWidget::Tool::Select);
+
+            const auto clipsOn = [&](zaro::model::TrackId track) {
+                return window.project().findSequence(sequence.id())->findTrack(track)->clips();
+            };
+            const auto& videoNow = clipsOn(videoStart.id());
+            const auto& audioNow = clipsOn(audioId);
+            if (videoNow.size() < 2) {
+                std::fprintf(stderr, "  FAIL: the blade did not cut the track it was on\n");
+                return 1;
+            }
+            // Where it actually landed, rather than where it was aimed: a
+            // press is at a pixel, and a pixel is a frame or so wide.
+            const zaro::time::RationalTime landed = videoNow[1].start();
+            if ((landed - cutAt).abs().frames() > 2) {
+                std::fprintf(stderr, "  FAIL: the cut landed %lld frames from the pointer\n",
+                             static_cast<long long>((landed - cutAt).abs().frames()));
+                return 1;
+            }
+            if (audioNow.size() < 2 || audioNow[1].start() != landed) {
+                std::fprintf(stderr, "  FAIL: cutting linked picture left its sound joined\n");
+                return 1;
+            }
+
+            // And the halves are two pairs rather than one group of four, so
+            // dragging one half does not take the other half's sound with it.
+            if (videoNow[0].link != audioNow[0].link || videoNow[1].link != audioNow[1].link ||
+                videoNow[0].link == videoNow[1].link) {
+                std::fprintf(stderr,
+                             "  FAIL: the halves of a linked cut are not two link groups\n");
+                return 1;
+            }
+            std::printf("  linked cut: one press cut V1 and A1 at %lld, leaving two pairs\n",
+                        static_cast<long long>(landed.frames()));
+
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            QApplication::processEvents();
+        }
+
+        // Alignment: where a cut lands when there is something to line it up
+        // with. The engine's snapping is unit-tested; what this checks is that
+        // the blade asks for it -- a cut that misses the edit point it was
+        // obviously aimed at is a frame of black nobody sees until export.
+        {
+            if (sequence.audioTracks().empty() || sequence.audioTracks().front().clips().empty()) {
+                std::fprintf(stderr, "  FAIL: no audio track to align against\n");
+                return 1;
+            }
+            const auto& rate = sequence.frameRate();
+            const zaro::model::TrackId audioTrackId = sequence.audioTracks().front().id();
+
+            // Unlinked first, and deliberately: with picture and sound linked,
+            // cutting the audio cuts the video at the same instant, and the
+            // blade would then be aiming at an edit point its own track
+            // already had -- which would pass without any snapping at all.
+            if (auto unlink = zaro::edit::makeUnlinkClips(
+                    window.project(), {sequence.id(), sequence.videoTracks().front().id()},
+                    sequence.videoTracks().front().clips().front().id)) {
+                window.commands().execute(window.project(), std::move(*unlink));
+                window.commands().breakMerge();
+            }
+
+            // An edit point on another track, a long way from anything else.
+            const zaro::time::RationalTime alignAt{120, rate};
+            auto cutAudio =
+                zaro::edit::makeRazor(window.project(), {sequence.id(), audioTrackId}, alignAt);
+            if (!cutAudio) {
+                std::fprintf(stderr, "  FAIL: %s\n", cutAudio.error().toString().c_str());
+                return 1;
+            }
+            window.commands().execute(window.project(), std::move(*cutAudio));
+            window.commands().breakMerge();
+
+            const auto boundaryExists = [&](const zaro::time::RationalTime& at) {
+                const auto& clips =
+                    window.project().findSequence(sequence.id())->videoTracks().front().clips();
+                return std::any_of(clips.begin(), clips.end(), [&](const zaro::model::Clip& clip) {
+                    return clip.start() == at;
+                });
+            };
+
+            timeline->setTool(app::TimelineWidget::Tool::Blade);
+            const int alignX = static_cast<int>(timeline->layout().xForTime(alignAt));
+            const int aimedX = alignX + 8;
+            // The test is only worth anything if the pointer is aiming at a
+            // different frame from the one it should land on.
+            const auto unsnapped = timeline->layout().timeForX(aimedX, rate);
+            if (unsnapped == alignAt) {
+                std::fprintf(stderr,
+                             "  FAIL: eight pixels is under a frame at this zoom; the "
+                             "alignment check would pass without snapping\n");
+                return 1;
+            }
+            dragOnTimeline(timeline, aimedX, aimedX, y);
+            if (!boundaryExists(alignAt)) {
+                std::fprintf(stderr,
+                             "  FAIL: a cut aimed %lld frames from an edit point on another "
+                             "track did not snap to it\n",
+                             static_cast<long long>((unsnapped - alignAt).abs().frames()));
+                return 1;
+            }
+
+            // And the playhead, which is the other thing a cut is usually
+            // aimed at: somebody parks it on the frame they want and cuts.
+            const zaro::time::RationalTime parkAt{180, rate};
+            window.setPosition(parkAt);
+            QApplication::processEvents();
+            const int parkX = static_cast<int>(timeline->layout().xForTime(parkAt));
+            dragOnTimeline(timeline, parkX - 7, parkX - 7, y);
+            if (!boundaryExists(parkAt)) {
+                std::fprintf(stderr, "  FAIL: a cut aimed near the playhead did not snap to it\n");
+                return 1;
+            }
+
+            // Dragging a clip onto an edit point puts a guide up, and the
+            // guide comes down when the gesture does: a line left on the
+            // timeline afterwards is one that means nothing.
+            {
+                const auto& videoNow =
+                    window.project().findSequence(sequence.id())->videoTracks().front();
+                const zaro::model::Clip& first = videoNow.clips().front();
+                const int grabX = static_cast<int>(timeline->layout().xForTime(first.start())) + 30;
+                const auto sendMouse = [&](QEvent::Type type, int mx, Qt::MouseButton button,
+                                           Qt::MouseButtons buttons) {
+                    QMouseEvent event(type, QPointF(mx, y), QPointF(mx, y), button, buttons,
+                                      Qt::NoModifier);
+                    QCoreApplication::sendEvent(timeline, &event);
+                };
+                // Aim the clip's start a few pixels off the audio cut, so the
+                // snap has something to do and something to say.
+                const int landOn = static_cast<int>(timeline->layout().xForTime(alignAt));
+                sendMouse(QEvent::MouseButtonPress, grabX, Qt::LeftButton, Qt::LeftButton);
+                for (int step = 1; step <= 6; ++step) {
+                    sendMouse(QEvent::MouseMove, grabX + (landOn + 6 - grabX) * step / 6,
+                              Qt::NoButton, Qt::LeftButton);
+                }
+                const bool guideUp = timeline->showingSnapGuide();
+                const auto guideAt = timeline->snapGuideTime();
+                sendMouse(QEvent::MouseButtonRelease, landOn + 6, Qt::NoButton, Qt::NoButton);
+
+                if (!guideUp || guideAt != alignAt) {
+                    std::fprintf(stderr,
+                                 "  FAIL: dragging a clip onto an edit point put up no guide\n");
+                    return 1;
+                }
+                if (timeline->showingSnapGuide()) {
+                    std::fprintf(stderr, "  FAIL: the alignment guide outlived the drag\n");
+                    return 1;
+                }
+                while (window.commands().canUndo() &&
+                       window.project()
+                               .findSequence(sequence.id())
+                               ->videoTracks()
+                               .front()
+                               .clips()
+                               .front()
+                               .start() != zaro::time::RationalTime{0, rate}) {
+                    window.commands().undo(window.project());
+                }
+            }
+
+            // Snapping off means off: the same gesture then lands where the
+            // pointer actually was.
+            timeline->setSnapEnabled(false);
+            const zaro::time::RationalTime looseAim = timeline->layout().timeForX(alignX + 8, rate);
+            dragOnTimeline(timeline, alignX + 8, alignX + 8, y);
+            if (!boundaryExists(looseAim)) {
+                std::fprintf(stderr, "  FAIL: with snapping off the cut still moved\n");
+                return 1;
+            }
+            timeline->setSnapEnabled(true);
+
+            std::printf(
+                "  alignment: a cut %lld frames off landed on the edit point, one near "
+                "the playhead landed on it, a drag put a guide up and took it down, "
+                "and nothing moved with snapping off\n",
+                static_cast<long long>((unsnapped - alignAt).abs().frames()));
+
+            timeline->setTool(app::TimelineWidget::Tool::Select);
+            while (window.commands().canUndo()) {
+                window.commands().undo(window.project());
+            }
+            QApplication::processEvents();
         }
 
         // A parameter change has to reach the picture, not just the model.

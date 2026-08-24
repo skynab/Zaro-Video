@@ -652,31 +652,65 @@ Result<CommandPtr> makeRazor(Project& project, const EditTarget& target, const R
         return Error{ErrorCode::InvalidData, "there is already a cut here"};
     }
 
-    const ClipId originalId = clip->id;
-    const ClipId tailId = project.ids().next<model::ClipTag>();
-    const TrackId trackId = target.track;
+    // Picture and sound are cut together. A link group is edited as one
+    // everywhere else -- moved, trimmed, lifted, extracted -- and a razor that
+    // cut only the track under the pointer left the other half of the take
+    // joined to itself, which is the one edit whose damage does not show until
+    // something is moved and the sound stays behind.
+    struct Piece {
+        TrackId track;
+        ClipId original;
+        ClipId tail;
+    };
+    std::vector<Piece> pieces;
+    for (const auto& [otherTrack, otherClip] :
+         linkedGroup(*located->sequence, target.track, clip->id)) {
+        const Track* track = located->sequence->findTrack(otherTrack);
+        const Clip* partner = track != nullptr ? track->find(otherClip) : nullptr;
+        // Strictly inside, and per clip: a link group's clips need not span
+        // identical ranges, and a cut on a boundary would make a clip of no
+        // length. A partner the cut misses is simply not cut.
+        if (partner == nullptr || !(partner->start() < cut && cut < partner->endExclusive())) {
+            continue;
+        }
+        pieces.push_back({otherTrack, partner->id, project.ids().next<model::ClipTag>()});
+    }
 
-    return makeCommand(target.sequence, "Razor", {},
-                       [cut, originalId, tailId, trackId](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
-                           ZARO_CHECK(track != nullptr, "track vanished between build and apply");
-                           const Clip* target = track->find(originalId);
-                           ZARO_CHECK(target != nullptr, "clip vanished between build and apply");
+    // The pieces on the right of the cut become a link group of their own.
+    // Left in the original group, the head of the picture would be linked to
+    // the tail of the sound, and dragging one half of the cut would take the
+    // other half's audio with it.
+    const model::LinkId tailLink =
+        pieces.size() > 1 ? project.ids().next<model::LinkTag>() : model::LinkId{};
 
-                           const Clip original = *target;
-                           std::vector<Clip> rebuilt;
-                           for (const Clip& existing : track->clips()) {
-                               if (existing.id != originalId) {
-                                   rebuilt.push_back(existing);
-                                   continue;
-                               }
-                               rebuilt.push_back(trimmedOut(original, cut));
-                               Clip tail = trimmedIn(original, cut);
-                               tail.id = tailId;
-                               rebuilt.push_back(std::move(tail));
-                           }
-                           track->setClips(std::move(rebuilt));
-                       });
+    return makeCommand(target.sequence, "Razor", {}, [cut, pieces, tailLink](Sequence& sequence) {
+        for (const Piece& piece : pieces) {
+            Track* track = sequence.findTrack(piece.track);
+            if (track == nullptr) {
+                continue;
+            }
+            const Clip* found = track->find(piece.original);
+            if (found == nullptr || !(found->start() < cut && cut < found->endExclusive())) {
+                continue;
+            }
+            const Clip original = *found;
+            std::vector<Clip> rebuilt;
+            for (const Clip& existing : track->clips()) {
+                if (existing.id != piece.original) {
+                    rebuilt.push_back(existing);
+                    continue;
+                }
+                rebuilt.push_back(trimmedOut(original, cut));
+                Clip tail = trimmedIn(original, cut);
+                tail.id = piece.tail;
+                if (tailLink.isValid()) {
+                    tail.link = tailLink;
+                }
+                rebuilt.push_back(std::move(tail));
+            }
+            track->setClips(std::move(rebuilt));
+        }
+    });
 }
 
 Result<CommandPtr> makeLift(Project& project, const EditTarget& target, ClipId clipId) {

@@ -21,6 +21,13 @@ enum class Glyph {
     SlipArrows,  ///< Slip: the same span with nothing pinning it
     Hand,        ///< Hand
     Magnifier,   ///< Zoom
+    Magnet,      ///< Snapping
+    Bookmark,    ///< Add marker
+    Split,       ///< Razor at the playhead
+    CrossFade,   ///< Add dissolve
+    Link,        ///< Picture and sound edited as one
+    Plus,        ///< Zoom in
+    Minus,       ///< Zoom out
     Heart,       ///< Support: the one filled glyph, as the design draws it
 };
 

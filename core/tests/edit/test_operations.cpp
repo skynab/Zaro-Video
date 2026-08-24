@@ -769,6 +769,60 @@ TEST_CASE("Linked clips are removed together", "[edit][link]") {
     }
 }
 
+TEST_CASE("Linked clips are cut together", "[edit][link][razor]") {
+    testing::Fixture f;
+    static_cast<void>(linkPair(f, 0, 50));
+
+    REQUIRE(f.run(edit::makeRazor(f.project, f.on(f.v1), f.at(20))));
+    CHECK(f.layout(f.v1) == "0-20@500 20-50@520");
+    // The point of the whole thing: the sound is cut in the same place, so the
+    // two halves can be moved apart without one of them dragging the other
+    // half's audio along.
+    CHECK(f.layout(f.a1) == "0-20@500 20-50@520");
+
+    SECTION("and the halves are two link groups, not one of four") {
+        const auto& video = f.track(f.v1).clips();
+        const auto& audio = f.track(f.a1).clips();
+        REQUIRE(video.size() == 2);
+        REQUIRE(audio.size() == 2);
+        CHECK(video[0].link == audio[0].link);
+        CHECK(video[1].link == audio[1].link);
+        CHECK(video[0].link != video[1].link);
+        CHECK(video[0].link.isValid());
+        CHECK(video[1].link.isValid());
+    }
+
+    SECTION("so moving one half leaves the other where it was") {
+        const model::ClipId tail = f.track(f.v1).clips()[1].id;
+        REQUIRE(f.run(edit::makeMove(f.project, f.on(f.v1), tail, f.v1, f.at(200))));
+        CHECK(f.layout(f.v1) == "0-20@500 200-230@520");
+        CHECK(f.layout(f.a1) == "0-20@500 200-230@520");
+    }
+
+    SECTION("and one undo puts both tracks back") {
+        REQUIRE(f.stack.undo(f.project));
+        CHECK(f.layout(f.v1) == "0-50@500");
+        CHECK(f.layout(f.a1) == "0-50@500");
+    }
+}
+
+TEST_CASE("A cut that misses a linked partner only cuts what it is inside", "[edit][link][razor]") {
+    testing::Fixture f;
+    // Sound that stops before the picture does -- a link group's clips need not
+    // span the same range.
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 20, 500))));
+    const model::ClipId video = f.track(f.v1).clipAt(f.at(0))->id;
+    const model::ClipId audio = f.track(f.a1).clipAt(f.at(0))->id;
+    REQUIRE(f.run(edit::makeLinkClips(f.project, f.sequenceId, {{f.v1, video}, {f.a1, audio}})));
+
+    REQUIRE(f.run(edit::makeRazor(f.project, f.on(f.v1), f.at(30))));
+    CHECK(f.layout(f.v1) == "0-30@500 30-50@530");
+    // Past the end of the sound, so the sound is left alone rather than
+    // refused or cut at its own end.
+    CHECK(f.layout(f.a1) == "0-20@500");
+}
+
 TEST_CASE("Linked clips trim together", "[edit][link]") {
     testing::Fixture f;
     const LinkedPair pair = linkPair(f, 0, 50);

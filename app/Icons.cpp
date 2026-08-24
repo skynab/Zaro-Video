@@ -96,6 +96,79 @@ QPainterPath pathFor(Glyph glyph) {
             path.lineTo(14.0, 14.0);
             return path;
 
+        case Glyph::Magnet:
+            // A horseshoe, poles down. The gap between the poles is the whole
+            // idea of the glyph, so the inner arch is drawn rather than
+            // implied by a thick stroke.
+            path.moveTo(2.6, 13.2);
+            path.lineTo(2.6, 8.0);
+            path.cubicTo(2.6, 2.6, 13.4, 2.6, 13.4, 8.0);
+            path.lineTo(13.4, 13.2);
+            path.moveTo(6.1, 13.2);
+            path.lineTo(6.1, 8.0);
+            path.cubicTo(6.1, 5.6, 9.9, 5.6, 9.9, 8.0);
+            path.lineTo(9.9, 13.2);
+            path.moveTo(2.6, 13.2);
+            path.lineTo(6.1, 13.2);
+            path.moveTo(9.9, 13.2);
+            path.lineTo(13.4, 13.2);
+            // The poles, banded across each leg. Without them the glyph is an
+            // arch, and an arch is a bridge.
+            path.moveTo(2.6, 10.6);
+            path.lineTo(6.1, 10.6);
+            path.moveTo(9.9, 10.6);
+            path.lineTo(13.4, 10.6);
+            return path;
+
+        case Glyph::Bookmark:
+            path.moveTo(4.0, 2.6);
+            path.lineTo(12.0, 2.6);
+            path.lineTo(12.0, 13.8);
+            path.lineTo(8.0, 10.5);
+            path.lineTo(4.0, 13.8);
+            path.closeSubpath();
+            return path;
+
+        case Glyph::Split:
+            // Two pieces pulled apart, with the cut between them. Deliberately
+            // not the scissors: the scissors is the blade *tool*, and two
+            // buttons a centimetre apart wearing the same glyph is two
+            // buttons nobody can tell apart.
+            path.addRoundedRect(QRectF(2.2, 4.4, 4.4, 7.2), 1.2, 1.2);
+            path.addRoundedRect(QRectF(9.4, 4.4, 4.4, 7.2), 1.2, 1.2);
+            path.moveTo(8.0, 2.4);
+            path.lineTo(8.0, 13.6);
+            return path;
+
+        case Glyph::CrossFade:
+            // One level falling as the other rises: the shape of the thing
+            // itself, and the symbol every mixer already uses for it.
+            path.moveTo(2.4, 12.6);
+            path.cubicTo(6.4, 12.6, 6.4, 3.4, 13.6, 3.4);
+            path.moveTo(2.4, 3.4);
+            path.cubicTo(6.4, 3.4, 6.4, 12.6, 13.6, 12.6);
+            return path;
+
+        case Glyph::Link:
+            // Two capsules overlapping: a chain, at the smallest size that
+            // still reads as one. This is drawn at nine pixels on a clip, so
+            // anything with more detail in it becomes a smudge.
+            path.addRoundedRect(QRectF(1.4, 5.2, 8.0, 5.6), 2.8, 2.8);
+            path.addRoundedRect(QRectF(6.6, 5.2, 8.0, 5.6), 2.8, 2.8);
+            return path;
+
+        case Glyph::Plus:
+            path.moveTo(8.0, 3.2);
+            path.lineTo(8.0, 12.8);
+            path.moveTo(3.2, 8.0);
+            path.lineTo(12.8, 8.0);
+            return path;
+
+        case Glyph::Minus:
+            path.moveTo(3.2, 8.0);
+            path.lineTo(12.8, 8.0);
+            return path;
+
         case Glyph::Heart:
             path.moveTo(8.0, 13.8);
             path.cubicTo(8.0, 13.8, 2.1, 10.3, 2.1, 6.3);
