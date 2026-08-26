@@ -100,10 +100,10 @@ QMenuBar::item { background: transparent; padding: 3px 8px; border-radius: 5px; 
 QMenuBar::item:selected, QMenuBar::item:pressed { background: %HOVER%; }
 
 QMenu { background: %SURFACE%; border: 1px solid %DIVIDER%; border-radius: 8px; padding: 4px; }
-QMenu::item { padding: 5px 24px 5px 12px; border-radius: 5px; }
+QMenu::item { padding: 4px 22px 4px 10px; border-radius: 5px; }
 QMenu::item:selected { background: %SELECT%; color: %ACCENT200%; }
 QMenu::item:disabled { color: %MUTED%; }
-QMenu::separator { height: 1px; background: %DIVIDER%; margin: 4px 8px; }
+QMenu::separator { height: 1px; background: %DIVIDER%; margin: 3px 8px; }
 QMenu::indicator { width: 12px; height: 12px; margin-left: 6px; }
 
 QPushButton {

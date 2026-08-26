@@ -2250,10 +2250,16 @@ private:
 
     void buildMenus() {
         menuBar_ = new QMenuBar(this);
-        // In the window rather than in the system bar: this is one window with
-        // its own furniture, and on macOS a native menu bar would put half the
-        // application somewhere the design does not show it.
+        // Native where the platform has a menu bar of its own. The design draws
+        // the menus inside the window, which is right on Windows and Linux and
+        // wrong on macOS: there the menu bar belongs at the top of the screen,
+        // and a second one in the window is a second place to look. Qt decides
+        // by platform on its own; this only says so out loud.
+#ifdef Q_OS_MACOS
+        menuBar_->setNativeMenuBar(true);
+#else
         menuBar_->setNativeMenuBar(false);
+#endif
 
         QMenu* file = menuBar_->addMenu("File");
         menuItem(file, "new-project", [this] { newProject(); });
@@ -2261,7 +2267,14 @@ private:
         file->addSeparator();
         menuItem(file, "save-project", [this] { static_cast<void>(save()); });
         menuItem(file, "save-project-as", [this] { static_cast<void>(saveAs()); });
-        menuItem(file, "save-version", [this] {
+
+        // Grouped into submenus rather than listed. Fifteen items and four
+        // rules made a File menu taller than some of the panels, and length is
+        // what makes a menu hard to read: four of these are about media, two
+        // about versions, two about templates and two about getting a file
+        // out, and saying so is shorter than spelling every one of them out.
+        QMenu* versions = file->addMenu("Versions");
+        menuItem(versions, "save-version", [this] {
             auto saved = saveNewVersion();
             if (!saved) {
                 app::say(this, "Version", QString::fromStdString(saved.error().message()));
@@ -2274,17 +2287,23 @@ private:
                          .arg(QString::fromStdString(
                              std::filesystem::path{*saved}.filename().string())));
         });
-        menuItem(file, "open-version", [this] { openVersionMenu(); });
+        menuItem(versions, "open-version", [this] { openVersionMenu(); });
         file->addSeparator();
-        menuItem(file, "import-media", [this] { bin_->importFiles(); });
-        menuItem(file, "browse-media", [this] { browseMedia(); });
-        menuItem(file, "relink-media", [this] { relinkDialog(); });
-        menuItem(file, "consolidate-media", [this] { consolidateDialog(); });
-        menuItem(file, "export-sequence", [this] { exportDialog(); });
-        menuItem(file, "export-otio", [this] { exportOtio(); });
-        file->addSeparator();
-        menuItem(file, "save-template", [this] { saveTemplateDialog(); });
-        menuItem(file, "place-template", [this] { placeTemplateDialog(); });
+
+        QMenu* media = file->addMenu("Media");
+        menuItem(media, "import-media", [this] { bin_->importFiles(); });
+        menuItem(media, "browse-media", [this] { browseMedia(); });
+        media->addSeparator();
+        menuItem(media, "relink-media", [this] { relinkDialog(); });
+        menuItem(media, "consolidate-media", [this] { consolidateDialog(); });
+
+        QMenu* exports = file->addMenu("Export");
+        menuItem(exports, "export-sequence", [this] { exportDialog(); });
+        menuItem(exports, "export-otio", [this] { exportOtio(); });
+
+        QMenu* templates = file->addMenu("Templates");
+        menuItem(templates, "save-template", [this] { saveTemplateDialog(); });
+        menuItem(templates, "place-template", [this] { placeTemplateDialog(); });
         file->addSeparator();
         menuItem(file, "close-window", [this] { close(); });
 
@@ -2417,8 +2436,10 @@ private:
         auto* brand = new QLabel("Zaro", bar);
         brand->setObjectName("chrome-brand");
         row->addWidget(brand);
-        menuBar_->setParent(bar);
-        row->addWidget(menuBar_);
+        if (!menuBar_->isNativeMenuBar()) {
+            menuBar_->setParent(bar);
+            row->addWidget(menuBar_);
+        }
         row->addStretch(1);
 
         projectLabel_ = mutedLabel();
@@ -2496,6 +2517,10 @@ private:
 
         auto* tabGroup = new QWidget(bar);
         tabGroup->setObjectName("tab-group");
+        // Fixed, and centred: without a height the group stretches to the whole
+        // bar, so its pill ran from the top edge to the bottom while the
+        // buttons beside it were thirty pixels tall in the middle.
+        tabGroup->setFixedHeight(30);
         auto* tabRow = new QHBoxLayout(tabGroup);
         tabRow->setContentsMargins(2, 2, 2, 2);
         tabRow->setSpacing(2);
@@ -2506,7 +2531,7 @@ private:
             workspaceTabs_.insert(name, tab);
             tabRow->addWidget(tab);
         }
-        row->addWidget(tabGroup);
+        row->addWidget(tabGroup, 0, Qt::AlignVCenter);
         row->addStretch(1);
 
         // Two clusters, one shown at a time: Import and Export belong to the
@@ -2572,6 +2597,7 @@ private:
 
         auto* segment = new QWidget(bar);
         segment->setObjectName("segment-group");
+        segment->setFixedHeight(28);
         auto* segmentRow = new QHBoxLayout(segment);
         segmentRow->setContentsMargins(2, 2, 2, 2);
         segmentRow->setSpacing(2);
@@ -2584,7 +2610,7 @@ private:
         programTab_->setChecked(true);
         connect(sourceTab_, &QPushButton::clicked, this, [this] { showViewer(source_); });
         connect(programTab_, &QPushButton::clicked, this, [this] { showViewer(monitor_); });
-        row->addWidget(segment);
+        row->addWidget(segment, 0, Qt::AlignVCenter);
 
         viewerLabel_ = mutedLabel();
         row->addWidget(viewerLabel_);
