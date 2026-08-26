@@ -50,6 +50,7 @@ add_executable(zaro_core_tests
     io/test_saving.cpp
     io/test_proxies.cpp
     media/test_waveform.cpp
+    ui/test_keymap.cpp
     ui/test_timeline_layout.cpp
     playback/test_transport.cpp
     playback/test_ring_buffer.cpp

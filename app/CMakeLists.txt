@@ -5,6 +5,7 @@ qt_standard_project_setup()
 add_executable(zaro-preview
     main.cpp
     MaskOverlay.cpp
+    Hotkeys.cpp
     MediaBrowser.cpp
     Transcript.cpp
     ProgramMonitor.cpp

@@ -4072,6 +4072,71 @@ Not done: scene detection still cuts one track. `makeRazorAt` takes a list of
 points on a single track, and giving it the same treatment means an id per
 partner per point; the argument for doing it is the same one as here.
 
+### Phase 7o — actions, and the hotkey manager ✅
+
+Changing what the keys do. The manager is the small part; making the
+application action-oriented is the rest, and was the point.
+
+**Every command is a catalogue entry now.** Before this, a command was a lambda
+handed to a menu builder with a shortcut baked into the call, and the list of
+what the program can do existed only as the shape of the code that built the
+menus. That is why the shortcuts could not be changed, why the key handler had
+its own separate table of "the bindings that are not menu items", and why the
+Help window's list of shortcuts was a hand-written string that had already
+drifted from the truth. `ui::allActions()` is that list as data: an id, a
+label, a category, a default.
+
+**The id is the stable name, and it is also the object name.** Labels get
+reworded and menus reorganised; a keymap somebody customised has to survive
+both. Using the same string as the widget's object name means the self-tests
+and the keymap refer to commands the same way.
+
+**Three places knew what a key did; now there is one.** A menu item's shortcut,
+the key-handler table, and the playback switch have collapsed into the keymap.
+The rule that used to be maintained by hand -- single letters are dispatched by
+the window rather than bound to menu items, because a bare letter fires while
+somebody is typing into a text field -- is derived: anything without a modifier
+goes to the key handler, so rebinding Save to "S" moves it to the safe path by
+itself.
+
+**One spelling per keystroke.** "ctrl+S", "Control+s" and "Ctrl+S" are one
+shortcut, and a keymap that stored them as three could bind three commands to
+one keystroke while reporting no clash. `normaliseShortcut` decides the
+spelling, and the catalogue is checked against it by a test.
+
+**A keystroke already in use is refused, and the error names what holds it.**
+Silently stealing it is how somebody loses a shortcut they use daily and cannot
+work out where it went.
+
+**Only the differences are saved.** A keymap file holds what somebody changed
+and nothing else, so a binding they never touched follows the application when
+its default moves. Bindings for commands this build has never heard of are
+carried through a save, for the same reason project files carry unknown fields.
+
+The manager itself is deliberately plain -- a table, a "press a key" button,
+Clear, Reset, Reset All -- because the interface is somebody else's job later
+and the part that matters is underneath it.
+
+Not done: the timeline's own tool keys (V, B, T and the rest) are still handled
+inside `TimelineWidget` and are not in the catalogue, so they cannot be
+rebound; the manager would be lying if it listed them.
+
+#### Three self-tests that had quietly stopped testing
+
+Running the suite on a clean machine found three blocks reading fixtures from
+the scratch folder of the session that wrote them -- a proxy, a subtitle file
+and a LUT. Those paths had not existed for months. Each block now writes what
+it needs into a temporary folder and removes it: the proxy is built with Phase
+7c's own proxy maker, the captions and the cube are written inline.
+
+And the hotkey self-test wrote its rebindings into the *real* user config,
+which passed once and then failed on the next run against a Save key the
+previous run had moved. The keymap path can be overridden now -- `ZARO_KEYMAP`,
+and the self-tests point it at a temporary file -- so a test cannot rebind the
+keys of whoever ran it. Both are the same lesson twice: a test that depends on
+state outside its own control is a test that reports on the machine rather than
+on the code.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

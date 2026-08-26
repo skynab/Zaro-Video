@@ -18,7 +18,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDir>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
@@ -42,6 +44,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QSysInfo>
 #include <QTimer>
@@ -60,6 +63,7 @@
 #include <utility>
 #include <vector>
 
+#include "zaro/core/Check.h"
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Sync.h"
@@ -91,10 +95,13 @@
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 #include "zaro/platform/qtext/QtTextRasterizer.h"
 #include "zaro/platform/sdl/AudioSink.h"
+#include "zaro/ui/Actions.h"
+#include "zaro/ui/Keymap.h"
 
 #include "CurveEditor.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
+#include "Hotkeys.h"
 #include "Icons.h"
 #include "MaskOverlay.h"
 #include "MediaBrowser.h"
@@ -240,6 +247,11 @@ public:
         // row of eighteen buttons under the picture, which was fine while there
         // were four of them: a menu bar is the structure that says which of
         // them belong together, and it costs the transport nothing.
+        // The keymap first: menus read their shortcuts from it as they are
+        // built, so a customised binding is on the item the first time it is
+        // drawn rather than after a refresh nobody triggers.
+        loadKeymap();
+        bindPlaybackActions();
         buildMenus();
 
         // One viewer with two pages rather than two viewers side by side: a
@@ -927,6 +939,98 @@ public:
         browser_->show();
         browser_->raise();
         return browser_;
+    }
+
+    /// Put the keymap's current binding on one action.
+    ///
+    /// **Only keystrokes with a modifier become Qt shortcuts.** A bare letter
+    /// bound through Qt fires while somebody is typing a title into a text
+    /// field; those are dispatched from this window's key handler instead,
+    /// which only sees a press when nothing else wanted it. That split used to
+    /// be a hand-maintained list of "the ones that are not menu items"; it is
+    /// derived now, so rebinding Save to "S" moves it to the safe path by
+    /// itself.
+    void applyShortcut(const QString& actionId, QAction* action) {
+        const std::string shortcut = keymap_.shortcutFor(actionId.toStdString());
+        const bool hasModifier = shortcut.find('+') != std::string::npos;
+        if (shortcut.empty() || !hasModifier) {
+            action->setShortcut(QKeySequence{});
+            return;
+        }
+        action->setShortcut(
+            QKeySequence::fromString(QString::fromStdString(shortcut), QKeySequence::PortableText));
+        action->setShortcutContext(Qt::WindowShortcut);
+    }
+
+    /// Re-read every binding: what the manager calls when something changed.
+    void applyKeymap() {
+        for (auto entry = actions_.constBegin(); entry != actions_.constEnd(); ++entry) {
+            applyShortcut(entry.key(), entry.value());
+        }
+    }
+
+    /// Where a customised keymap lives.
+    ///
+    /// A file in the user's config folder rather than a value inside the
+    /// settings blob: a keymap is a thing people share, back up, put in a
+    /// dotfile repository and edit by hand when a shortcut has gone somewhere
+    /// they cannot press.
+    [[nodiscard]] static QString keymapPath() {
+        if (!keymapPath_.isEmpty()) {
+            return keymapPath_;
+        }
+        const QString folder = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+        return folder + "/keymap.conf";
+    }
+
+    /// Put the keymap somewhere else.
+    ///
+    /// For the self-test, which rebinds things and must not leave them rebound
+    /// in whoever ran it -- it did exactly that once, and the next run failed
+    /// on a Save still sitting where the previous run had moved it. Also how
+    /// somebody keeps a keymap beside a project rather than in their home
+    /// directory: ZARO_KEYMAP names the file.
+    static void setKeymapPath(const QString& path) { keymapPath_ = path; }
+
+    void loadKeymap() {
+        QFile file{keymapPath()};
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return;  // nobody has customised anything, which is the usual case
+        }
+        auto loaded = ui::Keymap::decode(QString::fromUtf8(file.readAll()).toStdString());
+        if (!loaded) {
+            // A keymap that will not parse leaves the defaults in place rather
+            // than stopping the application: somebody who hand-edited it into
+            // a mess should still be able to start the program and fix it.
+            std::fprintf(stderr, "zaro: %s\n", loaded.error().toString().c_str());
+            return;
+        }
+        keymap_ = std::move(*loaded);
+    }
+
+    void saveKeymap() {
+        const QString path = keymapPath();
+        QDir{}.mkpath(QFileInfo{path}.absolutePath());
+        QFile file{path};
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            return;
+        }
+        file.write(QByteArray::fromStdString(keymap_.encode()));
+    }
+
+    /// The hotkey manager.
+    app::Hotkeys* showHotkeys() {
+        if (hotkeys_ == nullptr) {
+            hotkeys_ = new app::Hotkeys(keymap_, this);
+            hotkeys_->setOnChanged([this] {
+                applyKeymap();
+                saveKeymap();
+            });
+        }
+        hotkeys_->refresh();
+        hotkeys_->show();
+        hotkeys_->raise();
+        return hotkeys_;
     }
 
     /// Gather the project's media into one folder and point it at the copies.
@@ -1927,73 +2031,76 @@ public:
     }
 
 protected:
-    void keyPressEvent(QKeyEvent* event) override {
-        // One table rather than a switch buried in a handler: the bindings are
-        // the thing a user wants to see and eventually change, and a list of
-        // them reads as documentation. Premiere's defaults, which is what hands
-        // already know.
-        struct Binding {
-            int key;
-            Qt::KeyboardModifiers modifiers;
-            const char* description;
-            void (PreviewWindow::*action)();
-        };
-        // Only the bindings that are *not* menu items: anything with a
-        // modifier lives on its action now, where the menu can show it.
-        static const Binding kBindings[] = {
-            {Qt::Key_I, Qt::NoModifier, "Mark in", &PreviewWindow::doMarkIn},
-            {Qt::Key_O, Qt::NoModifier, "Mark out", &PreviewWindow::doMarkOut},
-            {Qt::Key_Comma, Qt::NoModifier, "Insert from source", &PreviewWindow::doInsert},
-            {Qt::Key_Period, Qt::NoModifier, "Overwrite from source", &PreviewWindow::doOverwrite},
-            {Qt::Key_Left, Qt::ShiftModifier, "Previous marker", &PreviewWindow::doPreviousMarker},
-            {Qt::Key_Right, Qt::ShiftModifier, "Next marker", &PreviewWindow::doNextMarker},
-            {Qt::Key_Up, Qt::NoModifier, "Source back one frame", &PreviewWindow::doSourceBack},
-            {Qt::Key_Down, Qt::NoModifier, "Source forward one frame",
-             &PreviewWindow::doSourceForward},
-            {Qt::Key_F, Qt::NoModifier, "Match frame", &PreviewWindow::doMatchFrame},
-        };
-        for (const Binding& binding : kBindings) {
-            if (event->key() == binding.key && event->modifiers() == binding.modifiers) {
-                (this->*binding.action)();
-                return;
-            }
-        }
-
+    /// Turn a key press into the same text a keymap holds.
+    ///
+    /// Qt's own portable spelling, run through the keymap's normaliser, so
+    /// there is one form and one comparison rather than a second opinion about
+    /// what "Shift+Left" is called.
+    [[nodiscard]] static std::string keystrokeOf(const QKeyEvent* event) {
         switch (event->key()) {
-            case Qt::Key_Space:
-                togglePlay();
-                return;
-            case Qt::Key_L:
-                transport_.pressL();
-                startIfPlaying();
-                return;
-            case Qt::Key_K:
-                transport_.pressK();
-                stop();
-                return;
-            case Qt::Key_J:
-                transport_.pressJ();
-                startIfPlaying();
-                return;
-            case Qt::Key_Left:
-                step(-1);
-                return;
-            case Qt::Key_Right:
-                step(1);
-                return;
-            case Qt::Key_Home:
-                stop();
-                setPosition(time::RationalTime{0, liveSequence()->frameRate()});
-                return;
-            case Qt::Key_End:
-                stop();
-                setPosition(liveSequence()->duration());
-                return;
+            case Qt::Key_Control:
+            case Qt::Key_Shift:
+            case Qt::Key_Alt:
+            case Qt::Key_Meta:
+                return {};  // a modifier on its own is not a keystroke
             default:
-                QWidget::keyPressEvent(event);
+                break;
         }
+        const QKeySequence sequence{event->keyCombination()};
+        auto normalised =
+            ui::normaliseShortcut(sequence.toString(QKeySequence::PortableText).toStdString());
+        return normalised ? *normalised : std::string{};
     }
 
+    void keyPressEvent(QKeyEvent* event) override {
+        // Whatever the keymap says this keystroke is, whether or not it has a
+        // menu item behind it. There used to be a table here of "the bindings
+        // that are not menu items" and a switch for playback underneath it,
+        // which meant three places knew what a key did and only one of them
+        // could be changed. Now there is one: the keymap.
+        const std::string keystroke = keystrokeOf(event);
+        const std::string wanted = keystroke.empty() ? std::string{} : keymap_.actionFor(keystroke);
+        if (!wanted.empty() && trigger(wanted)) {
+            return;
+        }
+        QWidget::keyPressEvent(event);
+    }
+
+public:
+    /// Run an action by name.
+    ///
+    /// The single door everything goes through -- a menu item, a key press, a
+    /// test -- so "what does this command do" has one answer and a self-test
+    /// can press a button that has no button.
+    bool trigger(const std::string& actionId) {
+        if (QAction* action = actions_.value(QString::fromStdString(actionId), nullptr)) {
+            action->trigger();
+            return true;
+        }
+        const auto handler = handlers_.find(actionId);
+        if (handler == handlers_.end()) {
+            return false;
+        }
+        handler->second();
+        return true;
+    }
+
+    /// Register something that has no menu item: playback, marking, stepping.
+    ///
+    /// These are the commands whose defaults are bare letters, which cannot be
+    /// Qt shortcuts without firing while somebody types. They are actions like
+    /// any other -- catalogued, rebindable, listed in the manager -- they
+    /// simply arrive through the key handler rather than through a menu.
+    template <typename F>
+    void bindAction(const char* actionId, F&& handler) {
+        ZARO_CHECK(ui::findAction(actionId) != nullptr,
+                   "a binding names an action nobody catalogued");
+        handlers_.emplace(actionId, std::forward<F>(handler));
+    }
+
+    [[nodiscard]] ui::Keymap& keymap() { return keymap_; }
+
+protected:
     /// Keep the mask handles over the picture when the monitor resizes.
     ///
     /// An event filter rather than a layout: the overlay has to cover the
@@ -2073,22 +2180,52 @@ private:
     }
 
     template <typename F>
-    QAction* menuItem(QMenu* menu, const QString& text, F&& handler,
-                      const QKeySequence& shortcut = {}, const QString& name = {}) {
-        QAction* action = menu->addAction(text);
-        if (!name.isEmpty()) {
-            action->setObjectName(name);
-        }
-        if (!shortcut.isEmpty()) {
-            // Window context: the menu bar is a child of this window, so an
-            // item is reachable wherever focus is inside it. Single letters are
-            // deliberately not bound here -- they would fire while somebody was
-            // typing a title into a text field.
-            action->setShortcut(shortcut);
-            action->setShortcutContext(Qt::WindowShortcut);
-        }
+    QAction* menuItem(QMenu* menu, const char* actionId, F&& handler) {
+        const ui::ActionInfo* info = ui::findAction(actionId);
+        ZARO_CHECK(info != nullptr, "a menu item names an action nobody catalogued");
+
+        QAction* action = menu->addAction(
+            QString::fromUtf8(info->label.data(), static_cast<int>(info->label.size())));
+        // The id is the object name, so the self-tests and anything else that
+        // reaches for a command by name uses the same name the keymap does.
+        action->setObjectName(QString::fromUtf8(actionId));
         connect(action, &QAction::triggered, this, std::forward<F>(handler));
+        actions_.insert(QString::fromUtf8(actionId), action);
+        applyShortcut(actionId, action);
         return action;
+    }
+
+    /// The commands that arrive by key rather than through a menu.
+    void bindPlaybackActions() {
+        bindAction("play-pause", [this] { togglePlay(); });
+        bindAction("shuttle-back", [this] {
+            transport_.pressJ();
+            startIfPlaying();
+        });
+        bindAction("shuttle-stop", [this] {
+            transport_.pressK();
+            stop();
+        });
+        bindAction("shuttle-forward", [this] {
+            transport_.pressL();
+            startIfPlaying();
+        });
+        bindAction("step-back", [this] { step(-1); });
+        bindAction("step-forward", [this] { step(1); });
+        bindAction("go-to-start", [this] {
+            stop();
+            setPosition(time::RationalTime{0, liveSequence()->frameRate()});
+        });
+        bindAction("go-to-end", [this] {
+            stop();
+            setPosition(liveSequence()->duration());
+        });
+        bindAction("mark-in", [this] { doMarkIn(); });
+        bindAction("mark-out", [this] { doMarkOut(); });
+        bindAction("insert-from-source", [this] { doInsert(); });
+        bindAction("overwrite-from-source", [this] { doOverwrite(); });
+        bindAction("source-back", [this] { doSourceBack(); });
+        bindAction("source-forward", [this] { doSourceForward(); });
     }
 
     void buildMenus() {
@@ -2099,147 +2236,109 @@ private:
         menuBar_->setNativeMenuBar(false);
 
         QMenu* file = menuBar_->addMenu("File");
-        menuItem(file, "New", [this] { newProject(); }, QKeySequence::New, "new-project");
-        menuItem(file, "Open…", [this] { openDialog(); }, QKeySequence::Open, "open-project");
+        menuItem(file, "new-project", [this] { newProject(); });
+        menuItem(file, "open-project", [this] { openDialog(); });
         file->addSeparator();
-        menuItem(
-            file, "Save", [this] { static_cast<void>(save()); }, QKeySequence::Save,
-            "save-project");
-        menuItem(file, "Save As…", [this] { static_cast<void>(saveAs()); }, QKeySequence::SaveAs);
-        menuItem(
-            file, "Save a New Version",
-            [this] {
-                auto saved = saveNewVersion();
-                if (!saved) {
-                    QMessageBox::information(this, "Version",
-                                             QString::fromStdString(saved.error().message()));
-                    return;
-                }
-                // Said out loud: the window title changes too, but a version
-                // that appeared to do nothing is one people press twice.
-                QMessageBox::information(
-                    this, "Version",
-                    QString("Now working in %1")
-                        .arg(QString::fromStdString(
-                            std::filesystem::path{*saved}.filename().string())));
-            },
-            QKeySequence("Ctrl+Alt+S"), "save-version");
-        menuItem(
-            file, "Open a Version…", [this] { openVersionMenu(); }, QKeySequence{}, "open-version");
+        menuItem(file, "save-project", [this] { static_cast<void>(save()); });
+        menuItem(file, "save-project-as", [this] { static_cast<void>(saveAs()); });
+        menuItem(file, "save-version", [this] {
+            auto saved = saveNewVersion();
+            if (!saved) {
+                QMessageBox::information(this, "Version",
+                                         QString::fromStdString(saved.error().message()));
+                return;
+            }
+            // Said out loud: the window title changes too, but a version
+            // that appeared to do nothing is one people press twice.
+            QMessageBox::information(this, "Version",
+                                     QString("Now working in %1")
+                                         .arg(QString::fromStdString(
+                                             std::filesystem::path{*saved}.filename().string())));
+        });
+        menuItem(file, "open-version", [this] { openVersionMenu(); });
         file->addSeparator();
-        menuItem(
-            file, "Import Media…", [this] { bin_->importFiles(); }, QKeySequence("Ctrl+I"),
-            "import-media");
-        menuItem(
-            file, "Browse Media…", [this] { browseMedia(); }, QKeySequence("Ctrl+Shift+I"),
-            "browse-media");
-        menuItem(file, "Relink Media…", [this] { relinkDialog(); }, QKeySequence{}, "relink-media");
-        menuItem(
-            file, "Consolidate Media…", [this] { consolidateDialog(); }, QKeySequence{},
-            "consolidate-media");
-        menuItem(
-            file, "Export…", [this] { exportDialog(); }, QKeySequence("Ctrl+E"), "export-sequence");
-        menuItem(file, "Export OpenTimelineIO…", [this] { exportOtio(); });
+        menuItem(file, "import-media", [this] { bin_->importFiles(); });
+        menuItem(file, "browse-media", [this] { browseMedia(); });
+        menuItem(file, "relink-media", [this] { relinkDialog(); });
+        menuItem(file, "consolidate-media", [this] { consolidateDialog(); });
+        menuItem(file, "export-sequence", [this] { exportDialog(); });
+        menuItem(file, "export-otio", [this] { exportOtio(); });
         file->addSeparator();
-        menuItem(
-            file, "Save Graphic as Template…", [this] { saveTemplateDialog(); }, QKeySequence{},
-            "save-template");
-        menuItem(
-            file, "Place Graphic Template…", [this] { placeTemplateDialog(); }, QKeySequence{},
-            "place-template");
+        menuItem(file, "save-template", [this] { saveTemplateDialog(); });
+        menuItem(file, "place-template", [this] { placeTemplateDialog(); });
         file->addSeparator();
-        menuItem(file, "Close Window", [this] { close(); }, QKeySequence::Close);
+        menuItem(file, "close-window", [this] { close(); });
 
         QMenu* edit = menuBar_->addMenu("Edit");
-        menuItem(edit, "Undo", [this] { timeline_->undo(); }, QKeySequence::Undo);
-        menuItem(edit, "Redo", [this] { timeline_->redo(); }, QKeySequence::Redo);
+        menuItem(edit, "undo", [this] { timeline_->undo(); });
+        menuItem(edit, "redo", [this] { timeline_->redo(); });
         edit->addSeparator();
-        menuItem(edit, "Select All", [this] { timeline_->selectAll(); }, QKeySequence::SelectAll);
+        menuItem(edit, "select-all", [this] { timeline_->selectAll(); });
         edit->addSeparator();
-        menuItem(
-            edit, "Detect Cuts in Selected Clip", [this] { static_cast<void>(detectScenes()); },
-            QKeySequence("Ctrl+D"), "detect-scenes");
+        menuItem(edit, "detect-scenes", [this] { static_cast<void>(detectScenes()); });
 
         QMenu* clip = menuBar_->addMenu("Clip");
-        menuItem(clip, "Match Frame", [this] { matchFrame(); });
-        menuItem(clip, "Make Subclip", [this] { makeSubclip(); });
+        menuItem(clip, "match-frame", [this] { matchFrame(); });
+        menuItem(clip, "make-subclip", [this] { makeSubclip(); });
         clip->addSeparator();
-        menuItem(clip, "Proxies…", [this] { proxyMenu(); }, {}, "proxies");
-        menuItem(clip, "Multicam…", [this] { multicamMenu(); }, {}, "multicam");
-        menuItem(clip, "Captions…", [this] { captionsMenu(); }, {}, "captions");
+        menuItem(clip, "proxies", [this] { proxyMenu(); });
+        menuItem(clip, "multicam", [this] { multicamMenu(); });
+        menuItem(clip, "captions", [this] { captionsMenu(); });
 
         QMenu* sequence = menuBar_->addMenu("Sequence");
-        menuItem(sequence, "Razor at Playhead", [this] { timeline_->razorAtPlayhead(); });
-        menuItem(sequence, "Add Dissolve at Playhead",
-                 [this] { timeline_->addDissolveAtPlayhead(); });
+        menuItem(sequence, "razor", [this] { timeline_->razorAtPlayhead(); });
+        menuItem(sequence, "add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
         sequence->addSeparator();
-        menuItem(sequence, "Render Range…", [this] { renderMenu(); }, {}, "render-range");
-        menuItem(sequence, "Delivery…", [this] { deliveryMenu(); }, {}, "delivery");
-        menuItem(sequence, "Loudness…", [this] { loudnessMenu(); }, {}, "loudness");
+        menuItem(sequence, "render-range", [this] { renderMenu(); });
+        menuItem(sequence, "delivery", [this] { deliveryMenu(); });
+        menuItem(sequence, "loudness", [this] { loudnessMenu(); });
 
         QMenu* text = menuBar_->addMenu("Text");
-        menuItem(
-            text, "Transcript…", [this] { showTranscript(); }, QKeySequence("Ctrl+T"),
-            "show-transcript");
+        menuItem(text, "show-transcript", [this] { showTranscript(); });
 
         QMenu* audio = menuBar_->addMenu("Audio");
-        menuItem(
-            audio, "Fit Music to the Picture",
-            [this] {
-                const model::Sequence* sequence = liveSequence();
-                if (sequence == nullptr) {
-                    return;
-                }
-                // The picture's length, less wherever the music starts: what
-                // has to be filled is what is left after it comes in.
-                const model::Track* track = sequence->findTrack(selectedTrack_);
-                const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-                const double from = clip != nullptr ? clip->start().toSecondsDouble() : 0.0;
-                const double wanted = sequence->duration().toSecondsDouble() - from;
-                auto plan = remixSelectedTo(wanted);
-                if (!plan) {
-                    QMessageBox::information(this, "Fit music",
-                                             QString::fromStdString(plan.error().message()));
-                    return;
-                }
+        menuItem(audio, "fit-music", [this] {
+            const model::Sequence* sequence = liveSequence();
+            if (sequence == nullptr) {
+                return;
+            }
+            // The picture's length, less wherever the music starts: what
+            // has to be filled is what is left after it comes in.
+            const model::Track* track = sequence->findTrack(selectedTrack_);
+            const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+            const double from = clip != nullptr ? clip->start().toSecondsDouble() : 0.0;
+            const double wanted = sequence->duration().toSecondsDouble() - from;
+            auto plan = remixSelectedTo(wanted);
+            if (!plan) {
                 QMessageBox::information(this, "Fit music",
-                                         QString("Cut %1 beats out at %2s, now %3s long.")
-                                             .arg(plan->beatsRemoved)
-                                             .arg(plan->cutAt, 0, 'f', 2)
-                                             .arg(plan->seconds, 0, 'f', 2));
-            },
-            QKeySequence{}, "fit-music");
+                                         QString::fromStdString(plan.error().message()));
+                return;
+            }
+            QMessageBox::information(this, "Fit music",
+                                     QString("Cut %1 beats out at %2s, now %3s long.")
+                                         .arg(plan->beatsRemoved)
+                                         .arg(plan->cutAt, 0, 'f', 2)
+                                         .arg(plan->seconds, 0, 'f', 2));
+        });
 
         QMenu* marker = menuBar_->addMenu("Marker");
-        menuItem(marker, "Add Marker", [this] { timeline_->addMarkerAtPlayhead(); });
-        menuItem(
-            marker, "Go to Next Marker", [this] { doNextMarker(); }, QKeySequence("Shift+Right"));
-        menuItem(
-            marker, "Go to Previous Marker", [this] { doPreviousMarker(); },
-            QKeySequence("Shift+Left"));
+        menuItem(marker, "add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
+        menuItem(marker, "next-marker", [this] { doNextMarker(); });
+        menuItem(marker, "previous-marker", [this] { doPreviousMarker(); });
         marker->addSeparator();
-        menuItem(
-            marker, "Resolve Comment Here", [this] { toggleCommentHere(); },
-            QKeySequence("Shift+R"), "resolve-comment");
-        menuItem(
-            marker, "Export Review Notes…", [this] { exportReviewNotes(); }, QKeySequence{},
-            "export-review");
+        menuItem(marker, "resolve-comment", [this] { static_cast<void>(toggleCommentHere()); });
+        menuItem(marker, "export-review", [this] { exportReviewNotes(); });
 
         QMenu* effects = menuBar_->addMenu("Effects");
-        compareAction_ = menuItem(
-            effects, "Hold This Frame to Compare",
-            [this](bool on) {
-                // Turning it on takes the frame showing now as the reference. That
-                // is the gesture: somebody looks at a shot they like and says
-                // "against this" -- asking them to nominate one first would be a
-                // step between the thought and the thing.
-                setComparing(on, on ? position_ : referenceAt_);
-            },
-            {}, "compare");
+        compareAction_ = menuItem(effects, "compare", [this](bool on) {
+            // Turning it on takes the frame showing now as the reference. That
+            // is the gesture: somebody looks at a shot they like and says
+            // "against this" -- asking them to nominate one first would be a
+            // step between the thought and the thing.
+            setComparing(on, on ? position_ : referenceAt_);
+        });
         compareAction_->setCheckable(true);
-        menuItem(
-            effects, "Match Selected Clip to Held Frame", [this] { matchShot(); }, {},
-            "match-shot");
+        menuItem(effects, "match-shot", [this] { matchShot(); });
 
         QMenu* view = menuBar_->addMenu("View");
         QMenu* workspaces = view->addMenu("Workspace");
@@ -2250,20 +2349,16 @@ private:
             connect(action, &QAction::triggered, this, [this, name] { setWorkspace(name); });
         }
         view->addSeparator();
-        menuItem(view, "Zoom In", [this] { timeline_->zoomBy(1.4); }, QKeySequence::ZoomIn);
-        menuItem(view, "Zoom Out", [this] { timeline_->zoomBy(1.0 / 1.4); }, QKeySequence::ZoomOut);
-        menuItem(
-            view, "Zoom to Fit", [this] { timeline_->zoomToFit(); }, QKeySequence("Ctrl+Shift+F"));
+        menuItem(view, "zoom-in", [this] { timeline_->zoomBy(1.4); });
+        menuItem(view, "zoom-out", [this] { timeline_->zoomBy(1.0 / 1.4); });
+        menuItem(view, "zoom-fit", [this] { timeline_->zoomToFit(); });
         view->addSeparator();
-        guidesAction_ = menuItem(
-            view, "Safe Area Guides",
-            [this](bool on) {
-                viewerOverlay_->setGuides(on);
-                if (guidesButton_ != nullptr) {
-                    guidesButton_->setChecked(on);
-                }
-            },
-            QKeySequence("Ctrl+'"), "safe-guides");
+        guidesAction_ = menuItem(view, "safe-guides", [this](bool on) {
+            viewerOverlay_->setGuides(on);
+            if (guidesButton_ != nullptr) {
+                guidesButton_->setChecked(on);
+            }
+        });
         guidesAction_->setCheckable(true);
 
         QMenu* window = menuBar_->addMenu("Window");
@@ -2272,11 +2367,11 @@ private:
         panelAction(window, "Scopes", [this] { return static_cast<QWidget*>(scopes_); });
         panelAction(window, "Audio Mixer", [this] { return static_cast<QWidget*>(mixer_); });
         window->addSeparator();
-        menuItem(window, "Reset Panels", [this] { setWorkspace(workspace_); });
+        menuItem(window, "reset-panels", [this] { setWorkspace(workspace_); });
 
         QMenu* help = menuBar_->addMenu("Help");
-        menuItem(help, "Keyboard Shortcuts", [this] { showShortcuts(); });
-        menuItem(help, "About Zaro", [this] {
+        menuItem(help, "hotkeys", [this] { showHotkeys(); });
+        menuItem(help, "about", [this] {
             QMessageBox::about(this, "Zaro Video",
                                "Zaro Video — a non-linear editor.\n\n"
                                "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
@@ -2917,14 +3012,6 @@ private:
                                  QString("Matched: the two shots were %1 apart and are now %2.")
                                      .arg(match->before, 0, 'f', 3)
                                      .arg(match->after, 0, 'f', 3));
-    }
-
-    void showShortcuts() {
-        QMessageBox::information(this, "Keyboard shortcuts",
-                                 "Space play/pause · J K L shuttle · ← → step · Home End\n"
-                                 "I O mark in/out · , . insert/overwrite · F match frame\n"
-                                 "V B T Y H Z tools · C razor · M marker · S snapping\n"
-                                 "Ctrl+Z undo · Ctrl+S save · Ctrl+E export · Ctrl+D detect cuts");
     }
 
     void goToStart() {
@@ -3631,6 +3718,13 @@ private:
     app::ProjectBin* bin_{nullptr};
     app::MediaBrowser* browser_{nullptr};
     app::Transcript* transcript_{nullptr};
+    app::Hotkeys* hotkeys_{nullptr};
+    static inline QString keymapPath_;
+
+    /// Which keystroke runs what, and everything that can be run.
+    ui::Keymap keymap_;
+    QMap<QString, QAction*> actions_;
+    std::map<std::string, std::function<void()>> handlers_;
     /// Somebody else has this project open, so it must not be written over.
     bool readOnly_{false};
     static inline bool locking_{false};
@@ -3744,6 +3838,15 @@ int main(int argc, char** argv) {
     const bool selfTest = arguments.removeAll("--selftest") > 0;
     const bool editTest = arguments.removeAll("--selftest-edit") > 0;
     const bool quitTest = arguments.removeAll("--selftest-quit") > 0;
+    // A keymap of its own for the self-tests, and for anybody who wants one
+    // beside a project: the tests rebind commands, and rebinding somebody's
+    // real Save key because they ran a test is not on.
+    if (const char* wanted = std::getenv("ZARO_KEYMAP"); wanted != nullptr) {
+        PreviewWindow::setKeymapPath(QString::fromUtf8(wanted));
+    } else if (selfTest || editTest || quitTest) {
+        PreviewWindow::setKeymapPath(QDir::temp().filePath("zaro-selftest-keymap.conf"));
+    }
+
     // Project locking is off unless asked for. See PreviewWindow::lockingEnabled.
     const char* lockingWanted = std::getenv("ZARO_LOCKING");
     PreviewWindow::setLockingEnabled(arguments.removeAll("--locking") > 0 ||
@@ -6842,14 +6945,32 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
         }
 
-        // Proxies: the swap, and the promise that export ignores it. The proxy
-        // fixture is inverted as well as smaller, so which file was read is
-        // unmistakable rather than a matter of judging sharpness.
+        // Proxies: the swap, and the promise that export ignores it.
+        //
+        // The proxy is made here rather than pointed at. It used to be a file
+        // in a scratch folder from the session that wrote this test, which
+        // meant the check passed on that machine that week and silently did
+        // nothing ever after -- it was found dead, months later, by a run on a
+        // clean temp directory.
         {
+            const std::filesystem::path proxyFolder =
+                std::filesystem::temp_directory_path() / "zaro-selftest-proxy-swap";
+            std::filesystem::remove_all(proxyFolder);
+            std::filesystem::create_directories(proxyFolder);
             for (auto& media : window.project().mediaMutable()) {
-                media.proxyPath =
-                    "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
-                    "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/proxy.mov";
+                zaro::platform::ffmpeg::ProxySettings settings;
+                settings.source = media.path;
+                settings.destination =
+                    (proxyFolder /
+                     (std::filesystem::path{media.path}.stem().string() + "-proxy.mov"))
+                        .string();
+                settings.width = 96;  // much smaller, so which file was read is unmistakable
+                auto made = zaro::platform::ffmpeg::makeProxy(settings);
+                if (!made) {
+                    std::fprintf(stderr, "  FAIL: %s\n", made.error().toString().c_str());
+                    return 1;
+                }
+                media.proxyPath = made->path;
             }
 
             std::int64_t brightFrame = 0;
@@ -6875,10 +6996,23 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
             const double viaProxy = meanGray(window.monitor()->grabFramebuffer());
 
-            std::printf("  proxies: %.1f from the original, %.1f from an inverted proxy\n",
-                        fromOriginal, viaProxy);
-            if (!(std::fabs(fromOriginal - viaProxy) > 40.0)) {
-                std::fprintf(stderr, "  FAIL: switching to proxies did not change what was read\n");
+            // What was read, rather than what it looked like: the proxy is a
+            // faithful copy at a quarter of the width, so judging it by
+            // brightness would be judging the resampler. The decoded frame's
+            // size says which file the pixels came from and nothing else does.
+            const auto probeAt = zaro::time::RationalTime{brightFrame, sequence.frameRate()};
+            const auto mediaId = window.project().media().front().id;
+            auto small = window.frameSource().imageFor(mediaId, probeAt);
+            if (!small) {
+                std::fprintf(stderr, "  FAIL: the proxy does not decode\n");
+                return 1;
+            }
+            const std::int32_t proxyWidth = (*small)->width();
+            std::printf("  proxies: %.1f from the original, %.1f from a %d-wide proxy\n",
+                        fromOriginal, viaProxy, proxyWidth);
+            if (proxyWidth != 96) {
+                std::fprintf(stderr, "  FAIL: reading proxies gave a %d-wide picture\n",
+                             proxyWidth);
                 return 1;
             }
 
@@ -6892,6 +7026,7 @@ int main(int argc, char** argv) {
             for (auto& media : window.project().mediaMutable()) {
                 media.proxyPath.clear();
             }
+            std::filesystem::remove_all(proxyFolder);
             window.monitor()->update();
             QApplication::processEvents();
         }
@@ -7095,9 +7230,22 @@ int main(int argc, char** argv) {
         // what those cannot show is whether an imported file reaches the
         // picture.
         {
-            auto subtitles = zaro::io::loadSubtitles(
-                "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
-                "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/test.srt");
+            // The file is written here rather than found: this block used to
+            // read a .srt from the scratch folder of the session that wrote it,
+            // which is a check that stops checking the moment that folder goes.
+            const std::filesystem::path subtitlePath =
+                std::filesystem::temp_directory_path() / "zaro-selftest-captions.srt";
+            {
+                std::ofstream writing{subtitlePath};
+                // Back to back and covering the whole two seconds the check
+                // searches: a gap between them would leave the darkest frame
+                // uncaptioned, and the test would read that as the burn-in not
+                // working.
+                writing << "1\n00:00:00,000 --> 00:00:01,000\nfirst line\n\n"
+                        << "2\n00:00:01,000 --> 00:00:02,000\nsecond line\n\n";
+            }
+            auto subtitles = zaro::io::loadSubtitles(subtitlePath.string());
+            std::filesystem::remove(subtitlePath);
             if (!subtitles) {
                 std::fprintf(stderr, "  FAIL: %s\n", subtitles.error().toString().c_str());
                 return 1;
@@ -7350,10 +7498,28 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
             const double plainDark = meanGray(window.monitor()->grabFramebuffer());
 
+            // Written here, for the same reason the captions are: a fixture in
+            // somebody's scratch folder is a test that quietly stops running.
+            // A 2x2x2 cube that lifts black by 0.15 and warms the highlights,
+            // which is the smallest thing that changes a picture visibly.
+            const std::filesystem::path lutPath =
+                std::filesystem::temp_directory_path() / "zaro-selftest-warm.cube";
+            {
+                std::ofstream writing{lutPath};
+                writing << "TITLE \"warm lift\"\nLUT_3D_SIZE 2\n";
+                for (int blue = 0; blue < 2; ++blue) {
+                    for (int green = 0; green < 2; ++green) {
+                        for (int red = 0; red < 2; ++red) {
+                            const double r = 0.75 + (red * 0.25);
+                            const double g = 0.72 + (green * 0.28);
+                            const double b = 0.68 + (blue * 0.32);
+                            writing << r << " " << g << " " << b << "\n";
+                        }
+                    }
+                }
+            }
             zaro::model::LutRef look;
-            look.path =
-                "/private/tmp/claude-1970005770/-Users-anthony-lazzaro-Documents-Zaro-Video/"
-                "5921f2b6-fdbc-4e60-9098-ed4fd2d5a97a/scratchpad/warm.cube";
+            look.path = lutPath.string();
             auto built = zaro::edit::makeSetLut(window.project(), {sequence.id(), videoTrack.id()},
                                                 original.id, look);
             if (!built) {
@@ -8556,6 +8722,102 @@ int main(int argc, char** argv) {
             binSearch->setText("");
             QApplication::processEvents();
             window.bin()->refresh();
+            QApplication::processEvents();
+        }
+
+        // Hotkeys: what the keys do, and changing it.
+        {
+            auto* manager = window.showHotkeys();
+            if (manager == nullptr) {
+                std::fprintf(stderr, "  FAIL: there is no hotkey manager\n");
+                return 1;
+            }
+            auto* saveAction = window.findChild<QAction*>("save-project");
+            if (saveAction == nullptr) {
+                std::fprintf(stderr, "  FAIL: commands are not addressable by name\n");
+                return 1;
+            }
+            // Out of the box, the menu shows what the catalogue says.
+            if (saveAction->shortcut() != QKeySequence("Ctrl+S")) {
+                std::fprintf(stderr, "  FAIL: Save is bound to %s, not Ctrl+S\n",
+                             saveAction->shortcut().toString().toStdString().c_str());
+                return 1;
+            }
+
+            // Rebind it, the way the manager does.
+            if (Status bound = manager->assign("save-project", "Ctrl+Alt+9"); !bound) {
+                std::fprintf(stderr, "  FAIL: %s\n", bound.error().toString().c_str());
+                return 1;
+            }
+            if (saveAction->shortcut() != QKeySequence("Ctrl+Alt+9")) {
+                std::fprintf(stderr, "  FAIL: rebinding did not reach the menu (%s)\n",
+                             saveAction->shortcut().toString().toStdString().c_str());
+                return 1;
+            }
+
+            // A keystroke somebody else has is refused, and says whose it is.
+            auto clash = manager->assign("relink-media", "Ctrl+Alt+9");
+            if (clash) {
+                std::fprintf(stderr, "  FAIL: two commands were allowed on one keystroke\n");
+                return 1;
+            }
+            if (clash.error().message().find("Save") == std::string::npos) {
+                std::fprintf(stderr, "  FAIL: the clash does not say what holds it: %s\n",
+                             clash.error().message().c_str());
+                return 1;
+            }
+
+            // A command with no menu item is rebindable too, and the key
+            // handler follows: mark-in moves from I to Y.
+            //
+            // What is checked is where the in point *is*, not whether there is
+            // one: an earlier block leaves a marked range behind, so a test
+            // that asked "is anything marked" would pass without either key
+            // doing anything -- which is exactly what it did until the revert
+            // check found it.
+            window.sourceMonitor()->step(7);
+            const auto parkedAt = window.sourceMonitor()->position();
+            if (Status moved = manager->assign("mark-in", "Y"); !moved) {
+                std::fprintf(stderr, "  FAIL: %s\n", moved.error().toString().c_str());
+                return 1;
+            }
+            QKeyEvent oldKey(QEvent::KeyPress, Qt::Key_I, Qt::NoModifier);
+            QCoreApplication::sendEvent(&window, &oldKey);
+            const auto afterOldKey = window.sourceMonitor()->markedRange();
+            if (afterOldKey.has_value() && afterOldKey->start() == parkedAt) {
+                std::fprintf(stderr, "  FAIL: the old key still marks in\n");
+                return 1;
+            }
+            QKeyEvent newKey(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier);
+            QCoreApplication::sendEvent(&window, &newKey);
+            const auto afterNewKey = window.sourceMonitor()->markedRange();
+            if (!afterNewKey.has_value() || afterNewKey->start() != parkedAt) {
+                std::fprintf(stderr, "  FAIL: the new key did not mark in where the source is\n");
+                return 1;
+            }
+
+            // It survives being written out and read back.
+            const std::string written = window.keymap().encode();
+            auto reloaded = zaro::ui::Keymap::decode(written);
+            if (!reloaded || reloaded->shortcutFor("save-project") != "Ctrl+Alt+9" ||
+                reloaded->shortcutFor("mark-in") != "Y") {
+                std::fprintf(stderr, "  FAIL: the keymap did not survive a round trip\n");
+                return 1;
+            }
+            std::printf("  hotkeys: %zu commands, %zu bytes of keymap when two are changed\n",
+                        zaro::ui::allActions().size(), written.size());
+
+            // And putting them back is one call.
+            if (Status back = manager->resetOne("save-project"); !back) {
+                std::fprintf(stderr, "  FAIL: %s\n", back.error().toString().c_str());
+                return 1;
+            }
+            if (saveAction->shortcut() != QKeySequence("Ctrl+S")) {
+                std::fprintf(stderr, "  FAIL: resetting did not restore the default\n");
+                return 1;
+            }
+            window.keymap().resetAll();
+            window.applyKeymap();
             QApplication::processEvents();
         }
 

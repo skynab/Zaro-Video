@@ -105,6 +105,7 @@ against the CPU path's 7.
 | 7l | Auto-reframe for vertical and square | **done** |
 | 7m | Remix: fitting music to a length, on its beats | **done** |
 | 7n | Text-based editing: delete words, the cut follows | **done** |
+| 7o | Actions and the hotkey manager | **done** |
 | 7o | The Cutline chrome: menus, tools, workspaces | **done** |
 | 7p | The design's second pass: the timeline's controls, and Donate | **done** |
 | 7q | Timeline alignment: snap guides, and a blade that shows its cut | **done** |
