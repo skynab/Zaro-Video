@@ -66,6 +66,22 @@ struct RenderRequest {
     /// file with nothing done to it. Off is how somebody forces a re-encode --
     /// for a file another program will not accept, say.
     bool allowCopy{true};
+
+    /// What to encode with. Empty picks from the container, which is what
+    /// every caller did before there was a choice: ProRes and PCM for .mov,
+    /// H.264 and AAC for .mp4.
+    ///
+    /// Named rather than enumerated because these are FFmpeg encoder names and
+    /// which ones exist depends on how FFmpeg was built. A name this build does
+    /// not have fails when the encoder is opened, with the name in the message
+    /// -- which is more use than a menu that offers something and then cannot
+    /// say what went wrong.
+    std::string videoCodec;
+    std::string audioCodec;
+    /// Bits per second for the picture. Zero leaves it to the encoder, and
+    /// codecs that do not take a rate -- ProRes picks its own from the profile
+    /// -- ignore it.
+    std::int64_t videoBitRate{0};
 };
 
 /// What the encoder actually wrote.

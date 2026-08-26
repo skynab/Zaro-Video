@@ -215,6 +215,8 @@ QLabel { background: transparent; }
 }
 #chrome-brand { font-weight: 600; padding: 0 6px; }
 #viewer-well { background: %WELL%; }
+#deliver-side { background: %SURFACE%; }
+#deliver-header { background: %SURFACE%; border-bottom: 1px solid %DIVIDER%; }
 #timecode-big { color: %ACCENT300%; }
 #segment-group { border: 1px solid %DIVIDER%; border-radius: 8px; }
 #tab-group { background: %HOVER%; border-radius: 8px; }

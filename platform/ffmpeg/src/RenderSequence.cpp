@@ -76,6 +76,12 @@ Status renderSequence(const model::Project& project, const RenderRequest& reques
     settings.frameRate = rate;
     settings.audioSampleRate = audioRate;
     settings.includeAudio = request.includeAudio;
+    // Passed through rather than decided here: the container's defaults are
+    // still what an empty name means, so every existing caller writes the file
+    // it always did.
+    settings.videoCodec = request.videoCodec;
+    settings.audioCodec = request.audioCodec;
+    settings.videoBitRate = request.videoBitRate;
     // What the deliverable is encoded through, taken from the sequence rather
     // than from the request: the scopes and the curve editor were drawn against
     // this, and an export that used a different curve would be judged against a

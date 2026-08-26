@@ -8,8 +8,8 @@ locked in.
 
 ## Status
 
-**Phase 7r — cutting a linked pair.** Media can be imported, marked up in a source
-monitor, cut into a timeline three-point with picture and sound linked,
+**Phase 7u — the Deliver workspace.** Media can be imported, marked up in a
+source monitor, cut into a timeline three-point with picture and sound linked,
 dissolved, marked, graded, masked, mixed, adjusted, watched and exported. The
 window is dressed as an editor: a menu bar, a timeline tool palette (select,
 blade, trim, slip, hand, zoom), four workspaces that decide which panels are
@@ -17,10 +17,11 @@ up, one viewer with source and program pages, a burn-in over the picture with
 safe-area guides, and a status line, all drawn from one set of design tokens in
 `app/Theme`. Edits align to the edit points around them and say so — a dashed
 guide down the tracks, and a blade that draws its cut before it makes it, and
-one that cuts picture and sound together where they are linked. On a
-1080p59.94 timeline the GPU path holds the playhead to zero frames of offset
-with no audio underruns, presenting about 47 of the 59.94 frames per second
-against the CPU path's 7.
+one that cuts picture and sound together where they are linked. Delivery has a
+workspace of its own: presets, settings that all reach the encoder, and a queue
+that renders them one at a time. On a 1080p59.94 timeline the GPU path holds
+the playhead to zero frames of offset with no audio underruns, presenting about
+47 of the 59.94 frames per second against the CPU path's 7.
 
 | Phase | | |
 |---|---|---|
@@ -107,10 +108,11 @@ against the CPU path's 7.
 | 7n | Text-based editing: delete words, the cut follows | **done** |
 | 7o | Actions and the hotkey manager | **done** |
 | 7p | Quiet mode: nothing modal in the way | **done** |
-| 7o | The Cutline chrome: menus, tools, workspaces | **done** |
-| 7p | The design's second pass: the timeline's controls, and Donate | **done** |
-| 7q | Timeline alignment: snap guides, and a blade that shows its cut | **done** |
-| 7r | Cutting a linked pair, and a clip that says it is linked | **done** |
+| 7q | The Cutline chrome: menus, tools, workspaces | **done** |
+| 7r | The design's second pass: the timeline's controls, and Donate | **done** |
+| 7s | Timeline alignment: snap guides, and a blade that shows its cut | **done** |
+| 7t | Cutting a linked pair, and a clip that says it is linked | **done** |
+| 7u | The Deliver workspace: presets, settings and a render queue | **done** |
 
 ## Building
 

@@ -20,6 +20,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -47,6 +48,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QSysInfo>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -99,6 +101,7 @@
 #include "zaro/ui/Keymap.h"
 
 #include "CurveEditor.h"
+#include "DeliverPanel.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
 #include "Hotkeys.h"
@@ -345,12 +348,24 @@ public:
         mainSplitter_->setStretchFactor(0, 3);
         mainSplitter_->setStretchFactor(1, 2);
 
+        // Deliver is not a rearrangement of the edit panels, it is a different
+        // screen: presets, settings and a render queue, with no timeline. So it
+        // is a page rather than a workspace layout, and the workspace tabs
+        // switch between them.
+        deliver_ = new app::DeliverPanel(this);
+        deliver_->setProject(&project_, sequenceId_);
+        connect(deliver_, &app::DeliverPanel::queueChanged, this, [this] { updateChrome(); });
+
+        workspaceStack_ = new QStackedWidget(this);
+        workspaceStack_->addWidget(mainSplitter_);
+        workspaceStack_->addWidget(deliver_);
+
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
         layout->addWidget(buildTitleBar());
         layout->addWidget(buildToolBar());
-        layout->addWidget(mainSplitter_, 1);
+        layout->addWidget(workspaceStack_, 1);
         layout->addWidget(buildStatusBar());
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
@@ -452,6 +467,7 @@ public:
     [[nodiscard]] app::EffectControls* effects() const { return effects_; }
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
+    [[nodiscard]] app::DeliverPanel* deliver() const { return deliver_; }
     [[nodiscard]] render::AudioSource& media() { return *media_; }
     [[nodiscard]] render::SourceFrameProvider* frames() { return media_.get(); }
     [[nodiscard]] render::FrameSource& frameSource() { return *media_; }
@@ -490,6 +506,9 @@ public:
     }
 
     void rebindSequence() {
+        if (deliver_ != nullptr) {
+            deliver_->setProject(&project_, sequenceId_);
+        }
         monitor_->setSource(liveSequence(), media_.get());
         monitor_->setNesting(&project_, media_.get());
         monitor_->setRenderCache(&renderCache_);
@@ -2490,16 +2509,47 @@ private:
         row->addWidget(tabGroup);
         row->addStretch(1);
 
-        auto* importButton = new QPushButton("Import", bar);
+        // Two clusters, one shown at a time: Import and Export belong to the
+        // workspaces where there is something to import into, and the queue
+        // buttons belong to Deliver. A bar that showed all four would offer
+        // Export and Start render side by side, which are the same intention
+        // asked twice.
+        actionStack_ = new QStackedWidget(bar);
+        actionStack_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+
+        auto* editActions = new QWidget(actionStack_);
+        auto* editRow = new QHBoxLayout(editActions);
+        editRow->setContentsMargins(0, 0, 0, 0);
+        editRow->setSpacing(8);
+        auto* importButton = new QPushButton("Import", editActions);
         importButton->setFixedHeight(30);
         connect(importButton, &QPushButton::clicked, this, [this] { bin_->importFiles(); });
-        row->addWidget(importButton);
-
-        auto* exportButton = new QPushButton("Export", bar);
+        editRow->addWidget(importButton);
+        auto* exportButton = new QPushButton("Export", editActions);
         exportButton->setProperty("accent", true);
         exportButton->setFixedHeight(30);
         connect(exportButton, &QPushButton::clicked, this, [this] { exportDialog(); });
-        row->addWidget(exportButton);
+        editRow->addWidget(exportButton);
+        actionStack_->addWidget(editActions);
+
+        auto* deliverActions = new QWidget(actionStack_);
+        auto* deliverRow = new QHBoxLayout(deliverActions);
+        deliverRow->setContentsMargins(0, 0, 0, 0);
+        deliverRow->setSpacing(8);
+        auto* addToQueue = new QPushButton("Add to queue", deliverActions);
+        addToQueue->setFixedHeight(30);
+        connect(addToQueue, &QPushButton::clicked, this, [this] { deliver_->queueCurrent(); });
+        deliverRow->addWidget(addToQueue);
+        renderButton_ = new QPushButton("Start render", deliverActions);
+        renderButton_->setProperty("accent", true);
+        renderButton_->setFixedHeight(30);
+        connect(renderButton_, &QPushButton::clicked, this, [this] {
+            deliver_->toggleRendering();
+            updateChrome();
+        });
+        deliverRow->addWidget(renderButton_);
+        actionStack_->addWidget(deliverActions);
+        row->addWidget(actionStack_);
 
         auto* donate = new app::SupportButton(bar);
         donate->setObjectName("donate");
@@ -2731,10 +2781,18 @@ public:
         const bool colour = name == "Color";
         const bool audio = name == "Audio";
         const bool deliver = name == "Deliver";
+        if (workspaceStack_ != nullptr) {
+            workspaceStack_->setCurrentIndex(deliver ? 1 : 0);
+            actionStack_->setCurrentIndex(deliver ? 1 : 0);
+            if (deliver) {
+                deliver_->setProject(&project_, sequenceId_);
+                deliver_->setPlayhead(position_);
+            }
+        }
         bin_->setVisible(!colour && !deliver);
         effects_->setVisible(!deliver);
-        scopes_->setVisible(colour || deliver);
-        mixer_->setVisible(audio || deliver);
+        scopes_->setVisible(colour);
+        mixer_->setVisible(audio);
 
         for (auto entry = workspaceTabs_.constBegin(); entry != workspaceTabs_.constEnd();
              ++entry) {
@@ -2792,10 +2850,18 @@ private:
         statusLeft_->setText(QString("%1 tool · %2 workspace")
                                  .arg(kToolNames[static_cast<int>(timeline_->tool())], workspace_));
         const int items = bin_->count();
-        statusMiddle_->setText(
-            QString("%1 %2 · %3")
-                .arg(items)
-                .arg(items == 1 ? "item" : "items", commands_.isModified() ? "edited" : "clean"));
+        if (workspace_ == "Deliver" && deliver_ != nullptr) {
+            // In Deliver the interesting middle fact is the queue, not the bin,
+            // and the tool bar's left label is the range rather than the format.
+            statusMiddle_->setText(deliver_->statusSummary());
+            formatLabel_->setText(deliver_->rangeSummary());
+            renderButton_->setText(deliver_->rendering() ? "Stop render" : "Start render");
+        } else {
+            statusMiddle_->setText(QString("%1 %2 · %3")
+                                       .arg(items)
+                                       .arg(items == 1 ? "item" : "items",
+                                            commands_.isModified() ? "edited" : "clean"));
+        }
         statusRight_->setText(QString("%1 · Qt %2").arg(kPlatformLabel, QT_VERSION_STR));
 
         snapButton_->setChecked(timeline_->snapEnabled());
@@ -3645,6 +3711,10 @@ private:
             scrubber_->setValue(static_cast<int>(position_.frames()));
         }
 
+        if (deliver_ != nullptr) {
+            deliver_->setPlayhead(position_);
+        }
+
         const time::Timecode left = time::timecodeFromFrames(
             std::max<std::int64_t>(0, liveSequence()->duration().frames() - position_.frames()),
             liveSequence()->frameRate(), dropFrame);
@@ -3724,6 +3794,10 @@ private:
     /// the window, and Qt deletes them with it.
     QMenuBar* menuBar_{nullptr};
     QStackedWidget* viewerStack_{nullptr};
+    QStackedWidget* workspaceStack_{nullptr};
+    QStackedWidget* actionStack_{nullptr};
+    app::DeliverPanel* deliver_{nullptr};
+    QPushButton* renderButton_{nullptr};
     app::ViewerOverlay* viewerOverlay_{nullptr};
     QLabel* projectLabel_{nullptr};
     QLabel* autosaveLabel_{nullptr};
@@ -3988,6 +4062,63 @@ int main(int argc, char** argv) {
                          "  FAIL: the drag left %zu undo steps; it should coalesce to one\n",
                          depthBefore);
             return 1;
+        }
+
+        // Deliver: the panel actually renders a file.
+        //
+        // The export dialog is covered by the render tests; what this checks is
+        // the Deliver workspace's own path -- that its settings become a
+        // RenderRequest, that the queue runs it on its worker, and that a file
+        // arrives. A screen full of controls that produce nothing is the
+        // failure worth catching here.
+        {
+            const std::filesystem::path deliverRoot =
+                std::filesystem::temp_directory_path() / "zaro-selftest-deliver";
+            std::filesystem::remove_all(deliverRoot);
+            std::filesystem::create_directories(deliverRoot);
+
+            app::DeliverPanel* deliver = window.deliver();
+            window.setWorkspace("Deliver");
+            QApplication::processEvents();
+            deliver->setDestination(QString::fromStdString(deliverRoot.string()), "selftest");
+            deliver->queueCurrent();
+            if (deliver->queueLength() != 1) {
+                std::fprintf(stderr, "  FAIL: adding to the queue added %d jobs\n",
+                             deliver->queueLength());
+                return 1;
+            }
+
+            deliver->toggleRendering();
+            // Rendering happens on the panel's own thread and reports back
+            // through the event loop, so the test has to run one -- and has to
+            // actually wait. `processEvents` with a time limit returns as soon
+            // as the queue is empty rather than filling that time, so spinning
+            // it four thousand times took milliseconds and declared a render
+            // that had not started yet a failure.
+            QElapsedTimer clock;
+            clock.start();
+            while (deliver->finishedCount() == 0 && clock.elapsed() < 180000) {
+                QApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(5);
+            }
+            const std::filesystem::path written = deliverRoot / "selftest.mp4";
+            if (deliver->finishedCount() != 1 || !std::filesystem::exists(written)) {
+                std::fprintf(stderr, "  FAIL: the queue rendered nothing (%s)\n",
+                             deliver->lastMessage().toStdString().c_str());
+                return 1;
+            }
+            const auto size = std::filesystem::file_size(written);
+            if (size < 1024) {
+                std::fprintf(stderr, "  FAIL: it wrote %llu bytes\n",
+                             static_cast<unsigned long long>(size));
+                return 1;
+            }
+            std::printf("  deliver: queued one job and rendered %llu bytes to %s\n",
+                        static_cast<unsigned long long>(size), "selftest.mp4");
+
+            std::filesystem::remove_all(deliverRoot);
+            window.setWorkspace("Edit");
+            QApplication::processEvents();
         }
 
         // Linked cutting: picture and sound are one edit. The operation is

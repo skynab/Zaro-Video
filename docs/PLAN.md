@@ -3838,240 +3838,6 @@ self-tests print as they go and are usually read from a redirected file; fully
 buffered, that file stays empty until the process exits, so a slow run and a
 hung one look exactly alike. They no longer do.
 
-### Phase 7o — the Cutline chrome §7.1 ✅
-
-The window, dressed. Every phase since 4a added a panel and hung its controls
-off the transport row; by 6q that row held eighteen buttons under the picture
-and the application looked like what it was, a test harness with a compositor
-behind it. This phase takes a design — Cutline, on the Nocturne palette — and
-builds the furniture it asks for: a menu bar, a tool bar with a tool palette
-and workspaces, one viewer with two pages, a timeline header, and a status
-line.
-
-**One place decides what colour anything is.** `app/Theme` holds the design
-system's tokens — a ground, a surface, a text colour and two nine-step ramps
-generated on one shared lightness scale — and builds both the palette Qt hands
-to its own style and the stylesheet every control is drawn from. The panels
-that paint themselves (the timeline, the meters, the burn-in) ask Theme for the
-same tokens rather than keeping a second palette that drifts from it. The
-keyframe self-test used to hunt for a literal `226,226,236` in the grab; it
-asks the theme for the diamond's colour now, because a test that pins a
-literal is a test that has to be chased every time the palette moves.
-
-**Eighteen buttons became nine menus.** A row of buttons is fine at four and
-illegible at eighteen: it says nothing about which of them belong together, and
-it grows every phase. The menus are where the structure lives, and the actions
-carry the object names the self-tests were already using — so the test that
-saved a project by clicking a button now triggers the same action from the File
-menu. Only modified shortcuts live on actions. A single letter bound
-window-wide would fire while somebody was typing a title into a text field,
-which is why the tool keys stay in the timeline's own key handler.
-
-**Tools, because some gestures have no obvious chord.** Select, Blade, Trim,
-Slip, Hand and Zoom. Trimming and moving still work under Select — that is what
-a pointer is for — but cutting, slipping and panning are each somebody's whole
-session, and a tool that stays picked is what makes a run of them fluent. Slip
-finally reaches the interface: `makeSlip` has been in the edit engine since
-Phase 2 with nothing calling it. A slip drag is measured in time rather than in
-pixels, so it means the same thing at every zoom, and the anchor only advances
-once a whole frame has been consumed — otherwise a slow drag at a high zoom
-rounds itself away one mouse-move at a time.
-
-**Workspaces are which panels are up.** Four, because there are four things
-people do with an editor and each wants a different half of the window: the
-scopes are dead weight while somebody is assembling, and the bin is dead weight
-while they are grading. Each workspace remembers its own splitter state — one
-saved arrangement restored into a different set of visible panels is a
-collapsed bin and a mixer four pixels tall.
-
-**One viewer, two pages.** Source and program were side by side, each with half
-the width, which is not enough width to judge either on. They are one stack with
-a segmented control now, and opening a clip from the bin — or a match frame —
-switches to the source, because that is what the gesture asked for. It has a
-cost the self-test found immediately: a monitor that is not the current page
-does not repaint, so the render-cache check read zero hits until it asked for
-the program back. Grabbing a hidden monitor still works; leaving it hidden and
-expecting it to redraw does not.
-
-**The burn-in is a widget, not a render.** Clip name, timecode, format and safe
-guides sit on a transparent overlay over the monitor — the same argument Phase
-6q made for the mask handles. The picture that leaves this application is the
-picture, and an overlay that could reach an export is a flag somebody
-eventually forgets to clear. It takes no mouse events, so the mask editor above
-it still gets every click.
-
-**A Qt layout given less room than its children need does not clip them, it
-overlaps them.** The mixer strip is taller than the panel usually gets, and the
-result was a meter painted over the solo button — visible in a screenshot and
-invisible to every test. The strips scroll now. The meters are narrow bars in
-the accent, and keep amber and red for the two states that are a warning: a
-level that is simply fine should look like the rest of the interface.
-
-**Icons are drawn, not fetched.** The design's tool palette is a row of
-Phosphor glyphs. Vendoring an icon font is a build dependency and a licence;
-taking the glyphs from whatever font happens to be installed gives a colour
-emoji on one platform and an empty box on another. `app/Icons` paints the six
-as painter paths at Phosphor's regular weight instead — stroked rather than
-filled, so a cursor beside a magnifier reads as one set — in three colours for
-the states a toolbar button has. The tooltip carries the shortcut: a palette is
-aimed at rather than read, and the letter is one hover away for as long as it
-takes to learn the shape. The transport keeps to characters, which are shapes
-every font has.
-
-The first version of the arrowheads had the sign of their barbs backwards, so
-Trim and Slip drew their heads a pixel outside the box and came out as blobs.
-It is the kind of mistake a unit test cannot see and a screenshot shows
-immediately, which is the argument for looking at the window as part of
-building it.
-
-Not done: the design's media browser with thumbnails, bins as a tree, and
-filter chips; a floating panel system; and the Deliver workspace is the export
-dialog's neighbours rather than a page of its own.
-
-### Phase 7p — the design's second pass §7.1 ✅
-
-Two changes came back from the design, and both are the kind that only show up
-once somebody has used the thing.
-
-**The tool palette belongs to the timeline.** It was on the window's tool bar,
-between the snap toggle and the workspaces. Every one of those six tools acts
-on the timeline and nothing else, and a control two panels away from what it
-changes is one people stop reaching for — so it moved to the timeline's own
-header, next to the razor and the dissolve, where the design puts it. It lost
-its box on the way: in the tool bar the border said where the group ended,
-while on the timeline header it sits among the other buttons that act on the
-timeline, and a line there separates things that belong together.
-
-**Snapping and markers went down with them,** for the same reason and with
-icons of their own: both are about where an edit lands, and the timeline is
-where edits land. That left the tool bar holding what is genuinely about the
-window — the sequence's format, the workspaces, and the three buttons that
-bring things in and send them out — and the timeline holding everything that
-acts on the timeline.
-
-Four glyphs joined `app/Icons` to make that row read: a horseshoe magnet with
-banded poles for snapping (unbanded it is an arch, and an arch is a bridge), a
-bookmark for markers, two pieces pulled apart around a cut for the razor, and
-two crossing levels for the dissolve. The razor is deliberately *not* the
-scissors: the scissors is the blade tool, a centimetre away in the same row,
-and two buttons wearing the same glyph are two buttons nobody can tell apart.
-
-**One colourful thing, once.** Donate is a hairline of spectrum around a button
-that is otherwise the ground it sits on. Asking for money should look like an
-invitation rather than another control — and it should look like it in exactly
-one place, or the rest of the interface starts competing with it. It is painted
-rather than styled: a Qt stylesheet can put a gradient *on* a border, but not a
-gradient ring around a fill of another colour, and faking that with a nested
-widget puts a second thing in the layout that has to be kept the same size as
-the first. The heart is the one filled glyph in `app/Icons`, which otherwise
-draws Phosphor's regular weight.
-
-Where the button points is one constant, `kSupportUrl`, and it currently points
-at the repository: there is no funding page yet, and inventing a URL that
-404s is worse than sending somebody to the project itself. One line to change
-when there is one.
-
-### Phase 7q — alignment: the cut you meant §7.1 ✅
-
-Snapping was already there and nobody could tell. `edit::snapTime` has pulled
-times to the edit points around them since Phase 2, and it returns what it
-latched onto and which track that came from — `SnapKind` and a `TrackId`,
-documented as being for the indicator. The widget called it, took `.time`, and
-threw the rest away. So a cut *did* land on the neighbouring edit point, and
-looked exactly like a cut that happened to land near it.
-
-**The guide is the feature.** A dashed line at the snapped time, drawn down
-through every track rather than only the one being edited: the alignment is
-being made *with* the other tracks, and a line that stops at the clip under the
-pointer shows the half of it that was never in question. A tick on the row the
-time came from says which track it lined up with, so a cut aligned to V2 says
-V2 instead of leaving you to count. Times that belong to no track — the
-playhead, the start of the sequence — get their tick in the ruler.
-
-**The blade shows its cut before making it.** Hovering with the blade draws a
-solid line across the track it would cut, with a nib top and bottom so it reads
-as a cut rather than as a second playhead, at the position the press will
-actually use — both go through `maybeSnap`, so the preview cannot disagree with
-the edit. Where that line jumps to a neighbouring edit point, the dashed guide
-appears beside it saying what it jumped to.
-
-**The playhead was snapping to itself.** Scrubbing passed the playhead in as a
-snap candidate, and the playhead is at zero distance from where it already is
-— so any scrub shorter than the ten-pixel radius pulled straight back and did
-nothing. It reads as a sticky timeline rather than as a bug, which is probably
-why it survived. `maybeSnap` takes an `includePlayhead` flag now and the scrub
-passes false; every other gesture still snaps to the playhead, which is the
-half of this somebody asked for: park the playhead on the frame you want and
-cut near it.
-
-**A guide belongs to its gesture.** It comes down in `finishDrag`, and in the
-three release paths that return before reaching it — a click that never became
-a band, a keyframe drag, a rubber band — each of which had to be found by
-leaving a line on the timeline and wondering what it meant.
-
-The self-test drives it through real mouse events: a cut aimed two frames off
-an edit point on another track lands on the point, a cut aimed near the
-playhead lands on the playhead, a drag onto an edit point raises a guide at
-exactly that time and drops it on release, and with snapping off the same
-gestures land where the pointer actually was. The check refuses to run if eight
-pixels is under a frame at the current zoom — an alignment test that would pass
-without any snapping is worse than no test.
-
-### Phase 7r — cutting a linked pair §7.1 ✅
-
-`Clip::link` has said since Phase 2 that clips sharing a link are "moved,
-trimmed and removed as one". Move does it, trim does it, lift and extract do
-it. Razor did not: it cut the track under the pointer and left the other half
-of the take joined to itself. That is the worst of the four to get wrong,
-because nothing looks wrong until somebody drags one of the halves and the
-sound stays where it was.
-
-**The fix belongs in the operation, not the tool.** `makeRazor` plans a cut for
-every clip in the link group and applies them in one command, so the blade, the
-razor button, the `C` key and anything written later all get it, and one undo
-takes the whole thing back. Tail ids are handed out at build time, as
-`makeRazorAt` already did, so re-applying an undone cut produces the same clips
-rather than new ones.
-
-**Each partner is cut only where the cut is inside it.** A link group's clips
-need not span the same range — the sound of a take often runs past the picture,
-or stops short of it — so a partner the cut misses is left alone rather than
-cut at its own end, and rather than the whole edit being refused.
-
-**The tails become a link group of their own.** Left in the original group, the
-head of the picture would be linked to the tail of the sound: four clips in one
-group, and dragging either half taking the other half's audio with it. A fresh
-`LinkId` for everything right of the cut keeps the pairing that was there
-before — head with head, tail with tail. That only happens when more than one
-clip was actually cut; a lone linked clip whose partners were all missed keeps
-the link it had.
-
-**A clip says it is linked.** A small chain badge in the top right of every
-linked clip, in the clip's own label colour. Until now the only sign was the
-outline that appears on the *partner* once you have already selected
-something — which tells you after the fact, when what you want to know is
-before. The badge is rasterised once per colour and cached: three colours can
-ever be asked for, and a busy timeline would otherwise redraw the same nine
-pixels a hundred times a frame.
-
-**And the zoom buttons became a plus and a minus.** They were a `+` and a
-`−` typed as text, which sat at whatever weight and size the font felt like
-next to a row of drawn icons.
-
-The self-test drives one blade press through the widget and checks that both
-tracks gained a boundary at the same instant, that the two halves are two link
-groups rather than one of four, and — because a press is at a pixel and a pixel
-is about a frame wide — that where it landed is read from the model rather than
-assumed. Fixing that check found the older alignment test had quietly stopped
-proving anything: it made its reference edit point by cutting the audio, and
-with this change that cut the video at the same instant, so the blade was
-aiming at an edit point its own track already had. It unlinks the pair first
-now.
-
-Not done: scene detection still cuts one track. `makeRazorAt` takes a list of
-points on a single track, and giving it the same treatment means an id per
-partner per point; the argument for doing it is the same one as here.
-
 ### Phase 7o — actions, and the hotkey manager ✅
 
 Changing what the keys do. The manager is the small part; making the
@@ -4162,6 +3928,310 @@ The rule this leaves behind: an interruption has to earn itself. A sentence
 somebody would like to have read is not a reason to take their hands off the
 keyboard, and a state belongs in the window rather than in a box about the
 window.
+
+### Phase 7q — the Cutline chrome §7.1 ✅
+
+The window, dressed. Every phase since 4a added a panel and hung its controls
+off the transport row; by 6q that row held eighteen buttons under the picture
+and the application looked like what it was, a test harness with a compositor
+behind it. This phase takes a design — Cutline, on the Nocturne palette — and
+builds the furniture it asks for: a menu bar, a tool bar with a tool palette
+and workspaces, one viewer with two pages, a timeline header, and a status
+line.
+
+**One place decides what colour anything is.** `app/Theme` holds the design
+system's tokens — a ground, a surface, a text colour and two nine-step ramps
+generated on one shared lightness scale — and builds both the palette Qt hands
+to its own style and the stylesheet every control is drawn from. The panels
+that paint themselves (the timeline, the meters, the burn-in) ask Theme for the
+same tokens rather than keeping a second palette that drifts from it. The
+keyframe self-test used to hunt for a literal `226,226,236` in the grab; it
+asks the theme for the diamond's colour now, because a test that pins a
+literal is a test that has to be chased every time the palette moves.
+
+**Eighteen buttons became nine menus.** A row of buttons is fine at four and
+illegible at eighteen: it says nothing about which of them belong together, and
+it grows every phase. The menus are where the structure lives, and the actions
+carry the object names the self-tests were already using — so the test that
+saved a project by clicking a button now triggers the same action from the File
+menu. Only modified shortcuts live on actions. A single letter bound
+window-wide would fire while somebody was typing a title into a text field,
+which is why the tool keys stay in the timeline's own key handler.
+
+**Tools, because some gestures have no obvious chord.** Select, Blade, Trim,
+Slip, Hand and Zoom. Trimming and moving still work under Select — that is what
+a pointer is for — but cutting, slipping and panning are each somebody's whole
+session, and a tool that stays picked is what makes a run of them fluent. Slip
+finally reaches the interface: `makeSlip` has been in the edit engine since
+Phase 2 with nothing calling it. A slip drag is measured in time rather than in
+pixels, so it means the same thing at every zoom, and the anchor only advances
+once a whole frame has been consumed — otherwise a slow drag at a high zoom
+rounds itself away one mouse-move at a time.
+
+**Workspaces are which panels are up.** Four, because there are four things
+people do with an editor and each wants a different half of the window: the
+scopes are dead weight while somebody is assembling, and the bin is dead weight
+while they are grading. Each workspace remembers its own splitter state — one
+saved arrangement restored into a different set of visible panels is a
+collapsed bin and a mixer four pixels tall.
+
+**One viewer, two pages.** Source and program were side by side, each with half
+the width, which is not enough width to judge either on. They are one stack with
+a segmented control now, and opening a clip from the bin — or a match frame —
+switches to the source, because that is what the gesture asked for. It has a
+cost the self-test found immediately: a monitor that is not the current page
+does not repaint, so the render-cache check read zero hits until it asked for
+the program back. Grabbing a hidden monitor still works; leaving it hidden and
+expecting it to redraw does not.
+
+**The burn-in is a widget, not a render.** Clip name, timecode, format and safe
+guides sit on a transparent overlay over the monitor — the same argument Phase
+6q made for the mask handles. The picture that leaves this application is the
+picture, and an overlay that could reach an export is a flag somebody
+eventually forgets to clear. It takes no mouse events, so the mask editor above
+it still gets every click.
+
+**A Qt layout given less room than its children need does not clip them, it
+overlaps them.** The mixer strip is taller than the panel usually gets, and the
+result was a meter painted over the solo button — visible in a screenshot and
+invisible to every test. The strips scroll now. The meters are narrow bars in
+the accent, and keep amber and red for the two states that are a warning: a
+level that is simply fine should look like the rest of the interface.
+
+**Icons are drawn, not fetched.** The design's tool palette is a row of
+Phosphor glyphs. Vendoring an icon font is a build dependency and a licence;
+taking the glyphs from whatever font happens to be installed gives a colour
+emoji on one platform and an empty box on another. `app/Icons` paints the six
+as painter paths at Phosphor's regular weight instead — stroked rather than
+filled, so a cursor beside a magnifier reads as one set — in three colours for
+the states a toolbar button has. The tooltip carries the shortcut: a palette is
+aimed at rather than read, and the letter is one hover away for as long as it
+takes to learn the shape. The transport keeps to characters, which are shapes
+every font has.
+
+The first version of the arrowheads had the sign of their barbs backwards, so
+Trim and Slip drew their heads a pixel outside the box and came out as blobs.
+It is the kind of mistake a unit test cannot see and a screenshot shows
+immediately, which is the argument for looking at the window as part of
+building it.
+
+Not done: the design's media browser with thumbnails, bins as a tree, and
+filter chips; a floating panel system; and the Deliver workspace is the export
+dialog's neighbours rather than a page of its own.
+
+### Phase 7r — the design's second pass §7.1 ✅
+
+Two changes came back from the design, and both are the kind that only show up
+once somebody has used the thing.
+
+**The tool palette belongs to the timeline.** It was on the window's tool bar,
+between the snap toggle and the workspaces. Every one of those six tools acts
+on the timeline and nothing else, and a control two panels away from what it
+changes is one people stop reaching for — so it moved to the timeline's own
+header, next to the razor and the dissolve, where the design puts it. It lost
+its box on the way: in the tool bar the border said where the group ended,
+while on the timeline header it sits among the other buttons that act on the
+timeline, and a line there separates things that belong together.
+
+**Snapping and markers went down with them,** for the same reason and with
+icons of their own: both are about where an edit lands, and the timeline is
+where edits land. That left the tool bar holding what is genuinely about the
+window — the sequence's format, the workspaces, and the three buttons that
+bring things in and send them out — and the timeline holding everything that
+acts on the timeline.
+
+Four glyphs joined `app/Icons` to make that row read: a horseshoe magnet with
+banded poles for snapping (unbanded it is an arch, and an arch is a bridge), a
+bookmark for markers, two pieces pulled apart around a cut for the razor, and
+two crossing levels for the dissolve. The razor is deliberately *not* the
+scissors: the scissors is the blade tool, a centimetre away in the same row,
+and two buttons wearing the same glyph are two buttons nobody can tell apart.
+
+**One colourful thing, once.** Donate is a hairline of spectrum around a button
+that is otherwise the ground it sits on. Asking for money should look like an
+invitation rather than another control — and it should look like it in exactly
+one place, or the rest of the interface starts competing with it. It is painted
+rather than styled: a Qt stylesheet can put a gradient *on* a border, but not a
+gradient ring around a fill of another colour, and faking that with a nested
+widget puts a second thing in the layout that has to be kept the same size as
+the first. The heart is the one filled glyph in `app/Icons`, which otherwise
+draws Phosphor's regular weight.
+
+Where the button points is one constant, `kSupportUrl`, and it currently points
+at the repository: there is no funding page yet, and inventing a URL that
+404s is worse than sending somebody to the project itself. One line to change
+when there is one.
+
+### Phase 7s — alignment: the cut you meant §7.1 ✅
+
+Snapping was already there and nobody could tell. `edit::snapTime` has pulled
+times to the edit points around them since Phase 2, and it returns what it
+latched onto and which track that came from — `SnapKind` and a `TrackId`,
+documented as being for the indicator. The widget called it, took `.time`, and
+threw the rest away. So a cut *did* land on the neighbouring edit point, and
+looked exactly like a cut that happened to land near it.
+
+**The guide is the feature.** A dashed line at the snapped time, drawn down
+through every track rather than only the one being edited: the alignment is
+being made *with* the other tracks, and a line that stops at the clip under the
+pointer shows the half of it that was never in question. A tick on the row the
+time came from says which track it lined up with, so a cut aligned to V2 says
+V2 instead of leaving you to count. Times that belong to no track — the
+playhead, the start of the sequence — get their tick in the ruler.
+
+**The blade shows its cut before making it.** Hovering with the blade draws a
+solid line across the track it would cut, with a nib top and bottom so it reads
+as a cut rather than as a second playhead, at the position the press will
+actually use — both go through `maybeSnap`, so the preview cannot disagree with
+the edit. Where that line jumps to a neighbouring edit point, the dashed guide
+appears beside it saying what it jumped to.
+
+**The playhead was snapping to itself.** Scrubbing passed the playhead in as a
+snap candidate, and the playhead is at zero distance from where it already is
+— so any scrub shorter than the ten-pixel radius pulled straight back and did
+nothing. It reads as a sticky timeline rather than as a bug, which is probably
+why it survived. `maybeSnap` takes an `includePlayhead` flag now and the scrub
+passes false; every other gesture still snaps to the playhead, which is the
+half of this somebody asked for: park the playhead on the frame you want and
+cut near it.
+
+**A guide belongs to its gesture.** It comes down in `finishDrag`, and in the
+three release paths that return before reaching it — a click that never became
+a band, a keyframe drag, a rubber band — each of which had to be found by
+leaving a line on the timeline and wondering what it meant.
+
+The self-test drives it through real mouse events: a cut aimed two frames off
+an edit point on another track lands on the point, a cut aimed near the
+playhead lands on the playhead, a drag onto an edit point raises a guide at
+exactly that time and drops it on release, and with snapping off the same
+gestures land where the pointer actually was. The check refuses to run if eight
+pixels is under a frame at the current zoom — an alignment test that would pass
+without any snapping is worse than no test.
+
+### Phase 7t — cutting a linked pair §7.1 ✅
+
+`Clip::link` has said since Phase 2 that clips sharing a link are "moved,
+trimmed and removed as one". Move does it, trim does it, lift and extract do
+it. Razor did not: it cut the track under the pointer and left the other half
+of the take joined to itself. That is the worst of the four to get wrong,
+because nothing looks wrong until somebody drags one of the halves and the
+sound stays where it was.
+
+**The fix belongs in the operation, not the tool.** `makeRazor` plans a cut for
+every clip in the link group and applies them in one command, so the blade, the
+razor button, the `C` key and anything written later all get it, and one undo
+takes the whole thing back. Tail ids are handed out at build time, as
+`makeRazorAt` already did, so re-applying an undone cut produces the same clips
+rather than new ones.
+
+**Each partner is cut only where the cut is inside it.** A link group's clips
+need not span the same range — the sound of a take often runs past the picture,
+or stops short of it — so a partner the cut misses is left alone rather than
+cut at its own end, and rather than the whole edit being refused.
+
+**The tails become a link group of their own.** Left in the original group, the
+head of the picture would be linked to the tail of the sound: four clips in one
+group, and dragging either half taking the other half's audio with it. A fresh
+`LinkId` for everything right of the cut keeps the pairing that was there
+before — head with head, tail with tail. That only happens when more than one
+clip was actually cut; a lone linked clip whose partners were all missed keeps
+the link it had.
+
+**A clip says it is linked.** A small chain badge in the top right of every
+linked clip, in the clip's own label colour. Until now the only sign was the
+outline that appears on the *partner* once you have already selected
+something — which tells you after the fact, when what you want to know is
+before. The badge is rasterised once per colour and cached: three colours can
+ever be asked for, and a busy timeline would otherwise redraw the same nine
+pixels a hundred times a frame.
+
+**And the zoom buttons became a plus and a minus.** They were a `+` and a
+`−` typed as text, which sat at whatever weight and size the font felt like
+next to a row of drawn icons.
+
+The self-test drives one blade press through the widget and checks that both
+tracks gained a boundary at the same instant, that the two halves are two link
+groups rather than one of four, and — because a press is at a pixel and a pixel
+is about a frame wide — that where it landed is read from the model rather than
+assumed. Fixing that check found the older alignment test had quietly stopped
+proving anything: it made its reference edit point by cutting the audio, and
+with this change that cut the video at the same instant, so the blade was
+aiming at an edit point its own track already had. It unlinks the pair first
+now.
+
+Not done: scene detection still cuts one track. `makeRazorAt` takes a list of
+points on a single track, and giving it the same treatment means an id per
+partner per point; the argument for doing it is the same one as here.
+
+### Phase 7u — the Deliver workspace §7.7 ✅
+
+The fourth tab, from the design's second screen. Presets down the left, the
+settings for the one that is picked in the middle, and a render queue on the
+right — with no timeline, because Deliver is not a rearrangement of the edit
+panels but a different screen. So it is a page in a stack rather than a
+workspace layout, and the tool bar's right-hand cluster swaps with it: Import
+and Export belong where there is something to import into, and Add to queue and
+Start render belong here. A bar showing all four would offer Export and Start
+render side by side, which is the same intention asked twice.
+
+**Every control on it does something.** The design draws menus for resolution,
+frame rate and bit depth. This program has no scaler and no retimer on the
+export path, so those would be promises the file then breaks: they are shown as
+facts, in fields that look like fields and are not editable, with one line
+underneath saying where the numbers come from. What is a control is a control —
+container, codec, quality, sound, smart render, GPU compositing, the range and
+the destination — because the renderer honours all of it.
+
+**Three fields, and every existing caller writes the file it always did.**
+`RenderRequest` gained `videoCodec`, `audioCodec` and `videoBitRate`; empty
+names still mean "whatever the container defaults to", which is what the
+command-line renderer and the export dialog were already getting. Naming the
+encoders rather than enumerating them is deliberate: which encoders exist
+depends on how FFmpeg was built, and a name this build lacks fails when the
+encoder opens, with the name in the message — more use than a menu that offers
+something and then cannot say what went wrong.
+
+**Quality is bits per pixel, not a number of megabits.** The same setting has to
+mean the same picture at 720p and at 4K, and it is the pixel rate that decides
+what a codec needs. ProRes picks its own rate from its profile, so for that
+preset the control is disabled rather than ignored, and the size estimate says
+so instead of inventing a number.
+
+**A job holds a copy of the project.** A render takes minutes and nothing stops
+somebody carrying on editing while it runs; rendering the live project would
+produce a file that is neither the cut they queued nor the one they have now,
+changing under the encoder halfway through. The copy is the model only — no
+media — so it costs nothing worth measuring.
+
+**Stop is stop, not pause.** An encoder cannot resume a file it has closed, so
+stopping cancels the render, removes the partial file — a partial file looks
+exactly like a finished one until somebody plays it — and puts the job back on
+the queue to start again. Calling it Pause would promise something the format
+cannot do.
+
+**The machine panel says what can be measured.** The design shows GPU and CPU
+meters; there is no honest cross-platform way to read either, so the panel
+shows free space on the destination volume, the frame the render is on, and the
+rate it is achieving — all of which come from the render itself.
+
+**Progress every frame is too often to draw.** The renderer reports each frame,
+and each report rebuilt the queue's cards, each card a widget with a stylesheet
+to parse. That starved the thread doing the work badly enough that a
+four-second render did not finish inside a forty-second wait. The view is
+rebuilt ten times a second now, and on the last frame regardless.
+
+**And a self-test that waited without waiting.** The check spun
+`processEvents(AllEvents, 10)` four thousand times expecting forty seconds of
+patience. `processEvents` returns as soon as the queue is empty rather than
+filling the time it is given, so the whole loop took milliseconds and declared a
+render that had not started a failure. It sleeps between passes now. The check
+itself queues a job, runs the queue and asserts a file arrived with bytes in it:
+a screen full of controls that produce nothing is the failure worth catching.
+
+Not done: resolution and frame-rate conversion on export, and with them the
+design's vertical-reframe and proxy presets; audio-stem and still-frame
+delivery; loudness normalisation as part of a render rather than a separate
+step; and the farm and upload buttons, which have nothing behind them.
 
 ## 7. Feature inventory (Premiere parity checklist)
 

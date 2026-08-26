@@ -13,6 +13,8 @@ add_executable(zaro-preview
     ProgramMonitor.h
     TimelineWidget.cpp
     TimelineWidget.h
+    DeliverPanel.cpp
+    DeliverPanel.h
     CurveEditor.cpp
     HueBand.cpp
     MixerPanel.cpp
