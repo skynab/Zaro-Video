@@ -29,6 +29,13 @@ enum class Glyph {
     Plus,        ///< Zoom in
     Minus,       ///< Zoom out
     Heart,       ///< Support: the one filled glyph, as the design draws it
+    FilmStrip,   ///< A picture file, in the bin
+    Waveform,    ///< A sound file, in the bin
+    Image,       ///< A still, in the bin
+    CaretDown,   ///< An open group heading
+    CaretRight,  ///< A closed group heading
+    DotsThree,   ///< The overflow menu: the second filled glyph
+    Rows,        ///< The list/thumbnail view toggle
 };
 
 /// One glyph, in one colour, at a size in logical pixels.

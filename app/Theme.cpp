@@ -222,6 +222,42 @@ QLabel { background: transparent; }
 #tab-group { background: %HOVER%; border-radius: 8px; }
 #tab-group QPushButton { border-color: transparent; color: %MUTED%; }
 #tab-group QPushButton:checked { background: %SURFACE%; color: %ACCENT200%; border-color: %DIVIDER%; }
+
+/* --- the media pane ----------------------------------------------------- */
+
+/* A surface panel against the window ground, with the divider on its edge
+   rather than a splitter handle: the design draws one hairline there, and two
+   would read as a gap. */
+#bin-panel { background: %SURFACE%; border-right: 1px solid %DIVIDER%; }
+#bin-tabbar, #bin-footer { background: transparent; }
+#bin-tabbar { border-bottom: 1px solid %DIVIDER%; }
+#bin-footer { border-top: 1px solid %DIVIDER%; color: %FAINT%; font-size: 10px; }
+#bin-tab {
+    border: none; background: transparent; color: %MUTED%;
+    padding: 3px 9px; border-radius: 5px; min-height: 18px; font-size: 11px;
+}
+#bin-tab:hover { background: %BINHOVER%; color: %TEXT%; }
+#bin-tab:checked { background: %ACCENTWASH%; color: %ACCENT300%; }
+#bin-chip {
+    border: 1px solid transparent; border-radius: 9px; background: %BINHOVER%;
+    color: %MUTED%; padding: 1px 8px; min-height: 15px; font-size: 10px;
+}
+#bin-chip:hover { color: %TEXT%; }
+#bin-chip:checked { background: %ACCENTWASH%; color: %ACCENT300%; }
+#bin-chip[outline="true"] { background: transparent; border-color: %DIVIDER%; }
+#bin-chip[outline="true"]:checked { background: %ACCENTWASH%; border-color: %ACCENT%; }
+#bin-search { background: %BG%; padding: 3px 8px; min-height: 26px; }
+#bin-glyph-button {
+    border: 1px solid %DIVIDER%; border-radius: 6px; background: transparent;
+    padding: 0; min-height: 26px;
+}
+#bin-glyph-button:hover { background: %BINHOVER%; }
+#bin-glyph-button:checked { background: %ACCENTWASH%; border-color: %ACCENT%; }
+/* No frame and no ground of its own: the rows are drawn by the delegate, and a
+   sunken box inside a surface panel is a second panel. */
+#bin-list { background: transparent; border: none; }
+#bin-list::item { padding: 0; border-radius: 0; background: transparent; }
+#bin-list::item:hover, #bin-list::item:selected { background: transparent; }
 )")
         .replace("%BG%", bgHex)
         .replace("%SURFACE%", surfaceHex)
@@ -241,6 +277,9 @@ QLabel { background: transparent; }
         .replace("%NEUTRAL600%", hex(neutral(600)))
         .replace("%NEUTRAL700%", hex(neutral(700)))
         .replace("%NEUTRAL800%", hex(neutral(800)))
+        .replace("%ACCENTWASH%", hex(mix(surface(), accent(), 0.16)))
+        .replace("%BINHOVER%", hex(mix(surface(), text(), 0.08)))
+        .replace("%FAINT%", hex(textAt(0.42)))
         .replace("%ACCENT%", accentHex);
 }
 

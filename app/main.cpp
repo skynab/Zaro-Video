@@ -235,8 +235,11 @@ public:
         // Monitor and parameters side by side, transport under them, timeline
         // across the bottom.
         bin_ = new app::ProjectBin(this);
-        bin_->setMinimumWidth(210);
-        bin_->setMaximumWidth(280);
+        // The width the design fixes the media pane at. Fixed rather than a
+        // range because the row inside it is fixed too -- a 64-pixel thumbnail,
+        // two lines of type and a dot -- and the pane has nothing that would
+        // use the extra space if it were given any.
+        bin_->setFixedWidth(296);
 
         source_ = new app::SourceMonitor(this);
         source_->setMinimumWidth(300);

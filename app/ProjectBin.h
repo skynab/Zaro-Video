@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QSet>
+#include <QString>
 #include <QWidget>
 #include <string>
 #include <vector>
@@ -8,14 +10,25 @@
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/model/Project.h"
 
+class QAbstractButton;
+class QButtonGroup;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QStackedWidget;
 
 namespace zaro::app {
 
-/// The project bin: what media the project knows about, and how to add more.
+/// The media pane: what media the project knows about, and how to look through
+/// it.
+///
+/// Drawn as the design draws it -- a tab strip, a search field, a row of
+/// counted filter chips, then thumbnail rows under folder headings, and a
+/// summary along the bottom. The rows are painted by a delegate rather than
+/// composed from widgets: a bin holds hundreds of files, and hundreds of
+/// widgets is hundreds of things for the layout engine to visit every time
+/// somebody types a letter into the search field.
 class ProjectBin : public QWidget {
     Q_OBJECT
 
@@ -26,8 +39,8 @@ public:
                     edit::CommandStack* commands);
     void refresh();
 
-    /// Ask for files. Public because Import is a File-menu item as well as a
-    /// button in this panel, and both should be the same action.
+    /// Ask for files. Public because Import is a File-menu item as well as an
+    /// item in this panel's overflow menu, and both should be the same action.
     void importFiles();
 
     /// Transcode files into an editing codec and import the results.
@@ -40,6 +53,11 @@ public:
 
     /// How many media references the project holds, for the status bar.
     [[nodiscard]] int count() const;
+
+    /// The line along the bottom of the pane: how many files, how much they
+    /// weigh, and where the proxies stand. Public so the self-test can read it
+    /// without scraping a label.
+    [[nodiscard]] QString summary() const;
 
 signals:
     /// Media was imported, or a clip appended.
@@ -70,6 +88,11 @@ public:
 
 private:
     void applyFilter();
+    void rebuildChips();
+    void overflowMenu();
+    void rowMenu(const QPoint& where);
+    void setBinFilter(const QString& bin);
+
     /// What is selected, as either a media reference or a subclip.
     struct Selection {
         model::MediaRefId media;
@@ -81,11 +104,23 @@ private:
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;
     edit::CommandStack* commands_{nullptr};
+
     QListWidget* list_{nullptr};
-    QPushButton* importButton_{nullptr};
     QLineEdit* search_{nullptr};
     QLabel* footer_{nullptr};
+    QWidget* chipHolder_{nullptr};
+    QButtonGroup* chipGroup_{nullptr};
+    QPushButton* compactButton_{nullptr};
+    QStackedWidget* pages_{nullptr};
+
     QString filter_;
+    /// Which folder chip is picked; empty means all of them.
+    QString bin_;
+    /// Folder headings somebody has folded shut.
+    QSet<QString> collapsed_;
+    /// The outline chip: only what the cut actually uses.
+    bool usedOnly_{false};
+    bool compact_{false};
 };
 
 }  // namespace zaro::app
