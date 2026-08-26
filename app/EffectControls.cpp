@@ -25,6 +25,8 @@
 #include "zaro/core/render/Ducking.h"
 #include "zaro/core/render/PathRaster.h"
 
+#include "Say.h"
+
 namespace zaro::app {
 namespace {
 
@@ -1472,7 +1474,7 @@ void EffectControls::saveLookAsCube() {
     auto text = render::bakeCube(*clip, sequence->output().transfer, 33,
                                  clip->name.empty() ? "Look" : clip->name, &omissions);
     if (!text) {
-        QMessageBox::warning(this, "Save look", QString::fromStdString(text.error().toString()));
+        app::warn(this, "Save look", QString::fromStdString(text.error().toString()));
         return;
     }
     if (omissions.any()) {
@@ -1491,12 +1493,12 @@ void EffectControls::saveLookAsCube() {
     }
     std::ofstream file{chosen.toStdString(), std::ios::binary | std::ios::trunc};
     if (!file) {
-        QMessageBox::warning(this, "Save look", "Could not open that file for writing.");
+        app::warn(this, "Save look", "Could not open that file for writing.");
         return;
     }
     file << *text;
     if (!file) {
-        QMessageBox::warning(this, "Save look", "Failed while writing that file.");
+        app::warn(this, "Save look", "Failed while writing that file.");
     }
 }
 

@@ -4137,6 +4137,32 @@ keys of whoever ran it. Both are the same lesson twice: a test that depends on
 state outside its own control is a test that reports on the machine rather than
 on the code.
 
+### Phase 7p — quiet mode ✅
+
+Nothing this program says in passing should be able to stop a machine.
+
+**The read-only refusal is not a dialog any more.** A project with a stale lock
+beside it -- left by a killed process, or by a test -- turned every Ctrl+S into
+a box somebody had to dismiss before they could carry on. The window title
+already carries `[read only]`, which is where a *state* belongs; the refusal
+says its piece on stderr. Phase 7k turned the locking off by default for the
+same reason; this removes the interruption itself, so the feature can be turned
+back on without bringing the nuisance with it.
+
+**Everything else goes through one door.** All forty-seven message boxes in the
+application now call `app::say` or `app::warn`, which in quiet mode write the
+same words to stderr. Nothing is hidden -- it is the waiting that goes.
+
+**On for every self-test, always.** A test that stops for a dialog is a test
+that hangs, and this session lost a while to exactly that shape of failure
+before it turned out to be buffering rather than a dialog. `--quiet` and
+`ZARO_QUIET=1` turn it on for ordinary runs.
+
+The rule this leaves behind: an interruption has to earn itself. A sentence
+somebody would like to have read is not a reason to take their hands off the
+keyboard, and a state belongs in the window rather than in a box about the
+window.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

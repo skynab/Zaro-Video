@@ -23,6 +23,8 @@
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 
+#include "Say.h"
+
 namespace zaro::app {
 namespace {
 
@@ -352,7 +354,7 @@ void ProjectBin::importTranscodedDialog() {
     const Status done = importTranscoded(paths, into.toStdString(), "prores_ks");
     QApplication::restoreOverrideCursor();
     if (!done) {
-        QMessageBox::warning(this, "Import", QString::fromStdString(done.error().message()));
+        app::warn(this, "Import", QString::fromStdString(done.error().message()));
     }
 }
 

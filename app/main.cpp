@@ -108,6 +108,7 @@
 #include "MixerPanel.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
+#include "Say.h"
 #include "ScopesPanel.h"
 #include "SourceMonitor.h"
 #include "SupportButton.h"
@@ -199,8 +200,7 @@ public:
         connect(effects_, &app::EffectControls::trackMaskRequested, this, [this] { trackMask(); });
         connect(effects_, &app::EffectControls::pinRequested, this, [this] {
             if (auto pinned = pinToClipBelow(); !pinned) {
-                QMessageBox::information(this, "Pin",
-                                         QString::fromStdString(pinned.error().message()));
+                app::say(this, "Pin", QString::fromStdString(pinned.error().message()));
             }
         });
         connect(effects_, &app::EffectControls::unpinRequested, this,
@@ -211,8 +211,7 @@ public:
             auto framed = reframeClip();
             QApplication::restoreOverrideCursor();
             if (!framed) {
-                QMessageBox::information(this, "Auto-reframe",
-                                         QString::fromStdString(framed.error().message()));
+                app::say(this, "Auto-reframe", QString::fromStdString(framed.error().message()));
                 return;
             }
             QString said = QString("Reframed %1 frames, scaled to %2%.")
@@ -221,7 +220,7 @@ public:
             if (!framed->reason.empty()) {
                 said += QString("\n%1").arg(QString::fromStdString(framed->reason));
             }
-            QMessageBox::information(this, "Auto-reframe", said);
+            app::say(this, "Auto-reframe", said);
         });
         connect(effects_, &app::EffectControls::clearStabilisationRequested, this,
                 [this] { clearStabilisation(); });
@@ -320,8 +319,7 @@ public:
             // makes, for the same reason.
             renderCache_.clear();
             if (Status reopened = reopenMedia(); !reopened) {
-                QMessageBox::warning(this, "Interpret",
-                                     QString::fromStdString(reopened.error().toString()));
+                app::warn(this, "Interpret", QString::fromStdString(reopened.error().toString()));
             }
             monitor_->update();
             updateCacheBar();
@@ -918,8 +916,7 @@ public:
             browser_->setProject(&project_, &commands_);
             connect(browser_, &app::MediaBrowser::imported, this, [this] {
                 if (Status reopened = openMedia(); !reopened) {
-                    QMessageBox::warning(this, "Import",
-                                         QString::fromStdString(reopened.error().toString()));
+                    app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
                 }
                 bin_->refresh();
                 updateTitle();
@@ -991,6 +988,9 @@ public:
     /// somebody keeps a keymap beside a project rather than in their home
     /// directory: ZARO_KEYMAP names the file.
     static void setKeymapPath(const QString& path) { keymapPath_ = path; }
+
+    /// Whether to interrupt. See `app::setQuiet`.
+    static void setQuietMode(bool quiet) { app::setQuiet(quiet); }
 
     void loadKeymap() {
         QFile file{keymapPath()};
@@ -1393,8 +1393,7 @@ public:
         }
         auto built = edit::makeSetSequenceOutput(project_, sequence->id(), output);
         if (!built) {
-            QMessageBox::warning(this, "Delivery",
-                                 QString::fromStdString(built.error().toString()));
+            app::warn(this, "Delivery", QString::fromStdString(built.error().toString()));
             return false;
         }
         commands_.execute(project_, std::move(*built));
@@ -1609,7 +1608,7 @@ public:
             // The project is loaded and the window is bound to it; what failed
             // is reading its files. Said plainly rather than swallowed: a
             // timeline of clips that draw nothing is a puzzle.
-            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+            app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
         }
         effects_->setSelection(model::TrackId{}, model::ClipId{});
         timeline_->setCachedSpans({});
@@ -1627,16 +1626,22 @@ public:
             return saveAs();
         }
         if (readOnly_) {
-            // Refused rather than asked about: somebody else is in this file,
-            // and the useful thing to offer is the way to keep the work.
-            QMessageBox::information(
-                this, "Read only",
-                QString("%1 has this project open.\nSave a new version to keep your work.")
-                    .arg(QString::fromStdString(heldBy().empty() ? "Somebody else" : heldBy())));
+            // Said on stderr and in the title bar, never in a dialog.
+            //
+            // This one was the worst offender: a project with a stale lock
+            // beside it -- left by a killed process, or by a test -- turned
+            // every Ctrl+S into a box somebody had to dismiss before they could
+            // carry on. The window title already carries "[read only]", which
+            // is where a state belongs; a refusal does not also need to
+            // interrupt.
+            std::fprintf(stderr,
+                         "zaro: read only: %s has this project open; save a new "
+                         "version to keep your work\n",
+                         heldBy().empty() ? "somebody else" : heldBy().c_str());
             return false;
         }
         if (Status written = io::saveProject(project_, path_, loaded_.unknown); !written) {
-            QMessageBox::warning(this, "Save", QString::fromStdString(written.error().toString()));
+            app::warn(this, "Save", QString::fromStdString(written.error().toString()));
             return false;
         }
         commands_.markSaved();
@@ -1679,7 +1684,7 @@ public:
     /// The versions beside this project, to jump between.
     void openVersionMenu() {
         if (path_.empty()) {
-            QMessageBox::information(this, "Version", "This project has not been saved yet.");
+            app::say(this, "Version", "This project has not been saved yet.");
             return;
         }
         QMenu menu;
@@ -1702,7 +1707,7 @@ public:
             return;
         }
         if (Status opened = openProject(found->second); !opened) {
-            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+            app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
         }
     }
 
@@ -1740,14 +1745,13 @@ public:
                 return;
             }
             if (Status opened = openProject(path, sharing); !opened) {
-                QMessageBox::warning(this, "Open",
-                                     QString::fromStdString(opened.error().toString()));
+                app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
             }
             return;
         }
 
         if (Status opened = openProject(path); !opened) {
-            QMessageBox::warning(this, "Open", QString::fromStdString(opened.error().toString()));
+            app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
         }
     }
 
@@ -1859,8 +1863,7 @@ public:
         auto built = edit::makeReplaceSource(project_, {sequence->id(), selectedTrack_},
                                              selectedClip_, media);
         if (!built) {
-            QMessageBox::warning(this, "Replace footage",
-                                 QString::fromStdString(built.error().toString()));
+            app::warn(this, "Replace footage", QString::fromStdString(built.error().toString()));
             return;
         }
         commands_.execute(project_, std::move(*built));
@@ -1889,8 +1892,7 @@ public:
         auto synced = byEar ? edit::syncByAudio(project_, *clip, *media_)
                             : edit::syncByTimecode(project_, *clip);
         if (!synced) {
-            QMessageBox::warning(this, "Multicam",
-                                 QString::fromStdString(synced.error().toString()));
+            app::warn(this, "Multicam", QString::fromStdString(synced.error().toString()));
             return;
         }
 
@@ -1911,8 +1913,7 @@ public:
             auto built = edit::makeSetAngleOffsets(project_, {sequence->id(), selectedTrack_},
                                                    selectedClip_, offsets);
             if (!built) {
-                QMessageBox::warning(this, "Multicam",
-                                     QString::fromStdString(built.error().toString()));
+                app::warn(this, "Multicam", QString::fromStdString(built.error().toString()));
                 return;
             }
             commands_.execute(project_, std::move(*built));
@@ -1925,11 +1926,11 @@ public:
         lastSyncSkipped_ = static_cast<std::int32_t>(skipped.size());
 
         if (!skipped.isEmpty()) {
-            QMessageBox::information(this, "Multicam",
-                                     QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
-                                         .arg(offsets.size())
-                                         .arg(clip->angles.size())
-                                         .arg(skipped.join("\n")));
+            app::say(this, "Multicam",
+                     QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
+                         .arg(offsets.size())
+                         .arg(clip->angles.size())
+                         .arg(skipped.join("\n")));
         }
     }
 
@@ -1983,7 +1984,7 @@ public:
                                        });
         progress.reset();
         if (!stats) {
-            QMessageBox::warning(this, "Render", QString::fromStdString(stats.error().toString()));
+            app::warn(this, "Render", QString::fromStdString(stats.error().toString()));
             return;
         }
         updateCacheBar();
@@ -2244,16 +2245,15 @@ private:
         menuItem(file, "save-version", [this] {
             auto saved = saveNewVersion();
             if (!saved) {
-                QMessageBox::information(this, "Version",
-                                         QString::fromStdString(saved.error().message()));
+                app::say(this, "Version", QString::fromStdString(saved.error().message()));
                 return;
             }
             // Said out loud: the window title changes too, but a version
             // that appeared to do nothing is one people press twice.
-            QMessageBox::information(this, "Version",
-                                     QString("Now working in %1")
-                                         .arg(QString::fromStdString(
-                                             std::filesystem::path{*saved}.filename().string())));
+            app::say(this, "Version",
+                     QString("Now working in %1")
+                         .arg(QString::fromStdString(
+                             std::filesystem::path{*saved}.filename().string())));
         });
         menuItem(file, "open-version", [this] { openVersionMenu(); });
         file->addSeparator();
@@ -2310,15 +2310,14 @@ private:
             const double wanted = sequence->duration().toSecondsDouble() - from;
             auto plan = remixSelectedTo(wanted);
             if (!plan) {
-                QMessageBox::information(this, "Fit music",
-                                         QString::fromStdString(plan.error().message()));
+                app::say(this, "Fit music", QString::fromStdString(plan.error().message()));
                 return;
             }
-            QMessageBox::information(this, "Fit music",
-                                     QString("Cut %1 beats out at %2s, now %3s long.")
-                                         .arg(plan->beatsRemoved)
-                                         .arg(plan->cutAt, 0, 'f', 2)
-                                         .arg(plan->seconds, 0, 'f', 2));
+            app::say(this, "Fit music",
+                     QString("Cut %1 beats out at %2s, now %3s long.")
+                         .arg(plan->beatsRemoved)
+                         .arg(plan->cutAt, 0, 'f', 2)
+                         .arg(plan->seconds, 0, 'f', 2));
         });
 
         QMenu* marker = menuBar_->addMenu("Marker");
@@ -2836,8 +2835,7 @@ private:
         }
         if (Status saved = io::saveOtio(project_, liveSequence()->id(), path.toStdString());
             !saved) {
-            QMessageBox::warning(this, "OpenTimelineIO",
-                                 QString::fromStdString(saved.error().toString()));
+            app::warn(this, "OpenTimelineIO", QString::fromStdString(saved.error().toString()));
         }
     }
 
@@ -2848,8 +2846,7 @@ private:
         auto tracked = trackMaskForward();
         QApplication::restoreOverrideCursor();
         if (!tracked) {
-            QMessageBox::information(this, "Track mask",
-                                     QString::fromStdString(tracked.error().message()));
+            app::say(this, "Track mask", QString::fromStdString(tracked.error().message()));
             return;
         }
         QString said = QString("Tracked %1 frame%2, weakest match %3.")
@@ -2861,7 +2858,7 @@ private:
             // exactly where somebody needs to look.
             said += QString("\nStopped early: %1").arg(QString::fromStdString(tracked->stopped));
         }
-        QMessageBox::information(this, "Track mask", said);
+        app::say(this, "Track mask", said);
     }
 
     void stabilise() {
@@ -2869,8 +2866,7 @@ private:
         auto held = stabiliseClip();
         QApplication::restoreOverrideCursor();
         if (!held) {
-            QMessageBox::information(this, "Stabilise",
-                                     QString::fromStdString(held.error().message()));
+            app::say(this, "Stabilise", QString::fromStdString(held.error().message()));
             return;
         }
         QString said = QString("Stabilised %1 frames, zoomed in %2%.")
@@ -2879,7 +2875,7 @@ private:
         if (!held->stopped.empty()) {
             said += QString("\nStopped early: %1").arg(QString::fromStdString(held->stopped));
         }
-        QMessageBox::information(this, "Stabilise", said);
+        app::say(this, "Stabilise", said);
     }
 
     void clearStabilisation() {
@@ -2910,7 +2906,7 @@ private:
         auto report = relinkMedia(root.toStdString());
         QApplication::restoreOverrideCursor();
         if (!report) {
-            QMessageBox::warning(this, "Relink", QString::fromStdString(report.error().message()));
+            app::warn(this, "Relink", QString::fromStdString(report.error().message()));
             return;
         }
         std::size_t byName = 0;
@@ -2931,7 +2927,7 @@ private:
             said +=
                 QString("\n%1 matched by name only -- check they are the right takes.").arg(byName);
         }
-        QMessageBox::information(this, "Relink", said);
+        app::say(this, "Relink", said);
     }
 
     void consolidateDialog() {
@@ -2944,8 +2940,7 @@ private:
         auto report = consolidateMedia(into.toStdString());
         QApplication::restoreOverrideCursor();
         if (!report) {
-            QMessageBox::warning(this, "Consolidate",
-                                 QString::fromStdString(report.error().message()));
+            app::warn(this, "Consolidate", QString::fromStdString(report.error().message()));
             return;
         }
         QString said = QString("Gathered %1 file%2, %3 MB copied.")
@@ -2958,7 +2953,7 @@ private:
             said += QString("\n%1 could not be found -- relink them first.")
                         .arg(report->missing.size());
         }
-        QMessageBox::information(this, "Consolidate", said);
+        app::say(this, "Consolidate", said);
     }
 
     void saveTemplateDialog() {
@@ -2968,7 +2963,7 @@ private:
             return;
         }
         if (Status saved = saveGraphicTemplate(path.toStdString()); !saved) {
-            QMessageBox::warning(this, "Template", QString::fromStdString(saved.error().message()));
+            app::warn(this, "Template", QString::fromStdString(saved.error().message()));
         }
     }
 
@@ -2980,8 +2975,7 @@ private:
         }
         auto placed = placeGraphicTemplate(path.toStdString(), time::RationalTime{});
         if (!placed) {
-            QMessageBox::warning(this, "Template",
-                                 QString::fromStdString(placed.error().message()));
+            app::warn(this, "Template", QString::fromStdString(placed.error().message()));
         }
     }
 
@@ -2992,26 +2986,25 @@ private:
             return;
         }
         if (Status written = writeReviewNotes(chosen.toStdString()); !written) {
-            QMessageBox::warning(this, "Review", QString::fromStdString(written.error().message()));
+            app::warn(this, "Review", QString::fromStdString(written.error().message()));
         }
     }
 
     void matchShot() {
         auto match = matchToReference();
         if (!match) {
-            QMessageBox::information(this, "Match",
-                                     QString::fromStdString(match.error().message()));
+            app::say(this, "Match", QString::fromStdString(match.error().message()));
             return;
         }
         if (!match->usable) {
             // Said, not applied. The person looking at both frames decides.
-            QMessageBox::information(this, "Match", QString::fromStdString(match->reason));
+            app::say(this, "Match", QString::fromStdString(match->reason));
             return;
         }
-        QMessageBox::information(this, "Match",
-                                 QString("Matched: the two shots were %1 apart and are now %2.")
-                                     .arg(match->before, 0, 'f', 3)
-                                     .arg(match->after, 0, 'f', 3));
+        app::say(this, "Match",
+                 QString("Matched: the two shots were %1 apart and are now %2.")
+                     .arg(match->before, 0, 'f', 3)
+                     .arg(match->after, 0, 'f', 3));
     }
 
     void goToStart() {
@@ -3395,8 +3388,7 @@ private:
             // means reopening. Cheaper than deciding per read, and it is the
             // only moment the decision changes.
             if (Status reopened = openMedia(); !reopened) {
-                QMessageBox::warning(this, "Proxies",
-                                     QString::fromStdString(reopened.error().toString()));
+                app::warn(this, "Proxies", QString::fromStdString(reopened.error().toString()));
             }
             monitor_->update();
             refresh();
@@ -3407,11 +3399,10 @@ private:
             auto made = buildProxy(making->second);
             QApplication::restoreOverrideCursor();
             if (!made) {
-                QMessageBox::warning(this, "Proxies",
-                                     QString::fromStdString(made.error().message()));
+                app::warn(this, "Proxies", QString::fromStdString(made.error().message()));
                 return;
             }
-            QMessageBox::information(
+            app::say(
                 this, "Proxies",
                 QString("Made a %1x%2 proxy of %3 frames, %4% of the size.")
                     .arg(made->width)
@@ -3520,8 +3511,7 @@ private:
                                     liveSequence()->duration()};
         auto measured = mixer.measureLoudness(*liveSequence(), whole);
         if (!measured) {
-            QMessageBox::warning(this, "Loudness",
-                                 QString::fromStdString(measured.error().toString()));
+            app::warn(this, "Loudness", QString::fromStdString(measured.error().toString()));
             return;
         }
 
@@ -3598,8 +3588,7 @@ private:
             }
             auto loaded = io::loadSubtitles(path.toStdString());
             if (!loaded) {
-                QMessageBox::warning(this, "Subtitles",
-                                     QString::fromStdString(loaded.error().toString()));
+                app::warn(this, "Subtitles", QString::fromStdString(loaded.error().toString()));
                 return;
             }
             // The style and the burn-in setting belong to the sequence, not to
@@ -3621,8 +3610,7 @@ private:
             if (Status saved =
                     io::saveSubtitles(liveSequence()->captions(), path.toStdString(), format);
                 !saved) {
-                QMessageBox::warning(this, "Subtitles",
-                                     QString::fromStdString(saved.error().toString()));
+                app::warn(this, "Subtitles", QString::fromStdString(saved.error().toString()));
             }
             return;
         }
@@ -3838,6 +3826,14 @@ int main(int argc, char** argv) {
     const bool selfTest = arguments.removeAll("--selftest") > 0;
     const bool editTest = arguments.removeAll("--selftest-edit") > 0;
     const bool quitTest = arguments.removeAll("--selftest-quit") > 0;
+    // Quiet: say things on stderr rather than in a box somebody has to
+    // dismiss. On for the self-tests always, because a test that stops for a
+    // dialog is a test that hangs.
+    const char* quietWanted = std::getenv("ZARO_QUIET");
+    PreviewWindow::setQuietMode(arguments.removeAll("--quiet") > 0 ||
+                                (quietWanted != nullptr && *quietWanted == '1') || selfTest ||
+                                editTest || quitTest);
+
     // A keymap of its own for the self-tests, and for anybody who wants one
     // beside a project: the tests rebind commands, and rebinding somebody's
     // real Save key because they ran a test is not on.
@@ -3868,6 +3864,7 @@ int main(int argc, char** argv) {
         std::puts("  --selftest-edit   drive a trim and a drag through the timeline, exit");
         std::puts("  --selftest-quit   quit with background work in flight, exit");
         std::puts("  --locking         take a lock on the project, and honour other people's");
+        std::puts("  --quiet           say things on stderr instead of in dialogs");
         return 2;
     }
 
