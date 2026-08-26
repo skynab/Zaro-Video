@@ -154,7 +154,13 @@ public:
         commands_.markSaved();
 
         monitor_ = new app::ProgramMonitor(this);
-        monitor_->setMinimumSize(480, 270);
+        // Narrow enough that a source and a program fit side by side in a
+        // window somebody has not maximised, without the splitter having to
+        // take the difference out of the parameter column and clip it. Only the
+        // width gives: two monitors sit beside each other, so they share the
+        // well's height rather than dividing it, and a monitor too short to
+        // judge a frame on is the thing this floor exists to prevent.
+        monitor_->setMinimumSize(240, 270);
 
         // The mask handles live on a transparent widget over the picture, so
         // the renderer never has to know about them and the widget that draws
@@ -229,7 +235,10 @@ public:
                 [this] { clearStabilisation(); });
         scopes_ = new app::ScopesPanel(this);
         mixer_ = new app::MixerPanel(this);
-        effects_->setMinimumWidth(250);
+        // 250 was under what the parameter rows actually measure, so the
+        // splitter was free to squeeze the column until the value fields ran
+        // off the edge of it. Now it is the width the content needs.
+        effects_->setMinimumWidth(300);
         effects_->setMaximumWidth(330);
 
         // Monitor and parameters side by side, transport under them, timeline
@@ -241,8 +250,11 @@ public:
         // use the extra space if it were given any.
         bin_->setFixedWidth(296);
 
+        // Its own row of buttons -- In, Out, Subclip, Insert, Over -- is what
+        // sets this, not the picture: below this width the labels start losing
+        // letters, and a button reading "nsert" is worse than a narrow picture.
         source_ = new app::SourceMonitor(this);
-        source_->setMinimumWidth(300);
+        source_->setMinimumWidth(280);
 
         // Splitters rather than fixed layouts: panel sizes are a matter of what
         // someone is doing at the time, and the arrangement is remembered
@@ -259,22 +271,33 @@ public:
         bindPlaybackActions();
         buildMenus();
 
-        // One viewer with two pages rather than two viewers side by side: a
-        // source and a program monitor are the same act of looking at a frame,
-        // and giving each half the width means neither is big enough to judge
-        // one on.
-        viewerStack_ = new QStackedWidget(this);
-        viewerStack_->setObjectName("viewer-well");
-        viewerStack_->addWidget(source_);
-        viewerStack_->addWidget(monitor_);
-        viewerStack_->setCurrentWidget(monitor_);
+        // Source and program side by side, each shown or not on its own.
+        //
+        // Two toggles rather than two tabs, as the design draws them: comparing
+        // the clip you are about to place against the cut you are placing it
+        // into is the whole reason both monitors exist, and a stack can only
+        // ever answer "which one" -- never "both". Either can be off, including
+        // both, because a window given over to the timeline is a real way to
+        // work and the well is the largest thing to reclaim.
+        viewerWell_ = new QWidget(this);
+        viewerWell_->setObjectName("viewer-well");
+        viewerWell_->setAttribute(Qt::WA_StyledBackground, true);
+        auto* wellRow = new QHBoxLayout(viewerWell_);
+        wellRow->setContentsMargins(12, 12, 12, 12);
+        wellRow->setSpacing(12);
+        wellRow->addWidget(source_, 1);
+        wellRow->addWidget(monitor_, 1);
+        noMonitorLabel_ = new QLabel("No monitor shown \u2014 turn on Source or Program", this);
+        noMonitorLabel_->setAlignment(Qt::AlignCenter);
+        noMonitorLabel_->setProperty("muted", true);
+        wellRow->addWidget(noMonitorLabel_, 1);
 
         auto* programColumn = new QWidget(this);
         auto* programLayout = new QVBoxLayout(programColumn);
         programLayout->setContentsMargins(0, 0, 0, 0);
         programLayout->setSpacing(0);
         programLayout->addWidget(buildViewerBar());
-        programLayout->addWidget(viewerStack_, 1);
+        programLayout->addWidget(viewerWell_, 1);
         programLayout->addWidget(buildTransportBar());
 
         topSplitter_ = new QSplitter(Qt::Horizontal, this);
@@ -305,7 +328,7 @@ public:
             if (const model::MediaRef* ref = project_.findMedia(id)) {
                 source_->load(*ref);
                 // Opening a clip is a request to look at it.
-                showViewer(source_);
+                setSourceShown(true);
             }
         });
         connect(bin_, &app::ProjectBin::openSubclipRequested, this,
@@ -316,7 +339,7 @@ public:
                     }
                     if (const model::MediaRef* ref = project_.findMedia(subclip->source)) {
                         source_->loadMarked(*ref, subclip->range);
-                        showViewer(source_);
+                        setSourceShown(true);
                     }
                 });
         connect(bin_, &app::ProjectBin::colorChanged, this, [this] {
@@ -1846,7 +1869,7 @@ public:
             return;
         }
         source_->showFrame(*ref, clip->activeSourceTimeAt(position_));
-        showViewer(source_);
+        setSourceShown(true);
     }
 
     /// Keep what is marked in the source monitor as a subclip.
@@ -2610,9 +2633,16 @@ private:
             tab->setFixedHeight(24);
             segmentRow->addWidget(tab);
         }
-        programTab_->setChecked(true);
-        connect(sourceTab_, &QPushButton::clicked, this, [this] { showViewer(source_); });
-        connect(programTab_, &QPushButton::clicked, this, [this] { showViewer(monitor_); });
+        // The dot is what says "toggle" rather than "tab": two tabs in a group
+        // mean one of them is on, and these two are independent.
+        for (QPushButton* tab : {sourceTab_, programTab_}) {
+            tab->setIconSize(QSize(13, 13));
+        }
+        connect(sourceTab_, &QPushButton::toggled, this,
+                [this](bool on) { setSourceShown(on); });
+        connect(programTab_, &QPushButton::toggled, this,
+                [this](bool on) { setProgramShown(on); });
+        syncViewers();
         row->addWidget(segment, 0, Qt::AlignVCenter);
 
         viewerLabel_ = mutedLabel();
@@ -2778,17 +2808,42 @@ private:
         return bar;
     }
 
-    /// Which page the one viewer is showing.
-    void showViewer(QWidget* page) {
-        viewerStack_->setCurrentWidget(page);
-        sourceTab_->setChecked(page == source_);
-        programTab_->setChecked(page == monitor_);
+    /// Show what is turned on, and say so on the toggles and in the well.
+    ///
+    /// One place, so the toggles and the monitors cannot disagree: every way in
+    /// -- a click on a chip, a clip opened from the bin, a match frame -- ends
+    /// up here rather than setting visibility itself.
+    void syncViewers() {
+        source_->setVisible(sourceShown_);
+        monitor_->setVisible(programShown_);
+        noMonitorLabel_->setVisible(!sourceShown_ && !programShown_);
+        // These do not re-enter: setChecked only emits when the value moves,
+        // and by here it already is what it is being set to.
+        sourceTab_->setChecked(sourceShown_);
+        programTab_->setChecked(programShown_);
+        sourceTab_->setIcon(app::icons::toolIcon(
+            sourceShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
+        programTab_->setIcon(app::icons::toolIcon(
+            programShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
     }
 
 public:
-    /// Put the program monitor back in the viewer. Match frame and opening a
-    /// clip from the bin both swap it for the source; this is the way back.
-    void showProgram() { showViewer(monitor_); }
+    /// Turn the source monitor on. Opening a clip from the bin and match frame
+    /// both want it up; neither wants the program taken down to get it, which
+    /// is what a stack used to make them do.
+    void setSourceShown(bool on) {
+        sourceShown_ = on;
+        syncViewers();
+    }
+    void setProgramShown(bool on) {
+        programShown_ = on;
+        syncViewers();
+    }
+
+    /// Put the program monitor up. Kept under its old name because it is the
+    /// same errand -- make sure the cut is on screen -- and it no longer costs
+    /// the source to do it.
+    void showProgram() { setProgramShown(true); }
 
     /// A workspace is which panels are up. Four arrangements, because there are
     /// four things people do with an editor, and each of them wants a different
@@ -3822,7 +3877,10 @@ private:
     /// The chrome. None of it owns anything: every one of these is a child of
     /// the window, and Qt deletes them with it.
     QMenuBar* menuBar_{nullptr};
-    QStackedWidget* viewerStack_{nullptr};
+    QWidget* viewerWell_{nullptr};
+    QLabel* noMonitorLabel_{nullptr};
+    bool sourceShown_{false};
+    bool programShown_{true};
     QStackedWidget* workspaceStack_{nullptr};
     QStackedWidget* actionStack_{nullptr};
     app::DeliverPanel* deliver_{nullptr};

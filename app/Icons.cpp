@@ -245,6 +245,20 @@ QPainterPath pathFor(Glyph glyph) {
             path.moveTo(2.6, 11.6);
             path.lineTo(13.4, 11.6);
             return path;
+
+        case Glyph::Circle:
+            path.addEllipse(QPointF(8.0, 8.0), 5.2, 5.2);
+            return path;
+
+        case Glyph::CheckCircle:
+            // The same ring with a tick in it. The design draws the lit state
+            // at Phosphor's fill weight; stroked keeps it in one set with every
+            // other icon here, and the chip behind it already lights up.
+            path.addEllipse(QPointF(8.0, 8.0), 5.2, 5.2);
+            path.moveTo(5.4, 8.1);
+            path.lineTo(7.2, 9.9);
+            path.lineTo(10.6, 6.3);
+            return path;
     }
     return path;
 }

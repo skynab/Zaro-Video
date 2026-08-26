@@ -36,6 +36,8 @@ enum class Glyph {
     CaretRight,  ///< A closed group heading
     DotsThree,   ///< The overflow menu: the second filled glyph
     Rows,        ///< The list/thumbnail view toggle
+    Circle,      ///< A monitor toggle that is off
+    CheckCircle, ///< A monitor toggle that is on
 };
 
 /// One glyph, in one colour, at a size in logical pixels.
