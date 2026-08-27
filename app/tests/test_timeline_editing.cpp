@@ -34,10 +34,28 @@ TEST_CASE("Trimming a clip's out point with the mouse, and undoing it", "[gui]")
     [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // Trim the out point inwards by dragging its right edge left.
+    //
+    // Where to press is asked of the layout rather than assumed. The out edge
+    // is a few pixels wide and the clip ends one pixel before xForTime says the
+    // exclusive end is, so a fixed offset either lands on the edge or a pixel
+    // past the end of the clip depending on how wide the window came up -- and
+    // pressing past the end is not a trim that failed, it is a press on empty
+    // track. Failing with the reason beats failing with "it did not shorten".
     const int outX = static_cast<int>(timeline->layout().xForTime(original.endExclusive()));
-    const int wantedX = outX - 120;
-    dragOnTimeline(timeline, outX - 2, wantedX, y);
-
+    int pressX = 0;
+    for (const int offset : {2, 3, 4, 5, 6}) {
+        const auto hit = timeline->layout().hitTest(sequence, outX - offset, y);
+        if (hit && hit->clip == original.id &&
+            hit->part == zaro::ui::TimelineLayout::Part::OutEdge) {
+            pressX = outX - offset;
+            break;
+        }
+    }
+    if (pressX == 0) {
+        zaro::app::testing::failf("no out edge to grab within 6px of x=%d on row y=%d\n", outX, y);
+    }
+    const int wantedX = pressX - 120;
+    dragOnTimeline(timeline, pressX, wantedX, y);
     const zaro::model::Clip* trimmed =
         window.project().findSequence(sequence.id())->videoTracks().front().find(original.id);
     if (trimmed == nullptr) {
@@ -47,7 +65,14 @@ TEST_CASE("Trimming a clip's out point with the mouse, and undoing it", "[gui]")
     std::printf("  after trimming out by 120px: %lld frames shorter\n",
                 static_cast<long long>(shortened));
     if (shortened <= 0) {
-        zaro::app::testing::failf("the trim did not shorten the clip\n");
+        // With the geometry, because without it this says only that a drag did
+        // nothing. What it has been every time so far is the press landing on a
+        // layout the widget had already moved on from.
+        zaro::app::testing::failf(
+            "the trim did not shorten the clip: pressed x=%d (out edge at %d), dragged to %d, "
+            "on a timeline %d wide; the clip is still %lld frames\n",
+            pressX, outX, wantedX, timeline->width(),
+            static_cast<long long>(trimmed->duration().frames()));
     }
     // The clip's start must not have moved: that is what distinguishes a
     // trim from a move.
@@ -99,6 +124,11 @@ TEST_CASE("A razor cuts picture and sound together", "[gui]") {
     const zaro::time::RationalTime cutAt{90, rate};
 
     timeline->setTool(app::TimelineWidget::Tool::Blade);
+    // The widget re-lays out when the tool changes, and the press below is
+    // aimed at a pixel this layout computes. Without a turn of the event loop
+    // in between, the blade sometimes landed on a layout that was still the old
+    // one and cut nothing.
+    QApplication::processEvents();
     const int cutX = static_cast<int>(timeline->layout().xForTime(cutAt));
     dragOnTimeline(timeline, cutX, cutX, y);
     timeline->setTool(app::TimelineWidget::Tool::Select);
@@ -189,6 +219,7 @@ TEST_CASE("A cut snaps to the edit point it was aimed at", "[gui]") {
     };
 
     timeline->setTool(app::TimelineWidget::Tool::Blade);
+    QApplication::processEvents();
     const int alignX = static_cast<int>(timeline->layout().xForTime(alignAt));
     const int aimedX = alignX + 8;
     // The test is only worth anything if the pointer is aiming at a

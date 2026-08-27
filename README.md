@@ -133,6 +133,14 @@ Presets: `debug`, `release`, `asan` (ASan + UBSan).
 Media fixtures are generated rather than committed — see `testdata/generate.sh`.
 Without them the media tests skip rather than fail.
 
+`ctest` runs three suites. `zaro_core_tests` and `zaro_media_tests` are headless
+and quick. `zaro_app_tests` drives the real window through sixty-two gestures —
+a trim with the mouse, a grade through the panel, a render out of Deliver — and
+measures the picture each one produced, so it takes about a minute and needs a
+display with a working QRhi. `QT_QPA_PLATFORM=offscreen` is not one: that plugin
+has no QRhi, and a `QRhiWidget` on it never draws. On a headless Linux box run
+it under `xvfb-run`, which is what CI does.
+
 ## Tools
 
 ```

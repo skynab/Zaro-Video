@@ -31,10 +31,18 @@ namespace zaro::app {
 ///
 /// Bounded: if the monitor never draws, the scan should report what it saw
 /// rather than hang.
+///
+/// The bound is generous on purpose. What it is waiting for is a GPU composite,
+/// and how long that takes is a property of the machine: a few milliseconds on
+/// hardware, and far more than that under a software renderer, which is what
+/// CI has. Too small a budget does not report "the monitor never drew" -- it
+/// gives back the frame from before, so a test that measures the picture fails
+/// saying the grade did not reach it. Ten seconds is longer than any real draw
+/// and still short enough to be a failure rather than a hang.
 inline QImage settledGrab(app::ProgramMonitor* monitor) {
     const std::int64_t before = monitor->framesRendered();
     monitor->update();
-    for (int spin = 0; spin < 100 && monitor->framesRendered() == before; ++spin) {
+    for (int spin = 0; spin < 2000 && monitor->framesRendered() == before; ++spin) {
         QApplication::processEvents(QEventLoop::AllEvents, 5);
     }
     return monitor->grabFramebuffer();

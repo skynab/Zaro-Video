@@ -44,7 +44,16 @@ public:
     void setReduction(float reductionDb);
     void setPicked(bool picked);
 
+    /// Drop the peak hold back to the level being shown now.
+    ///
+    /// A hold that keeps showing the last loud thing is what a meter is for and
+    /// a trap for anything reading one: on material that is mostly silence, the
+    /// value at an arbitrary position is whatever was held from somewhere else.
+    void resetHold();
+
     [[nodiscard]] model::TrackId track() const noexcept { return track_; }
+    /// The peak hold, as it is being painted.
+    [[nodiscard]] float hold() const noexcept { return hold_; }
     [[nodiscard]] double gainDb() const noexcept { return gainDb_; }
     [[nodiscard]] double pan() const noexcept { return pan_; }
     [[nodiscard]] bool muted() const noexcept { return muted_; }

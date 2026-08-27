@@ -513,10 +513,15 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     // handler follows: mark-in moves from I to Y.
     //
     // What is checked is where the in point *is*, not whether there is
-    // one: an earlier block leaves a marked range behind, so a test
-    // that asked "is anything marked" would pass without either key
-    // doing anything -- which is exactly what it did until the revert
-    // check found it.
+    // one: a marked range may already exist, so a test that asked "is
+    // anything marked" would pass without either key doing anything --
+    // which is exactly what it did until the revert check found it.
+    // Loaded here rather than inherited. The comment below used to be right --
+    // an earlier block left a clip in the source monitor -- and that is exactly
+    // what made this test depend on running after one, which nothing guarantees
+    // now that the sections are separate cases.
+    window.sourceMonitor()->load(window.project().media().front());
+    QApplication::processEvents();
     window.sourceMonitor()->step(7);
     const auto parkedAt = window.sourceMonitor()->position();
     if (Status moved = manager->assign("mark-in", "Y"); !moved) {
@@ -735,7 +740,7 @@ TEST_CASE("A nested sequence renders through the parent", "[gui]") {
     for (std::int64_t frame = 0; frame < 35; ++frame) {
         window.setPosition(zaro::time::RationalTime{frame, outerRate});
         QApplication::processEvents();
-        const double gray = meanGray(window.monitor()->grabFramebuffer());
+        const double gray = meanGray(settledGrab(window.monitor()));
         if (gray < darkest) {
             darkest = gray;
             darkFrame = frame;
@@ -743,7 +748,7 @@ TEST_CASE("A nested sequence renders through the parent", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{darkFrame, outerRate});
     QApplication::processEvents();
-    const double without = meanGray(window.monitor()->grabFramebuffer());
+    const double without = meanGray(settledGrab(window.monitor()));
 
     auto nested = zaro::edit::makeNestSequence(window.project(), {outerId, outerTrackId}, innerId,
                                                zaro::time::RationalTime{0, outerRate});
@@ -753,7 +758,7 @@ TEST_CASE("A nested sequence renders through the parent", "[gui]") {
     window.commands().execute(window.project(), std::move(*nested));
     window.monitor()->update();
     QApplication::processEvents();
-    const double withNest = meanGray(window.monitor()->grabFramebuffer());
+    const double withNest = meanGray(settledGrab(window.monitor()));
 
     std::printf("  nesting: %.1f with a nested sequence, %.1f without\n", withNest, without);
     if (!(withNest > without + 50.0)) {

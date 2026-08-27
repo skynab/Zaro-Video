@@ -670,7 +670,7 @@ TEST_CASE("Chroma keying, through the real compositor", "[gui]") {
         window.project().findSequence(keySequenceId)->findTrack(keyTop)->clips().front().id;
     window.monitor()->update();
     QApplication::processEvents();
-    const double covered = meanGray(window.monitor()->grabFramebuffer());
+    const double covered = meanGray(settledGrab(window.monitor()));
     if (!(covered > beneath + 50.0)) {
         zaro::app::testing::failf("the green screen did not reach the preview\n");
     }
@@ -689,7 +689,7 @@ TEST_CASE("Chroma keying, through the real compositor", "[gui]") {
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const double keyed = meanGray(window.monitor()->grabFramebuffer());
+    const double keyed = meanGray(settledGrab(window.monitor()));
 
     std::printf("  chroma key: %.1f behind the screen, %.1f with it, %.1f keyed\n", beneath,
                 covered, keyed);
@@ -704,7 +704,7 @@ TEST_CASE("Chroma keying, through the real compositor", "[gui]") {
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    if (!(meanGray(window.monitor()->grabFramebuffer()) > beneath + 50.0)) {
+    if (!(meanGray(settledGrab(window.monitor())) > beneath + 50.0)) {
         zaro::app::testing::failf("clearing the key did not bring the screen back\n");
     }
 
@@ -753,7 +753,7 @@ TEST_CASE("A mask, through the panel and the compositor", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double whole = meanGray(window.monitor()->grabFramebuffer());
+    const double whole = meanGray(settledGrab(window.monitor()));
 
     // A small ellipse: most of the picture goes.
     zaro::model::Mask mask;
@@ -768,7 +768,7 @@ TEST_CASE("A mask, through the panel and the compositor", "[gui]") {
     window.commands().execute(window.project(), std::move(*built));
     window.monitor()->update();
     QApplication::processEvents();
-    const double throughMask = meanGray(window.monitor()->grabFramebuffer());
+    const double throughMask = meanGray(settledGrab(window.monitor()));
 
     // Inverted, the same mask keeps everything it was hiding.
     mask.inverted = true;
@@ -777,7 +777,7 @@ TEST_CASE("A mask, through the panel and the compositor", "[gui]") {
     window.commands().execute(window.project(), std::move(*flipped));
     window.monitor()->update();
     QApplication::processEvents();
-    const double outside = meanGray(window.monitor()->grabFramebuffer());
+    const double outside = meanGray(settledGrab(window.monitor()));
 
     std::printf("  mask: %.1f whole, %.1f through a small ellipse, %.1f inverted\n", whole,
                 throughMask, outside);

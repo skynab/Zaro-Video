@@ -71,7 +71,7 @@ TEST_CASE("The scopes measure what the monitor is showing", "[gui]") {
     for (std::int64_t frame = 0; frame < 40; ++frame) {
         window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
         QApplication::processEvents();
-        const double picture = meanGray(window.monitor()->grabFramebuffer());
+        const double picture = meanGray(settledGrab(window.monitor()));
         const double where = traceHeight();
         if (where < 0.0) {
             zaro::app::testing::failf("the scope drew no trace at all\n");
@@ -146,19 +146,19 @@ TEST_CASE("Colour correction reaches the picture", "[gui]") {
     window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
     QApplication::processEvents();
 
-    const double litBefore = meanGray(window.monitor()->grabFramebuffer());
+    const double litBefore = meanGray(settledGrab(window.monitor()));
     exposure->setValue(-2.0);
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const double darker = meanGray(window.monitor()->grabFramebuffer());
+    const double darker = meanGray(settledGrab(window.monitor()));
 
     exposure->setValue(0.0);
     saturation->setValue(0.0);
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const QImage grey = window.monitor()->grabFramebuffer();
+    const QImage grey = settledGrab(window.monitor());
     std::int64_t coloured = 0;
     std::int64_t looked = 0;
     for (int gy = 0; gy < grey.height(); gy += 3) {
@@ -641,7 +641,7 @@ TEST_CASE("A look LUT loaded from a real file", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double plainDark = meanGray(window.monitor()->grabFramebuffer());
+    const double plainDark = meanGray(settledGrab(window.monitor()));
 
     // Written here, for the same reason the captions are: a fixture in
     // somebody's scratch folder is a test that quietly stops running.
@@ -673,7 +673,7 @@ TEST_CASE("A look LUT loaded from a real file", "[gui]") {
     window.commands().execute(window.project(), std::move(*built));
     window.monitor()->update();
     QApplication::processEvents();
-    const double lifted = meanGray(window.monitor()->grabFramebuffer());
+    const double lifted = meanGray(settledGrab(window.monitor()));
 
     // And dialled back to nothing, which has to return the picture.
     zaro::model::LutRef none = clipNow()->lut;
@@ -683,7 +683,7 @@ TEST_CASE("A look LUT loaded from a real file", "[gui]") {
     window.commands().execute(window.project(), std::move(*cleared));
     window.monitor()->update();
     QApplication::processEvents();
-    const double off = meanGray(window.monitor()->grabFramebuffer());
+    const double off = meanGray(settledGrab(window.monitor()));
 
     std::printf(
         "  look LUT: %.1f before, %.1f applied, %.1f at zero amount "
@@ -753,19 +753,19 @@ TEST_CASE("The secondary, through its panel", "[gui]") {
     // threshold would be measuring the letterbox: how much of the
     // monitor the picture covers depends on the panel layout, and that
     // changes whenever a control is added.
-    const double picture = meanGray(window.monitor()->grabFramebuffer());
+    const double picture = meanGray(settledGrab(window.monitor()));
 
     enable->setChecked(true);
     mask->setChecked(true);
     window.monitor()->update();
     QApplication::processEvents();
-    const double everything = meanGray(window.monitor()->grabFramebuffer());
+    const double everything = meanGray(settledGrab(window.monitor()));
 
     // Now key only the darks. This frame is white, so it drops out.
     lumaHigh->setValue(0.2);
     window.monitor()->update();
     QApplication::processEvents();
-    const double nothing = meanGray(window.monitor()->grabFramebuffer());
+    const double nothing = meanGray(settledGrab(window.monitor()));
 
     std::printf("  qualifier mask: picture %.1f, wide open %.1f, keyed to darks %.1f\n", picture,
                 everything, nothing);
@@ -834,7 +834,7 @@ TEST_CASE("An adjustment layer, through the real preview", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{brightestFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double plain = meanGray(window.monitor()->grabFramebuffer());
+    const double plain = meanGray(settledGrab(window.monitor()));
 
     auto built = zaro::edit::makeAddAdjustment(
         window.project(), {adjustSequenceId, aboveId},
@@ -857,7 +857,7 @@ TEST_CASE("An adjustment layer, through the real preview", "[gui]") {
     window.commands().execute(window.project(), std::move(*graded));
     window.monitor()->update();
     QApplication::processEvents();
-    const double adjusted = meanGray(window.monitor()->grabFramebuffer());
+    const double adjusted = meanGray(settledGrab(window.monitor()));
 
     std::printf("  adjustment layer: %.1f plain, %.1f two stops down from above\n", plain,
                 adjusted);

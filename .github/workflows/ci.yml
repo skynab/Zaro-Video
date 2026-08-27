@@ -56,8 +56,12 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # The GUI suite is excluded here and run once, on its own, in the job
+      # below. It needs a display and a working QRhi, which is a property of the
+      # runner rather than of the build, so running it nine times over would be
+      # nine chances to fail for a reason that is not ours.
       - name: Test
-        run: ctest --preset ${{ matrix.preset }}
+        run: ctest --preset ${{ matrix.preset }} -E zaro_app_tests
 
       - name: Verify frame exactness against FFmpeg
         run: ZARO_FRAME=build/${{ matrix.preset }}/bin/zaro-frame ./scripts/verify-frame-exact.sh
@@ -86,3 +90,45 @@ jobs:
             find "$dir" \( -name '*.cpp' -o -name '*.h' \) -print0 \
               | xargs -0 --no-run-if-empty clang-format --dry-run --Werror
           done
+
+  gui:
+    name: GUI tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config ffmpeg nlohmann-json3-dev libsdl2-dev \
+            qt6-base-dev qt6-base-private-dev qt6-shadertools-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev \
+            xvfb libgl1-mesa-dri mesa-vulkan-drivers
+
+      - name: Generate media fixtures
+        run: |
+          ./testdata/generate.sh
+          test -f testdata/media/sync_click_flash.mov
+
+      - name: Configure
+        run: cmake --preset debug
+
+      - name: Build
+        run: cmake --build --preset debug --target zaro_app_tests
+
+      # A real display, not QT_QPA_PLATFORM=offscreen: that plugin has no QRhi,
+      # so a QRhiWidget on it never draws and every test that measures a picture
+      # fails. Xvfb with llvmpipe behind it gives a GL the compositor can use.
+      #
+      # These drive one window through sixty-two gestures and grab the frame
+      # each one produced, so they are slower than the headless suites and are
+      # kept to a single job rather than a matrix.
+      - name: Test
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          QSG_RHI_BACKEND: opengl
+        run: xvfb-run -a --server-args="-screen 0 1600x1200x24" ctest --preset debug -R zaro_app_tests --output-on-failure

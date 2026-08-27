@@ -35,7 +35,7 @@ TEST_CASE("Lowering opacity reaches the compositor", "[gui]") {
     window.setPosition(
         zaro::time::RationalTime{sequence.duration().frames() / 2, sequence.frameRate()});
     QApplication::processEvents();
-    const QImage before = window.monitor()->grabFramebuffer();
+    const QImage before = settledGrab(window.monitor());
 
     zaro::model::Transform faded;
     faded.opacity = 0.15;
@@ -47,7 +47,7 @@ TEST_CASE("Lowering opacity reaches the compositor", "[gui]") {
     window.commands().execute(window.project(), std::move(*dim));
     window.monitor()->update();
     QApplication::processEvents();
-    const QImage after = window.monitor()->grabFramebuffer();
+    const QImage after = settledGrab(window.monitor());
 
     const double brightBefore = meanGray(before);
     const double brightAfter = meanGray(after);
@@ -189,7 +189,7 @@ TEST_CASE("A shape layer, created and edited through the panel", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double without = meanGray(window.monitor()->grabFramebuffer());
+    const double without = meanGray(settledGrab(window.monitor()));
 
     zaro::model::Graphic shape;
     shape.kind = zaro::model::GraphicKind::Rectangle;
@@ -211,7 +211,7 @@ TEST_CASE("A shape layer, created and edited through the panel", "[gui]") {
     window.commands().execute(window.project(), std::move(*built));
     window.monitor()->update();
     QApplication::processEvents();
-    const double withShape = meanGray(window.monitor()->grabFramebuffer());
+    const double withShape = meanGray(settledGrab(window.monitor()));
 
     std::printf("  shape layer: %.1f with a white rectangle, %.1f without\n", withShape, without);
     if (!(withShape > without + 50.0)) {
@@ -288,7 +288,7 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
         window.project().findSequence(fxSequenceId)->findTrack(fxTop)->clips().front().id;
     window.monitor()->update();
     QApplication::processEvents();
-    const int hardEdges = brightPixels(window.monitor()->grabFramebuffer(), 200);
+    const int hardEdges = brightPixels(settledGrab(window.monitor()), 200);
     if (hardEdges < 100) {
         zaro::app::testing::failf("the rectangle did not reach the preview\n");
     }
@@ -320,7 +320,7 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
     // is set to have to be tellable apart.
     window.monitor()->update();
     QApplication::processEvents();
-    const int justAdded = brightPixels(window.monitor()->grabFramebuffer(), 200);
+    const int justAdded = brightPixels(settledGrab(window.monitor()), 200);
     if (std::abs(justAdded - hardEdges) > hardEdges / 20) {
         zaro::app::testing::failf("adding an effect changed the picture by itself\n");
     }
@@ -329,7 +329,7 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const int blurred = brightPixels(window.monitor()->grabFramebuffer(), 200);
+    const int blurred = brightPixels(settledGrab(window.monitor()), 200);
 
     std::printf("  effect stack: %d bright pixels sharp, %d after a blur\n", hardEdges, blurred);
     if (!(blurred < hardEdges * 9 / 10)) {
@@ -342,7 +342,7 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    if (brightPixels(window.monitor()->grabFramebuffer(), 200) < hardEdges * 9 / 10) {
+    if (brightPixels(settledGrab(window.monitor()), 200) < hardEdges * 9 / 10) {
         zaro::app::testing::failf("disabling the effect did not restore the edges\n");
     }
     enabledBox->setChecked(true);
@@ -381,13 +381,13 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const int rampStart = brightPixels(window.monitor()->grabFramebuffer(), 200);
+    const int rampStart = brightPixels(settledGrab(window.monitor()), 200);
 
     window.setPosition(zaro::time::RationalTime{30, sequence.frameRate()});
     QApplication::processEvents();
     window.monitor()->update();
     QApplication::processEvents();
-    const int rampEnd = brightPixels(window.monitor()->grabFramebuffer(), 200);
+    const int rampEnd = brightPixels(settledGrab(window.monitor()), 200);
 
     std::printf(
         "  keyframed blur: %d bright pixels at the start of the ramp, %d at the "
@@ -555,7 +555,7 @@ TEST_CASE("The curve editor, driven with the mouse", "[gui]") {
         window.monitor()->update();
         QApplication::processEvents();
     }
-    const double withCurve = meanGray(window.monitor()->grabFramebuffer());
+    const double withCurve = meanGray(settledGrab(window.monitor()));
 
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
@@ -564,7 +564,7 @@ TEST_CASE("The curve editor, driven with the mouse", "[gui]") {
         window.monitor()->update();
         QApplication::processEvents();
     }
-    const double withoutCurve = meanGray(window.monitor()->grabFramebuffer());
+    const double withoutCurve = meanGray(settledGrab(window.monitor()));
     std::printf("  curve on the GPU: %.1f with, %.1f without\n", withCurve, withoutCurve);
     if (!(withCurve > withoutCurve + 1.0)) {
         zaro::app::testing::failf(

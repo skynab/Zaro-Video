@@ -1,6 +1,9 @@
 #include "GuiFixture.h"
 
 #include <QApplication>
+#include <QEventLoop>
+#include <QSize>
+#include <array>
 #include <cstdarg>
 #include <cstdio>
 #include <filesystem>
@@ -194,17 +197,99 @@ void restoreFixtureProject() {
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
-    // Reloaded outright rather than unpicked. Undo covers the edits; it does
-    // not cover which sequence is active, a project somebody opened instead, or
-    // the read-only flag a lock left set -- and a test that inherits any of
-    // those fails for a reason that has nothing to do with what it is testing.
+    // Reloaded from the file, every test, unconditionally.
+    //
+    // Undo covers the edits that went through the command stack, and a good
+    // deal of what these tests do does not: setting a transfer override, giving
+    // a media reference a proxy, pointing one at a file that moved. Those are
+    // written straight onto the project, so the stack has nothing to unwind and
+    // the next test inherits them. What that looked like was a media reference
+    // still pointing where a relink test had left it, failing a test three
+    // files away with a path that does not exist. Cheaper to be sure than to
+    // keep finding the exceptions.
     auto loaded = io::loadProject(held.fixturePath);
     if (!loaded) {
         FAIL("could not reload the fixture project: " + loaded.error().toString());
     }
     model::Project project = loaded->project;
     window.adopt(std::move(project), std::move(*loaded), held.fixturePath);
+
+    window.setWorkspace("Edit");
+    // The tool and the snapping switch are chrome, not project state, so undo
+    // and a reload both leave them exactly where the last test put them. A
+    // razor test that ends with the blade selected makes the next test's drag
+    // a cut, which it reports as a trim that did not trim -- and which of the
+    // two failed depended on the order Catch2 happened to run them in.
+    window.timeline()->setTool(app::TimelineWidget::Tool::Select);
+    // Take the deferred fit now rather than whenever the next resize arrives.
+    //
+    // Binding a project asks the timeline to zoom to fit, and it does that on
+    // its next resizeEvent. Under a window manager that event can turn up after
+    // a test has already asked the layout where a clip's edge is, so the press
+    // goes to a pixel the widget has since stopped agreeing with -- which is a
+    // trim that quietly does not trim, about one run in six. Doing it here
+    // means every test starts from the same zoom, and a known one.
+    window.timeline()->zoomToFit();
+    window.timeline()->setSnapEnabled(true);
+    // Back to the head, before the settle below measures anything.
+    //
+    // The timeline scrolls to keep the playhead in view, so a test that left it
+    // at the end of the clip leaves the next one looking at a scrolled view --
+    // and the x it computes for a clip's edge is then measured from an origin
+    // that moves again on the next repaint. That is what made a trim drag miss
+    // the edge it was aimed at, about one run in three.
+    if (const model::Sequence* seq = window.sequence(); seq != nullptr) {
+        window.setPosition(time::RationalTime{0, seq->frameRate()});
+    }
     window.renderCache().clear();
+
+    // Settle before handing the window over.
+    //
+    // Adopting a project re-binds every panel, and the timeline only knows
+    // where a clip is once it has been laid out at its real width. A test that
+    // asks xForTime too early gets coordinates from a widget that is still
+    // nominally narrow, drives the mouse somewhere that is not the clip's edge,
+    // and reports that trimming does not trim or that the blade missed.
+    //
+    // "Has a width" is not enough: the geometry arrives in more than one step,
+    // and three fast polls can all land inside the same intermediate one. What
+    // is waited for is the whole geometry a gesture depends on -- the widget's
+    // width, the row's top and height, and where the clip's out point falls --
+    // unchanged across five samples a frame apart. Bounded, so a window that
+    // never settles fails the test rather than hanging the run.
+    const model::Sequence* sequence = window.sequence();
+    std::array<double, 4> last{-1.0, -1.0, -1.0, -1.0};
+    int steady = 0;
+    for (int spin = 0; spin < 200 && steady < 5; ++spin) {
+        QApplication::processEvents(QEventLoop::AllEvents, 16);
+        if (sequence == nullptr || sequence->videoTracks().empty()) {
+            steady = 0;
+            continue;
+        }
+        const auto& track = sequence->videoTracks().front();
+        if (track.clips().empty()) {
+            steady = 0;
+            continue;
+        }
+        const auto row = window.timeline()->rowFor(track.id());
+        if (!row || row->height <= 0 || window.timeline()->width() <= 1) {
+            steady = 0;
+            continue;
+        }
+        const std::array<double, 4> now{
+            static_cast<double>(window.timeline()->width()), static_cast<double>(row->top),
+            static_cast<double>(row->height),
+            window.timeline()->layout().xForTime(track.clips().front().endExclusive())};
+        if (now[3] <= 1.0) {
+            steady = 0;
+            last = now;
+            continue;
+        }
+        steady = now == last ? steady + 1 : 0;
+        last = now;
+    }
+
+    window.monitor()->update();
     QApplication::processEvents();
 }
 
@@ -222,6 +307,14 @@ PreviewWindow& gui() {
     held.argv = {held.program.data(), nullptr};
     held.application = std::make_unique<QApplication>(held.argc, held.argv.data());
     theme::apply(*held.application);
+    // The hotkeys test rebinds a key and writes the keymap out. Left at its
+    // default that is the developer's own keymap.conf, so running the suite
+    // would rebind Save in the editor they use -- and a stale one from an
+    // earlier run comes back the next time and fails the test that wrote it.
+    const QString keymap =
+        QString::fromStdString((std::filesystem::path{ZARO_SCRATCH_DIR} / "keymap.conf").string());
+    std::filesystem::remove(keymap.toStdString());
+    PreviewWindow::setKeymapPath(keymap);
     // Anything that would have opened a dialog says so on stderr instead. A
     // modal dialog in a test is a hang, and the run has no one to close it.
     setQuiet(true);
@@ -242,7 +335,20 @@ PreviewWindow& gui() {
     }
     held.window->resize(960, 620);
     held.window->show();
-    QApplication::processEvents();
+    // Wait for the window to stop being resized before anything measures it.
+    //
+    // A window that has just been shown is not yet the size it will settle at:
+    // a window manager gives it one, and how long that takes is not ours to
+    // know. Every gesture in this suite is aimed at a pixel computed from the
+    // timeline's width, so the first test to run was the one that paid for it.
+    QSize lastSize;
+    int settled = 0;
+    for (int spin = 0; spin < 300 && settled < 10; ++spin) {
+        QApplication::processEvents(QEventLoop::AllEvents, 16);
+        const QSize now = held.window->size();
+        settled = now == lastSize ? settled + 1 : 0;
+        lastSize = now;
+    }
 
     PreviewWindow& window = *held.window;
     REQUIRE(window.sequence() != nullptr);
@@ -252,6 +358,11 @@ PreviewWindow& gui() {
     held.fixturePath = *path;
     held.baseSequence = window.sequence()->id();
     held.ready = true;
+    // Through the same door as every other test. A freshly shown window has not
+    // laid its timeline out either, and the first test to run was reading
+    // coordinates from it before it had -- which made whichever test Catch2
+    // happened to start with fail about one run in four.
+    restoreFixtureProject();
     return window;
 }
 

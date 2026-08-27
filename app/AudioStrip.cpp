@@ -127,6 +127,12 @@ void AudioStrip::setLevel(float peak) {
     update();
 }
 
+void AudioStrip::resetHold() {
+    hold_ = level_;
+    held_ = 0;
+    update();
+}
+
 QRect AudioStrip::eqRect() const {
     return QRect{6, kInsertsTop + (kInsertHeight * 2) + 10, kWidth - 12, kEqHeight};
 }
@@ -161,19 +167,18 @@ void AudioStrip::paintEvent(QPaintEvent* /*event*/) {
 
     // The strip's ground. A picked strip is washed with the accent, which is
     // how it says the channel panel on the right is showing this one.
-    painter.fillRect(rect(), picked_ ? theme::mix(theme::bg(), theme::accent(), 0.07)
-                                     : theme::bg());
+    painter.fillRect(rect(),
+                     picked_ ? theme::mix(theme::bg(), theme::accent(), 0.07) : theme::bg());
     painter.setPen(QPen{theme::divider(), 1.0});
     painter.drawLine(width() - 1, 0, width() - 1, height());
 
     // --- header ---------------------------------------------------------
     const QRect header{0, 0, width(), kHeaderHeight};
-    const QColor accentInk = kind_ == Kind::Master ? QColor{0xd9, 0xc7, 0x6a}
-                                                   : QColor{0x8f, 0xc7, 0xd9};
+    const QColor accentInk =
+        kind_ == Kind::Master ? QColor{0xd9, 0xc7, 0x6a} : QColor{0x8f, 0xc7, 0xd9};
     painter.setPen(Qt::NoPen);
-    painter.fillRect(header, kind_ == Kind::Master
-                                 ? theme::mix(theme::surface(), accentInk, 0.16)
-                                 : theme::surface());
+    painter.fillRect(header, kind_ == Kind::Master ? theme::mix(theme::surface(), accentInk, 0.16)
+                                                   : theme::surface());
     painter.setBrush(accentInk);
     painter.drawEllipse(QPointF{11.0, kHeaderHeight / 2.0}, 3.0, 3.0);
 
@@ -203,9 +208,9 @@ void AudioStrip::paintEvent(QPaintEvent* /*event*/) {
     } chain[] = {
         {eq_.enabled, eq_.enabled ? QString("EQ · %1 Hz").arg(std::lround(eq_.peakHz))
                                   : QStringLiteral("EQ · off")},
-        {compressor_.enabled,
-         compressor_.enabled ? QString("Comp %1:1").arg(compressor_.ratio, 0, 'f', 1)
-                             : QStringLiteral("Comp · off")},
+        {compressor_.enabled, compressor_.enabled
+                                  ? QString("Comp %1:1").arg(compressor_.ratio, 0, 'f', 1)
+                                  : QStringLiteral("Comp · off")},
     };
     for (int at = 0; at < 2; ++at) {
         const QRect slot{7, kInsertsTop + (at * kInsertHeight), width() - 14, kInsertHeight - 3};
@@ -301,9 +306,8 @@ void AudioStrip::paintEvent(QPaintEvent* /*event*/) {
     // Gain reduction, hanging down from the top of the meter: the one number a
     // compressor has that a level meter cannot show.
     if (reductionDb_ < -0.1F) {
-        const int deep =
-            static_cast<int>(std::min(1.0, -static_cast<double>(reductionDb_) / 24.0) *
-                             meter.height());
+        const int deep = static_cast<int>(std::min(1.0, -static_cast<double>(reductionDb_) / 24.0) *
+                                          meter.height());
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor{0xd9, 0xc7, 0x6a, 150});
         painter.drawRect(QRect{meter.left(), meter.top(), 3, deep});
@@ -360,8 +364,8 @@ void AudioStrip::paintEqCurve(QPainter& painter, const QRect& box) const {
     QPainterPath curve;
     for (int step = 0; step <= 40; ++step) {
         const double at = static_cast<double>(step) / 40.0;
-        const double hz = std::pow(10.0, std::log10(20.0) + (at * (std::log10(20000.0) -
-                                                                   std::log10(20.0))));
+        const double hz =
+            std::pow(10.0, std::log10(20.0) + (at * (std::log10(20000.0) - std::log10(20.0))));
         double db = 0.0;
         if (eq_.highPassHz > 0.0 && hz < eq_.highPassHz) {
             db -= 12.0 * std::log10(eq_.highPassHz / std::max(20.0, hz));
@@ -375,8 +379,8 @@ void AudioStrip::paintEqCurve(QPainter& painter, const QRect& box) const {
             db += eq_.peakGainDb * std::exp(-(octaves * octaves) / (2.0 * width * width));
         }
         // +-18 dB across the box, which is the range a track EQ works in.
-        const double y = plot.center().y() - (std::clamp(db, -18.0, 18.0) / 18.0) *
-                                                 (plot.height() / 2.0);
+        const double y =
+            plot.center().y() - (std::clamp(db, -18.0, 18.0) / 18.0) * (plot.height() / 2.0);
         const QPointF point{xFor(hz), y};
         if (step == 0) {
             curve.moveTo(point);

@@ -636,6 +636,7 @@ public:
     [[nodiscard]] app::EffectControls* effects() const { return effects_; }
     [[nodiscard]] app::ScopesPanel* scopes() const { return scopes_; }
     [[nodiscard]] app::MixerPanel* mixer() const { return mixer_; }
+    [[nodiscard]] app::ChannelPanel* channel() const { return channel_; }
     [[nodiscard]] app::DeliverPanel* deliver() const { return deliver_; }
     [[nodiscard]] render::AudioSource& media() { return *media_; }
     [[nodiscard]] render::SourceFrameProvider* frames() { return media_.get(); }

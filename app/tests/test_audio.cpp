@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "../AudioStrip.h"
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -206,9 +207,14 @@ TEST_CASE("The processing chain, through the mixer", "[gui]") {
 
     const auto audioTrackId =
         window.project().findSequence(sequence.id())->audioTracks().front().id();
-    auto* eqBox = window.mixer()->findChild<QCheckBox*>();
+    // The EQ and compressor switches are on the channel strip beside the
+    // console, not on the console itself. This looked for them on the mixer,
+    // which is where they were before the chain got a panel of its own.
+    window.setWorkspace("Audio");
+    QApplication::processEvents();
+    auto* eqBox = window.channel()->findChild<QCheckBox*>();
     if (eqBox == nullptr) {
-        zaro::app::testing::failf("the mixer strip has no controls\n");
+        zaro::app::testing::failf("the channel strip has no processing controls\n");
     }
 
     // A hard low pass: the fixture's audio is clicks, which are almost
@@ -299,9 +305,12 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
         zaro::app::testing::failf("the mixer panel never became visible\n");
     }
 
-    auto* meter = window.mixer()->findChild<app::LevelMeter*>(
-        QString{"mixer-meter-"} + QString::number(audioTrack->id().value()));
-    auto* master = window.mixer()->findChild<app::LevelMeter*>("mixer-master-meter");
+    // The meter is painted by the strip itself. It used to be a LevelMeter
+    // child named "mixer-meter-<id>"; the strips took that over, and this
+    // looked for the old names for as long as nothing ran it.
+    auto* meter = window.mixer()->findChild<app::AudioStrip*>(
+        QString{"mixer-strip-"} + QString::number(audioTrack->id().value()));
+    auto* master = window.mixer()->findChild<app::AudioStrip*>("mixer-master");
     if (meter == nullptr || master == nullptr) {
         zaro::app::testing::failf("the mixer has no meters\n");
     }
@@ -311,7 +320,7 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
     // last loud thing, so reading it at one arbitrary position gives
     // either the click or whatever was held from somewhere else. Scan
     // instead, and take the loudest.
-    const auto loudest = [&](app::LevelMeter* which) {
+    const auto loudest = [&](app::AudioStrip* which) {
         float peak = 0.0F;
         for (std::int64_t frame = 0; frame < 60; ++frame) {
             which->resetHold();

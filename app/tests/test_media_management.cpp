@@ -277,7 +277,7 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{brightFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double fromOriginal = meanGray(window.monitor()->grabFramebuffer());
+    const double fromOriginal = meanGray(settledGrab(window.monitor()));
 
     window.project().setUsingProxies(true);
     if (Status reopened = window.reopenMedia(); !reopened) {
@@ -285,7 +285,7 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
     }
     window.monitor()->update();
     QApplication::processEvents();
-    const double viaProxy = meanGray(window.monitor()->grabFramebuffer());
+    const double viaProxy = meanGray(settledGrab(window.monitor()));
 
     // What was read, rather than what it looked like: the proxy is a
     // faithful copy at a quarter of the width, so judging it by
@@ -339,10 +339,18 @@ TEST_CASE("Metadata and search, through the real bin", "[gui]") {
     if (binSearch == nullptr || binList == nullptr) {
         zaro::app::testing::failf("the bin has no search box or list\n");
     }
+    // Media only. The bin grew folders, and a folder is a row in the same list
+    // -- counting those made "everything" one too many and made a search that
+    // matched one file look like it matched two. A header is enabled so it can
+    // be clicked shut but never selectable, which is what tells them apart.
     const auto visibleRows = [&] {
         int shown = 0;
         for (int row = 0; row < binList->count(); ++row) {
-            shown += binList->item(row)->isHidden() ? 0 : 1;
+            const QListWidgetItem* item = binList->item(row);
+            if (item->isHidden() || (item->flags() & Qt::ItemIsSelectable) == 0) {
+                continue;
+            }
+            ++shown;
         }
         return shown;
     };

@@ -221,12 +221,12 @@ TEST_CASE("Captions imported, burned in and measured", "[gui]") {
     window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
     window.monitor()->update();
     QApplication::processEvents();
-    const double withCaption = meanGray(window.monitor()->grabFramebuffer());
+    const double withCaption = meanGray(settledGrab(window.monitor()));
 
     window.commands().undo(window.project());
     window.monitor()->update();
     QApplication::processEvents();
-    const double without = meanGray(window.monitor()->grabFramebuffer());
+    const double without = meanGray(settledGrab(window.monitor()));
 
     std::printf("  captions: %zu read, frame reads %.2f burned in against %.2f\n",
                 subtitles->size(), withCaption, without);
@@ -271,7 +271,7 @@ TEST_CASE("A text layer, through the real font engine", "[gui]") {
     }
     window.setPosition(zaro::time::RationalTime{darkFrame, sequence.frameRate()});
     QApplication::processEvents();
-    const double blank = meanGray(window.monitor()->grabFramebuffer());
+    const double blank = meanGray(settledGrab(window.monitor()));
 
     zaro::model::Graphic title;
     title.kind = zaro::model::GraphicKind::Text;
@@ -294,7 +294,7 @@ TEST_CASE("A text layer, through the real font engine", "[gui]") {
     window.commands().execute(window.project(), std::move(*built));
     window.monitor()->update();
     QApplication::processEvents();
-    const double withText = meanGray(window.monitor()->grabFramebuffer());
+    const double withText = meanGray(settledGrab(window.monitor()));
 
     // Glyphs cover a small fraction of the frame, so this is not a big
     // number -- but it is unambiguously more than nothing, and nothing
