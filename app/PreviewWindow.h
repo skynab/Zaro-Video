@@ -139,6 +139,7 @@
 #include "commands/Analysis.h"
 #include "commands/Context.h"
 #include "commands/Media.h"
+#include "commands/Multicam.h"
 #include "commands/Music.h"
 #include "commands/Review.h"
 #include "commands/Structure.h"
@@ -1064,32 +1065,13 @@ public:
         return pinned;
     }
 
-    /// Pin to whatever is underneath at the playhead.
-    ///
-    /// The topmost clip on a lower track, because that is the one somebody can
-    /// see: pinning to something hidden behind another picture would be
-    /// pinning to a thing that is not there as far as they are concerned.
+    /// Pin the selected clip to whatever is under it at the playhead.
     Result<model::ClipId> pinToClipBelow() {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr || !selectedClip_.isValid()) {
-            return Error{ErrorCode::InvalidData, "select the clip to pin first"};
+        auto pinned = commands::pinToClipBelow(editContext());
+        if (pinned) {
+            afterEdit();
         }
-        const model::Clip* found = nullptr;
-        for (const model::Track& track : sequence->videoTracks()) {
-            if (track.id() == selectedTrack_) {
-                break;  // tracks are listed bottom-up, so this is where "below" ends
-            }
-            if (!sequence->isAudible(track)) {
-                continue;
-            }
-            if (const model::Clip* candidate = track.clipAt(position_)) {
-                found = candidate;
-            }
-        }
-        if (found == nullptr) {
-            return Error{ErrorCode::InvalidData, "there is nothing under this clip to pin it to"};
-        }
-        return pinTo(found->id);
+        return pinned;
     }
 
     /// Save the selected title as a template.
@@ -1187,25 +1169,15 @@ public:
         setDelivery(wanted);
     }
 
-    /// The work behind the menu, separated so it can be driven without one.
+    /// Set the curve the sequence goes out through.
     bool setDelivery(const model::Sequence::Output& output) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
+        if (Status set = commands::setDelivery(editContext(), output); !set) {
+            app::warn(this, "Delivery", QString::fromStdString(set.error().toString()));
             return false;
         }
-        auto built = edit::makeSetSequenceOutput(project_, sequence->id(), output);
-        if (!built) {
-            app::warn(this, "Delivery", QString::fromStdString(built.error().toString()));
-            return false;
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        // The delivery curve is what curves, secondaries and LUTs are baked
-        // against, so every cached frame was made for the old one.
-        renderCache_.clear();
-        monitor_->update();
-        updateCacheBar();
-        updateTitle();
+        // Curves, secondaries and LUTs are all baked against the delivery
+        // curve, so every cached frame was made for the old one.
+        afterEdit();
         return true;
     }
 
@@ -1560,130 +1532,64 @@ public:
         }
     }
 
-    /// Open the source monitor on the frame the selected clip is showing.
+    /// Show the source frame the picture is currently made from.
     void matchFrame() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr ||
-            !clip->timelineRange.contains(position_.rescaledTo(clip->start().rate()))) {
+        auto found = commands::frameToMatch(editContext());
+        if (!found) {
             return;
         }
-        const model::MediaRef* ref = project_.findMedia(clip->activeSource());
+        const model::MediaRef* ref = project_.findMedia(found->media);
         if (ref == nullptr) {
-            // A generated clip or a nest has no frame of a file to match to.
             return;
         }
-        source_->showFrame(*ref, clip->activeSourceTimeAt(position_));
+        source_->showFrame(*ref, found->at);
         setSourceShown(true);
     }
 
-    /// Keep what is marked in the source monitor as a subclip.
+    /// Make a subclip of what is marked in the source monitor.
     void makeSubclip() {
         const auto range = source_->markedRange();
         if (!range || !source_->media().isValid()) {
             return;
         }
-        const model::MediaRef* ref = project_.findMedia(source_->media());
-        if (ref == nullptr) {
-            return;
+        if (commands::makeSubclip(editContext(), source_->media(), *range)) {
+            bin_->refresh();
         }
-        model::Subclip subclip;
-        subclip.id = project_.ids().next<model::SubclipTag>();
-        subclip.source = ref->id;
-        subclip.range = *range;
-        // Numbered rather than asked for. Naming every subclip at the moment it
-        // is made is a dialog between somebody and the thing they were doing;
-        // the bin lists them under the file they came from, which is how they
-        // are found anyway.
-        std::size_t existing = 0;
-        for (const model::Subclip& other : project_.subclips()) {
-            existing += other.source == ref->id ? 1 : 0;
-        }
-        subclip.name = ref->name + " [" + std::to_string(existing + 1) + "]";
-        project_.addSubclip(std::move(subclip));
-        bin_->refresh();
     }
 
-    /// Point the selected timeline clip at different media.
+    /// Point the selected clip at a different file.
     void replaceSelectedSource(model::MediaRefId media) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr || !selectedClip_.isValid()) {
+        if (Status replaced = commands::replaceSelectedSource(editContext(), media); !replaced) {
+            app::warn(this, "Replace footage", QString::fromStdString(replaced.error().toString()));
             return;
         }
-        auto built = edit::makeReplaceSource(project_, {sequence->id(), selectedTrack_},
-                                             selectedClip_, media);
-        if (!built) {
-            app::warn(this, "Replace footage", QString::fromStdString(built.error().toString()));
-            return;
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        monitor_->update();
-        timeline_->update();
-        updateCacheBar();
+        afterEdit();
     }
 
-    /// The work behind the menu, separated so it can be driven without one.
-    ///
-    /// Reports what it could not do rather than silently doing less: a camera
-    /// left unsynced is a cut that lands wrong later, and the moment to find
-    /// out is now.
+    /// Line the multicam angles up, and say which ones would not.
     void syncAngles(bool byEar) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
+        auto report = commands::syncAngles(editContext(), byEar);
+        if (!report) {
+            app::warn(this, "Multicam", QString::fromStdString(report.error().toString()));
             return;
         }
-        const model::Track* track = sequence->findTrack(selectedTrack_);
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || !clip->isMulticam()) {
+        if (report->synced > 0) {
+            afterEdit();
+        }
+        lastSyncCount_ = report->synced;
+        lastSyncSkipped_ = static_cast<std::int32_t>(report->skipped.size());
+        if (report->skipped.empty()) {
             return;
         }
-
-        auto synced = byEar ? edit::syncByAudio(project_, *clip, *media_)
-                            : edit::syncByTimecode(project_, *clip);
-        if (!synced) {
-            app::warn(this, "Multicam", QString::fromStdString(synced.error().toString()));
-            return;
+        QStringList lines;
+        for (const std::string& line : report->skipped) {
+            lines.append(QString::fromStdString(line));
         }
-
-        std::vector<std::pair<std::int32_t, time::RationalTime>> offsets;
-        QStringList skipped;
-        for (const edit::AngleSync& entry : *synced) {
-            if (entry.offset.has_value()) {
-                offsets.emplace_back(entry.angle, *entry.offset);
-                continue;
-            }
-            const std::string& name = clip->angles[static_cast<std::size_t>(entry.angle)].name;
-            skipped.append(QString("%1: %2")
-                               .arg(QString::fromStdString(name))
-                               .arg(QString::fromStdString(entry.reason)));
-        }
-
-        if (!offsets.empty()) {
-            auto built = edit::makeSetAngleOffsets(project_, {sequence->id(), selectedTrack_},
-                                                   selectedClip_, offsets);
-            if (!built) {
-                app::warn(this, "Multicam", QString::fromStdString(built.error().toString()));
-                return;
-            }
-            commands_.execute(project_, std::move(*built));
-            commands_.breakMerge();
-            monitor_->update();
-            timeline_->update();
-            updateCacheBar();
-        }
-        lastSyncCount_ = static_cast<std::int32_t>(offsets.size());
-        lastSyncSkipped_ = static_cast<std::int32_t>(skipped.size());
-
-        if (!skipped.isEmpty()) {
-            app::say(this, "Multicam",
-                     QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
-                         .arg(offsets.size())
-                         .arg(clip->angles.size())
-                         .arg(skipped.join("\n")));
-        }
+        app::say(this, "Multicam",
+                 QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
+                     .arg(report->synced)
+                     .arg(report->total)
+                     .arg(lines.join("\n")));
     }
 
     [[nodiscard]] std::int32_t lastSyncCount() const noexcept { return lastSyncCount_; }

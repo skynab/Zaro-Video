@@ -12,6 +12,8 @@ add_library(zaro_app_ui STATIC
     commands/Analysis.h
     commands/Music.cpp
     commands/Music.h
+    commands/Multicam.cpp
+    commands/Multicam.h
     commands/Media.cpp
     commands/Media.h
     commands/Review.cpp

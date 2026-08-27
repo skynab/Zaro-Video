@@ -20,4 +20,37 @@ Result<model::ClipId> pinTo(const Context& context, model::ClipId host);
 /// reporting none.
 std::int32_t detectScenes(const Context& context, const Progress& tell);
 
+/// Pin the selected clip to whatever is under it at the playhead.
+///
+/// "Under" means the topmost audible video track below the selected one, since
+/// tracks are listed bottom-up and a hidden track is not what somebody means.
+Result<model::ClipId> pinToClipBelow(const Context& context);
+
+/// Set the curve the sequence goes out through.
+Status setDelivery(const Context& context, const model::Sequence::Output& output);
+
+/// Point the selected clip at a different file, keeping the cut it was given.
+Status replaceSelectedSource(const Context& context, model::MediaRefId media);
+
+/// Make a subclip of what is marked in a file.
+///
+/// Numbered rather than named. Naming every subclip at the moment it is made is
+/// a dialog between somebody and the thing they were doing; the bin lists them
+/// under the file they came from, which is how they are found anyway.
+Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId source,
+                                     const time::TimeRange& range);
+
+/// Which frame of which file the selected clip is showing at the playhead.
+struct MatchedFrame {
+    model::MediaRefId media;
+    time::RationalTime at;
+};
+
+/// Find the frame the picture is currently made from.
+///
+/// Fails rather than guesses when the playhead is not over the selected clip,
+/// or when what it is over is generated or a nest -- neither has a frame of a
+/// file to match back to.
+Result<MatchedFrame> frameToMatch(const Context& context);
+
 }  // namespace zaro::app::commands

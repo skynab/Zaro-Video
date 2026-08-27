@@ -83,4 +83,86 @@ std::int32_t detectScenes(const Context& context, const Progress& tell) {
     return static_cast<std::int32_t>(points.size());
 }
 
+Result<model::ClipId> pinToClipBelow(const Context& context) {
+    const model::Sequence* sequence = context.sequence();
+    if (sequence == nullptr || !context.clip.isValid()) {
+        return Error{ErrorCode::InvalidData, "select the clip to pin first"};
+    }
+    const model::Clip* found = nullptr;
+    for (const model::Track& track : sequence->videoTracks()) {
+        if (track.id() == context.track) {
+            break;  // tracks are listed bottom-up, so this is where "below" ends
+        }
+        if (!sequence->isAudible(track)) {
+            continue;
+        }
+        if (const model::Clip* candidate = track.clipAt(context.position)) {
+            found = candidate;
+        }
+    }
+    if (found == nullptr) {
+        return Error{ErrorCode::InvalidData, "there is nothing under this clip to pin it to"};
+    }
+    return pinTo(context, found->id);
+}
+
+Status setDelivery(const Context& context, const model::Sequence::Output& output) {
+    const model::Sequence* sequence = context.sequence();
+    if (sequence == nullptr) {
+        return Error{ErrorCode::InvalidData, "there is no sequence to deliver"};
+    }
+    auto built = edit::makeSetSequenceOutput(context.project(), sequence->id(), output);
+    if (!built) {
+        return built.error();
+    }
+    context.commands().execute(context.project(), std::move(*built));
+    return {};
+}
+
+Status replaceSelectedSource(const Context& context, model::MediaRefId media) {
+    const model::Sequence* sequence = context.sequence();
+    if (sequence == nullptr || !context.clip.isValid()) {
+        return Error{ErrorCode::InvalidData, "select the clip to replace first"};
+    }
+    auto built = edit::makeReplaceSource(context.project(), context.target(), context.clip, media);
+    if (!built) {
+        return built.error();
+    }
+    context.commands().execute(context.project(), std::move(*built));
+    return {};
+}
+
+Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId source,
+                                     const time::TimeRange& range) {
+    const model::MediaRef* ref = context.project().findMedia(source);
+    if (ref == nullptr) {
+        return Error{ErrorCode::NotFound, "no such media in this project"};
+    }
+    model::Subclip subclip;
+    subclip.id = context.project().ids().next<model::SubclipTag>();
+    subclip.source = ref->id;
+    subclip.range = range;
+    std::size_t existing = 0;
+    for (const model::Subclip& other : context.project().subclips()) {
+        existing += other.source == ref->id ? 1 : 0;
+    }
+    subclip.name = ref->name + " [" + std::to_string(existing + 1) + "]";
+    const model::SubclipId id = subclip.id;
+    context.project().addSubclip(std::move(subclip));
+    return id;
+}
+
+Result<MatchedFrame> frameToMatch(const Context& context) {
+    const model::Clip* clip = context.selectedClip();
+    if (clip == nullptr ||
+        !clip->timelineRange.contains(context.position.rescaledTo(clip->start().rate()))) {
+        return Error{ErrorCode::InvalidData, "put the playhead over the selected clip first"};
+    }
+    const model::MediaRef* ref = context.project().findMedia(clip->activeSource());
+    if (ref == nullptr) {
+        return Error{ErrorCode::InvalidData, "this clip is generated: there is no frame to match"};
+    }
+    return MatchedFrame{ref->id, clip->activeSourceTimeAt(context.position)};
+}
+
 }  // namespace zaro::app::commands
