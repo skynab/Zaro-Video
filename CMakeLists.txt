@@ -33,6 +33,8 @@ if(ZARO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(core/tests)
     add_subdirectory(platform/tests)
+    # After core/tests, which is where Catch2 is found or fetched.
+    add_subdirectory(app/tests)
 endif()
 
 message(STATUS "")

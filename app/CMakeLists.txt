@@ -2,8 +2,12 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 qt_standard_project_setup()
 
-add_executable(zaro-preview
-    main.cpp
+# The window and its panels, as a library: zaro-preview links it behind its
+# main(), and the GUI tests in app/tests link it in front of Catch2's. A test
+# cannot drive a window that only exists inside an executable.
+add_library(zaro_app_ui STATIC
+    PreviewWindow.h
+    FrameGrab.h
     MaskOverlay.cpp
     Hotkeys.cpp
     Say.cpp
@@ -61,8 +65,8 @@ add_executable(zaro-preview
     ViewerOverlay.h
 )
 
-target_link_libraries(zaro-preview
-    PRIVATE
+target_link_libraries(zaro_app_ui
+    PUBLIC
         zaro::ui_core
         zaro::platform_qrhi
     zaro::platform_qtext
@@ -72,13 +76,26 @@ target_link_libraries(zaro-preview
         Qt6::Widgets
 )
 
+target_include_directories(zaro_app_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Qt's headers and moc output trip warnings that are right for our code and
 # wrong for a framework this size.
-target_compile_options(zaro-preview PRIVATE
+target_compile_options(zaro_app_ui PRIVATE
     -Wno-old-style-cast
     -Wno-sign-conversion
     -Wno-conversion
     -Wno-shadow
 )
 
+set_target_properties(zaro_app_ui PROPERTIES AUTOMOC ON)
+
+add_executable(zaro-preview main.cpp)
+target_link_libraries(zaro-preview PRIVATE zaro_app_ui zaro::warnings)
+target_compile_options(zaro-preview PRIVATE
+    -Wno-old-style-cast
+    -Wno-sign-conversion
+    -Wno-conversion
+    -Wno-shadow
+)
 set_target_properties(zaro-preview PROPERTIES AUTOMOC ON)
+
