@@ -7,6 +7,10 @@ qt_standard_project_setup()
 # cannot drive a window that only exists inside an executable.
 add_library(zaro_app_ui STATIC
     PreviewWindow.h
+    ActionRouter.cpp
+    ActionRouter.h
+    chrome/Menus.cpp
+    chrome/Menus.h
     commands/Context.h
     commands/Analysis.cpp
     commands/Analysis.h

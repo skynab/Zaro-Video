@@ -109,6 +109,7 @@
 #include "zaro/ui/Keymap.h"
 #include "zaro/ui/SequenceBinding.h"
 
+#include "ActionRouter.h"
 #include "ChannelPanel.h"
 #include "ClipStrip.h"
 #include "ColorPalette.h"
@@ -136,6 +137,7 @@
 #include "TimelineWidget.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
+#include "chrome/Menus.h"
 #include "commands/Analysis.h"
 #include "commands/Context.h"
 #include "commands/Media.h"
@@ -306,6 +308,10 @@ public:
         // built, so a customised binding is on the item the first time it is
         // drawn rather than after a refresh nobody triggers.
         loadKeymap();
+        // Every command says what it does before anything shows one: the menus
+        // and the bars ask the router for an action by id, and an id nothing is
+        // bound to is a menu item that does nothing.
+        bindCommands();
         bindPlaybackActions();
         buildMenus();
 
@@ -923,24 +929,9 @@ public:
     /// be a hand-maintained list of "the ones that are not menu items"; it is
     /// derived now, so rebinding Save to "S" moves it to the safe path by
     /// itself.
-    void applyShortcut(const QString& actionId, QAction* action) {
-        const std::string shortcut = keymap_.shortcutFor(actionId.toStdString());
-        const bool hasModifier = shortcut.find('+') != std::string::npos;
-        if (shortcut.empty() || !hasModifier) {
-            action->setShortcut(QKeySequence{});
-            return;
-        }
-        action->setShortcut(
-            QKeySequence::fromString(QString::fromStdString(shortcut), QKeySequence::PortableText));
-        action->setShortcutContext(Qt::WindowShortcut);
-    }
 
     /// Re-read every binding: what the manager calls when something changed.
-    void applyKeymap() {
-        for (auto entry = actions_.constBegin(); entry != actions_.constEnd(); ++entry) {
-            applyShortcut(entry.key(), entry.value());
-        }
-    }
+    void applyKeymap() { actions_.applyKeymap(); }
 
     /// Where a customised keymap lives.
     ///
@@ -948,13 +939,6 @@ public:
     /// settings blob: a keymap is a thing people share, back up, put in a
     /// dotfile repository and edit by hand when a shortcut has gone somewhere
     /// they cannot press.
-    [[nodiscard]] static QString keymapPath() {
-        if (!keymapPath_.isEmpty()) {
-            return keymapPath_;
-        }
-        const QString folder = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-        return folder + "/keymap.conf";
-    }
 
     /// Put the keymap somewhere else.
     ///
@@ -963,41 +947,19 @@ public:
     /// on a Save still sitting where the previous run had moved it. Also how
     /// somebody keeps a keymap beside a project rather than in their home
     /// directory: ZARO_KEYMAP names the file.
-    static void setKeymapPath(const QString& path) { keymapPath_ = path; }
+    static void setKeymapPath(const QString& path) { ActionRouter::setKeymapPath(path); }
 
     /// Whether to interrupt. See `app::setQuiet`.
     static void setQuietMode(bool quiet) { app::setQuiet(quiet); }
 
-    void loadKeymap() {
-        QFile file{keymapPath()};
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            return;  // nobody has customised anything, which is the usual case
-        }
-        auto loaded = ui::Keymap::decode(QString::fromUtf8(file.readAll()).toStdString());
-        if (!loaded) {
-            // A keymap that will not parse leaves the defaults in place rather
-            // than stopping the application: somebody who hand-edited it into
-            // a mess should still be able to start the program and fix it.
-            std::fprintf(stderr, "zaro: %s\n", loaded.error().toString().c_str());
-            return;
-        }
-        keymap_ = std::move(*loaded);
-    }
+    void loadKeymap() { actions_.loadKeymap(); }
 
-    void saveKeymap() {
-        const QString path = keymapPath();
-        QDir{}.mkpath(QFileInfo{path}.absolutePath());
-        QFile file{path};
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            return;
-        }
-        file.write(QByteArray::fromStdString(keymap_.encode()));
-    }
+    void saveKeymap() { actions_.saveKeymap(); }
 
     /// The hotkey manager.
     app::Hotkeys* showHotkeys() {
         if (hotkeys_ == nullptr) {
-            hotkeys_ = new app::Hotkeys(keymap_, this);
+            hotkeys_ = new app::Hotkeys(actions_.keymap(), this);
             hotkeys_->setOnChanged([this] {
                 applyKeymap();
                 saveKeymap();
@@ -1714,7 +1676,8 @@ protected:
         // which meant three places knew what a key did and only one of them
         // could be changed. Now there is one: the keymap.
         const std::string keystroke = keystrokeOf(event);
-        const std::string wanted = keystroke.empty() ? std::string{} : keymap_.actionFor(keystroke);
+        const std::string wanted =
+            keystroke.empty() ? std::string{} : actions_.keymap().actionFor(keystroke);
         if (!wanted.empty() && trigger(wanted)) {
             return;
         }
@@ -1727,18 +1690,7 @@ public:
     /// The single door everything goes through -- a menu item, a key press, a
     /// test -- so "what does this command do" has one answer and a self-test
     /// can press a button that has no button.
-    bool trigger(const std::string& actionId) {
-        if (QAction* action = actions_.value(QString::fromStdString(actionId), nullptr)) {
-            action->trigger();
-            return true;
-        }
-        const auto handler = handlers_.find(actionId);
-        if (handler == handlers_.end()) {
-            return false;
-        }
-        handler->second();
-        return true;
-    }
+    bool trigger(const std::string& actionId) { return actions_.trigger(actionId); }
 
     /// Register something that has no menu item: playback, marking, stepping.
     ///
@@ -1746,14 +1698,13 @@ public:
     /// Qt shortcuts without firing while somebody types. They are actions like
     /// any other -- catalogued, rebindable, listed in the manager -- they
     /// simply arrive through the key handler rather than through a menu.
+    /// Register a command that has no menu item: playback, marking, stepping.
     template <typename F>
     void bindAction(const char* actionId, F&& handler) {
-        ZARO_CHECK(ui::findAction(actionId) != nullptr,
-                   "a binding names an action nobody catalogued");
-        handlers_.emplace(actionId, std::forward<F>(handler));
+        actions_.bind(actionId, std::forward<F>(handler));
     }
 
-    [[nodiscard]] ui::Keymap& keymap() { return keymap_; }
+    [[nodiscard]] ui::Keymap& keymap() { return actions_.keymap(); }
 
 protected:
     /// Keep the mask handles over the picture when the monitor resizes.
@@ -1834,19 +1785,14 @@ private:
         return label;
     }
 
-    template <typename F>
-    QAction* menuItem(QMenu* menu, const char* actionId, F&& handler) {
-        const ui::ActionInfo* info = ui::findAction(actionId);
-        ZARO_CHECK(info != nullptr, "a menu item names an action nobody catalogued");
-
-        QAction* action = menu->addAction(
-            QString::fromUtf8(info->label.data(), static_cast<int>(info->label.size())));
-        // The id is the object name, so the self-tests and anything else that
-        // reaches for a command by name uses the same name the keymap does.
-        action->setObjectName(QString::fromUtf8(actionId));
-        connect(action, &QAction::triggered, this, std::forward<F>(handler));
-        actions_.insert(QString::fromUtf8(actionId), action);
-        applyShortcut(actionId, action);
+    /// Put a command on a menu, by id.
+    ///
+    /// The QAction comes from the router, which made it when the id was bound;
+    /// two menus naming the same id get the same action, and neither has to
+    /// know what it does.
+    QAction* menuItem(QMenu* menu, const char* actionId) {
+        QAction* action = actions_.action(actionId);
+        menu->addAction(action);
         return action;
     }
 
@@ -1883,33 +1829,18 @@ private:
         bindAction("source-forward", [this] { doSourceForward(); });
     }
 
-    void buildMenus() {
-        menuBar_ = new QMenuBar(this);
-        // Native where the platform has a menu bar of its own. The design draws
-        // the menus inside the window, which is right on Windows and Linux and
-        // wrong on macOS: there the menu bar belongs at the top of the screen,
-        // and a second one in the window is a second place to look. Qt decides
-        // by platform on its own; this only says so out loud.
-#ifdef Q_OS_MACOS
-        menuBar_->setNativeMenuBar(true);
-#else
-        menuBar_->setNativeMenuBar(false);
-#endif
-
-        QMenu* file = menuBar_->addMenu("File");
-        menuItem(file, "new-project", [this] { newProject(); });
-        menuItem(file, "open-project", [this] { openDialog(); });
-        file->addSeparator();
-        menuItem(file, "save-project", [this] { static_cast<void>(save()); });
-        menuItem(file, "save-project-as", [this] { static_cast<void>(saveAs()); });
-
-        // Grouped into submenus rather than listed. Fifteen items and four
-        // rules made a File menu taller than some of the panels, and length is
-        // what makes a menu hard to read: four of these are about media, two
-        // about versions, two about templates and two about getting a file
-        // out, and saying so is shorter than spelling every one of them out.
-        QMenu* versions = file->addMenu("Versions");
-        menuItem(versions, "save-version", [this] {
+    /// Say what every command does, once.
+    ///
+    /// The menus and the bars name ids and nothing else; this is the only place
+    /// that knows what an id means. It used to be spread through buildMenus as a
+    /// lambda per menu item, which is why building a menu needed the window:
+    /// naming File > Save meant writing out what saving is.
+    void bindCommands() {
+        actions_.bind("new-project", [this] { newProject(); });
+        actions_.bind("open-project", [this] { openDialog(); });
+        actions_.bind("save-project", [this] { static_cast<void>(save()); });
+        actions_.bind("save-project-as", [this] { static_cast<void>(saveAs()); });
+        actions_.bind("save-version", [this] {
             auto saved = saveNewVersion();
             if (!saved) {
                 app::say(this, "Version", QString::fromStdString(saved.error().message()));
@@ -1922,55 +1853,32 @@ private:
                          .arg(QString::fromStdString(
                              std::filesystem::path{*saved}.filename().string())));
         });
-        menuItem(versions, "open-version", [this] { openVersionMenu(); });
-        file->addSeparator();
-
-        QMenu* media = file->addMenu("Media");
-        menuItem(media, "import-media", [this] { bin_->importFiles(); });
-        menuItem(media, "browse-media", [this] { browseMedia(); });
-        media->addSeparator();
-        menuItem(media, "relink-media", [this] { relinkDialog(); });
-        menuItem(media, "consolidate-media", [this] { consolidateDialog(); });
-
-        QMenu* exports = file->addMenu("Export");
-        menuItem(exports, "export-sequence", [this] { exportDialog(); });
-        menuItem(exports, "export-otio", [this] { exportOtio(); });
-
-        QMenu* templates = file->addMenu("Templates");
-        menuItem(templates, "save-template", [this] { saveTemplateDialog(); });
-        menuItem(templates, "place-template", [this] { placeTemplateDialog(); });
-        file->addSeparator();
-        menuItem(file, "close-window", [this] { close(); });
-
-        QMenu* edit = menuBar_->addMenu("Edit");
-        menuItem(edit, "undo", [this] { timeline_->undo(); });
-        menuItem(edit, "redo", [this] { timeline_->redo(); });
-        edit->addSeparator();
-        menuItem(edit, "select-all", [this] { timeline_->selectAll(); });
-        edit->addSeparator();
-        menuItem(edit, "detect-scenes", [this] { static_cast<void>(detectScenes()); });
-
-        QMenu* clip = menuBar_->addMenu("Clip");
-        menuItem(clip, "match-frame", [this] { matchFrame(); });
-        menuItem(clip, "make-subclip", [this] { makeSubclip(); });
-        clip->addSeparator();
-        menuItem(clip, "proxies", [this] { proxyMenu(); });
-        menuItem(clip, "multicam", [this] { multicamMenu(); });
-        menuItem(clip, "captions", [this] { captionsMenu(); });
-
-        QMenu* sequence = menuBar_->addMenu("Sequence");
-        menuItem(sequence, "razor", [this] { timeline_->razorAtPlayhead(); });
-        menuItem(sequence, "add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
-        sequence->addSeparator();
-        menuItem(sequence, "render-range", [this] { renderMenu(); });
-        menuItem(sequence, "delivery", [this] { deliveryMenu(); });
-        menuItem(sequence, "loudness", [this] { loudnessMenu(); });
-
-        QMenu* text = menuBar_->addMenu("Text");
-        menuItem(text, "show-transcript", [this] { showTranscript(); });
-
-        QMenu* audio = menuBar_->addMenu("Audio");
-        menuItem(audio, "fit-music", [this] {
+        actions_.bind("open-version", [this] { openVersionMenu(); });
+        actions_.bind("import-media", [this] { bin_->importFiles(); });
+        actions_.bind("browse-media", [this] { browseMedia(); });
+        actions_.bind("relink-media", [this] { relinkDialog(); });
+        actions_.bind("consolidate-media", [this] { consolidateDialog(); });
+        actions_.bind("export-sequence", [this] { exportDialog(); });
+        actions_.bind("export-otio", [this] { exportOtio(); });
+        actions_.bind("save-template", [this] { saveTemplateDialog(); });
+        actions_.bind("place-template", [this] { placeTemplateDialog(); });
+        actions_.bind("close-window", [this] { close(); });
+        actions_.bind("undo", [this] { timeline_->undo(); });
+        actions_.bind("redo", [this] { timeline_->redo(); });
+        actions_.bind("select-all", [this] { timeline_->selectAll(); });
+        actions_.bind("detect-scenes", [this] { static_cast<void>(detectScenes()); });
+        actions_.bind("match-frame", [this] { matchFrame(); });
+        actions_.bind("make-subclip", [this] { makeSubclip(); });
+        actions_.bind("proxies", [this] { proxyMenu(); });
+        actions_.bind("multicam", [this] { multicamMenu(); });
+        actions_.bind("captions", [this] { captionsMenu(); });
+        actions_.bind("razor", [this] { timeline_->razorAtPlayhead(); });
+        actions_.bind("add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
+        actions_.bind("render-range", [this] { renderMenu(); });
+        actions_.bind("delivery", [this] { deliveryMenu(); });
+        actions_.bind("loudness", [this] { loudnessMenu(); });
+        actions_.bind("show-transcript", [this] { showTranscript(); });
+        actions_.bind("fit-music", [this] {
             const model::Sequence* sequence = liveSequence();
             if (sequence == nullptr) {
                 return;
@@ -1992,62 +1900,56 @@ private:
                          .arg(plan->cutAt, 0, 'f', 2)
                          .arg(plan->seconds, 0, 'f', 2));
         });
-
-        QMenu* marker = menuBar_->addMenu("Marker");
-        menuItem(marker, "add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
-        menuItem(marker, "next-marker", [this] { doNextMarker(); });
-        menuItem(marker, "previous-marker", [this] { doPreviousMarker(); });
-        marker->addSeparator();
-        menuItem(marker, "resolve-comment", [this] { static_cast<void>(toggleCommentHere()); });
-        menuItem(marker, "export-review", [this] { exportReviewNotes(); });
-
-        QMenu* effects = menuBar_->addMenu("Effects");
-        compareAction_ = menuItem(effects, "compare", [this](bool on) {
+        actions_.bind("add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
+        actions_.bind("next-marker", [this] { doNextMarker(); });
+        actions_.bind("previous-marker", [this] { doPreviousMarker(); });
+        actions_.bind("resolve-comment", [this] { static_cast<void>(toggleCommentHere()); });
+        actions_.bind("export-review", [this] { exportReviewNotes(); });
+        actions_.bindToggle("compare", [this](bool on) {
             // Turning it on takes the frame showing now as the reference. That
             // is the gesture: somebody looks at a shot they like and says
             // "against this" -- asking them to nominate one first would be a
             // step between the thought and the thing.
             setComparing(on, on ? position_ : referenceAt_);
         });
-        compareAction_->setCheckable(true);
-        menuItem(effects, "match-shot", [this] { matchShot(); });
-
-        QMenu* view = menuBar_->addMenu("View");
-        QMenu* workspaces = view->addMenu("Workspace");
-        for (const QString& name : kWorkspaces) {
-            QAction* action = workspaces->addAction(name);
-            action->setCheckable(true);
-            workspaceActions_.insert(name, action);
-            connect(action, &QAction::triggered, this, [this, name] { setWorkspace(name); });
-        }
-        view->addSeparator();
-        menuItem(view, "zoom-in", [this] { timeline_->zoomBy(1.4); });
-        menuItem(view, "zoom-out", [this] { timeline_->zoomBy(1.0 / 1.4); });
-        menuItem(view, "zoom-fit", [this] { timeline_->zoomToFit(); });
-        view->addSeparator();
-        guidesAction_ = menuItem(view, "safe-guides", [this](bool on) {
+        actions_.bind("match-shot", [this] { matchShot(); });
+        actions_.bind("zoom-in", [this] { timeline_->zoomBy(1.4); });
+        actions_.bind("zoom-out", [this] { timeline_->zoomBy(1.0 / 1.4); });
+        actions_.bind("zoom-fit", [this] { timeline_->zoomToFit(); });
+        actions_.bindToggle("safe-guides", [this](bool on) {
             viewerOverlay_->setGuides(on);
             if (guidesButton_ != nullptr) {
                 guidesButton_->setChecked(on);
             }
         });
-        guidesAction_->setCheckable(true);
-
-        QMenu* window = menuBar_->addMenu("Window");
-        panelAction(window, "Project Bin", [this] { return bin_; });
-        panelAction(window, "Effect Controls", [this] { return static_cast<QWidget*>(effects_); });
-        panelAction(window, "Scopes", [this] { return static_cast<QWidget*>(scopes_); });
-        panelAction(window, "Audio Mixer", [this] { return static_cast<QWidget*>(mixer_); });
-        window->addSeparator();
-        menuItem(window, "reset-panels", [this] { setWorkspace(workspace_); });
-
-        QMenu* help = menuBar_->addMenu("Help");
-        menuItem(help, "hotkeys", [this] { showHotkeys(); });
-        menuItem(help, "about", [this] {
+        actions_.bind("reset-panels", [this] { setWorkspace(workspace_); });
+        actions_.bind("hotkeys", [this] { showHotkeys(); });
+        actions_.bind("about", [this] {
             QMessageBox::about(this, "Zaro Video",
                                "Zaro Video — a non-linear editor.\n\n"
                                "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
         });
+    }
+
+    void buildMenus() {
+        menuBar_ = chrome::buildMenuBar(
+            this, actions_, kWorkspaces, workspaceActions_,
+            [this](const QString& name) { setWorkspace(name); },
+            [this](QMenuBar* bar) {
+                QMenu* window = bar->addMenu("Window");
+                panelAction(window, "Project Bin", [this] { return bin_; });
+                panelAction(window, "Effect Controls",
+                            [this] { return static_cast<QWidget*>(effects_); });
+                panelAction(window, "Scopes", [this] { return static_cast<QWidget*>(scopes_); });
+                panelAction(window, "Audio Mixer",
+                            [this] { return static_cast<QWidget*>(mixer_); });
+                window->addSeparator();
+                menuItem(window, "reset-panels");
+
+                QMenu* help = bar->addMenu("Help");
+                menuItem(help, "hotkeys");
+                menuItem(help, "about");
+            });
     }
 
     /// A Window-menu item that shows and hides one panel.
@@ -2260,7 +2162,9 @@ private:
         guidesButton_->setFixedHeight(24);
         connect(guidesButton_, &QPushButton::clicked, this, [this](bool on) {
             viewerOverlay_->setGuides(on);
-            guidesAction_->setChecked(on);
+            if (QAction* guides = actions_.find("safe-guides")) {
+                guides->setChecked(on);
+            }
         });
         row->addWidget(guidesButton_);
 
@@ -3665,12 +3569,9 @@ private:
     app::MediaBrowser* browser_{nullptr};
     app::Transcript* transcript_{nullptr};
     app::Hotkeys* hotkeys_{nullptr};
-    static inline QString keymapPath_;
 
     /// Which keystroke runs what, and everything that can be run.
-    ui::Keymap keymap_;
-    QMap<QString, QAction*> actions_;
-    std::map<std::string, std::function<void()>> handlers_;
+    ActionRouter actions_{this};
     /// Somebody else has this project open, so it must not be written over.
     bool readOnly_{false};
     static inline bool locking_{false};
@@ -3706,8 +3607,6 @@ private:
     QPushButton* programTab_{nullptr};
     QPushButton* snapButton_{nullptr};
     QPushButton* guidesButton_{nullptr};
-    QAction* guidesAction_{nullptr};
-    QAction* compareAction_{nullptr};
     std::vector<QPushButton*> toolButtons_;
     QMap<QString, QPushButton*> workspaceTabs_;
     QMap<QString, QAction*> workspaceActions_;
