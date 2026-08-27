@@ -110,6 +110,13 @@
 #include "MediaBrowser.h"
 #include "MixerPanel.h"
 #include "ProgramMonitor.h"
+#include "ChannelPanel.h"
+#include "ClipStrip.h"
+#include "ColorPalette.h"
+#include "FrameThumb.h"
+#include "GalleryPanel.h"
+#include "GradeNodes.h"
+#include "LoudnessPanel.h"
 #include "ProjectBin.h"
 #include "Say.h"
 #include "ScopesPanel.h"
@@ -253,6 +260,19 @@ public:
         // Its own row of buttons -- In, Out, Subclip, Insert, Over -- is what
         // sets this, not the picture: below this width the labels start losing
         // letters, and a button reading "nsert" is worse than a narrow picture.
+        thumb_ = new app::FrameThumb(this);
+        loudness_ = new app::LoudnessPanel(this);
+        channel_ = new app::ChannelPanel(this);
+        channel_->setMinimumWidth(280);
+        channel_->setMaximumWidth(320);
+
+        gallery_ = new app::GalleryPanel(this);
+        gallery_->setFixedWidth(236);
+        clipStrip_ = new app::ClipStrip(this);
+        nodes_ = new app::GradeNodes(this);
+        palette_ = new app::ColorPalette(this);
+        palette_->setFixedHeight(212);
+
         source_ = new app::SourceMonitor(this);
         source_->setMinimumWidth(280);
 
@@ -287,6 +307,12 @@ public:
         wellRow->setSpacing(12);
         wellRow->addWidget(source_, 1);
         wellRow->addWidget(monitor_, 1);
+        // Scopes beside the picture rather than off in the parameter column,
+        // which is where the design puts them and where they are read: an
+        // instrument is compared against the frame it measures, and a glance
+        // that crosses the whole window is a glance nobody takes.
+        scopes_->setFixedWidth(330);
+        wellRow->addWidget(scopes_);
         noMonitorLabel_ = new QLabel("No monitor shown \u2014 turn on Source or Program", this);
         noMonitorLabel_->setAlignment(Qt::AlignCenter);
         noMonitorLabel_->setProperty("muted", true);
@@ -296,24 +322,58 @@ public:
         auto* programLayout = new QVBoxLayout(programColumn);
         programLayout->setContentsMargins(0, 0, 0, 0);
         programLayout->setSpacing(0);
-        programLayout->addWidget(buildViewerBar());
+        viewerBar_ = buildViewerBar();
+        programLayout->addWidget(viewerBar_);
         programLayout->addWidget(viewerWell_, 1);
+        // The console takes the centre in Audio, where the picture is in every
+        // other workspace: a mix is read across ten channels at once, and a
+        // column of strips squeezed into a side panel is a column nobody can
+        // find a fader in.
+        programLayout->addWidget(mixer_, 1);
+        programLayout->addWidget(clipStrip_);
         programLayout->addWidget(buildTransportBar());
 
         topSplitter_ = new QSplitter(Qt::Horizontal, this);
         topSplitter_->setHandleWidth(1);
+        auto* leftColumn = new QWidget(this);
+        leftColumn->setObjectName("audio-side");
+        leftColumn->setFixedWidth(262);
+        auto* leftLayout = new QVBoxLayout(leftColumn);
+        leftLayout->setContentsMargins(0, 0, 0, 0);
+        leftLayout->setSpacing(0);
+        leftLayout->addWidget(thumb_);
+        leftLayout->addWidget(loudness_);
+        leftLayout->addStretch(1);
+        audioSide_ = leftColumn;
+
+        topSplitter_->addWidget(audioSide_);
+        topSplitter_->addWidget(gallery_);
         topSplitter_->addWidget(bin_);
         topSplitter_->addWidget(programColumn);
         // Scopes share the parameter column: they are read while grading, and
         // grading is done with the parameters in reach.
+        // The grade chain sits on top of the parameters it navigates, in one
+        // column rather than as a splitter pane: the node strip is a fixed
+        // 118 pixels and giving it a drag handle would invite somebody to
+        // squash a picture that has nothing to gain from being shorter.
+        auto* gradeColumn = new QWidget(this);
+        auto* gradeLayout = new QVBoxLayout(gradeColumn);
+        gradeLayout->setContentsMargins(0, 0, 0, 0);
+        gradeLayout->setSpacing(0);
+        nodesBox_ = new QWidget(gradeColumn);
+        nodesBox_->setObjectName("grade-nodes-box");
+        auto* nodesLayout = new QVBoxLayout(nodesBox_);
+        nodesLayout->setContentsMargins(12, 10, 12, 10);
+        nodesLayout->addWidget(nodes_);
+        gradeLayout->addWidget(nodesBox_);
+        gradeLayout->addWidget(effects_, 1);
+
         auto* rightColumn = new QSplitter(Qt::Vertical, this);
         rightColumn->setHandleWidth(1);
-        rightColumn->addWidget(effects_);
-        rightColumn->addWidget(scopes_);
-        rightColumn->addWidget(mixer_);
-        rightColumn->setStretchFactor(0, 3);
-        rightColumn->setStretchFactor(1, 1);
-        rightColumn->setStretchFactor(2, 1);
+        rightColumn->addWidget(gradeColumn);
+        rightColumn->addWidget(channel_);
+        rightColumn->setStretchFactor(0, 4);
+        rightColumn->setStretchFactor(1, 4);
         // Floors, so no panel can be squeezed to a sliver by its neighbours. A
         // scope four pixels tall or a mixer with no meter is worse than one
         // that pushes the window wider: it looks like a broken panel rather
@@ -322,7 +382,60 @@ public:
         scopes_->setMinimumHeight(150);
         mixer_->setMinimumHeight(190);
         topSplitter_->addWidget(rightColumn);
-        topSplitter_->setStretchFactor(1, 3);
+        topSplitter_->setStretchFactor(3, 3);
+
+        // Picking a shot in the strip is the Color workspace's way of moving
+        // about: it selects the clip and puts the playhead inside it, so the
+        // monitor, the scopes and every parameter panel are all looking at the
+        // same shot.
+        connect(clipStrip_, &app::ClipStrip::chosen, this,
+                [this](zaro::model::TrackId track, zaro::model::ClipId clip) {
+                    const model::Sequence* sequence = liveSequence();
+                    const model::Track* found =
+                        sequence != nullptr ? sequence->findTrack(track) : nullptr;
+                    const model::Clip* shot = found != nullptr ? found->find(clip) : nullptr;
+                    if (shot == nullptr) {
+                        return;
+                    }
+                    timeline_->selectOnly(track, clip);
+                    setPosition(shot->timelineRange.start());
+                });
+
+        connect(mixer_, &app::MixerPanel::pickedChanged, this,
+                [this](zaro::model::TrackId track) { channel_->setTrack(track); });
+        connect(channel_, &app::ChannelPanel::edited, this, [this] {
+            mixer_->refresh();
+            timeline_->update();
+            updateTitle();
+        });
+        connect(loudness_, &app::LoudnessPanel::measureRequested, this, [this] { measureProgramme(); });
+
+        connect(nodes_, &app::GradeNodes::stageChosen, this,
+                [this](int stage) { effects_->revealStage(stage); });
+
+        connect(palette_, &app::ColorPalette::edited, this, [this] {
+            renderCache_.clear();
+            monitor_->update();
+            timeline_->update();
+            effects_->refresh();
+            clipStrip_->refresh();
+            refreshGradeChain();
+            refreshInstruments();
+            updateTitle();
+        });
+
+        // A still is a reference frame: grabbing one records where it came
+        // from, and picking one points the split compare at that moment.
+        connect(gallery_, &app::GalleryPanel::grabRequested, this, [this] { grabStill(); });
+        connect(gallery_, &app::GalleryPanel::stillChosen, this,
+                [this](zaro::time::RationalTime at) {
+                    setCompareMode(render::CompareMode::Split);
+                    setComparing(true, at);
+                    monitor_->update();
+                });
+        connect(gallery_, &app::GalleryPanel::lutChosen, this, [this](const QString& path) {
+            applyLookToSelection(path);
+        });
 
         connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
             if (const model::MediaRef* ref = project_.findMedia(id)) {
@@ -370,7 +483,13 @@ public:
         mainSplitter_ = new QSplitter(Qt::Vertical, this);
         mainSplitter_->setHandleWidth(1);
         mainSplitter_->addWidget(topSplitter_);
-        mainSplitter_->addWidget(buildTimelinePane());
+        timelinePane_ = buildTimelinePane();
+        mainSplitter_->addWidget(timelinePane_);
+        // The grading palette takes the timeline's place in Color. Not beside
+        // it: the design gives that workspace no timeline at all, because what
+        // a colourist moves through is shots, and the strip under the viewer is
+        // the list of those.
+        mainSplitter_->addWidget(palette_);
         mainSplitter_->setStretchFactor(0, 3);
         mainSplitter_->setStretchFactor(1, 2);
 
@@ -402,15 +521,18 @@ public:
                 [this](model::TrackId track, model::ClipId clip) {
                     selectedTrack_ = track;
                     selectedClip_ = clip;
+                    palette_->setSelection(track, clip);
+                    clipStrip_->setSelection(track, clip);
+                    refreshGradeChain();
                     maskOverlay_->setTarget(&project_, sequenceId_, track, clip, &commands_);
                 });
-        connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { measureScopes(); });
+        connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { refreshInstruments(); });
         connect(mixer_, &app::MixerPanel::edited, this, [this] {
             // Mute and solo change the picture as well as the sound: a muted
             // video track stops being composited.
             monitor_->update();
             timeline_->update();
-            measureScopes();
+            refreshInstruments();
         });
         connect(effects_, &app::EffectControls::keyframesChanged, this,
                 [this] { timeline_->update(); });
@@ -418,7 +540,7 @@ public:
             // A parameter change alters the picture at the current playhead.
             monitor_->update();
             timeline_->update();
-            measureScopes();
+            refreshInstruments();
         });
 
         // The two panels drive each other: scrubbing the timeline moves the
@@ -2067,7 +2189,7 @@ public:
         // The panel shows values at the playhead and writes keyframes there, so
         // it has to know where the playhead is.
         effects_->setPosition(position_);
-        measureScopes();
+        refreshInstruments();
         refresh();
     }
 
@@ -2845,6 +2967,16 @@ public:
     /// the source to do it.
     void showProgram() { setProgramShown(true); }
 
+    /// Where a workspace's splitter sizes are remembered.
+    ///
+    /// Versioned, because restoring a size list into a splitter with a
+    /// different number of panes leaves the new ones at zero width -- which
+    /// looks exactly like a panel that failed to appear. Bump the number when
+    /// panes are added or removed from either splitter.
+    static QString layoutKey(const QString& workspace, const char* which) {
+        return QString("workspace/%1/%2-v3").arg(workspace, QString::fromUtf8(which));
+    }
+
     /// A workspace is which panels are up. Four arrangements, because there are
     /// four things people do with an editor, and each of them wants a different
     /// half of the window: the panels a colourist needs are dead weight while
@@ -2857,8 +2989,8 @@ public:
         // back to it finds the splitters where they were.
         if (topSplitter_ != nullptr && !workspace_.isEmpty()) {
             QSettings settings("Zaro", "Zaro Video");
-            settings.setValue("workspace/" + workspace_ + "/top", topSplitter_->saveState());
-            settings.setValue("workspace/" + workspace_ + "/main", mainSplitter_->saveState());
+            settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
+            settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
         }
         workspace_ = name;
 
@@ -2873,10 +3005,40 @@ public:
                 deliver_->setPlayhead(position_);
             }
         }
-        bin_->setVisible(!colour && !deliver);
-        effects_->setVisible(!deliver);
+        // The bin and the parameter panel are both about picture; Audio has a
+        // console in the middle and a channel's chain on the right, and neither
+        // of those wants a clip's motion controls beside it.
+        bin_->setVisible(!colour && !deliver && !audio);
+        effects_->setVisible(!deliver && !audio);
         scopes_->setVisible(colour);
         mixer_->setVisible(audio);
+        // Color is a different room: the gallery and the shot strip replace the
+        // bin and the timeline, the grade chain sits over the parameters, and
+        // the wheels take the bottom of the window.
+        gallery_->setVisible(colour);
+        clipStrip_->setVisible(colour);
+        nodesBox_->setVisible(colour);
+        palette_->setVisible(colour);
+        timelinePane_->setVisible(!colour && !deliver);
+        // Audio is a console: the mixer takes the centre, the loudness meter
+        // and the channel's chain take the sides, and the picture stands down.
+        audioSide_->setVisible(audio);
+        channel_->setVisible(audio);
+        viewerWell_->setVisible(!audio && !deliver);
+        viewerBar_->setVisible(!audio && !deliver);
+        if (audio) {
+            mixer_->setProject(&project_, sequenceId_, &commands_);
+            channel_->setProject(&project_, sequenceId_, &commands_);
+            channel_->setTrack(mixer_->picked());
+            refreshInstruments();
+        }
+        if (colour) {
+            palette_->setProject(&project_, sequenceId_, &commands_);
+            palette_->setSelection(selectedTrack_, selectedClip_);
+            clipStrip_->setProject(&project_, sequenceId_);
+            clipStrip_->setSelection(selectedTrack_, selectedClip_);
+            refreshGradeChain();
+        }
 
         for (auto entry = workspaceTabs_.constBegin(); entry != workspaceTabs_.constEnd();
              ++entry) {
@@ -2888,11 +3050,11 @@ public:
         }
 
         QSettings settings("Zaro", "Zaro Video");
-        if (const auto state = settings.value("workspace/" + name + "/top").toByteArray();
+        if (const auto state = settings.value(layoutKey(name, "top")).toByteArray();
             !state.isEmpty()) {
             topSplitter_->restoreState(state);
         }
-        if (const auto state = settings.value("workspace/" + name + "/main").toByteArray();
+        if (const auto state = settings.value(layoutKey(name, "main")).toByteArray();
             !state.isEmpty()) {
             mainSplitter_->restoreState(state);
         }
@@ -3179,8 +3341,8 @@ private:
         // arrangement restored into a different set of visible panels is a
         // collapsed bin and a mixer four pixels tall.
         settings.setValue("workspace/current", workspace_);
-        settings.setValue("workspace/" + workspace_ + "/top", topSplitter_->saveState());
-        settings.setValue("workspace/" + workspace_ + "/main", mainSplitter_->saveState());
+        settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
+        settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
     }
 
     void restoreWorkspace() {
@@ -3468,11 +3630,23 @@ private:
     /// preview, so the scope measures what will be delivered. That is the
     /// number a grade is judged against, and it does not make playback pay for
     /// a readback it otherwise does not need.
-    void measureScopes() {
-        if (scopes_ == nullptr || media_ == nullptr || liveSequence() == nullptr) {
+    /// Composite the frame under the playhead, and give it to whatever wants it.
+    ///
+    /// One render for both instruments. The scopes measure it and the Audio
+    /// workspace's thumbnail shows it, and they are never both up -- but
+    /// compositing twice for the one that is would be paying for the frame
+    /// twice, and the frame is the expensive part.
+    ///
+    /// Not while playing. Both of these are things somebody looks at when
+    /// stopped, and a composite per displayed frame is the transport's budget
+    /// spent on a picture that is already on screen.
+    void refreshInstruments() {
+        if (media_ == nullptr || liveSequence() == nullptr) {
             return;
         }
-        if (playing_ || !scopes_->wantsMeasurement()) {
+        const bool wantScopes = scopes_ != nullptr && scopes_->wantsMeasurement();
+        const bool wantThumb = thumb_ != nullptr && thumb_->isVisible();
+        if (playing_ || (!wantScopes && !wantThumb)) {
             return;
         }
         render::RenderGraph graph{*media_};
@@ -3480,16 +3654,155 @@ private:
         graph.setProject(&project_);
         auto frame = graph.composite(*liveSequence(), position_);
         if (!frame) {
-            scopes_->clear();
+            if (wantScopes) {
+                scopes_->clear();
+            }
+            if (wantThumb) {
+                thumb_->clearFrame();
+            }
             return;
         }
-        render::ScopeOptions options;
-        options.waveformColumns = std::max(64, scopes_->width());
-        // Every second row. The shape of a waveform does not change for being
-        // measured at half the vertical resolution, and this is running
-        // between scrubs.
-        options.rowStride = 2;
-        scopes_->setScopes(render::measure(*frame, options));
+
+        if (wantScopes) {
+            render::ScopeOptions options;
+            options.waveformColumns = std::max(64, scopes_->width());
+            // Every second row. The shape of a waveform does not change for
+            // being measured at half the vertical resolution, and this is
+            // running between scrubs.
+            options.rowStride = 2;
+            scopes_->setScopes(render::measure(*frame, options));
+        }
+        if (wantThumb) {
+            showThumbnail(*frame);
+        }
+    }
+
+    /// The composited frame, encoded for display and handed to the thumbnail.
+    void showThumbnail(const render::RgbaImage& frame) {
+        const int wide = frame.width();
+        const int tall = frame.height();
+        if (wide <= 0 || tall <= 0) {
+            thumb_->clearFrame();
+            return;
+        }
+        const int stride = wide * 3;
+        std::vector<std::uint8_t> rgb(static_cast<std::size_t>(stride) *
+                                      static_cast<std::size_t>(tall));
+        if (!render::toDisplayRgb24(frame, rgb.data(), stride)) {
+            thumb_->clearFrame();
+            return;
+        }
+        // Copied, because the QImage above only borrows the vector, and the
+        // vector is gone at the end of this function.
+        thumb_->setFrame(
+            QImage{rgb.data(), wide, tall, stride, QImage::Format_RGB888}.copy());
+
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr && !sequence->videoTracks().empty()
+                ? &sequence->videoTracks().front()
+                : nullptr;
+        const model::Clip* clip = track != nullptr ? track->clipAt(position_) : nullptr;
+        const bool dropFrame =
+            sequence != nullptr && time::supportsDropFrame(sequence->frameRate());
+        thumb_->setCaption(
+            clip != nullptr ? QString::fromStdString(clip->name) : QString{"—"},
+            sequence != nullptr
+                ? QString::fromStdString(
+                      time::timecodeFromFrames(position_.frames(), sequence->frameRate(),
+                                               dropFrame)
+                          .toString())
+                : QString{});
+    }
+
+    /// Measure the whole programme's loudness.
+    ///
+    /// On demand, not continuously: the reading that matters is the gated
+    /// integrated figure over everything, and that means mixing the sequence
+    /// from end to end. Doing it every time a fader moved would make the mixer
+    /// unusable to pay for a number nobody reads until delivery.
+    void measureProgramme() {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        render::AudioGraph graph{*media_};
+        const time::TimeRange whole{time::RationalTime{0, sequence->frameRate()},
+                                    sequence->duration()};
+        auto measured = graph.measureLoudness(*sequence, whole);
+        QApplication::restoreOverrideCursor();
+        if (!measured) {
+            app::warn(this, "Loudness", QString::fromStdString(measured.error().message()));
+            return;
+        }
+        loudness_->setMeasurement(*measured);
+    }
+
+    /// Say which stages of the chain this shot has been through.
+    ///
+    /// Read from the clip rather than remembered, for the same reason the
+    /// panels are: after an undo the clip is the only thing that knows.
+    void refreshGradeChain() {
+        const model::Sequence* sequence = liveSequence();
+        const model::Track* track =
+            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        nodes_->setEnabledChain(clip != nullptr);
+        if (clip == nullptr) {
+            nodes_->setOccupied({false, false, false, false});
+            return;
+        }
+        nodes_->setOccupied({!clip->color.isIdentity() || !clip->wheels.isIdentity(),
+                             !clip->curves.isIdentity(), clip->secondary.qualifier.enabled,
+                             !clip->lut.path.empty()});
+    }
+
+    /// Keep the frame that is on screen, as a reference to grade against.
+    ///
+    /// Grabbed off the monitor rather than composited again: what somebody
+    /// means by "this frame" is the one they are looking at, and rendering a
+    /// second one would be a different picture the moment anything about the
+    /// grade or the proxy setting differed.
+    void grabStill() {
+        const QImage shot = monitor_->grab().toImage();
+        if (shot.isNull()) {
+            return;
+        }
+        const model::Sequence* sequence = liveSequence();
+        const bool dropFrame =
+            sequence != nullptr && time::supportsDropFrame(sequence->frameRate());
+        const QString name =
+            sequence != nullptr
+                ? QString::fromStdString(
+                      time::timecodeFromFrames(position_.frames(), sequence->frameRate(), dropFrame)
+                          .toString())
+                : QString{"still"};
+        gallery_->addStill(shot, position_, name);
+    }
+
+    /// Put a .cube on the selected shot.
+    void applyLookToSelection(const QString& path) {
+        if (!selectedClip_.isValid()) {
+            app::say(this, "Look", "Pick a shot first — a look goes on a clip.");
+            return;
+        }
+        model::LutRef look;
+        look.path = path.toStdString();
+        look.amount = 1.0;
+        auto built = edit::makeSetLut(project_, {sequenceId_, selectedTrack_}, selectedClip_, look);
+        if (!built) {
+            return;
+        }
+        commands_.execute(project_, std::move(*built));
+        commands_.breakMerge();
+        renderCache_.clear();
+        effects_->refresh();
+        clipStrip_->refresh();
+        refreshGradeChain();
+        monitor_->update();
+        refreshInstruments();
+        updateTitle();
     }
 
     /// Attach proxies, make them, and switch between them and the originals.
@@ -3780,7 +4093,7 @@ private:
         commands_.breakMerge();
         monitor_->update();
         timeline_->update();
-        measureScopes();
+        refreshInstruments();
     }
 
     void refresh() {
@@ -3858,6 +4171,17 @@ private:
     render::AudioGraph::Meters latestMeters_;
     QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
+    app::GalleryPanel* gallery_{nullptr};
+    app::LoudnessPanel* loudness_{nullptr};
+    app::FrameThumb* thumb_{nullptr};
+    app::ChannelPanel* channel_{nullptr};
+    QWidget* audioSide_{nullptr};
+    QWidget* viewerBar_{nullptr};
+    app::ClipStrip* clipStrip_{nullptr};
+    app::GradeNodes* nodes_{nullptr};
+    app::ColorPalette* palette_{nullptr};
+    QWidget* nodesBox_{nullptr};
+    QWidget* timelinePane_{nullptr};
     app::MediaBrowser* browser_{nullptr};
     app::Transcript* transcript_{nullptr};
     app::Hotkeys* hotkeys_{nullptr};
@@ -4582,7 +4906,7 @@ int main(int argc, char** argv) {
                                          ->clips()
                                          .front()
                                          .id;
-            timeline->selectOnlyForTest(remapTrackId, remapClipId);
+            timeline->selectOnly(remapTrackId, remapClipId);
             window.effects()->setSelection(remapTrackId, remapClipId);
             window.setPosition(zaro::time::RationalTime{litFrame, sequence.frameRate()});
             QApplication::processEvents();
@@ -4907,7 +5231,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            timeline->selectOnlyForTest(fxTop, fxClipId);
+            timeline->selectOnly(fxTop, fxClipId);
             window.effects()->setSelection(fxTop, fxClipId);
             QApplication::processEvents();
 
@@ -5106,7 +5430,7 @@ int main(int argc, char** argv) {
             const auto wheelClipId = wheelTrack->clips().front().id;
             const auto wheelRate = window.project().findSequence(wheelSequenceId)->frameRate();
 
-            timeline->selectOnlyForTest(wheelTrackId, wheelClipId);
+            timeline->selectOnly(wheelTrackId, wheelClipId);
             window.effects()->setSelection(wheelTrackId, wheelClipId);
             window.setPosition(zaro::time::RationalTime{6, wheelRate});
             QApplication::processEvents();
@@ -5224,7 +5548,7 @@ int main(int argc, char** argv) {
 
             // And the editor: convert the shape to a path through the panel,
             // then drag a point with the mouse and watch the picture follow.
-            timeline->selectOnlyForTest(pathTrackId, panelId);
+            timeline->selectOnly(pathTrackId, panelId);
             window.effects()->setSelection(pathTrackId, panelId);
             QApplication::processEvents();
 
@@ -5514,7 +5838,7 @@ int main(int argc, char** argv) {
             }
             window.commands().execute(window.project(), std::move(*boxed));
 
-            timeline->selectOnlyForTest(trackTrackId, markId);
+            timeline->selectOnly(trackTrackId, markId);
             window.effects()->setSelection(trackTrackId, markId);
             window.setPosition(markStart);
             QApplication::processEvents();
@@ -5688,7 +6012,7 @@ int main(int argc, char** argv) {
 
             const double shookBefore = shakiness();
 
-            timeline->selectOnlyForTest(stabTrackId, stabClipId);
+            timeline->selectOnly(stabTrackId, stabClipId);
             window.effects()->setSelection(stabTrackId, stabClipId);
             window.setPosition(stabAt);
             QApplication::processEvents();
@@ -5841,7 +6165,7 @@ int main(int argc, char** argv) {
             }
             window.commands().execute(window.project(), std::move(*animated));
 
-            timeline->selectOnlyForTest(respTrackId, cardId);
+            timeline->selectOnly(respTrackId, cardId);
             window.effects()->setSelection(respTrackId, cardId);
             QApplication::processEvents();
             auto* introBox = window.effects()->findChild<QDoubleSpinBox*>("responsive-intro");
@@ -5980,7 +6304,7 @@ int main(int argc, char** argv) {
             }
             window.commands().execute(window.project(), std::move(*responsive));
 
-            timeline->selectOnlyForTest(tplTrackId, designedId);
+            timeline->selectOnly(tplTrackId, designedId);
             window.effects()->setSelection(tplTrackId, designedId);
             QApplication::processEvents();
 
@@ -6136,7 +6460,7 @@ int main(int argc, char** argv) {
                 span.start() +
                 zaro::time::RationalTime{span.duration().frames() / 2, span.start().rate()};
 
-            timeline->selectOnlyForTest(wipeTrackId, window.project()
+            timeline->selectOnly(wipeTrackId, window.project()
                                                          .findSequence(wipeSequenceId)
                                                          ->findTrack(wipeTrackId)
                                                          ->clips()
@@ -6249,7 +6573,7 @@ int main(int argc, char** argv) {
             window.renderCache().clear();
 
             // Hold a frame of the first, stand on the second, and match.
-            timeline->selectOnlyForTest(matchTrackId, secondId);
+            timeline->selectOnly(matchTrackId, secondId);
             window.effects()->setSelection(matchTrackId, secondId);
             window.setComparing(true, zaro::time::RationalTime{0, matchRate});
             window.setPosition(zaro::time::RationalTime{600, matchRate});
@@ -6474,7 +6798,7 @@ int main(int argc, char** argv) {
                                        .id;
             const auto vigRate = window.project().findSequence(vigSequenceId)->frameRate();
 
-            timeline->selectOnlyForTest(vigTrackId, vigClipId);
+            timeline->selectOnly(vigTrackId, vigClipId);
             window.effects()->setSelection(vigTrackId, vigClipId);
 
             std::int64_t litFrame = 0;
@@ -6677,7 +7001,7 @@ int main(int argc, char** argv) {
             }
             const auto duckClipId = duckTrack->clips().front().id;
 
-            timeline->selectOnlyForTest(duckTrackId, duckClipId);
+            timeline->selectOnly(duckTrackId, duckClipId);
             window.effects()->setSelection(duckTrackId, duckClipId);
             QApplication::processEvents();
 
@@ -6735,7 +7059,7 @@ int main(int argc, char** argv) {
             window.commands().execute(window.project(), std::move(*placedVoice));
 
             // And the original becomes the bed.
-            timeline->selectOnlyForTest(duckTrackId, duckClipId);
+            timeline->selectOnly(duckTrackId, duckClipId);
             window.effects()->setSelection(duckTrackId, duckClipId);
             QApplication::processEvents();
             roleBox->setCurrentIndex(
@@ -6795,7 +7119,7 @@ int main(int argc, char** argv) {
             const auto sceneClipId = sceneTrack->clips().front().id;
             const std::size_t clipsBefore = sceneTrack->clips().size();
 
-            timeline->selectOnlyForTest(sceneTrackId, sceneClipId);
+            timeline->selectOnly(sceneTrackId, sceneClipId);
             window.effects()->setSelection(sceneTrackId, sceneClipId);
             QApplication::processEvents();
 
@@ -7000,7 +7324,7 @@ int main(int argc, char** argv) {
                                                      ->findTrack(sourceTrackId)
                                                      ->find(probeId);
             const auto expected = matchClip->activeSourceTimeAt(matchAt);
-            timeline->selectOnlyForTest(sourceTrackId, probeId);
+            timeline->selectOnly(sourceTrackId, probeId);
             window.setPosition(matchAt);
             QApplication::processEvents();
             // Somewhere else first, so landing on the right frame cannot be
@@ -7118,7 +7442,7 @@ int main(int argc, char** argv) {
             }
 
             // Set the key through the panel, the way somebody would.
-            timeline->selectOnlyForTest(keyTop, screenClipId);
+            timeline->selectOnly(keyTop, screenClipId);
             window.effects()->setSelection(keyTop, screenClipId);
             QApplication::processEvents();
 
@@ -8413,7 +8737,7 @@ int main(int argc, char** argv) {
                                 .front()
                                 .id;
             window.effects()->setSelection(trackId, id);
-            timeline->selectOnlyForTest(trackId, id);
+            timeline->selectOnly(trackId, id);
             window.setPosition(zaro::time::RationalTime{25, sequence.frameRate()});
             QApplication::processEvents();
 
@@ -8510,7 +8834,7 @@ int main(int argc, char** argv) {
                                         ->clips()
                                         .front()
                                         .id;
-            timeline->selectOnlyForTest(syncTrackId, syncClipId);
+            timeline->selectOnly(syncTrackId, syncClipId);
             QApplication::processEvents();
 
             window.syncAngles(/*byEar=*/false);
@@ -8710,7 +9034,7 @@ int main(int argc, char** argv) {
             }
             window.commands().execute(window.project(), std::move(*offset));
 
-            timeline->selectOnlyForTest(upperTrack, badgeId);
+            timeline->selectOnly(upperTrack, badgeId);
             window.effects()->setSelection(upperTrack, badgeId);
             window.setPosition(pinAt);
             QApplication::processEvents();
@@ -9189,7 +9513,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            timeline->selectOnlyForTest(musicTrack, musicClip);
+            timeline->selectOnly(musicTrack, musicClip);
             window.effects()->setSelection(musicTrack, musicClip);
             QApplication::processEvents();
 
@@ -9288,7 +9612,7 @@ int main(int argc, char** argv) {
                 window.project().findSequence(tallId)->findTrack(tallTrack)->clips().front().id;
 
             window.setActiveSequence(tallId);
-            timeline->selectOnlyForTest(tallTrack, tallClip);
+            timeline->selectOnly(tallTrack, tallClip);
             window.effects()->setSelection(tallTrack, tallClip);
             QApplication::processEvents();
 

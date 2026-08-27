@@ -1,11 +1,15 @@
 #include "ScopesPanel.h"
 
-#include <QComboBox>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QPainter>
+#include <QPushButton>
 #include <QShowEvent>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+
+#include "Theme.h"
 
 namespace zaro::app {
 namespace {
@@ -35,29 +39,147 @@ float traceAlpha(std::uint32_t count, std::uint32_t peak) {
 }  // namespace
 
 ScopesPanel::ScopesPanel(QWidget* parent) : QWidget{parent} {
-    chooser_ = new QComboBox(this);
-    chooser_->addItem("Waveform", static_cast<int>(Mode::Waveform));
-    chooser_->addItem("RGB Parade", static_cast<int>(Mode::Parade));
-    chooser_->addItem("Histogram", static_cast<int>(Mode::Histogram));
-    chooser_->addItem("Vectorscope", static_cast<int>(Mode::Vectorscope));
-    chooser_->setObjectName("scope-chooser");
+    setObjectName("scopes-panel");
+
+    // A row of chips rather than a drop-down. Four instruments is few enough to
+    // show all of them, and a colourist switches between parade and vectorscope
+    // constantly -- one click each rather than open, read, pick.
+    tabBar_ = new QWidget(this);
+    tabBar_->setObjectName("scope-tabs");
+    auto* tabRow = new QHBoxLayout(tabBar_);
+    tabRow->setContentsMargins(2, 2, 2, 2);
+    tabRow->setSpacing(2);
+    static constexpr std::pair<const char*, Mode> kTabs[] = {
+        {"Parade", Mode::Parade},
+        {"Vector", Mode::Vectorscope},
+        {"Histogram", Mode::Histogram},
+        {"Waveform", Mode::Waveform},
+    };
+    for (std::size_t at = 0; at < tabs_.size(); ++at) {
+        auto* tab = new QPushButton(QString::fromUtf8(kTabs[at].first), tabBar_);
+        tab->setObjectName("scope-tab");
+        tab->setCheckable(true);
+        tab->setFocusPolicy(Qt::NoFocus);
+        tab->setCursor(Qt::PointingHandCursor);
+        const Mode mode = kTabs[at].second;
+        connect(tab, &QPushButton::clicked, this, [this, mode] { setMode(mode); });
+        tabRow->addWidget(tab, 1);
+        tabs_[at] = tab;
+    }
+
+    // Peak, black and saturation: the three numbers somebody checks a shot
+    // against, and the three the design puts under the instrument. Read off the
+    // same measurement the trace is drawn from, so they cannot disagree with
+    // the picture above them.
+    readoutRow_ = new QWidget(this);
+    auto* readouts = new QHBoxLayout(readoutRow_);
+    readouts->setContentsMargins(0, 0, 0, 0);
+    readouts->setSpacing(6);
+    static constexpr const char* kLabels[] = {"Peak", "Black", "Sat max"};
+    static const QColor kInk[] = {QColor{0xd2, 0xce, 0xfd}, QColor{0x8f, 0xc7, 0xd9},
+                                  QColor{0xd9, 0xc7, 0x6a}};
+    for (std::size_t at = 0; at < values_.size(); ++at) {
+        auto* tile = new QWidget(readoutRow_);
+        tile->setObjectName("scope-readout");
+        tile->setAttribute(Qt::WA_StyledBackground, true);
+        auto* column = new QVBoxLayout(tile);
+        column->setContentsMargins(8, 5, 8, 5);
+        column->setSpacing(1);
+        auto* name = new QLabel(QString::fromUtf8(kLabels[at]), tile);
+        name->setObjectName("scope-readout-label");
+        values_[at] = new QLabel("—", tile);
+        values_[at]->setObjectName("scope-readout-value");
+        values_[at]->setStyleSheet(QString("color:%1").arg(kInk[at].name()));
+        column->addWidget(name);
+        column->addWidget(values_[at]);
+        readouts->addWidget(tile, 1);
+    }
 
     auto* layout = new QVBoxLayout(this);
-    layout->addWidget(chooser_);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
+    layout->addWidget(tabBar_);
     layout->addStretch(1);
+    layout->addWidget(readoutRow_);
 
-    connect(chooser_, &QComboBox::currentIndexChanged, this, [this] {
-        mode_ = static_cast<Mode>(chooser_->currentData().toInt());
-        // Every instrument is computed in one pass, so switching does not need
-        // a new measurement -- but the panel may have been hidden when the last
-        // one was taken.
-        if (!hasScopes_) {
-            emit measurementNeeded();
-        }
-        update();
-    });
-
+    setMode(Mode::Parade);
     setMinimumHeight(160);
+}
+
+void ScopesPanel::setMode(Mode mode) {
+    mode_ = mode;
+    static constexpr Mode kOrder[] = {Mode::Parade, Mode::Vectorscope, Mode::Histogram,
+                                      Mode::Waveform};
+    for (std::size_t at = 0; at < tabs_.size(); ++at) {
+        tabs_[at]->setChecked(kOrder[at] == mode);
+    }
+    // Every instrument is computed in one pass, so switching does not need a
+    // new measurement -- but the panel may have been hidden when the last one
+    // was taken.
+    if (!hasScopes_) {
+        emit measurementNeeded();
+    }
+    update();
+}
+
+/// Peak and black off the luma waveform's own levels, saturation off the
+/// vectorscope's furthest occupied cell.
+///
+/// The waveform is in signal order and 256 levels wide, so a level is a code
+/// value and IRE is that as a percentage. Reading the extremes rather than a
+/// percentile: what these are for is spotting a clipped highlight or a crushed
+/// black, and a percentile is precisely the thing that hides both.
+ScopesPanel::Readings ScopesPanel::readings() const {
+    Readings found;
+    if (!hasScopes_ || !scopes_.histogram.isValid()) {
+        return found;
+    }
+    const auto& luma = scopes_.histogram.luma;
+    int lowest = -1;
+    int highest = -1;
+    for (int level = 0; level < render::Histogram::kBins; ++level) {
+        if (luma[static_cast<std::size_t>(level)] == 0) {
+            continue;
+        }
+        highest = level;
+        if (lowest < 0) {
+            lowest = level;
+        }
+    }
+    if (highest < 0) {
+        return found;
+    }
+    found.peakIre = (highest / 255.0) * 100.0;
+    found.blackIre = (lowest / 255.0) * 100.0;
+
+    if (scopes_.vectorscope.isValid()) {
+        const std::int32_t size = scopes_.vectorscope.size();
+        const double centre = size / 2.0;
+        double furthest = 0.0;
+        for (std::int32_t y = 0; y < size; ++y) {
+            for (std::int32_t x = 0; x < size; ++x) {
+                if (scopes_.vectorscope.at(x, y) == 0) {
+                    continue;
+                }
+                furthest = std::max(furthest, std::hypot(x - centre, y - centre));
+            }
+        }
+        found.saturation = std::min(100.0, (furthest / centre) * 100.0);
+    }
+    return found;
+}
+
+void ScopesPanel::showReadings() {
+    if (!hasScopes_) {
+        for (QLabel* value : values_) {
+            value->setText("\u2014");
+        }
+        return;
+    }
+    const Readings found = readings();
+    values_[0]->setText(QString("%1 IRE").arg(found.peakIre, 0, 'f', 0));
+    values_[1]->setText(QString("%1 IRE").arg(found.blackIre, 0, 'f', 1));
+    values_[2]->setText(QString("%1%").arg(found.saturation, 0, 'f', 0));
 }
 
 bool ScopesPanel::wantsMeasurement() const {
@@ -67,11 +189,13 @@ bool ScopesPanel::wantsMeasurement() const {
 void ScopesPanel::setScopes(render::FrameScopes scopes) {
     scopes_ = std::move(scopes);
     hasScopes_ = true;
+    showReadings();
     update();
 }
 
 void ScopesPanel::clear() {
     hasScopes_ = false;
+    showReadings();
     update();
 }
 
@@ -82,7 +206,7 @@ void ScopesPanel::showEvent(QShowEvent* event) {
 }
 
 QRect ScopesPanel::plotArea() const {
-    return rect().adjusted(4, chooser_->height() + 8, -4, -4);
+    return rect().adjusted(4, tabBar_->height() + 8, -4, -(readoutRow_->height() + 8));
 }
 
 void ScopesPanel::paintEvent(QPaintEvent* /*event*/) {

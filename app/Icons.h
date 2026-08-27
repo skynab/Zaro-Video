@@ -38,6 +38,15 @@ enum class Glyph {
     Rows,        ///< The list/thumbnail view toggle
     Circle,      ///< A monitor toggle that is off
     CheckCircle, ///< A monitor toggle that is on
+    Camera,      ///< Grab a still
+    FolderOpen,  ///< Choose a folder of looks
+    CircleHalf,  ///< A graded clip, in the strip: the third filled glyph
+    CircleDashed,///< An ungraded clip
+    Swap,        ///< A / B: this grade against the one before it
+    Selection,   ///< The secondary: which pixels get corrected
+    BezierCurve, ///< The tone curves
+    Headphones,  ///< Clear every solo
+    Revert,      ///< Faders back to unity
 };
 
 /// One glyph, in one colour, at a size in logical pixels.

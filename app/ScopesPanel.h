@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QWidget>
+#include <array>
 
 #include "zaro/core/render/Scopes.h"
 
-class QComboBox;
+class QLabel;
+class QPushButton;
 
 namespace zaro::app {
 
@@ -33,6 +35,15 @@ public:
     void setScopes(render::FrameScopes scopes);
     void clear();
 
+    /// What the readouts say, as the panel computes them. Public so a test can
+    /// check the numbers without reading them off a label.
+    struct Readings {
+        double peakIre{0.0};
+        double blackIre{0.0};
+        double saturation{0.0};
+    };
+    [[nodiscard]] Readings readings() const;
+
 signals:
     /// The panel wants a fresh measurement: it became visible, or the
     /// instrument changed.
@@ -48,10 +59,18 @@ private:
     void paintHistogram(QPainter& painter, const QRect& area) const;
     void paintVectorscope(QPainter& painter, const QRect& area) const;
 
+    void setMode(Mode mode);
+    void showReadings();
+
     Mode mode_{Mode::Waveform};
     render::FrameScopes scopes_;
     bool hasScopes_{false};
-    QComboBox* chooser_{nullptr};
+    /// Parade, Vector, Histogram, Waveform -- the design's order, which puts
+    /// the two a colourist reaches for first at the left.
+    std::array<QPushButton*, 4> tabs_{};
+    std::array<QLabel*, 3> values_{};
+    QWidget* tabBar_{nullptr};
+    QWidget* readoutRow_{nullptr};
 };
 
 }  // namespace zaro::app

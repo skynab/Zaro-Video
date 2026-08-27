@@ -15,6 +15,24 @@ add_executable(zaro-preview
     TimelineWidget.h
     DeliverPanel.cpp
     DeliverPanel.h
+    AudioStrip.cpp
+    ChannelPanel.cpp
+    ChannelPanel.h
+    LoudnessPanel.cpp
+    LoudnessPanel.h
+    AudioStrip.h
+    ClipStrip.cpp
+    ClipStrip.h
+    ColorPalette.cpp
+    ColorPalette.h
+    FrameThumb.cpp
+    FrameThumb.h
+    GalleryPanel.cpp
+    GalleryPanel.h
+    GradeNodes.cpp
+    GradeNodes.h
+    ColorWheel.cpp
+    ColorWheel.h
     CurveEditor.cpp
     HueBand.cpp
     MixerPanel.cpp

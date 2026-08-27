@@ -1535,7 +1535,7 @@ bool TimelineWidget::setTransitionKindAtPlayhead(model::TransitionKind kind,
     return true;
 }
 
-void TimelineWidget::selectOnlyForTest(model::TrackId track, model::ClipId clip) {
+void TimelineWidget::selectOnly(model::TrackId track, model::ClipId clip) {
     selection_.clear();
     selection_.push_back(edit::ClipRef{track, clip});
     announceSelection();

@@ -197,10 +197,12 @@ public:
         return snapMark_.time;
     }
 
-    /// Select one clip, for a self-test that needs a selection without a
-    /// mouse. The keyboard paths all act on the selection, so a test that
-    /// cannot make one cannot reach them.
-    void selectOnlyForTest(model::TrackId track, model::ClipId clip);
+    /// Select one clip, without a mouse.
+    ///
+    /// Two callers, and they want the same thing: the Color workspace's shot
+    /// strip, where picking a tile is picking a clip, and a self-test that has
+    /// to make a selection before it can reach the keyboard paths.
+    void selectOnly(model::TrackId track, model::ClipId clip);
 
     /// Change the transition under the playhead to another kind.
     ///

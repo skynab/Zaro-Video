@@ -188,6 +188,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     videoGroup_ = motion;
 
     auto* colour = new QGroupBox("Colour", this);
+    colourGroup_ = colour;
     auto* colourForm = new QFormLayout(colour);
     addRow(colourForm, "Temperature", model::Param::Temperature, temperature_);
     addRow(colourForm, "Tint", model::Param::Tint, tint_);
@@ -659,6 +660,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->addStretch(1);
 
     auto* scroll = new QScrollArea(this);
+    scroll_ = scroll;
     scroll->setWidget(inner);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -725,6 +727,37 @@ const model::Clip* EffectControls::selectedClip() const {
     }
     const model::Track* track = sequence->findTrack(track_);
     return track != nullptr ? track->find(clip_) : nullptr;
+}
+
+/// Put a stage of the grade chain on screen.
+///
+/// Scrolled to rather than switched to: the panel is one column of groups in
+/// render order, and a colourist reading it wants to see that the LUT sits
+/// after the secondary. Hiding the rest to show one would take that away.
+void EffectControls::revealStage(int stage) {
+    if (scroll_ == nullptr) {
+        return;
+    }
+    QWidget* target = nullptr;
+    switch (stage) {
+        case 0:
+            target = colourGroup_;
+            break;
+        case 1:
+            target = curves_;
+            break;
+        case 2:
+            target = secondaryGroup_;
+            break;
+        case 3:
+            target = lutName_;
+            break;
+        default:
+            return;
+    }
+    if (target != nullptr) {
+        scroll_->ensureWidgetVisible(target, 0, 40);
+    }
 }
 
 void EffectControls::setEditingEnabled(bool enabled) {

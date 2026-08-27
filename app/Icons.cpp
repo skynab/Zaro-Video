@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPainterPath>
+#include <tuple>
 #include <QScreen>
 
 #include "Theme.h"
@@ -250,6 +251,106 @@ QPainterPath pathFor(Glyph glyph) {
             path.addEllipse(QPointF(8.0, 8.0), 5.2, 5.2);
             return path;
 
+        case Glyph::Camera:
+            path.moveTo(2.2, 5.4);
+            path.lineTo(5.0, 5.4);
+            path.lineTo(6.2, 3.4);
+            path.lineTo(9.8, 3.4);
+            path.lineTo(11.0, 5.4);
+            path.lineTo(13.8, 5.4);
+            path.lineTo(13.8, 12.6);
+            path.lineTo(2.2, 12.6);
+            path.closeSubpath();
+            path.addEllipse(QPointF(8.0, 9.0), 2.6, 2.6);
+            return path;
+
+        case Glyph::FolderOpen:
+            // The tab and the near wall leaning open, which is the whole of
+            // what tells this apart from a shut folder at thirteen pixels.
+            path.moveTo(2.0, 12.4);
+            path.lineTo(2.0, 3.6);
+            path.lineTo(6.2, 3.6);
+            path.lineTo(7.6, 5.4);
+            path.lineTo(12.2, 5.4);
+            path.lineTo(12.2, 7.2);
+            path.moveTo(2.0, 12.4);
+            path.lineTo(4.6, 7.2);
+            path.lineTo(14.6, 7.2);
+            path.lineTo(12.0, 12.4);
+            path.closeSubpath();
+            return path;
+
+        case Glyph::CircleHalf:
+            // Half the disc filled, which is what the glyph is named for and
+            // what makes it read as "something has been done here" beside the
+            // dashed ring that means nothing has.
+            path.moveTo(8.0, 2.6);
+            path.arcTo(QRectF(2.6, 2.6, 10.8, 10.8), 90.0, -180.0);
+            path.closeSubpath();
+            return path;
+
+        case Glyph::CircleDashed: {
+            // Eight arcs with gaps between them: the shape that says "nothing
+            // has been done to this yet" without writing the word.
+            for (int segment = 0; segment < 8; ++segment) {
+                path.arcMoveTo(QRectF(2.6, 2.6, 10.8, 10.8), segment * 45.0);
+                path.arcTo(QRectF(2.6, 2.6, 10.8, 10.8), segment * 45.0, 28.0);
+            }
+            return path;
+        }
+
+        case Glyph::Swap:
+            path.moveTo(3.0, 5.4);
+            path.lineTo(12.0, 5.4);
+            arrowHead(path, 12.6, 5.4, 3.0, 2.0);
+            path.moveTo(13.0, 10.6);
+            path.lineTo(4.0, 10.6);
+            arrowHead(path, 3.4, 10.6, 13.0, 2.0);
+            return path;
+
+        case Glyph::Selection:
+            // A marquee: four corners and nothing between them.
+            for (const auto& [x, y, dx, dy] :
+                 {std::tuple{3.0, 6.0, 0.0, -3.0}, std::tuple{3.0, 10.0, 0.0, 3.0},
+                  std::tuple{13.0, 6.0, 0.0, -3.0}, std::tuple{13.0, 10.0, 0.0, 3.0}}) {
+                path.moveTo(x, y);
+                path.lineTo(x + dx, y + dy);
+            }
+            path.moveTo(3.0, 3.0);
+            path.lineTo(6.0, 3.0);
+            path.moveTo(10.0, 3.0);
+            path.lineTo(13.0, 3.0);
+            path.moveTo(3.0, 13.0);
+            path.lineTo(6.0, 13.0);
+            path.moveTo(10.0, 13.0);
+            path.lineTo(13.0, 13.0);
+            return path;
+
+        case Glyph::BezierCurve:
+            path.moveTo(2.4, 12.4);
+            path.cubicTo(6.0, 12.4, 8.0, 3.6, 13.6, 3.6);
+            path.addEllipse(QPointF(2.4, 12.4), 1.5, 1.5);
+            path.addEllipse(QPointF(13.6, 3.6), 1.5, 1.5);
+            return path;
+
+        case Glyph::Headphones:
+            path.moveTo(3.0, 10.4);
+            path.lineTo(3.0, 8.0);
+            path.cubicTo(3.0, 3.6, 13.0, 3.6, 13.0, 8.0);
+            path.lineTo(13.0, 10.4);
+            path.addRoundedRect(QRectF(1.6, 9.4, 3.4, 4.6), 1.4, 1.4);
+            path.addRoundedRect(QRectF(11.0, 9.4, 3.4, 4.6), 1.4, 1.4);
+            return path;
+
+        case Glyph::Revert:
+            // An arrow round anticlockwise, with the head where it started.
+            path.arcMoveTo(QRectF(3.2, 3.2, 9.6, 9.6), 120.0);
+            path.arcTo(QRectF(3.2, 3.2, 9.6, 9.6), 120.0, -290.0);
+            path.moveTo(2.2, 2.6);
+            path.lineTo(4.2, 5.6);
+            path.lineTo(7.4, 4.4);
+            return path;
+
         case Glyph::CheckCircle:
             // The same ring with a tick in it. The design draws the lit state
             // at Phosphor's fill weight; stroked keeps it in one set with every
@@ -266,7 +367,8 @@ QPainterPath pathFor(Glyph glyph) {
 /// The one glyph the design draws filled. Phosphor calls this weight `ph-fill`,
 /// and a heart is the shape that reads as an outline the least.
 bool isFilled(Glyph glyph) {
-    return glyph == Glyph::Heart || glyph == Glyph::DotsThree;
+    return glyph == Glyph::Heart || glyph == Glyph::DotsThree ||
+           glyph == Glyph::CircleHalf;
 }
 
 }  // namespace

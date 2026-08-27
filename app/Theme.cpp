@@ -258,6 +258,56 @@ QLabel { background: transparent; }
 #bin-list { background: transparent; border: none; }
 #bin-list::item { padding: 0; border-radius: 0; background: transparent; }
 #bin-list::item:hover, #bin-list::item:selected { background: transparent; }
+
+/* --- the Color workspace ------------------------------------------------ */
+
+#gallery-panel, #color-palette { background: %SURFACE%; }
+#gallery-panel { border-right: 1px solid %DIVIDER%; }
+#color-palette { border-top: 1px solid %DIVIDER%; }
+#gallery-heading { border-bottom: 1px solid %DIVIDER%; }
+#gallery-title { font-weight: 500; font-size: 11px; }
+#gallery-grid, #gallery-luts, #palette-list { background: transparent; border: none; }
+#gallery-grid::item { border-radius: 5px; padding: 2px; color: %FAINT%; font-size: 9px; }
+#gallery-grid::item:selected, #gallery-luts::item:selected, #palette-list::item:selected {
+    background: %ACCENTWASH%; color: %ACCENT300%;
+}
+#gallery-luts::item, #palette-list::item {
+    border-radius: 5px; padding: 4px 6px; color: %MUTED%; font-size: 11px;
+}
+#gallery-luts::item:hover, #palette-list::item:hover { background: %BINHOVER%; color: %TEXT%; }
+#palette-list { border-right: 1px solid %DIVIDER%; padding: 10px 8px; }
+/* The strip is a well, like the viewer: it is full of pictures. */
+#clip-strip { background: %WELL%; border-top: 1px solid %DIVIDER%; }
+#grade-nodes-box { background: %SURFACE%; border-bottom: 1px solid %DIVIDER%; }
+#scopes-panel { background: transparent; }
+#scope-tabs { background: %HOVER%; border-radius: 7px; }
+#scope-tab {
+    border: none; background: transparent; color: %MUTED%;
+    padding: 3px 0; border-radius: 5px; min-height: 16px; font-size: 10px;
+}
+#scope-tab:hover { color: %TEXT%; }
+#scope-tab:checked { background: %ACCENTWASH%; color: %ACCENT200%; }
+#scope-readout { background: %SURFACE%; border: 1px solid %DIVIDER%; border-radius: 6px; }
+#scope-readout-label {
+    font-size: 9px; letter-spacing: 0.06em; color: %FAINT%; text-transform: uppercase;
+}
+#scope-readout-value { font-family: Menlo, monospace; font-size: 12px; }
+
+/* --- the Audio workspace ------------------------------------------------ */
+
+#audio-side, #loudness-panel, #channel-panel, #frame-thumb { background: %SURFACE%; }
+#frame-thumb { border-bottom: 1px solid %DIVIDER%; }
+#audio-side { border-right: 1px solid %DIVIDER%; }
+#loudness-panel { border-bottom: 1px solid %DIVIDER%; }
+#channel-panel { border-left: 1px solid %DIVIDER%; }
+#channel-header, #mixer-header { border-bottom: 1px solid %DIVIDER%; background: %SURFACE%; }
+#channel-heading {
+    font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: %FAINT%;
+}
+#mixer-panel { background: %BG%; }
+/* The console sits in a well, like the viewer: it is a row of instruments. */
+#mixer-console { background: %WELL%; }
+#loudness-measure { font-size: 10px; padding: 2px 8px; border-radius: 6px; }
 )")
         .replace("%BG%", bgHex)
         .replace("%SURFACE%", surfaceHex)

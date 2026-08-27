@@ -20,6 +20,7 @@ class QFormLayout;
 class QPushButton;
 class QToolButton;
 class QLabel;
+class QScrollArea;
 
 namespace zaro::app {
 
@@ -44,6 +45,12 @@ public:
 
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
+
+    /// Scroll to a stage of the grade chain: 0 primary, 1 curves, 2 secondary,
+    /// 3 look. The Color workspace draws that chain as nodes, and clicking one
+    /// has to land somewhere -- this is where. The order matches
+    /// `GradeNodes::Stage`, which is the render order.
+    void revealStage(int stage);
 
     /// Show whether the pen is out. Called back when the overlay turns it off
     /// by itself -- the path closed, or was abandoned -- so the button and the
@@ -160,6 +167,9 @@ private:
     QWidget* videoGroup_{nullptr};
     QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
+    /// Held so `revealStage` can scroll to them.
+    QWidget* colourGroup_{nullptr};
+    QScrollArea* scroll_{nullptr};
     QWidget* maskGroup_{nullptr};
     QComboBox* maskShape_{nullptr};
     QDoubleSpinBox* maskWidth_{nullptr};

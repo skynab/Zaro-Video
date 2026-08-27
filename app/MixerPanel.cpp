@@ -1,11 +1,10 @@
 #include "MixerPanel.h"
 
-#include <QCheckBox>
-#include <QDoubleSpinBox>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -13,6 +12,7 @@
 
 #include "zaro/core/edit/Operations.h"
 
+#include "Icons.h"
 #include "Theme.h"
 
 namespace zaro::app {
@@ -104,39 +104,61 @@ void LevelMeter::paintEvent(QPaintEvent* /*event*/) {
 }
 
 MixerPanel::MixerPanel(QWidget* parent) : QWidget{parent} {
+    setObjectName("mixer-panel");
+    setAttribute(Qt::WA_StyledBackground, true);
+
+    // --- the header the design puts over the console ---------------------
+    auto* header = new QFrame(this);
+    header->setObjectName("mixer-header");
+    header->setFixedHeight(32);
+    auto* headerRow = new QHBoxLayout(header);
+    headerRow->setContentsMargins(12, 0, 8, 0);
+    headerRow->setSpacing(10);
+    auto* title = new QLabel("Mixer", header);
+    title->setObjectName("gallery-title");
+    headerRow->addWidget(title);
+    soloLabel_ = new QLabel(header);
+    soloLabel_->setProperty("muted", true);
+    headerRow->addWidget(soloLabel_);
+    headerRow->addStretch(1);
+
+    auto* clear = new QPushButton(header);
+    clear->setObjectName("bin-glyph-button");
+    clear->setIcon(icons::toolIcon(icons::Glyph::Headphones, 13));
+    clear->setFixedSize(26, 24);
+    clear->setToolTip("Clear every solo");
+    connect(clear, &QPushButton::clicked, this, [this] { clearSolos(); });
+    headerRow->addWidget(clear);
+
+    auto* reset = new QPushButton(header);
+    reset->setObjectName("bin-glyph-button");
+    reset->setIcon(icons::toolIcon(icons::Glyph::Revert, 13));
+    reset->setFixedSize(26, 24);
+    reset->setToolTip("Faders to unity, pans to centre");
+    connect(reset, &QPushButton::clicked, this, [this] { resetFaders(); });
+    headerRow->addWidget(reset);
+
+    // --- the console ------------------------------------------------------
     strips_ = new QWidget(this);
+    strips_->setObjectName("mixer-console");
+    strips_->setAttribute(Qt::WA_StyledBackground, true);
     auto* row = new QHBoxLayout(strips_);
     row->setContentsMargins(0, 0, 0, 0);
-
-    master_ = new LevelMeter(this);
-    master_->setObjectName("mixer-master-meter");
-
-    auto* masterColumn = new QWidget(this);
-    auto* masterLayout = new QVBoxLayout(masterColumn);
-    masterLayout->setContentsMargins(0, 0, 0, 0);
-    auto* masterLabel = new QLabel("Master", this);
-    masterLayout->addWidget(masterLabel);
-    masterLayout->addWidget(master_, 1, Qt::AlignHCenter);
-
-    // A strip is taller than the panel usually gets, and a Qt layout given less
-    // room than its children need does not clip them -- it overlaps them, which
-    // put the meter on top of the solo button. Scrolling is the honest answer:
-    // the mixer stays readable at any height the splitter leaves it.
-    auto* content = new QWidget(this);
-    auto* contentRow = new QHBoxLayout(content);
-    contentRow->setContentsMargins(0, 0, 0, 0);
-    contentRow->addWidget(strips_, 1);
-    contentRow->addWidget(masterColumn);
+    row->setSpacing(0);
+    row->addStretch(1);
 
     auto* scroll = new QScrollArea(this);
-    scroll->setWidget(content);
+    scroll->setWidget(strips_);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    auto* outer = new QHBoxLayout(this);
+    auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    outer->addWidget(scroll);
+    outer->setSpacing(0);
+    outer->addWidget(header);
+    outer->addWidget(scroll, 1);
 }
 
 void MixerPanel::setProject(model::Project* project, model::SequenceId sequence,
@@ -157,167 +179,174 @@ void MixerPanel::refresh() {
     const bool sameTracks =
         sequence != nullptr && strip_.size() == sequence->audioTracks().size() &&
         std::equal(strip_.begin(), strip_.end(), sequence->audioTracks().begin(),
-                   [](const Strip& strip, const model::Track& track) {
-                       return strip.track == track.id();
+                   [](const AudioStrip* strip, const model::Track& track) {
+                       return strip->track() == track.id();
                    });
 
     if (!sameTracks) {
-        for (const Strip& strip : strip_) {
-            strip.name->parentWidget()->deleteLater();
+        for (AudioStrip* strip : strip_) {
+            strip->setParent(nullptr);
+            strip->deleteLater();
         }
         strip_.clear();
+        if (master_ != nullptr) {
+            master_->setParent(nullptr);
+            master_->deleteLater();
+            master_ = nullptr;
+        }
+        auto* row = qobject_cast<QHBoxLayout*>(strips_->layout());
         if (sequence != nullptr) {
-            auto* row = qobject_cast<QHBoxLayout*>(strips_->layout());
             for (const model::Track& track : sequence->audioTracks()) {
-                Strip strip;
-                strip.track = track.id();
-                strip.name = new QLabel(QString::fromStdString(track.name()), strips_);
-                strip.gain = new QDoubleSpinBox(strips_);
-                strip.gain->setRange(-96.0, 12.0);
-                strip.gain->setSingleStep(0.5);
-                strip.gain->setSuffix(" dB");
-                strip.pan = new QDoubleSpinBox(strips_);
-                strip.pan->setRange(-1.0, 1.0);
-                strip.pan->setSingleStep(0.05);
-                strip.pan->setDecimals(2);
-                strip.mute = new QCheckBox("M", strips_);
-                strip.solo = new QCheckBox("S", strips_);
-                strip.meter = new LevelMeter(strips_);
-                // The chain, on and off. Its settings live in the project and
-                // are reachable from a file; a strip with eleven more spin
-                // boxes on it would be a strip nobody can read a level from,
-                // which is what a mixer is chiefly for.
-                strip.eq = new QCheckBox("EQ", strips_);
-                strip.eq->setToolTip("High pass, low pass and one bell");
-                strip.compress = new QCheckBox("Comp", strips_);
-                strip.reduction = new QLabel("0.0 dB", strips_);
-                strip.reduction->setToolTip("Gain reduction");
-                strip.meter->setObjectName(QString{"mixer-meter-"} +
-                                           QString::number(track.id().value()));
-
-                auto* column = new QWidget(strips_);
-                auto* layout = new QVBoxLayout(column);
-                layout->setContentsMargins(2, 2, 2, 2);
-                layout->addWidget(strip.name);
-                layout->addWidget(strip.meter, 1, Qt::AlignHCenter);
-                auto* buttons = new QWidget(column);
-                auto* buttonRow = new QHBoxLayout(buttons);
-                buttonRow->setContentsMargins(0, 0, 0, 0);
-                buttonRow->addWidget(strip.mute);
-                buttonRow->addWidget(strip.solo);
-                layout->addWidget(buttons);
-                layout->addWidget(strip.eq);
-                layout->addWidget(strip.compress);
-                layout->addWidget(strip.reduction);
-                layout->addWidget(strip.gain);
-                layout->addWidget(strip.pan);
-                row->addWidget(column);
-
-                const Strip captured = strip;
-                connect(strip.gain, &QDoubleSpinBox::valueChanged, this,
-                        [this, captured] { push(captured); });
-                connect(strip.pan, &QDoubleSpinBox::valueChanged, this,
-                        [this, captured] { push(captured); });
-                connect(strip.mute, &QCheckBox::toggled, this, [this, captured] {
-                    push(captured);
-                    if (commands_ != nullptr) {
-                        commands_->breakMerge();
-                    }
-                });
-                connect(strip.eq, &QCheckBox::toggled, this, [this, captured](bool on) {
-                    pushChain(captured, on, captured.compress->isChecked());
-                });
-                connect(strip.compress, &QCheckBox::toggled, this, [this, captured](bool on) {
-                    pushChain(captured, captured.eq->isChecked(), on);
-                });
-                connect(strip.solo, &QCheckBox::toggled, this, [this, captured] {
-                    push(captured);
-                    if (commands_ != nullptr) {
-                        commands_->breakMerge();
-                    }
+                auto* strip = new AudioStrip{track.id(), AudioStrip::Kind::Track, strips_};
+                strip->setObjectName(QString{"mixer-strip-"} +
+                                     QString::number(track.id().value()));
+                row->insertWidget(row->count() - 1, strip);
+                connect(strip, &AudioStrip::moved, this,
+                        [this, strip](bool committed) { pushState(strip, committed); });
+                connect(strip, &AudioStrip::switched, this,
+                        [this, strip] { pushState(strip, true); });
+                connect(strip, &AudioStrip::picked, this, [this, strip] {
+                    picked_ = strip->track();
+                    showPicked();
+                    emit pickedChanged(picked_);
                 });
                 strip_.push_back(strip);
             }
+            // The master last, on the right, as it is on every console. It is
+            // not a track -- there is nothing in the model to write to -- so it
+            // carries the summed meter and nothing that can be moved.
+            master_ = new AudioStrip{model::TrackId{}, AudioStrip::Kind::Master, strips_};
+            master_->setObjectName("mixer-master");
+            master_->setName("Master");
+            // Before the stretch, so the master sits against the last channel
+            // rather than at the far end of an empty console.
+            row->insertWidget(row->count() - 1, master_);
+        }
+        if (!picked_.isValid() && !strip_.empty()) {
+            picked_ = strip_.front()->track();
+            emit pickedChanged(picked_);
         }
     }
 
     if (sequence == nullptr) {
         return;
     }
-    // Driven from the model, like every other panel: after an undo the widgets
+    // Driven from the model, like every other panel: after an undo the strips
     // have to say what the project says, not what they last wrote.
     updating_ = true;
-    for (const Strip& strip : strip_) {
-        const model::Track* track = sequence->findTrack(strip.track);
+    int soloed = 0;
+    for (AudioStrip* strip : strip_) {
+        const model::Track* track = sequence->findTrack(strip->track());
         if (track == nullptr) {
             continue;
         }
-        strip.name->setText(QString::fromStdString(track->name()));
-        strip.gain->setValue(track->gainDb());
-        strip.pan->setValue(track->pan());
-        strip.eq->setChecked(track->eq().enabled);
-        strip.compress->setChecked(track->compressor().enabled);
-        strip.mute->setChecked(track->isMuted());
-        strip.solo->setChecked(track->isSoloed());
+        strip->setName(QString::fromStdString(track->name()));
+        strip->setGainDb(track->gainDb());
+        strip->setPan(track->pan());
+        strip->setMuted(track->isMuted());
+        strip->setSoloed(track->isSoloed());
+        strip->setProcessing(track->eq(), track->compressor());
         // A track silenced by someone else's solo is shown dimmed rather than
         // marked muted: it is not muted, and saying so would be a lie the user
         // would then try to undo.
-        strip.meter->setEnabled(sequence->isAudible(*track));
+        strip->setEnabled(sequence->isAudible(*track));
+        soloed += track->isSoloed() ? 1 : 0;
     }
     updating_ = false;
+    showPicked();
+    soloLabel_->setText(soloed > 0
+                            ? QString("%1 channel%2 solo").arg(soloed).arg(soloed == 1 ? "" : "s")
+                            : QString("%1 channel%2").arg(strip_.size())
+                                  .arg(strip_.size() == 1 ? "" : "s"));
+}
+
+void MixerPanel::showPicked() {
+    for (AudioStrip* strip : strip_) {
+        strip->setPicked(strip->track() == picked_);
+    }
 }
 
 void MixerPanel::setMeters(const render::AudioGraph::Meters& meters) {
-    for (const Strip& strip : strip_) {
-        strip.meter->setLevel(meters.peakFor(strip.track));
-        const auto found = meters.reduction.find(strip.track.value());
-        const float reduction = found == meters.reduction.end() ? 0.0F : found->second;
-        strip.reduction->setText(QString::number(static_cast<double>(reduction), 'f', 1) + " dB");
+    for (AudioStrip* strip : strip_) {
+        strip->setLevel(meters.peakFor(strip->track()));
+        const auto found = meters.reduction.find(strip->track().value());
+        strip->setReduction(found == meters.reduction.end() ? 0.0F : found->second);
     }
-    master_->setLevel(meters.masterPeak());
+    if (master_ != nullptr) {
+        master_->setLevel(meters.masterPeak());
+    }
 }
 
-void MixerPanel::pushChain(const Strip& strip, bool eqOn, bool compressOn) {
-    if (updating_ || commands_ == nullptr || project_ == nullptr) {
-        return;
-    }
-    const model::Sequence* sequence = project_->findSequence(sequenceId_);
-    const model::Track* track = sequence != nullptr ? sequence->findTrack(strip.track) : nullptr;
-    if (track == nullptr) {
-        return;
-    }
-    // The settings themselves are left alone: switching the chain off and on
-    // again should give back what was there, not a default.
-    model::AudioEq eq = track->eq();
-    eq.enabled = eqOn;
-    model::Compressor compressor = track->compressor();
-    compressor.enabled = compressOn;
-
-    auto built = edit::makeSetTrackProcessing(*project_, sequenceId_, strip.track, eq, compressor);
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
-    commands_->breakMerge();
-    emit edited();
-}
-
-void MixerPanel::push(const Strip& strip) {
+void MixerPanel::pushState(AudioStrip* strip, bool committed) {
     if (updating_ || commands_ == nullptr || project_ == nullptr) {
         return;
     }
     edit::TrackState state;
-    state.muted = strip.mute->isChecked();
-    state.soloed = strip.solo->isChecked();
-    state.gainDb = strip.gain->value();
-    state.pan = strip.pan->value();
+    state.muted = strip->muted();
+    state.soloed = strip->soloed();
+    state.gainDb = strip->gainDb();
+    state.pan = strip->pan();
 
-    auto built = edit::makeSetTrackState(*project_, sequenceId_, strip.track, state);
+    auto built = edit::makeSetTrackState(*project_, sequenceId_, strip->track(), state);
     if (!built) {
         return;
     }
     commands_->execute(*project_, std::move(*built));
+    if (committed) {
+        commands_->breakMerge();
+    }
     // Solo changes what every other strip is doing, so the whole panel re-reads.
+    refresh();
+    emit edited();
+}
+
+void MixerPanel::clearSolos() {
+    if (commands_ == nullptr || project_ == nullptr) {
+        return;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    if (sequence == nullptr) {
+        return;
+    }
+    for (const model::Track& track : sequence->audioTracks()) {
+        if (!track.isSoloed()) {
+            continue;
+        }
+        edit::TrackState state;
+        state.muted = track.isMuted();
+        state.soloed = false;
+        state.gainDb = track.gainDb();
+        state.pan = track.pan();
+        if (auto built = edit::makeSetTrackState(*project_, sequenceId_, track.id(), state)) {
+            commands_->execute(*project_, std::move(*built));
+        }
+    }
+    commands_->breakMerge();
+    refresh();
+    emit edited();
+}
+
+void MixerPanel::resetFaders() {
+    if (commands_ == nullptr || project_ == nullptr) {
+        return;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    if (sequence == nullptr) {
+        return;
+    }
+    for (const model::Track& track : sequence->audioTracks()) {
+        edit::TrackState state;
+        // Mute and solo are left alone: this is a fader reset, and taking a
+        // mute off with it would be a second decision nobody asked for.
+        state.muted = track.isMuted();
+        state.soloed = track.isSoloed();
+        state.gainDb = 0.0;
+        state.pan = 0.0;
+        if (auto built = edit::makeSetTrackState(*project_, sequenceId_, track.id(), state)) {
+            commands_->execute(*project_, std::move(*built));
+        }
+    }
+    commands_->breakMerge();
     refresh();
     emit edited();
 }

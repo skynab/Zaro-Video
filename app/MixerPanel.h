@@ -8,9 +8,10 @@
 #include "zaro/core/model/Project.h"
 #include "zaro/core/render/AudioGraph.h"
 
-class QCheckBox;
-class QDoubleSpinBox;
+#include "AudioStrip.h"
+
 class QLabel;
+class QPushButton;
 
 namespace zaro::app {
 
@@ -42,7 +43,12 @@ private:
     int held_{0};
 };
 
-/// The audio track mixer: one strip per audio track.
+/// The audio track mixer: one console strip per audio track, and the master.
+///
+/// The strips are `AudioStrip`, which paints itself; this panel is what stands
+/// between them and the project. Every move is written through the command
+/// stack and then read back, so an undo puts the faders where the project says
+/// they are rather than where the widget last remembered being.
 class MixerPanel : public QWidget {
     Q_OBJECT
 
@@ -57,25 +63,25 @@ public:
     /// New meter readings, from the last block the mixer produced.
     void setMeters(const render::AudioGraph::Meters& meters);
 
+    /// Which channel the detail panel is showing. Invalid until a strip is
+    /// clicked or the first refresh picks the first track.
+    [[nodiscard]] model::TrackId picked() const noexcept { return picked_; }
+
+    /// Drop every solo. The design gives this its own button, because a solo
+    /// left on in one strip is the commonest way to wonder where the sound
+    /// went.
+    void clearSolos();
+    /// Every fader back to unity, pans back to centre.
+    void resetFaders();
+
 signals:
     void edited();
+    /// A different channel was picked, so the channel panel should follow.
+    void pickedChanged(zaro::model::TrackId track);
 
 private:
-    struct Strip {
-        model::TrackId track;
-        QLabel* name{nullptr};
-        QDoubleSpinBox* gain{nullptr};
-        QDoubleSpinBox* pan{nullptr};
-        QCheckBox* mute{nullptr};
-        QCheckBox* solo{nullptr};
-        LevelMeter* meter{nullptr};
-        QCheckBox* eq{nullptr};
-        QCheckBox* compress{nullptr};
-        QLabel* reduction{nullptr};
-    };
-
-    void push(const Strip& strip);
-    void pushChain(const Strip& strip, bool eqOn, bool compressOn);
+    void pushState(AudioStrip* strip, bool committed);
+    void showPicked();
 
     model::Project* project_{nullptr};
     model::SequenceId sequenceId_;
@@ -83,8 +89,11 @@ private:
     bool updating_{false};
 
     QWidget* strips_{nullptr};
-    std::vector<Strip> strip_;
-    LevelMeter* master_{nullptr};
+    std::vector<AudioStrip*> strip_;
+    AudioStrip* master_{nullptr};
+    LevelMeter* masterMeter_{nullptr};
+    QLabel* soloLabel_{nullptr};
+    model::TrackId picked_;
 };
 
 }  // namespace zaro::app
