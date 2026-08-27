@@ -12,6 +12,8 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 /// Look through folders and take what you want.
@@ -20,13 +22,13 @@ namespace zaro::app {
 /// does for a minute at the start of a day, and a permanent panel would spend
 /// the rest of the day taking space from the timeline. It stays open while
 /// importing, because taking three clips from three folders is one errand.
-class MediaBrowser : public QDialog {
+class MediaBrowser : public QDialog, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit MediaBrowser(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
 
     /// Show a folder's contents. Public because that is the whole interface:
     /// the dialog is one way of asking, and a test is another.

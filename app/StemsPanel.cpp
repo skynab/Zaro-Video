@@ -51,13 +51,13 @@ StemsPanel::StemsPanel(QWidget* parent) : QWidget{parent} {
 }
 
 QSize StemsPanel::sizeHint() const {
-    return QSize{262, kHeaderHeight +
-                          (static_cast<int>(stems_.size()) * kRowHeight) + (kMargin * 2)};
+    return QSize{262,
+                 kHeaderHeight + (static_cast<int>(stems_.size()) * kRowHeight) + (kMargin * 2)};
 }
 
-void StemsPanel::setProject(model::Project* project, model::SequenceId sequence) {
-    project_ = project;
-    sequenceId_ = sequence;
+void StemsPanel::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
     refresh();
 }
 
@@ -91,9 +91,9 @@ void StemsPanel::refresh() {
         // clip is a note about material that is not in the mix.
         for (const model::Track& track : sequence->audioTracks()) {
             for (const model::Clip& clip : track.clips()) {
-                auto found = std::find_if(
-                    stems_.begin(), stems_.end(),
-                    [&clip](const Stem& stem) { return stem.role == clip.role; });
+                auto found = std::find_if(stems_.begin(), stems_.end(), [&clip](const Stem& stem) {
+                    return stem.role == clip.role;
+                });
                 if (found == stems_.end()) {
                     continue;
                 }
@@ -177,11 +177,10 @@ void StemsPanel::paintEvent(QPaintEvent* /*event*/) {
 
         painter.setFont(mono);
         painter.setPen(theme::textAt(empty ? 0.28 : 0.45));
-        painter.drawText(
-            QRect{row.left(), row.top(), row.width() - 10, row.height()},
-            Qt::AlignRight | Qt::AlignVCenter,
-            empty ? QStringLiteral("—")
-                  : QString("%1 · %2").arg(stem.clips).arg(lengthOf(stem.seconds)));
+        painter.drawText(QRect{row.left(), row.top(), row.width() - 10, row.height()},
+                         Qt::AlignRight | Qt::AlignVCenter,
+                         empty ? QStringLiteral("—")
+                               : QString("%1 · %2").arg(stem.clips).arg(lengthOf(stem.seconds)));
     }
 }
 

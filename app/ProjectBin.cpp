@@ -9,8 +9,8 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
-#include <QLayout>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QLinearGradient>
 #include <QListWidget>
@@ -48,7 +48,7 @@ namespace {
 // What a row carries. The item's own text stays the file's name, so type-ahead
 // and accessibility still find rows by the thing they are called; everything
 // the delegate draws beyond that is here.
-constexpr int kRoleMedia = Qt::UserRole;      ///< qulonglong: the media id
+constexpr int kRoleMedia = Qt::UserRole;        ///< qulonglong: the media id
 constexpr int kRoleSubclip = Qt::UserRole + 1;  ///< qulonglong: the subclip id, or 0
 constexpr int kRoleHeader = Qt::UserRole + 2;   ///< bool: a folder heading
 constexpr int kRoleMeta = Qt::UserRole + 3;     ///< the second line
@@ -113,7 +113,7 @@ QString metaFor(const model::MediaRef& ref) {
             parts << QString::fromStdString(audio->codecName);
         }
         parts << QString("%1 kHz").arg(audio->sampleRate.toDouble() / 1000.0, 0, 'g', 4);
-        parts << (audio->channelCount == 1  ? QStringLiteral("mono")
+        parts << (audio->channelCount == 1   ? QStringLiteral("mono")
                   : audio->channelCount == 2 ? QStringLiteral("stereo")
                                              : QString("%1 ch").arg(audio->channelCount));
     }
@@ -318,22 +318,21 @@ public:
         painter->setFont(name);
         painter->setPen(theme::text());
         const QFontMetrics nameMetrics{name};
-        const QString shownName =
-            nameMetrics.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideMiddle,
-                                   text.width());
+        const QString shownName = nameMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
+                                                         Qt::ElideMiddle, text.width());
         if (twoLine) {
-            painter->drawText(QRect{text.left(), text.top() + 5, text.width(), nameMetrics.height()},
-                              Qt::AlignLeft | Qt::AlignVCenter, shownName);
+            painter->drawText(
+                QRect{text.left(), text.top() + 5, text.width(), nameMetrics.height()},
+                Qt::AlignLeft | Qt::AlignVCenter, shownName);
             QFont small = option.font;
             small.setPointSizeF(8.0);
             painter->setFont(small);
             painter->setPen(theme::textAt(0.45));
             const QFontMetrics smallMetrics{small};
-            painter->drawText(
-                QRect{text.left(), text.bottom() - smallMetrics.height() - 5, text.width(),
-                      smallMetrics.height()},
-                Qt::AlignLeft | Qt::AlignVCenter,
-                smallMetrics.elidedText(meta, Qt::ElideRight, text.width()));
+            painter->drawText(QRect{text.left(), text.bottom() - smallMetrics.height() - 5,
+                                    text.width(), smallMetrics.height()},
+                              Qt::AlignLeft | Qt::AlignVCenter,
+                              smallMetrics.elidedText(meta, Qt::ElideRight, text.width()));
         } else {
             painter->drawText(text, Qt::AlignLeft | Qt::AlignVCenter, shownName);
             // In one line the running time is the only other thing that fits,
@@ -627,7 +626,7 @@ void ProjectBin::rebuildChips() {
     }
 
     const auto addChip = [this, chips](const QString& label, bool on, bool outline,
-                                      const std::function<void(bool)>& picked) {
+                                       const std::function<void(bool)>& picked) {
         auto* chip = new QPushButton(label, this);
         chip->setObjectName("bin-chip");
         chip->setCheckable(true);
@@ -647,9 +646,8 @@ void ProjectBin::rebuildChips() {
     });
     for (const auto& [name, tally] : counts) {
         const QString bin = name;
-        addChip(QString("%1 %2").arg(bin).arg(tally), bin_ == bin, false, [this, bin](bool on) {
-            setBinFilter(on ? bin : QString{});
-        });
+        addChip(QString("%1 %2").arg(bin).arg(tally), bin_ == bin, false,
+                [this, bin](bool on) { setBinFilter(on ? bin : QString{}); });
     }
     // The design's outline chip is Favourites. There is no favourite in this
     // project's model and inventing one would be a field to save, load and
@@ -707,9 +705,9 @@ void ProjectBin::applyFilter() {
                 ? project_->findMedia(model::MediaRefId{item->data(kRoleMedia).toULongLong()})
                 : nullptr;
         const bool matchesText =
-            filter_.isEmpty() || (ref != nullptr
-                                      ? model::matchesSearch(*ref, query)
-                                      : item->text().contains(filter_, Qt::CaseInsensitive));
+            filter_.isEmpty() ||
+            (ref != nullptr ? model::matchesSearch(*ref, query)
+                            : item->text().contains(filter_, Qt::CaseInsensitive));
         const bool matchesBin = bin_.isEmpty() || bin == bin_;
         const bool matchesUsed = !usedOnly_ || item->data(kRoleUsed).toBool();
         const bool matches = matchesText && matchesBin && matchesUsed;
@@ -853,11 +851,10 @@ void ProjectBin::setNotes(model::MediaRefId media, const std::string& notes) {
     emit edited();
 }
 
-void ProjectBin::setProject(model::Project* project, model::SequenceId sequence,
-                            edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void ProjectBin::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     refresh();
 }
 
@@ -916,13 +913,12 @@ void ProjectBin::refresh() {
                 }
                 auto* child = new QListWidgetItem(describe(subclip, *ref), list_);
                 child->setData(kRoleMedia, QVariant::fromValue<qulonglong>(ref->id.value()));
-                child->setData(kRoleSubclip,
-                               QVariant::fromValue<qulonglong>(subclip.id.value()));
+                child->setData(kRoleSubclip, QVariant::fromValue<qulonglong>(subclip.id.value()));
                 child->setData(kRoleHeader, false);
                 child->setData(kRoleBin, bin);
-                child->setData(kRoleBadge,
-                               QString("%1s").arg(subclip.range.duration().toSecondsDouble(), 0,
-                                                  'f', 2));
+                child->setData(
+                    kRoleBadge,
+                    QString("%1s").arg(subclip.range.duration().toSecondsDouble(), 0, 'f', 2));
                 child->setData(kRoleUsed, false);
             }
         }

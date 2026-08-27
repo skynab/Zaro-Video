@@ -656,9 +656,9 @@ const model::Sequence* DeliverPanel::sequence() const {
     return project_ != nullptr ? project_->findSequence(sequenceId_) : nullptr;
 }
 
-void DeliverPanel::setProject(const model::Project* project, model::SequenceId sequence) {
-    project_ = project;
-    sequenceId_ = sequence;
+void DeliverPanel::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
     refresh();
 }
 

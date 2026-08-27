@@ -20,6 +20,8 @@ class QListWidget;
 class QSlider;
 class QVBoxLayout;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 class PillSwitch;
@@ -31,7 +33,7 @@ class PillSwitch;
 /// renderer actually honours: a menu offering a resolution or a frame rate this
 /// program cannot change would be a promise the file then breaks, so the
 /// sequence's own numbers are shown as facts rather than as controls.
-class DeliverPanel : public QWidget {
+class DeliverPanel : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
@@ -40,7 +42,7 @@ public:
 
     /// Neither is owned. The project is read when a job is queued, not when it
     /// renders -- see `queueCurrent`.
-    void setProject(const model::Project* project, model::SequenceId sequence);
+    void bind(const ui::SequenceBinding& binding) override;
     void setPlayhead(const time::RationalTime& position);
 
     /// Re-read what the sequence says: its size, its rate, its output curve.

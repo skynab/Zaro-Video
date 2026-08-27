@@ -11,6 +11,8 @@ class QCheckBox;
 class QEvent;
 class QLabel;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 class GradientSlider;
@@ -62,14 +64,13 @@ private:
 /// what its compressor is doing, and how hard the compressor is working. All of
 /// it writes through `makeSetTrackProcessing`, so it undoes as one thing and
 /// the mixer strip's own sketch of the curve stays in step.
-class ChannelPanel : public QWidget {
+class ChannelPanel : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit ChannelPanel(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
     /// Which channel to show. An invalid id empties the panel.
     void setTrack(model::TrackId track);
     void refresh();

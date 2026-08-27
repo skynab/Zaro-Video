@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "../AudioStrip.h"
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -1184,4 +1185,61 @@ TEST_CASE("New and Open, through the real window", "[gui]") {
     if (std::filesystem::exists(zaro::io::lockPath(originalPath))) {
         zaro::app::testing::failf("closing left a lock behind\n");
     }
+}
+
+// Switching sequence while a workspace other than Edit is up.
+//
+// Every panel holds which sequence it is about, so every panel has to be told
+// when that changes. Which ones get told was a list written by hand in
+// setActiveSequence, and it named four of the eleven: the rest were bound in
+// setWorkspace instead, on the way into the workspace that shows them. That is
+// the right place to bind them the first time and the wrong place to be the
+// only place, because somebody already looking at the mixer when the sequence
+// changes never leaves and comes back -- so the console stayed pointed at a
+// sequence that was no longer the one being edited.
+TEST_CASE("Every panel follows the sequence being edited", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    const auto firstId = window.project().activeSequence();
+    const auto rate = window.project().findSequence(firstId)->frameRate();
+    const auto firstAudioTrack = window.project().findSequence(firstId)->audioTracks().front().id();
+
+    // A second sequence with an audio track of its own, so "which sequence is
+    // the mixer showing" has two possible answers and they look different.
+    zaro::model::Sequence second{window.project().ids().next<zaro::model::SequenceTag>(), "second",
+                                 rate};
+    second.setSize(window.sequence()->width(), window.sequence()->height());
+    const auto secondId = second.id();
+    const auto secondVideo = window.project().ids().next<zaro::model::TrackTag>();
+    const auto secondAudio = window.project().ids().next<zaro::model::TrackTag>();
+    second.addTrack(secondVideo, zaro::model::TrackKind::Video, "V1");
+    second.addTrack(secondAudio, zaro::model::TrackKind::Audio, "A1");
+    window.project().addSequence(std::move(second));
+    window.rebindSequence();
+
+    // Standing in the Audio workspace, the way somebody mixing would be.
+    window.setWorkspace("Audio");
+    QApplication::processEvents();
+
+    const auto stripFor = [&](zaro::model::TrackId track) {
+        return window.mixer()->findChild<app::AudioStrip*>(QString{"mixer-strip-"} +
+                                                           QString::number(track.value()));
+    };
+    if (stripFor(firstAudioTrack) == nullptr) {
+        zaro::app::testing::failf("the mixer is not showing the sequence being edited to start\n");
+    }
+
+    // The sequence changes underneath them.
+    window.setActiveSequence(secondId);
+    QApplication::processEvents();
+
+    if (stripFor(secondAudio) == nullptr) {
+        zaro::app::testing::failf(
+            "the mixer did not follow the sequence: no strip for the new sequence's A1\n");
+    }
+    if (stripFor(firstAudioTrack) != nullptr) {
+        zaro::app::testing::failf("the mixer is still showing the sequence that was left behind\n");
+    }
+    std::printf("  panels followed the sequence: mixer now on A1 of \"second\"\n");
 }

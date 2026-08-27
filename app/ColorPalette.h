@@ -12,6 +12,8 @@ class QLabel;
 class QListWidget;
 class QStackedWidget;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 class ColorWheel;
@@ -28,8 +30,7 @@ class GradientSlider : public QWidget {
 public:
     /// `from`, `middle` and `to` paint the track. A middle of an invalid colour
     /// makes it a two-stop ramp, which is what saturation wants.
-    GradientSlider(QString label, QColor from, QColor middle, QColor to,
-                   QWidget* parent = nullptr);
+    GradientSlider(QString label, QColor from, QColor middle, QColor to, QWidget* parent = nullptr);
 
     /// The position, 0..1. What that maps to is the owner's business.
     void setFraction(double fraction);
@@ -72,14 +73,13 @@ private:
 /// balance and saturation sit. Everything here writes through the command
 /// stack, so a drag is one undo step and nothing can hold a value the stack has
 /// never seen -- the panel re-reads the clip after every push.
-class ColorPalette : public QWidget {
+class ColorPalette : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit ColorPalette(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
     /// Whose grade is being shown. An invalid clip empties the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
     /// Re-read the clip. Called after an edit from anywhere, and after undo.

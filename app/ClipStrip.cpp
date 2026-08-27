@@ -46,9 +46,9 @@ QSize ClipStrip::sizeHint() const {
     return QSize{(static_cast<int>(shots_.size()) * (kTileWidth + kTileGap)) + (kMargin * 2), 74};
 }
 
-void ClipStrip::setProject(model::Project* project, model::SequenceId sequence) {
-    project_ = project;
-    sequenceId_ = sequence;
+void ClipStrip::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
     refresh();
 }
 
@@ -76,8 +76,8 @@ void ClipStrip::refresh() {
                 // colour -- a wheel moved, a correction typed, a look put on
                 // it. The mark answers "have I been here", so it has to catch
                 // all three rather than only the one this panel edits.
-                shot.graded = !clip.wheels.isIdentity() || !clip.color.isIdentity() ||
-                              !clip.lut.path.empty();
+                shot.graded =
+                    !clip.wheels.isIdentity() || !clip.color.isIdentity() || !clip.lut.path.empty();
                 shots_.push_back(std::move(shot));
             }
         }
@@ -146,9 +146,9 @@ void ClipStrip::paintEvent(QPaintEvent* /*event*/) {
         painter.drawText(frame.adjusted(4, 3, -4, 0), Qt::AlignLeft | Qt::AlignTop,
                          QString("%1").arg(at + 1, 2, 10, QChar('0')));
 
-        const QPixmap mark = icons::pixmap(
-            shot.graded ? icons::Glyph::CircleHalf : icons::Glyph::CircleDashed, 10,
-            shot.graded ? theme::accent(200) : QColor{255, 255, 255, 110});
+        const QPixmap mark =
+            icons::pixmap(shot.graded ? icons::Glyph::CircleHalf : icons::Glyph::CircleDashed, 10,
+                          shot.graded ? theme::accent(200) : QColor{255, 255, 255, 110});
         painter.drawPixmap(QPoint{frame.right() - 13, frame.bottom() - 13}, mark);
 
         painter.setFont(name);

@@ -107,6 +107,7 @@
 #include "zaro/platform/sdl/AudioSink.h"
 #include "zaro/ui/Actions.h"
 #include "zaro/ui/Keymap.h"
+#include "zaro/ui/SequenceBinding.h"
 
 #include "ChannelPanel.h"
 #include "ClipStrip.h"
@@ -215,8 +216,8 @@ public:
         playButton_->setFixedSize(46, 30);
         scrubber_ = new QSlider(Qt::Horizontal, this);
 
-        timeline_ = new app::TimelineWidget(this);
-        effects_ = new app::EffectControls(this);
+        timeline_ = adopting(new app::TimelineWidget(this));
+        effects_ = adopting(new app::EffectControls(this));
         connect(effects_, &app::EffectControls::drawMaskRequested, maskOverlay_,
                 &app::MaskOverlay::setDrawing);
         connect(maskOverlay_, &app::MaskOverlay::drawingChanged, effects_,
@@ -249,7 +250,7 @@ public:
         connect(effects_, &app::EffectControls::clearStabilisationRequested, this,
                 [this] { clearStabilisation(); });
         scopes_ = new app::ScopesPanel(this);
-        mixer_ = new app::MixerPanel(this);
+        mixer_ = adopting(new app::MixerPanel(this));
         // 250 was under what the parameter rows actually measure, so the
         // splitter was free to squeeze the column until the value fields ran
         // off the edge of it. Now it is the width the content needs.
@@ -258,7 +259,7 @@ public:
 
         // Monitor and parameters side by side, transport under them, timeline
         // across the bottom.
-        bin_ = new app::ProjectBin(this);
+        bin_ = adopting(new app::ProjectBin(this));
         // The width the design fixes the media pane at. Fixed rather than a
         // range because the row inside it is fixed too -- a 64-pixel thumbnail,
         // two lines of type and a dot -- and the pane has nothing that would
@@ -270,16 +271,16 @@ public:
         // letters, and a button reading "nsert" is worse than a narrow picture.
         thumb_ = new app::FrameThumb(this);
         loudness_ = new app::LoudnessPanel(this);
-        stems_ = new app::StemsPanel(this);
-        channel_ = new app::ChannelPanel(this);
+        stems_ = adopting(new app::StemsPanel(this));
+        channel_ = adopting(new app::ChannelPanel(this));
         channel_->setMinimumWidth(280);
         channel_->setMaximumWidth(320);
 
         gallery_ = new app::GalleryPanel(this);
         gallery_->setFixedWidth(236);
-        clipStrip_ = new app::ClipStrip(this);
+        clipStrip_ = adopting(new app::ClipStrip(this));
         nodes_ = new app::GradeNodes(this);
-        palette_ = new app::ColorPalette(this);
+        palette_ = adopting(new app::ColorPalette(this));
         palette_->setFixedHeight(212);
 
         source_ = new app::SourceMonitor(this);
@@ -517,8 +518,7 @@ public:
         // screen: presets, settings and a render queue, with no timeline. So it
         // is a page rather than a workspace layout, and the workspace tabs
         // switch between them.
-        deliver_ = new app::DeliverPanel(this);
-        deliver_->setProject(&project_, sequenceId_);
+        deliver_ = adopting(new app::DeliverPanel(this));
         connect(deliver_, &app::DeliverPanel::queueChanged, this, [this] { updateChrome(); });
 
         workspaceStack_ = new QStackedWidget(this);
@@ -665,26 +665,43 @@ public:
         selectedTrack_ = model::TrackId{};
         selectedClip_ = model::ClipId{};
         renderCache_.clear();
-        // The panels hold which sequence they are about, so they have to be
-        // told too: a parameter panel still pointed at the sequence that has
-        // gone shows nothing and disables everything, which looks like the
-        // clip being unselectable rather than the panel being lost.
-        effects_->setProject(&project_, id, &commands_);
-        bin_->setProject(&project_, id, &commands_);
         rebindSequence();
         refresh();
     }
 
+    /// Point every panel at the sequence being edited.
+    ///
+    /// One loop over one list. Which panels needed telling used to be written
+    /// out by hand in three different places, and between them they named four
+    /// of the eleven -- the rest were bound on the way into the workspace that
+    /// shows them, so changing sequence while already standing in the mixer
+    /// left the console on the sequence that had gone. A list is still a list,
+    /// but it is one list, and a panel that does not appear in it cannot be
+    /// bound anywhere else either, which is a failure somebody notices.
     void rebindSequence() {
-        if (deliver_ != nullptr) {
-            deliver_->setProject(&project_, sequenceId_);
+        const ui::SequenceBinding binding{&project_, sequenceId_, &commands_};
+        for (ui::SequenceBound* panel : bound_) {
+            if (panel != nullptr) {
+                panel->bind(binding);
+            }
         }
         monitor_->setSource(liveSequence(), media_.get());
         monitor_->setNesting(&project_, media_.get());
         monitor_->setRenderCache(&renderCache_);
         monitor_->setTextRasterizer(&text_);
-        timeline_->setProject(&project_, sequenceId_, &commands_);
         monitor_->update();
+    }
+
+    /// Take a panel into the list that rebindSequence walks, and bind it now.
+    ///
+    /// Panels that are made when they are first asked for -- the browser, the
+    /// transcript -- arrive after the window is built, so they join here rather
+    /// than in the constructor.
+    template <typename Panel>
+    Panel* adopting(Panel* panel) {
+        bound_.push_back(panel);
+        panel->bind(ui::SequenceBinding{&project_, sequenceId_, &commands_});
+        return panel;
     }
 
     /// Feed the mixer's meters.
@@ -1101,8 +1118,7 @@ public:
     /// the same place they got the last lot.
     app::MediaBrowser* browseMedia() {
         if (browser_ == nullptr) {
-            browser_ = new app::MediaBrowser(this);
-            browser_->setProject(&project_, &commands_);
+            browser_ = adopting(new app::MediaBrowser(this));
             connect(browser_, &app::MediaBrowser::imported, this, [this] {
                 if (Status reopened = openMedia(); !reopened) {
                     app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
@@ -1260,7 +1276,7 @@ public:
     /// Show the transcript, and edit by it.
     app::Transcript* showTranscript() {
         if (transcript_ == nullptr) {
-            transcript_ = new app::Transcript(this);
+            transcript_ = adopting(new app::Transcript(this));
             connect(transcript_, &app::Transcript::edited, this, [this] {
                 renderCache_.clear();
                 timeline_->update();
@@ -1272,7 +1288,6 @@ public:
             connect(transcript_, &app::Transcript::scrubbed, this,
                     [this](time::RationalTime at) { setPosition(at); });
         }
-        transcript_->setProject(&project_, sequenceId_, &commands_);
         transcript_->show();
         transcript_->raise();
         return transcript_;
@@ -1793,6 +1808,11 @@ public:
         commands_.markSaved();
         renderCache_.clear();
 
+        // Bound before the media is opened as well as after, so that a project
+        // whose files cannot be read still leaves every panel pointed at it.
+        // Otherwise the failure below shows a window full of panels describing
+        // the project that has gone.
+        rebindSequence();
         if (Status opened = openMedia(); !opened) {
             // The project is loaded and the window is bound to it; what failed
             // is reading its files. Said plainly rather than swallowed: a
@@ -2185,15 +2205,11 @@ public:
             return opened.error();
         }
         media_ = std::move(*opened);
-        monitor_->setSource(liveSequence(), media_.get());
-        monitor_->setTextRasterizer(&text_);
-        monitor_->setNesting(&project_, media_.get());
-        monitor_->setRenderCache(&renderCache_);
-        timeline_->setProject(&project_, liveSequence()->id(), &commands_);
-        effects_->setProject(&project_, liveSequence()->id(), &commands_);
+        // The project this opened media for may be a different one -- adopt
+        // calls through here -- so the panels are pointed at it again, along
+        // with the monitor.
+        rebindSequence();
         effects_->setAudioSource(media_.get());
-        mixer_->setProject(&project_, liveSequence()->id(), &commands_);
-        bin_->setProject(&project_, liveSequence()->id(), &commands_);
         source_->setProvider(media_.get());
         startWaveforms();
         scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
@@ -3021,7 +3037,6 @@ public:
             workspaceStack_->setCurrentIndex(deliver ? 1 : 0);
             actionStack_->setCurrentIndex(deliver ? 1 : 0);
             if (deliver) {
-                deliver_->setProject(&project_, sequenceId_);
                 deliver_->setPlayhead(position_);
             }
         }
@@ -3047,16 +3062,11 @@ public:
         viewerWell_->setVisible(!audio && !deliver);
         viewerBar_->setVisible(!audio && !deliver);
         if (audio) {
-            mixer_->setProject(&project_, sequenceId_, &commands_);
-            channel_->setProject(&project_, sequenceId_, &commands_);
             channel_->setTrack(mixer_->picked());
-            stems_->setProject(&project_, sequenceId_);
             refreshInstruments();
         }
         if (colour) {
-            palette_->setProject(&project_, sequenceId_, &commands_);
             palette_->setSelection(selectedTrack_, selectedClip_);
-            clipStrip_->setProject(&project_, sequenceId_);
             clipStrip_->setSelection(selectedTrack_, selectedClip_);
             refreshGradeChain();
         }
@@ -4201,6 +4211,8 @@ private:
     app::ColorPalette* palette_{nullptr};
     QWidget* nodesBox_{nullptr};
     QWidget* timelinePane_{nullptr};
+    /// Every panel that is about a sequence, in one place. See rebindSequence.
+    std::vector<ui::SequenceBound*> bound_;
     app::MediaBrowser* browser_{nullptr};
     app::Transcript* transcript_{nullptr};
     app::Hotkeys* hotkeys_{nullptr};

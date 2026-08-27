@@ -111,11 +111,10 @@ Transcript::Transcript(QWidget* parent) : QDialog{parent} {
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
 }
 
-void Transcript::setProject(model::Project* project, model::SequenceId sequence,
-                            edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void Transcript::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     refresh();
 }
 

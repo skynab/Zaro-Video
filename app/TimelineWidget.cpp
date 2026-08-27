@@ -131,11 +131,10 @@ void TimelineWidget::setSnapEnabled(bool enabled) {
     emit snapChanged(snapEnabled_);
 }
 
-void TimelineWidget::setProject(model::Project* project, model::SequenceId sequence,
-                                edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void TimelineWidget::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     selected_ = {};
     // Defer the fit: at this point the widget has not been laid out, so its
     // width is not yet the width it will be shown at, and fitting to it would

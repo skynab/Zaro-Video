@@ -703,11 +703,10 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     setEditingEnabled(false);
 }
 
-void EffectControls::setProject(model::Project* project, model::SequenceId sequence,
-                                edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void EffectControls::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     setSelection({}, {});
 }
 

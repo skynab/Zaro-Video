@@ -76,11 +76,7 @@ double fromFraction(double fraction, double low, double high) {
 
 GradientSlider::GradientSlider(QString label, QColor from, QColor middle, QColor to,
                                QWidget* parent)
-    : QWidget{parent},
-      label_{std::move(label)},
-      from_{from},
-      middle_{middle},
-      to_{to} {
+    : QWidget{parent}, label_{std::move(label)}, from_{from}, middle_{middle}, to_{to} {
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
     setToolTip(label_ + " — double-click to reset");
@@ -141,9 +137,8 @@ void GradientSlider::paintEvent(QPaintEvent* /*event*/) {
 
 void GradientSlider::take(const QPoint& where) {
     const QRect track = trackRect();
-    setFraction(track.width() > 0
-                    ? static_cast<double>(where.x() - track.left()) / track.width()
-                    : 0.0);
+    setFraction(track.width() > 0 ? static_cast<double>(where.x() - track.left()) / track.width()
+                                  : 0.0);
 }
 
 void GradientSlider::mousePressEvent(QMouseEvent* event) {
@@ -187,9 +182,8 @@ ColorPalette::ColorPalette(QWidget* parent) : QWidget{parent} {
     palettes_->setObjectName("palette-list");
     palettes_->setFrameShape(QFrame::NoFrame);
     palettes_->setFixedWidth(150);
-    for (const auto& [name, glyph] :
-         {std::pair{QStringLiteral("Wheels"), icons::Glyph::Circle},
-          std::pair{QStringLiteral("Bars"), icons::Glyph::Rows}}) {
+    for (const auto& [name, glyph] : {std::pair{QStringLiteral("Wheels"), icons::Glyph::Circle},
+                                      std::pair{QStringLiteral("Bars"), icons::Glyph::Rows}}) {
         auto* item = new QListWidgetItem(name, palettes_);
         item->setIcon(icons::toolIcon(glyph, 14));
     }
@@ -248,8 +242,8 @@ ColorPalette::ColorPalette(QWidget* parent) : QWidget{parent} {
             [this](int row) { pages_->setCurrentIndex(std::max(0, row)); });
 
     // --- temperature, tint, saturation -----------------------------------
-    temperature_ = new GradientSlider{"Temperature", QColor{0x6a, 0x8f, 0xd9},
-                                      theme::neutral(600), QColor{0xd9, 0xa8, 0x6a}, this};
+    temperature_ = new GradientSlider{"Temperature", QColor{0x6a, 0x8f, 0xd9}, theme::neutral(600),
+                                      QColor{0xd9, 0xa8, 0x6a}, this};
     tint_ = new GradientSlider{"Tint", QColor{0x7f, 0xd9, 0x8f}, theme::neutral(600),
                                QColor{0xd9, 0x6a, 0xc7}, this};
     saturation_ = new GradientSlider{"Saturation", theme::neutral(700), QColor{},
@@ -287,11 +281,10 @@ ColorPalette::ColorPalette(QWidget* parent) : QWidget{parent} {
     refresh();
 }
 
-void ColorPalette::setProject(model::Project* project, model::SequenceId sequence,
-                              edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void ColorPalette::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     refresh();
 }
 
@@ -344,8 +337,7 @@ void ColorPalette::refresh() {
         wheels_[at]->setBalance(x, y);
         wheels_[at]->setMaster(master);
         for (int channel = 0; channel < 3; ++channel) {
-            const double value =
-                channel == 0 ? scaled.r : (channel == 1 ? scaled.g : scaled.b);
+            const double value = channel == 0 ? scaled.r : (channel == 1 ? scaled.g : scaled.b);
             bars_[(at * 3) + static_cast<std::size_t>(channel)]->setFraction(
                 toFraction(value, -1.0, 1.0));
             bars_[(at * 3) + static_cast<std::size_t>(channel)]->setReadout(
@@ -443,8 +435,8 @@ void ColorPalette::resetGrade() {
     if (commands_ == nullptr || project_ == nullptr || !clip_.isValid()) {
         return;
     }
-    if (auto built = edit::makeSetWheels(*project_, {sequenceId_, track_}, clip_,
-                                         model::ColorWheels{})) {
+    if (auto built =
+            edit::makeSetWheels(*project_, {sequenceId_, track_}, clip_, model::ColorWheels{})) {
         commands_->execute(*project_, std::move(*built));
     }
     if (auto built = edit::makeSetColorCorrection(*project_, {sequenceId_, track_}, clip_,

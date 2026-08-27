@@ -1,11 +1,11 @@
 #include "ChannelPanel.h"
 
 #include <QCheckBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -41,9 +41,8 @@ double toLogFraction(double hz, double low, double high) {
                       0.0, 1.0);
 }
 double fromLogFraction(double fraction, double low, double high) {
-    return std::pow(10.0, std::log10(low) +
-                              (std::clamp(fraction, 0.0, 1.0) *
-                               (std::log10(high) - std::log10(low))));
+    return std::pow(10.0, std::log10(low) + (std::clamp(fraction, 0.0, 1.0) *
+                                             (std::log10(high) - std::log10(low))));
 }
 
 }  // namespace
@@ -81,8 +80,8 @@ double EqCurve::hzFor(double x) const {
 
 double EqCurve::yFor(double db) const {
     const QRect plot = plotArea();
-    return plot.center().y() - ((std::clamp(db, -kRangeDb, kRangeDb) / kRangeDb) *
-                                (plot.height() / 2.0));
+    return plot.center().y() -
+           ((std::clamp(db, -kRangeDb, kRangeDb) / kRangeDb) * (plot.height() / 2.0));
 }
 
 double EqCurve::dbFor(double y) const {
@@ -232,8 +231,8 @@ namespace {
 /// than colours. Reuses the Color workspace's control so the two panels do not
 /// grow separate ideas of what a slider looks like.
 GradientSlider* makeRow(const QString& label, QWidget* parent) {
-    auto* slider = new GradientSlider{label, theme::neutral(800), QColor{},
-                                      QColor{0x6a, 0xa8, 0xc7}, parent};
+    auto* slider =
+        new GradientSlider{label, theme::neutral(800), QColor{}, QColor{0x6a, 0xa8, 0xc7}, parent};
     slider->setFixedHeight(24);
     return slider;
 }
@@ -348,11 +347,10 @@ ChannelPanel::ChannelPanel(QWidget* parent) : QWidget{parent} {
     refresh();
 }
 
-void ChannelPanel::setProject(model::Project* project, model::SequenceId sequence,
-                              edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void ChannelPanel::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     refresh();
 }
 
@@ -395,8 +393,7 @@ void ChannelPanel::refresh() {
     highPass_->setFraction(toLogFraction(eq.highPassHz, kLowHz, kHighHz));
     highPass_->setReadout(eq.highPassHz <= kLowHz ? QStringLiteral("off")
                                                   : QString("%1 Hz").arg(eq.highPassHz, 0, 'f', 0));
-    lowPass_->setFraction(eq.lowPassHz <= 0.0 ? 1.0
-                                              : toLogFraction(eq.lowPassHz, kLowHz, kHighHz));
+    lowPass_->setFraction(eq.lowPassHz <= 0.0 ? 1.0 : toLogFraction(eq.lowPassHz, kLowHz, kHighHz));
     lowPass_->setReadout(eq.lowPassHz <= 0.0 || eq.lowPassHz >= kHighHz
                              ? QStringLiteral("off")
                              : QString("%1 Hz").arg(eq.lowPassHz, 0, 'f', 0));

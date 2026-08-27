@@ -161,11 +161,10 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget{parent} {
     outer->addWidget(scroll, 1);
 }
 
-void MixerPanel::setProject(model::Project* project, model::SequenceId sequence,
-                            edit::CommandStack* commands) {
-    project_ = project;
-    sequenceId_ = sequence;
-    commands_ = commands;
+void MixerPanel::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    sequenceId_ = binding.sequence;
+    commands_ = binding.commands;
     refresh();
 }
 
@@ -198,8 +197,7 @@ void MixerPanel::refresh() {
         if (sequence != nullptr) {
             for (const model::Track& track : sequence->audioTracks()) {
                 auto* strip = new AudioStrip{track.id(), AudioStrip::Kind::Track, strips_};
-                strip->setObjectName(QString{"mixer-strip-"} +
-                                     QString::number(track.id().value()));
+                strip->setObjectName(QString{"mixer-strip-"} + QString::number(track.id().value()));
                 row->insertWidget(row->count() - 1, strip);
                 connect(strip, &AudioStrip::moved, this,
                         [this, strip](bool committed) { pushState(strip, committed); });
@@ -254,10 +252,9 @@ void MixerPanel::refresh() {
     }
     updating_ = false;
     showPicked();
-    soloLabel_->setText(soloed > 0
-                            ? QString("%1 channel%2 solo").arg(soloed).arg(soloed == 1 ? "" : "s")
-                            : QString("%1 channel%2").arg(strip_.size())
-                                  .arg(strip_.size() == 1 ? "" : "s"));
+    soloLabel_->setText(
+        soloed > 0 ? QString("%1 channel%2 solo").arg(soloed).arg(soloed == 1 ? "" : "s")
+                   : QString("%1 channel%2").arg(strip_.size()).arg(strip_.size() == 1 ? "" : "s"));
 }
 
 void MixerPanel::showPicked() {

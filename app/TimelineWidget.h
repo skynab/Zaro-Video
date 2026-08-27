@@ -15,6 +15,7 @@
 #include "zaro/core/model/Project.h"
 #include "zaro/core/time/RationalTime.h"
 #include "zaro/core/time/TimeRange.h"
+#include "zaro/ui/SequenceBinding.h"
 #include "zaro/ui/TimelineLayout.h"
 
 namespace zaro::app {
@@ -29,7 +30,7 @@ namespace zaro::app {
 /// Every edit goes through the command stack, which is the only write path into
 /// the model — so everything here is undoable by construction rather than by
 /// remembering to make it so.
-class TimelineWidget : public QWidget {
+class TimelineWidget : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
@@ -52,8 +53,7 @@ public:
     void setSnapEnabled(bool enabled);
 
     /// Neither is owned; both must outlive the widget.
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
 
     [[nodiscard]] const time::RationalTime& playhead() const noexcept { return playhead_; }
     void setPlayhead(const time::RationalTime& position);

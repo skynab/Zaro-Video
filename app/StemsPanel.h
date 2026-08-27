@@ -7,6 +7,7 @@
 #include "zaro/core/model/AudioRole.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/time/RationalTime.h"
+#include "zaro/ui/SequenceBinding.h"
 
 namespace zaro::app {
 
@@ -23,13 +24,13 @@ namespace zaro::app {
 /// That makes the panel answer the question a stem list is really asked during
 /// an audio pass -- has this been sorted out yet, and where is the music -- and
 /// it stays true without a submix model behind it.
-class StemsPanel : public QWidget {
+class StemsPanel : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit StemsPanel(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence);
+    void bind(const ui::SequenceBinding& binding) override;
     /// Re-read the sequence: clips were added, removed, or re-tagged.
     void refresh();
 

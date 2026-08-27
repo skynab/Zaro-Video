@@ -18,6 +18,8 @@ class QListWidget;
 class QPushButton;
 class QStackedWidget;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 /// The media pane: what media the project knows about, and how to look through
@@ -29,14 +31,13 @@ namespace zaro::app {
 /// composed from widgets: a bin holds hundreds of files, and hundreds of
 /// widgets is hundreds of things for the layout engine to visit every time
 /// somebody types a letter into the search field.
-class ProjectBin : public QWidget {
+class ProjectBin : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit ProjectBin(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
     void refresh();
 
     /// Ask for files. Public because Import is a File-menu item as well as an

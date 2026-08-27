@@ -12,6 +12,8 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 /// The sequence's transcript, as something to edit by.
@@ -23,14 +25,13 @@ namespace zaro::app {
 /// A window rather than a docked panel, like the media browser: reading a
 /// transcript is something somebody does while looking at it and not while
 /// trimming, and it wants width rather than a column beside the timeline.
-class Transcript : public QDialog {
+class Transcript : public QDialog, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit Transcript(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
     void refresh();
 
     /// Delete whatever is selected, from the transcript and from the sequence.

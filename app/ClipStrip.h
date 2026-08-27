@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "zaro/core/model/Project.h"
+#include "zaro/ui/SequenceBinding.h"
 
 namespace zaro::app {
 
@@ -14,13 +15,13 @@ namespace zaro::app {
 /// answered by a row of shots you can count. This is that row -- the same
 /// clips the timeline holds, read straight from the sequence, with no state of
 /// its own beyond which one is picked.
-class ClipStrip : public QWidget {
+class ClipStrip : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit ClipStrip(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence);
+    void bind(const ui::SequenceBinding& binding) override;
     /// Re-read the sequence: clips were added, removed, or graded.
     void refresh();
     /// Follow a selection made somewhere else, without echoing it back.

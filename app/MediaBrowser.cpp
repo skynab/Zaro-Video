@@ -84,9 +84,9 @@ MediaBrowser::MediaBrowser(QWidget* parent) : QDialog{parent} {
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
 }
 
-void MediaBrowser::setProject(model::Project* project, edit::CommandStack* commands) {
-    project_ = project;
-    commands_ = commands;
+void MediaBrowser::bind(const ui::SequenceBinding& binding) {
+    project_ = binding.project;
+    commands_ = binding.commands;
 }
 
 Status MediaBrowser::showFolder(const std::string& path) {

@@ -13,6 +13,8 @@
 class QLabel;
 class QPushButton;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 /// A meter bar: current level, and a peak that falls back slowly.
@@ -49,14 +51,13 @@ private:
 /// between them and the project. Every move is written through the command
 /// stack and then read back, so an undo puts the faders where the project says
 /// they are rather than where the widget last remembered being.
-class MixerPanel : public QWidget {
+class MixerPanel : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit MixerPanel(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
     /// Rebuild the strips. Called when tracks are added or removed, and after
     /// an undo, which can do either.
     void refresh();

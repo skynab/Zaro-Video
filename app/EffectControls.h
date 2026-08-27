@@ -22,6 +22,8 @@ class QToolButton;
 class QLabel;
 class QScrollArea;
 
+#include "zaro/ui/SequenceBinding.h"
+
 namespace zaro::app {
 
 /// Effect Controls: the parameters of whichever clip is selected.
@@ -34,14 +36,13 @@ namespace zaro::app {
 /// any edit, and after undo, it re-reads what the clip actually says. A panel
 /// that trusted its own widgets would drift out of step the first time
 /// something changed the clip from elsewhere.
-class EffectControls : public QWidget {
+class EffectControls : public QWidget, public ui::SequenceBound {
     Q_OBJECT
 
 public:
     explicit EffectControls(QWidget* parent = nullptr);
 
-    void setProject(model::Project* project, model::SequenceId sequence,
-                    edit::CommandStack* commands);
+    void bind(const ui::SequenceBinding& binding) override;
 
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
