@@ -137,6 +137,7 @@
 #include "TimelineWidget.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
+#include "chrome/Choices.h"
 #include "chrome/Menus.h"
 #include "commands/Analysis.h"
 #include "commands/Context.h"
@@ -1082,49 +1083,13 @@ public:
             return;
         }
         const model::Sequence::Output current = sequence->output();
-
-        QMenu menu;
-        menu.addAction("Delivered through")->setEnabled(false);
-        std::map<QAction*, media::TransferFunction> curves;
-        for (const media::TransferFunction transfer : media::allTransferFunctions()) {
-            if (transfer == media::TransferFunction::Unknown) {
-                continue;  // no formula, so nothing could encode through it
-            }
-            QAction* action = menu.addAction(QString::fromUtf8(media::toString(transfer)));
-            action->setCheckable(true);
-            action->setChecked(current.transfer == transfer);
-            curves.emplace(action, transfer);
-        }
-
-        menu.addSeparator();
-        menu.addAction("Highlights")->setEnabled(false);
-        struct Knee {
-            const char* name;
-            double value;
-        };
-        static constexpr Knee kKnees[] = {
-            {"clip (as delivered before)", 1.0},
-            {"roll off gently", 0.9},
-            {"roll off", 0.8},
-            {"roll off hard", 0.65},
-        };
-        std::map<QAction*, double> knees;
-        for (const Knee& knee : kKnees) {
-            QAction* action = menu.addAction(QString::fromUtf8(knee.name));
-            action->setCheckable(true);
-            action->setChecked(current.highlightKnee == knee.value);
-            knees.emplace(action, knee.value);
-        }
-
-        QAction* chosen = menu.exec(QCursor::pos());
-        if (chosen == nullptr) {
-            return;
-        }
+        const chrome::DeliveryChoice chosen =
+            chrome::deliveryMenu(current.transfer, current.highlightKnee);
         model::Sequence::Output wanted = current;
-        if (const auto curve = curves.find(chosen); curve != curves.end()) {
-            wanted.transfer = curve->second;
-        } else if (const auto knee = knees.find(chosen); knee != knees.end()) {
-            wanted.highlightKnee = knee->second;
+        if (chosen.transfer.has_value()) {
+            wanted.transfer = *chosen.transfer;
+        } else if (chosen.highlightKnee.has_value()) {
+            wanted.highlightKnee = *chosen.highlightKnee;
         } else {
             return;
         }
@@ -3188,88 +3153,60 @@ private:
 
     /// Attach proxies, make them, and switch between them and the originals.
     void proxyMenu() {
-        QMenu menu;
-        QAction* toggle = menu.addAction("Use proxies");
-        toggle->setCheckable(true);
-        toggle->setChecked(project_.usingProxies());
-
-        std::size_t proxied = 0;
+        std::vector<chrome::ProxyEntry> entries;
+        entries.reserve(project_.media().size());
         for (const model::MediaRef& media : project_.media()) {
-            proxied += media.proxyPath.empty() ? 0 : 1;
+            entries.push_back(
+                {media.id, QString::fromStdString(media.name), !media.proxyPath.empty()});
         }
-        toggle->setEnabled(proxied > 0);
-        menu.addSeparator();
-        menu.addAction(QString("%1 of %2 have proxies").arg(proxied).arg(project_.media().size()))
-            ->setEnabled(false);
-        menu.addSeparator();
-
-        // One entry per media reference, so a file can be given its proxy
-        // without a second panel to manage.
-        std::map<QAction*, model::MediaRefId> attach;
-        std::map<QAction*, model::MediaRefId> build;
-        for (const model::MediaRef& media : project_.media()) {
-            QAction* action = menu.addAction(
-                QString("Attach proxy for %1…").arg(QString::fromStdString(media.name)));
-            attach.emplace(action, media.id);
-        }
-        menu.addSeparator();
-        for (const model::MediaRef& media : project_.media()) {
-            if (!media.proxyPath.empty()) {
-                continue;  // it has one; making a second is not a thing to offer
+        const chrome::ProxyChoice chosen = chrome::proxyMenu(entries, project_.usingProxies());
+        switch (chosen.kind) {
+            case chrome::ProxyChoice::Kind::ToggleUsingProxies: {
+                project_.setUsingProxies(!project_.usingProxies());
+                // The media source resolved its paths when it opened, so
+                // switching means reopening. Cheaper than deciding per read,
+                // and it is the only moment the decision changes.
+                if (Status reopened = openMedia(); !reopened) {
+                    app::warn(this, "Proxies", QString::fromStdString(reopened.error().toString()));
+                }
+                monitor_->update();
+                refresh();
+                break;
             }
-            QAction* action = menu.addAction(
-                QString("Make a proxy for %1").arg(QString::fromStdString(media.name)));
-            build.emplace(action, media.id);
-        }
-
-        QAction* chosen = menu.exec(QCursor::pos());
-        if (chosen == nullptr) {
-            return;
-        }
-        if (chosen == toggle) {
-            project_.setUsingProxies(toggle->isChecked());
-            // The media source resolved its paths when it opened, so switching
-            // means reopening. Cheaper than deciding per read, and it is the
-            // only moment the decision changes.
-            if (Status reopened = openMedia(); !reopened) {
-                app::warn(this, "Proxies", QString::fromStdString(reopened.error().toString()));
+            case chrome::ProxyChoice::Kind::Build: {
+                QApplication::setOverrideCursor(Qt::WaitCursor);
+                auto made = buildProxy(chosen.media);
+                QApplication::restoreOverrideCursor();
+                if (!made) {
+                    app::warn(this, "Proxies", QString::fromStdString(made.error().message()));
+                    return;
+                }
+                app::say(this, "Proxies",
+                         QString("Made a %1x%2 proxy of %3 frames, %4% of the size.")
+                             .arg(made->width)
+                             .arg(made->height)
+                             .arg(made->frames)
+                             .arg(made->sourceBytes == 0
+                                      ? 0.0
+                                      : (100.0 * static_cast<double>(made->proxyBytes) /
+                                         static_cast<double>(made->sourceBytes)),
+                                  0, 'f', 1));
+                break;
             }
-            monitor_->update();
-            refresh();
-            return;
-        }
-        if (const auto making = build.find(chosen); making != build.end()) {
-            QApplication::setOverrideCursor(Qt::WaitCursor);
-            auto made = buildProxy(making->second);
-            QApplication::restoreOverrideCursor();
-            if (!made) {
-                app::warn(this, "Proxies", QString::fromStdString(made.error().message()));
-                return;
+            case chrome::ProxyChoice::Kind::Attach: {
+                const QString path = QFileDialog::getOpenFileName(this, "Choose a proxy file");
+                if (path.isEmpty()) {
+                    return;
+                }
+                for (model::MediaRef& media : project_.mediaMutable()) {
+                    if (media.id == chosen.media) {
+                        media.proxyPath = path.toStdString();
+                    }
+                }
+                break;
             }
-            app::say(
-                this, "Proxies",
-                QString("Made a %1x%2 proxy of %3 frames, %4% of the size.")
-                    .arg(made->width)
-                    .arg(made->height)
-                    .arg(made->frames)
-                    .arg(made->sourceBytes == 0 ? 0.0
-                                                : (100.0 * static_cast<double>(made->proxyBytes) /
-                                                   static_cast<double>(made->sourceBytes)),
-                         0, 'f', 1));
-            return;
-        }
-        const auto found = attach.find(chosen);
-        if (found == attach.end()) {
-            return;
-        }
-        const QString path = QFileDialog::getOpenFileName(this, "Choose a proxy file");
-        if (path.isEmpty()) {
-            return;
-        }
-        for (model::MediaRef& media : project_.mediaMutable()) {
-            if (media.id == found->second) {
-                media.proxyPath = path.toStdString();
-            }
+            case chrome::ProxyChoice::Kind::None:
+                break;
         }
     }
 
@@ -3279,29 +3216,18 @@ private:
     /// there is no useful middle: timecode is exact when it is there, and by
     /// ear is what is left when it is not.
     void multicamMenu() {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
-            return;
-        }
-        const model::Track* track = sequence->findTrack(selectedTrack_);
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-
-        QMenu menu;
-        QAction* byTimecode = menu.addAction("Sync angles by timecode");
-        QAction* byAudio = menu.addAction("Sync angles by audio");
+        const model::Clip* clip = editContext().selectedClip();
         const bool multicam = clip != nullptr && clip->isMulticam();
-        byTimecode->setEnabled(multicam);
-        byAudio->setEnabled(multicam && media_ != nullptr);
-        if (!multicam) {
-            menu.addSeparator();
-            menu.addAction("Select a multicam clip first")->setEnabled(false);
+        switch (chrome::multicamMenu(multicam, media_ != nullptr)) {
+            case chrome::MulticamChoice::ByAudio:
+                syncAngles(true);
+                break;
+            case chrome::MulticamChoice::ByTimecode:
+                syncAngles(false);
+                break;
+            case chrome::MulticamChoice::None:
+                break;
         }
-
-        QAction* chosen = menu.exec(QCursor::pos());
-        if (chosen == nullptr || !multicam) {
-            return;
-        }
-        syncAngles(chosen == byAudio);
     }
 
     /// Pre-render, so a stack the CPU has to composite plays back.
@@ -3316,28 +3242,18 @@ private:
             return;
         }
         const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
-
-        QMenu menu;
-        QAction* render = menu.addAction(
-            QString("Render the visible range (%1 frames)").arg(visible.duration().frames()));
-        render->setEnabled(!visible.isEmpty());
-        QAction* clear = menu.addAction("Clear the render cache");
-        menu.addSeparator();
-        menu.addAction(QString("%1 frames cached, %2 MB")
-                           .arg(renderCache_.count())
-                           .arg(renderCache_.byteSize() / (1024 * 1024)))
-            ->setEnabled(false);
-
-        QAction* chosen = menu.exec(QCursor::pos());
-        if (chosen == clear) {
-            renderCache_.clear();
-            updateCacheBar();
-            return;
+        switch (chrome::renderMenu(visible.isEmpty() ? 0 : visible.duration().frames(),
+                                   renderCache_.count(), renderCache_.byteSize())) {
+            case chrome::RenderChoice::ClearCache:
+                renderCache_.clear();
+                updateCacheBar();
+                break;
+            case chrome::RenderChoice::RenderVisible:
+                renderVisibleRange();
+                break;
+            case chrome::RenderChoice::None:
+                break;
         }
-        if (chosen != render) {
-            return;
-        }
-        renderVisibleRange();
     }
 
     /// Measure the programme, and offer to normalise it.
@@ -3361,22 +3277,7 @@ private:
 
         constexpr double kTarget = -23.0;  // EBU R128
         const double gain = measured->gainToReach(kTarget);
-
-        QMenu menu;
-        menu.addAction(QString("Integrated: %1 LUFS").arg(measured->integratedLufs, 0, 'f', 1))
-            ->setEnabled(false);
-        menu.addAction(QString("Sample peak: %1 dBFS").arg(measured->samplePeakDbfs, 0, 'f', 1))
-            ->setEnabled(false);
-        menu.addSeparator();
-        QAction* normalise = menu.addAction(QString("Normalise to %1 LUFS (%2%3 dB)")
-                                                .arg(kTarget, 0, 'f', 0)
-                                                .arg(gain >= 0.0 ? "+" : "")
-                                                .arg(gain, 0, 'f', 1));
-        // Nothing to do to silence, and nothing worth doing for a tenth of a
-        // decibel.
-        normalise->setEnabled(std::fabs(gain) > 0.1);
-
-        if (menu.exec(QCursor::pos()) != normalise) {
+        if (!chrome::loudnessMenu(measured->integratedLufs, measured->samplePeakDbfs, kTarget)) {
             return;
         }
         // Applied to every audio track's fader rather than to a master gain,
@@ -3406,62 +3307,50 @@ private:
         if (liveSequence() == nullptr) {
             return;
         }
-        QMenu menu;
-        QAction* importAction = menu.addAction("Import subtitles…");
-        QAction* exportAction = menu.addAction("Export subtitles…");
-        menu.addSeparator();
-        QAction* burnAction = menu.addAction("Burn in");
-        burnAction->setCheckable(true);
-        burnAction->setChecked(liveSequence()->captions().isBurnedIn());
-
-        const std::size_t count = liveSequence()->captions().size();
-        exportAction->setEnabled(count > 0);
-        burnAction->setEnabled(count > 0);
-        menu.addSeparator();
-        menu.addAction(QString("%1 captions").arg(count))->setEnabled(false);
-
-        QAction* chosen = menu.exec(QCursor::pos());
-        if (chosen == nullptr) {
-            return;
-        }
-        if (chosen == importAction) {
-            const QString path = QFileDialog::getOpenFileName(
-                this, "Open subtitles", {}, "Subtitles (*.srt *.vtt);;All files (*)");
-            if (path.isEmpty()) {
-                return;
+        const model::CaptionTrack& captions = liveSequence()->captions();
+        switch (chrome::captionsMenu(captions.size(), captions.isBurnedIn())) {
+            case chrome::CaptionChoice::Import: {
+                const QString path = QFileDialog::getOpenFileName(
+                    this, "Open subtitles", {}, "Subtitles (*.srt *.vtt);;All files (*)");
+                if (path.isEmpty()) {
+                    return;
+                }
+                auto loaded = io::loadSubtitles(path.toStdString());
+                if (!loaded) {
+                    app::warn(this, "Subtitles", QString::fromStdString(loaded.error().toString()));
+                    return;
+                }
+                // The style and the burn-in setting belong to the sequence, not
+                // to the file: importing a new script should not silently turn
+                // burn-in off or lose a typeface somebody chose.
+                model::CaptionTrack merged = *loaded;
+                merged.setStyle(liveSequence()->captions().style());
+                merged.setBurnedIn(liveSequence()->captions().isBurnedIn());
+                applyCaptions(merged);
+                break;
             }
-            auto loaded = io::loadSubtitles(path.toStdString());
-            if (!loaded) {
-                app::warn(this, "Subtitles", QString::fromStdString(loaded.error().toString()));
-                return;
+            case chrome::CaptionChoice::Export: {
+                const QString path = QFileDialog::getSaveFileName(
+                    this, "Save subtitles", "captions.srt", "SubRip (*.srt);;WebVTT (*.vtt)");
+                if (path.isEmpty()) {
+                    return;
+                }
+                const auto format = io::formatForPath(path.toStdString());
+                if (Status saved =
+                        io::saveSubtitles(liveSequence()->captions(), path.toStdString(), format);
+                    !saved) {
+                    app::warn(this, "Subtitles", QString::fromStdString(saved.error().toString()));
+                }
+                break;
             }
-            // The style and the burn-in setting belong to the sequence, not to
-            // the file: importing a new script should not silently turn burn-in
-            // off or lose a typeface somebody chose.
-            model::CaptionTrack merged = *loaded;
-            merged.setStyle(liveSequence()->captions().style());
-            merged.setBurnedIn(liveSequence()->captions().isBurnedIn());
-            applyCaptions(merged);
-            return;
-        }
-        if (chosen == exportAction) {
-            const QString path = QFileDialog::getSaveFileName(
-                this, "Save subtitles", "captions.srt", "SubRip (*.srt);;WebVTT (*.vtt)");
-            if (path.isEmpty()) {
-                return;
+            case chrome::CaptionChoice::ToggleBurnIn: {
+                model::CaptionTrack changed = liveSequence()->captions();
+                changed.setBurnedIn(!changed.isBurnedIn());
+                applyCaptions(changed);
+                break;
             }
-            const auto format = io::formatForPath(path.toStdString());
-            if (Status saved =
-                    io::saveSubtitles(liveSequence()->captions(), path.toStdString(), format);
-                !saved) {
-                app::warn(this, "Subtitles", QString::fromStdString(saved.error().toString()));
-            }
-            return;
-        }
-        if (chosen == burnAction) {
-            model::CaptionTrack changed = liveSequence()->captions();
-            changed.setBurnedIn(burnAction->isChecked());
-            applyCaptions(changed);
+            case chrome::CaptionChoice::None:
+                break;
         }
     }
 
