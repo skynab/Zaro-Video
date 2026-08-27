@@ -136,6 +136,13 @@
 #include "TimelineWidget.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
+#include "commands/Analysis.h"
+#include "commands/Context.h"
+#include "commands/Media.h"
+#include "commands/Music.h"
+#include "commands/Review.h"
+#include "commands/Structure.h"
+#include "commands/Templates.h"
 
 namespace zaro::app {
 
@@ -692,6 +699,57 @@ public:
         monitor_->update();
     }
 
+    /// What the operations in app/commands need, gathered from where it lives.
+    ///
+    /// Built per call rather than held: every member of it is something the
+    /// window changes, and a cached copy would be a second answer to questions
+    /// that already have one.
+    [[nodiscard]] commands::Context editContext() {
+        return commands::Context{ui::SequenceBinding{&project_, sequenceId_, &commands_},
+                                 selectedTrack_,
+                                 selectedClip_,
+                                 position_,
+                                 media_.get(),
+                                 &renderCache_,
+                                 &text_};
+    }
+
+    /// Show what an edit did.
+    ///
+    /// The five or six lines every operation used to end with. They are the
+    /// reason those operations looked like window code: the editing itself
+    /// needs none of this, and a caller that forgets one of them gets a picture
+    /// that does not match the project rather than an error.
+    void afterEdit() {
+        commands_.breakMerge();
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+    }
+
+    /// Show what a change to the project's *media* did.
+    ///
+    /// The bin is what lists the files, so it is the one that has to be told;
+    /// the picture may also have changed underneath, since a relinked or
+    /// proxied clip decodes from somewhere else now.
+    void afterMediaChange() {
+        // Reopened here rather than by the operation that changed the paths:
+        // the source belongs to the window, and an operation that reached in to
+        // reopen it was an operation that could only be called from one.
+        if (Status reopened = openMedia(); !reopened) {
+            app::warn(this, "Media", QString::fromStdString(reopened.error().toString()));
+        }
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        bin_->refresh();
+        updateCacheBar();
+        updateTitle();
+    }
+
     /// Take a panel into the list that rebindSequence walks, and bind it now.
     ///
     /// Panels that are made when they are first asked for -- the browser, the
@@ -758,357 +816,69 @@ public:
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
 
     /// Match the selected clip to the frame being held as the reference.
-    ///
-    /// Returns the match so a caller can say what happened. Nothing is applied
-    /// when the two shots are too unalike: an automatic grade that is confidently
-    /// wrong is worse than none, and the person looking at both frames is better
-    /// placed to decide than a distance measure is.
     Result<render::ShotMatch> matchToReference() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the clip to match first"};
-        }
         if (!comparing_) {
             return Error{ErrorCode::InvalidData, "hold a frame to match against first"};
         }
-
-        // Both frames composited the same way, through the CPU graph the
-        // comparison already uses -- so what is matched is what is on screen.
-        render::RenderGraph graph{*media_};
-        graph.setProject(&project_);
-        graph.setTextRasterizer(&text_);
-        graph.setRenderCache(&renderCache_);
-
-        render::RgbaImage reference;
-        if (Status status = graph.compositeInto(*sequence, referenceAt_, reference); !status) {
-            return status.error();
+        auto matched = commands::matchToReference(editContext(), referenceAt_);
+        if (matched && matched->usable) {
+            afterEdit();
         }
-        render::RgbaImage current;
-        if (Status status = graph.compositeInto(*sequence, position_, current); !status) {
-            return status.error();
-        }
-
-        auto match = render::matchShot(reference, current);
-        if (!match) {
-            return match.error();
-        }
-        if (!match->usable) {
-            return match;
-        }
-
-        auto built = edit::makeSetWheels(project_, {sequence->id(), selectedTrack_}, selectedClip_,
-                                         match->wheels);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        updateCacheBar();
-        updateTitle();
-        return match;
+        return matched;
     }
 
-    /// What tracking a mask through the shot came to.
-    struct MaskTrack {
-        int frames{0};
-        double confidence{1.0};
-        /// Set when the track stopped early, saying why. The keyframes found
-        /// before it stopped are kept: a track that held for two seconds and
-        /// then lost the thing it was on is worth two seconds of keyframes and
-        /// a note, not a refusal.
-        std::string stopped;
-    };
+    using MaskTrack = commands::MaskTrack;
 
     /// Follow the selected clip's mask through the rest of the clip.
-    ///
-    /// **Frame to frame, not against the first frame.** A reference frame does
-    /// not drift, but it also stops matching the moment the thing turns, moves
-    /// under a different light, or is partly covered -- which is most shots
-    /// worth tracking. Frame to frame follows all of that and accumulates a
-    /// little error instead, which is the trade every tracker makes and the one
-    /// people can correct by hand afterwards.
-    ///
-    /// **On the composited picture, not on the decoded source.** The mask lives
-    /// in output coordinates over whatever is on screen, so what it has to
-    /// follow is what is on screen.
-    Result<MaskTrack> trackMaskForward() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the clip whose mask should be tracked"};
+    Result<commands::MaskTrack> trackMaskForward() {
+        auto tracked = commands::trackMaskForward(editContext());
+        if (tracked) {
+            afterEdit();
         }
-        if (!clip->mask.isSet()) {
-            return Error{ErrorCode::InvalidData, "that clip has no mask to track"};
-        }
-        const time::RationalTime from = position_;
-        if (from < clip->start() || from >= clip->endExclusive()) {
-            return Error{ErrorCode::InvalidData, "put the playhead over the clip first"};
-        }
-
-        const render::MaskBounds bounds = render::maskBounds(clip->maskAt(from));
-        if (bounds.isEmpty()) {
-            return Error{ErrorCode::InvalidData, "that mask has no area to track"};
-        }
-
-        render::RenderGraph graph{*media_};
-        graph.setProject(&project_);
-        graph.setTextRasterizer(&text_);
-        graph.setRenderCache(&renderCache_);
-
-        const auto rate = sequence->frameRate();
-        const auto step = time::RationalTime{1, rate};
-        render::RgbaImage previous;
-        if (Status status = graph.compositeInto(*sequence, from, previous); !status) {
-            return status.error();
-        }
-
-        // The search window scales with the frame rather than being a fixed
-        // number of pixels: twenty pixels is a big move at 720p and a twitch at
-        // 4K, and what somebody means by "it moves about this fast" is the
-        // former. Capped, because the cost is the square of it and a window
-        // wide enough to cover a whipping pan is also wide enough to find the
-        // wrong lamppost.
-        render::PatchWindow window;
-        window.search = std::clamp(static_cast<double>(sequence->width()) * 0.02, 8.0, 48.0);
-
-        model::Curve xs;
-        model::Curve ys;
-        double dx = clip->parameterAt(model::Param::MaskX, from);
-        double dy = clip->parameterAt(model::Param::MaskY, from);
-        // Both curves start with where the mask already is, so the frames
-        // before the track are not dragged along by the first keyframe.
-        xs.set(model::Keyframe{clip->sourceTimeAt(from), dx, model::Interpolation::Linear, {}, {}});
-        ys.set(model::Keyframe{clip->sourceTimeAt(from), dy, model::Interpolation::Linear, {}, {}});
-
-        MaskTrack result;
-        result.confidence = 1.0;
-        for (time::RationalTime at = from + step; at < clip->endExclusive(); at = at + step) {
-            render::RgbaImage current;
-            if (Status status = graph.compositeInto(*sequence, at, current); !status) {
-                return status.error();
-            }
-            window.centreX = (static_cast<double>(sequence->width()) / 2.0) + bounds.centreX() + dx;
-            window.centreY =
-                (static_cast<double>(sequence->height()) / 2.0) + bounds.centreY() + dy;
-            window.halfWidth = std::max(8.0, bounds.width() / 2.0);
-            window.halfHeight = std::max(8.0, bounds.height() / 2.0);
-
-            const render::PatchTrack moved = render::trackPatch(previous, current, window);
-            if (!moved.usable) {
-                result.stopped = moved.reason;
-                break;
-            }
-            dx += moved.dx;
-            dy += moved.dy;
-            result.confidence = std::min(result.confidence, moved.confidence);
-            ++result.frames;
-            const time::RationalTime when = clip->sourceTimeAt(at);
-            xs.set(model::Keyframe{when, dx, model::Interpolation::Linear, {}, {}});
-            ys.set(model::Keyframe{when, dy, model::Interpolation::Linear, {}, {}});
-            previous = std::move(current);
-        }
-
-        if (result.frames == 0) {
-            return Error{ErrorCode::InvalidData,
-                         result.stopped.empty() ? "there is nothing after this frame to track into"
-                                                : result.stopped};
-        }
-
-        auto built =
-            edit::makeTrackMask(project_, {sequence->id(), selectedTrack_}, selectedClip_, xs, ys);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        effects_->refresh();
-        updateCacheBar();
-        updateTitle();
-        return result;
+        return tracked;
     }
 
-    /// Hold the selected clip still.
-    ///
-    /// **On the clip's own frames, not on the composite.** What is being
-    /// measured is how the camera moved, and the composite already has this
-    /// clip's transform applied to it -- including the correction being
-    /// computed, which would make the analysis chase its own tail. It also has
-    /// whatever is layered over the clip in it, which moved for reasons of its
-    /// own.
+    /// Steady the selected clip.
     Result<render::StabiliseResult> stabiliseClip() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the clip to stabilise"};
+        auto steadied = commands::stabiliseClip(editContext());
+        if (steadied) {
+            afterEdit();
         }
-        if (clip->graphic.kind != model::GraphicKind::None || clip->nested.isValid() ||
-            !clip->activeSource().isValid()) {
-            return Error{ErrorCode::InvalidData,
-                         "there is nothing to stabilise: this clip is generated, not filmed"};
-        }
-
-        const auto step = time::RationalTime{1, sequence->frameRate()};
-        std::vector<time::RationalTime> times;
-        std::vector<time::RationalTime> timeline;
-        for (time::RationalTime at = clip->start(); at < clip->endExclusive(); at = at + step) {
-            timeline.push_back(at);
-            times.push_back(clip->activeSourceTimeAt(at));
-        }
-
-        auto analysed = render::stabilise(*media_, clip->activeSource(), times);
-        if (!analysed) {
-            return analysed;
-        }
-
-        model::Curve xs;
-        model::Curve ys;
-        for (std::size_t i = 0; i < analysed->x.size() && i < timeline.size(); ++i) {
-            // Keyframes at the clip's own source times, like every other curve
-            // in the project: a stabilised clip that is then trimmed or moved
-            // keeps its correction glued to the frames it was measured from.
-            const time::RationalTime when = clip->sourceTimeAt(timeline[i]);
-            xs.set(model::Keyframe{when, analysed->x[i], model::Interpolation::Linear, {}, {}});
-            ys.set(model::Keyframe{when, analysed->y[i], model::Interpolation::Linear, {}, {}});
-        }
-        if (xs.empty()) {
-            return Error{ErrorCode::InvalidData, "there is not enough of this clip to stabilise"};
-        }
-
-        auto built = edit::makeStabilise(project_, {sequence->id(), selectedTrack_}, selectedClip_,
-                                         xs, ys, analysed->zoom);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        effects_->refresh();
-        updateCacheBar();
-        updateTitle();
-        return analysed;
+        return steadied;
     }
 
-    /// Find the project's missing files under a folder and point it at them.
-    ///
-    /// Everything found is relinked, and what is not found is reported: a
-    /// dialog per file would be a dialog per file, and the report says exactly
-    /// which ones were matched only by their name.
+    /// Point the project's media at files that moved.
     Result<io::RelinkReport> relinkMedia(const std::string& root) {
-        auto report = io::findRelinks(project_, root);
-        if (!report) {
-            return report;
-        }
-        for (const io::RelinkMatch& match : report->matches) {
-            auto built = edit::makeRelinkMedia(project_, match.media, match.found);
-            if (!built) {
-                continue;  // it went missing again between looking and linking
-            }
-            commands_.execute(project_, std::move(*built));
-        }
-        commands_.breakMerge();
-        if (!report->matches.empty()) {
-            if (Status reopened = openMedia(); !reopened) {
-                return reopened.error();
-            }
-            renderCache_.clear();
-            monitor_->update();
-            timeline_->update();
-            bin_->refresh();
-            updateCacheBar();
-            updateTitle();
+        auto report = commands::relinkMedia(editContext(), root);
+        if (report) {
+            afterMediaChange();
         }
         return report;
     }
 
-    /// Make a proxy for one media reference and attach it.
-    ///
-    /// Beside the original by default, named after it. Not in a temporary
-    /// folder: a proxy the system might delete under a project is worse than
-    /// no proxy, and one nobody can find is one everybody remakes.
+    /// Make a small copy of one file to cut against.
     Result<platform::ffmpeg::ProxySummary> buildProxy(model::MediaRefId mediaId,
                                                       std::int32_t width = 960) {
-        const model::MediaRef* media = project_.findMedia(mediaId);
-        if (media == nullptr) {
-            return Error{ErrorCode::NotFound, "no such media in this project"};
+        auto built = commands::buildProxy(editContext(), mediaId, width);
+        if (built) {
+            afterMediaChange();
         }
-        const std::filesystem::path original{media->path};
-        platform::ffmpeg::ProxySettings settings;
-        settings.source = media->path;
-        settings.destination =
-            (original.parent_path() / (original.stem().string() + "-proxy.mov")).string();
-        settings.width = width;
-
-        auto made = platform::ffmpeg::makeProxy(settings);
-        if (!made) {
-            return made;
-        }
-        for (model::MediaRef& entry : project_.mediaMutable()) {
-            if (entry.id == mediaId) {
-                entry.proxyPath = made->path;
-            }
-        }
-        // Not switched on by anything here: making one and using one are
-        // separate decisions, and somebody who makes proxies for a long import
-        // does not necessarily want the picture to change under them now.
-        bin_->refresh();
-        updateTitle();
-        return made;
+        return built;
     }
 
-    /// Tick the comment under the playhead off, or put it back.
-    ///
-    /// A toggle rather than two commands, because the mistake somebody makes
-    /// is ticking off the wrong one, and the fix for that has to be the same
-    /// keystroke again.
+    /// Leave a note at the playhead, or take the one that is there away.
     Result<bool> toggleCommentHere() {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
-            return Error{ErrorCode::InvalidData, "there is no sequence"};
+        auto toggled = commands::toggleCommentHere(editContext());
+        if (toggled) {
+            timeline_->update();
+            updateTitle();
         }
-        const model::Marker* found = nullptr;
-        for (const model::Marker& marker : sequence->markers()) {
-            if (position_ >= marker.range.start() && position_ < marker.range.endExclusive()) {
-                found = &marker;
-            }
-        }
-        if (found == nullptr) {
-            return Error{ErrorCode::NotFound, "there is no comment at the playhead"};
-        }
-        const bool resolved = !found->resolved;
-        auto built = edit::makeSetMarkerReview(
-            project_, sequence->id(), found->id,
-            found->author.empty() ? io::thisProcess().user : found->author, resolved);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        timeline_->update();
-        updateTitle();
-        return resolved;
+        return toggled;
     }
 
-    /// Write the comments out as something to send somebody.
+    /// Write the notes out as a list somebody can be sent.
     Status writeReviewNotes(const std::string& path) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
-            return Error{ErrorCode::InvalidData, "there is no sequence"};
-        }
-        return io::writeReviewNotes(*sequence, path);
+        return commands::writeReviewNotes(editContext(), path);
     }
 
     /// Open the browser, on the folder the project's media came from.
@@ -1238,38 +1008,12 @@ public:
         return hotkeys_;
     }
 
-    /// Gather the project's media into one folder and point it at the copies.
-    ///
-    /// The copying and the relinking are one action here and two underneath:
-    /// the copy is a filesystem change nothing can undo, and the relink is an
-    /// edit like any other. Undo therefore puts the project back on the
-    /// originals and leaves the copies where they are, which is the honest
-    /// half to be able to take back.
+    /// Gather the project's media into one folder.
     Result<io::ConsolidateReport> consolidateMedia(const std::string& destination) {
-        auto report = io::consolidate(project_, destination);
-        if (!report) {
-            return report;
+        auto report = commands::consolidateMedia(editContext(), destination);
+        if (report) {
+            afterMediaChange();
         }
-        for (const io::ConsolidatedFile& file : report->files) {
-            if (file.alreadyThere) {
-                continue;
-            }
-            auto built = edit::makeRelinkMedia(project_, file.media, file.to);
-            if (!built) {
-                continue;
-            }
-            commands_.execute(project_, std::move(*built));
-        }
-        commands_.breakMerge();
-        if (Status reopened = openMedia(); !reopened) {
-            return reopened.error();
-        }
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        bin_->refresh();
-        updateCacheBar();
-        updateTitle();
         return report;
     }
 
@@ -1293,135 +1037,31 @@ public:
         return transcript_;
     }
 
-    /// Fit the selected music clip to a length by taking a piece out of it.
-    ///
-    /// The length wanted is the picture's: fitting music to a cut is the
-    /// errand, and asking for a number when the answer is on screen would be a
-    /// question with one sensible reply.
+    /// Fit the selected music clip to a length.
     Result<render::RemixPlan> remixSelectedTo(double targetSeconds) {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the music to fit"};
+        auto plan = commands::remixSelectedTo(editContext(), targetSeconds);
+        if (plan) {
+            afterEdit();
         }
-        if (!clip->activeSource().isValid()) {
-            return Error{ErrorCode::InvalidData, "that clip has no media to look at"};
-        }
-        const model::MediaRef* media = project_.findMedia(clip->activeSource());
-        if (media == nullptr || media->info.primaryAudio() == nullptr) {
-            return Error{ErrorCode::InvalidData, "there is no sound in that clip"};
-        }
-
-        const double have = clip->sourceRange.duration().toSecondsDouble();
-        auto beats =
-            render::detectBeats(*media_, clip->activeSource(), have, sequence->audioSampleRate());
-        if (!beats) {
-            return beats.error();
-        }
-        // The beats are measured from the clip's own start, so a clip already
-        // trimmed into the middle of a track still cuts on its own beats.
-        auto plan = render::planRemix(*beats, have, targetSeconds);
-        if (!plan) {
-            return plan;
-        }
-
-        auto built = edit::makeRemix(project_, {sequence->id(), selectedTrack_}, selectedClip_,
-                                     plan->cutAt, plan->resumeFrom, plan->joinFade);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        timeline_->update();
-        monitor_->update();
-        updateCacheBar();
-        updateTitle();
         return plan;
     }
 
-    /// Recompose the selected clip to fill the sequence's frame.
-    ///
-    /// **On the clip's own frames**, like the stabiliser and for the same
-    /// reason: the composite already has this clip's transform on it, and the
-    /// transform is what is being decided.
+    /// Reframe the selected clip for the sequence's shape.
     Result<render::ReframeResult> reframeClip() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the clip to reframe"};
+        auto framed = commands::reframeClip(editContext());
+        if (framed) {
+            afterEdit();
         }
-        if (clip->graphic.kind != model::GraphicKind::None || clip->nested.isValid() ||
-            !clip->activeSource().isValid()) {
-            return Error{ErrorCode::InvalidData,
-                         "there is nothing to reframe: this clip is generated, not filmed"};
-        }
-
-        const auto step = time::RationalTime{1, sequence->frameRate()};
-        std::vector<time::RationalTime> times;
-        std::vector<time::RationalTime> timeline;
-        for (time::RationalTime at = clip->start(); at < clip->endExclusive(); at = at + step) {
-            timeline.push_back(at);
-            times.push_back(clip->activeSourceTimeAt(at));
-        }
-
-        auto framed = render::autoReframe(*media_, clip->activeSource(), times, sequence->width(),
-                                          sequence->height());
-        if (!framed) {
-            return framed;
-        }
-
-        model::Curve xs;
-        model::Curve ys;
-        for (std::size_t i = 0; i < framed->x.size() && i < timeline.size(); ++i) {
-            const time::RationalTime when = clip->sourceTimeAt(timeline[i]);
-            xs.set(model::Keyframe{when, framed->x[i], model::Interpolation::Linear, {}, {}});
-            ys.set(model::Keyframe{when, framed->y[i], model::Interpolation::Linear, {}, {}});
-        }
-        if (xs.empty()) {
-            return Error{ErrorCode::InvalidData, "there is not enough of this clip to reframe"};
-        }
-
-        auto built = edit::makeReframe(project_, {sequence->id(), selectedTrack_}, selectedClip_,
-                                       xs, ys, framed->scale);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        effects_->refresh();
-        updateCacheBar();
-        updateTitle();
         return framed;
     }
 
     /// Pin the selected clip to one on a lower track, or to nothing.
     Result<model::ClipId> pinTo(model::ClipId host) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr || !selectedClip_.isValid()) {
-            return Error{ErrorCode::InvalidData, "select the clip to pin first"};
+        auto pinned = commands::pinTo(editContext(), host);
+        if (pinned) {
+            afterEdit();
         }
-        auto built =
-            edit::makePinTo(project_, {sequence->id(), selectedTrack_}, selectedClip_, host);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        effects_->refresh();
-        updateCacheBar();
-        updateTitle();
-        return host;
+        return pinned;
     }
 
     /// Pin to whatever is underneath at the playhead.
@@ -1452,61 +1092,19 @@ public:
         return pinTo(found->id);
     }
 
-    /// Save the selected graphic on its own, so it can be used again.
+    /// Save the selected title as a template.
     Status saveGraphicTemplate(const std::string& path) {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr) {
-            return Error{ErrorCode::InvalidData, "select the title or shape to save"};
-        }
-        return io::saveGraphicTemplate(*clip, path);
+        return commands::saveGraphicTemplate(editContext(), path);
     }
 
-    /// Drop a saved graphic in at the playhead, on the selected track.
+    /// Drop a saved template in at the playhead.
     Result<model::ClipId> placeGraphicTemplate(const std::string& path,
-                                               const time::RationalTime& duration) {
-        const model::Sequence* sequence = liveSequence();
-        if (sequence == nullptr) {
-            return Error{ErrorCode::InvalidData, "there is no sequence to place it in"};
+                                               const time::RationalTime& at) {
+        auto placed = commands::placeGraphicTemplate(editContext(), path, at);
+        if (placed) {
+            afterEdit();
         }
-        const model::TrackId trackId =
-            selectedTrack_.isValid() ? selectedTrack_ : sequence->videoTracks().front().id();
-        auto loaded = io::loadGraphicTemplate(path);
-        if (!loaded) {
-            return loaded.error();
-        }
-        // As long as it was designed to be, unless somebody says otherwise: a
-        // template dropped in at some arbitrary length is a template whose
-        // timing nobody chose.
-        time::RationalTime length = duration;
-        if (length.toSecondsDouble() <= 0.0) {
-            length = loaded->responsive.authored.toSecondsDouble() > 0.0
-                         ? loaded->responsive.authored
-                         : loaded->sourceRange.duration();
-        }
-        const time::TimeRange range{position_, length.rescaledTo(position_.rate())};
-        auto built =
-            edit::makePlaceGraphicTemplate(project_, {sequence->id(), trackId}, *loaded, range);
-        if (!built) {
-            return built.error();
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        renderCache_.clear();
-        monitor_->update();
-        timeline_->update();
-        updateCacheBar();
-        updateTitle();
-
-        const model::Track* track = project_.findSequence(sequence->id())->findTrack(trackId);
-        for (const model::Clip& candidate : track->clips()) {
-            if (candidate.start() == range.start()) {
-                return candidate.id;
-            }
-        }
-        return Error{ErrorCode::InvalidData, "the template did not land anywhere"};
+        return placed;
     }
 
     /// Hold a frame and show the current one against it.
@@ -1612,79 +1210,24 @@ public:
     }
 
     /// Cut the selected clip where the picture changes.
-    ///
-    /// Returns how many cuts were made, so the self-test can say what happened
-    /// without a dialog. Zero is a perfectly good answer: a single continuous
-    /// take has no scene changes in it, and reporting one would be worse than
-    /// reporting none.
     std::int32_t detectScenes() {
-        const model::Sequence* sequence = liveSequence();
-        const model::Track* track =
-            sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
-        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
-        if (clip == nullptr || media_ == nullptr || clip->nested.isValid() ||
-            clip->graphic.isSet()) {
-            return 0;
-        }
-
-        const time::Rational rate = sequence->frameRate();
-        const std::int64_t first = clip->start().rescaledTo(rate).frames();
-        const std::int64_t count = clip->timelineRange.duration().rescaledTo(rate).frames();
-        if (count <= 1) {
-            return 0;
-        }
-
-        render::SceneDetectOptions options;
-        // Half a second, at whatever rate this sequence runs. Expressed in time
-        // rather than frames so the same setting means the same thing on a
-        // 24fps cut and a 60fps one.
-        options.minimumShot = time::RationalTime::fromSeconds(time::Rational{1, 2}, rate);
-
-        QProgressDialog progress("Looking for scene changes…", "Cancel", 0, static_cast<int>(count),
-                                 this);
+        // The dialog is the window's, and the operation's only view of it is a
+        // question it asks once a frame: keep going?
+        QProgressDialog progress("Looking for scene changes\u2026", "Cancel", 0, 1, this);
         progress.setWindowModality(Qt::WindowModal);
         progress.setMinimumDuration(400);
-
-        render::SceneDetector detector{options};
-        for (std::int64_t i = 0; i < count; ++i) {
-            progress.setValue(static_cast<int>(i));
-            QCoreApplication::processEvents();
-            if (progress.wasCanceled()) {
-                return 0;
-            }
-            const time::RationalTime at{first + i, rate};
-            auto image = media_->imageFor(clip->activeSource(), clip->activeSourceTimeAt(at));
-            if (!image) {
-                // A frame that will not decode is a gap in the evidence, not a
-                // scene change. Skipped, and the frame before it stays the one
-                // the next is compared against.
-                continue;
-            }
-            detector.push(**image, at);
-        }
-        detector.flush();
+        const std::int32_t cuts =
+            commands::detectScenes(editContext(), [&](std::int64_t done, std::int64_t total) {
+                progress.setMaximum(static_cast<int>(total));
+                progress.setValue(static_cast<int>(done));
+                QCoreApplication::processEvents();
+                return !progress.wasCanceled();
+            });
         progress.reset();
-
-        std::vector<time::RationalTime> points;
-        points.reserve(detector.cuts().size());
-        for (const render::SceneCut& cut : detector.cuts()) {
-            points.push_back(cut.at);
+        if (cuts > 0) {
+            afterEdit();
         }
-        if (points.empty()) {
-            return 0;
-        }
-
-        auto built = edit::makeRazorAt(project_, {sequence->id(), selectedTrack_}, points);
-        if (!built) {
-            return 0;
-        }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        timeline_->update();
-        monitor_->update();
-        updateCacheBar();
-        updateTitle();
-        return static_cast<std::int32_t>(points.size());
+        return cuts;
     }
 
     /// Open a different project into this window.

@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QEventLoop>
+#include <QMouseEvent>
 #include <QSize>
 #include <array>
 #include <cstdarg>
@@ -231,6 +232,23 @@ void restoreFixtureProject() {
     // means every test starts from the same zoom, and a known one.
     window.timeline()->zoomToFit();
     window.timeline()->setSnapEnabled(true);
+    // End any gesture still in progress.
+    //
+    // A drag is press, move, release, and the widget keeps state between them.
+    // A test that pressed and did not release -- or one whose assertion threw
+    // between the two -- leaves that state set, and the next press is then
+    // treated as part of a gesture that started somewhere else. That is a trim
+    // that does nothing, with geometry that checks out and a hit test that
+    // agrees, which is exactly how it presented.
+    {
+        QMouseEvent release{QEvent::MouseButtonRelease,
+                            QPointF{0, 0},
+                            QPointF{0, 0},
+                            Qt::LeftButton,
+                            Qt::NoButton,
+                            Qt::NoModifier};
+        QCoreApplication::sendEvent(window.timeline(), &release);
+    }
     // Back to the head, before the settle below measures anything.
     //
     // The timeline scrolls to keep the playhead in view, so a test that left it
