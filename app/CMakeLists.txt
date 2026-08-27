@@ -31,6 +31,8 @@ add_executable(zaro-preview
     GalleryPanel.h
     GradeNodes.cpp
     GradeNodes.h
+    StemsPanel.cpp
+    StemsPanel.h
     ColorWheel.cpp
     ColorWheel.h
     CurveEditor.cpp

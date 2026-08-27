@@ -295,7 +295,8 @@ QLabel { background: transparent; }
 
 /* --- the Audio workspace ------------------------------------------------ */
 
-#audio-side, #loudness-panel, #channel-panel, #frame-thumb { background: %SURFACE%; }
+#audio-side, #loudness-panel, #channel-panel, #frame-thumb, #stems-panel { background: %SURFACE%; }
+#stems-panel { border-bottom: 1px solid %DIVIDER%; }
 #frame-thumb { border-bottom: 1px solid %DIVIDER%; }
 #audio-side { border-right: 1px solid %DIVIDER%; }
 #loudness-panel { border-bottom: 1px solid %DIVIDER%; }

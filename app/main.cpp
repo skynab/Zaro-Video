@@ -117,6 +117,7 @@
 #include "GalleryPanel.h"
 #include "GradeNodes.h"
 #include "LoudnessPanel.h"
+#include "StemsPanel.h"
 #include "ProjectBin.h"
 #include "Say.h"
 #include "ScopesPanel.h"
@@ -262,6 +263,7 @@ public:
         // letters, and a button reading "nsert" is worse than a narrow picture.
         thumb_ = new app::FrameThumb(this);
         loudness_ = new app::LoudnessPanel(this);
+        stems_ = new app::StemsPanel(this);
         channel_ = new app::ChannelPanel(this);
         channel_->setMinimumWidth(280);
         channel_->setMaximumWidth(320);
@@ -343,6 +345,7 @@ public:
         leftLayout->setSpacing(0);
         leftLayout->addWidget(thumb_);
         leftLayout->addWidget(loudness_);
+        leftLayout->addWidget(stems_);
         leftLayout->addStretch(1);
         audioSide_ = leftColumn;
 
@@ -409,6 +412,16 @@ public:
             updateTitle();
         });
         connect(loudness_, &app::LoudnessPanel::measureRequested, this, [this] { measureProgramme(); });
+
+        // Picking a stem is how somebody asks "where is the music": it goes to
+        // the first clip carrying that role and selects it, so the mixer and
+        // the channel panel are looking at the same sound.
+        connect(stems_, &app::StemsPanel::stemChosen, this,
+                [this](zaro::model::TrackId track, zaro::model::ClipId clip,
+                       zaro::time::RationalTime at) {
+                    timeline_->selectOnly(track, clip);
+                    setPosition(at);
+                });
 
         connect(nodes_, &app::GradeNodes::stageChosen, this,
                 [this](int stage) { effects_->revealStage(stage); });
@@ -3030,6 +3043,7 @@ public:
             mixer_->setProject(&project_, sequenceId_, &commands_);
             channel_->setProject(&project_, sequenceId_, &commands_);
             channel_->setTrack(mixer_->picked());
+            stems_->setProject(&project_, sequenceId_);
             refreshInstruments();
         }
         if (colour) {
@@ -4174,6 +4188,7 @@ private:
     app::GalleryPanel* gallery_{nullptr};
     app::LoudnessPanel* loudness_{nullptr};
     app::FrameThumb* thumb_{nullptr};
+    app::StemsPanel* stems_{nullptr};
     app::ChannelPanel* channel_{nullptr};
     QWidget* audioSide_{nullptr};
     QWidget* viewerBar_{nullptr};
