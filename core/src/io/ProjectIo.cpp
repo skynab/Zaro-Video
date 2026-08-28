@@ -318,7 +318,7 @@ Result<LoadedProject> loadProjectFromString(const std::string& text) {
         return Error{ErrorCode::InvalidData, "this is not valid JSON"};
     }
     if (!document.is_object() || !document.contains("zaro")) {
-        return Error{ErrorCode::InvalidData, "this is not a Zaro project file"};
+        return Error{ErrorCode::InvalidData, "this is not a CutReel project file"};
     }
 
     const int version = document.at("zaro").value("schemaVersion", 0);

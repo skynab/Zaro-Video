@@ -177,7 +177,7 @@ TEST_CASE("Malformed input is rejected with something readable", "[io]") {
     SECTION("JSON, but not a project") {
         const auto loaded = io::loadProjectFromString(R"({"something": "else"})");
         REQUIRE_FALSE(loaded);
-        CHECK(loaded.error().message().find("Zaro project") != std::string::npos);
+        CHECK(loaded.error().message().find("CutReel project") != std::string::npos);
     }
 
     SECTION("a project with no schema version") {

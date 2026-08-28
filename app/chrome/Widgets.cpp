@@ -67,7 +67,7 @@ QWidget* buildTitleBar(QWidget* parent, Bars& bars) {
     row->setContentsMargins(12, 0, 12, 0);
     row->setSpacing(8);
 
-    auto* brand = new QLabel("Zaro", bar);
+    auto* brand = new QLabel("CutReel", bar);
     brand->setObjectName("chrome-brand");
     row->addWidget(brand);
     if (!bars.menuBar->isNativeMenuBar()) {
@@ -231,7 +231,7 @@ QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const H
     auto* donate = new app::SupportButton(bar);
     donate->setObjectName("donate");
     donate->setText("Donate");
-    donate->setToolTip(QString("Support Zaro — opens %1").arg(supportUrl));
+    donate->setToolTip(QString("Support CutReel — opens %1").arg(supportUrl));
     donate->setFixedHeight(30);
     QObject::connect(donate, &QPushButton::clicked, donate, [supportUrl] {
         static_cast<void>(QDesktopServices::openUrl(QUrl{supportUrl}));

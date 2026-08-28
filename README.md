@@ -1,4 +1,4 @@
-# Zaro Video
+# CutReel
 
 A non-linear video editor. C++20, Qt 6, FFmpeg, GPU compositing via Qt RHI.
 

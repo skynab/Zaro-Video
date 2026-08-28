@@ -11,7 +11,7 @@ namespace zaro::time {
 /// An exact rational number, always stored in lowest terms with a positive
 /// denominator.
 ///
-/// This type is the foundation of every temporal quantity in Zaro. Frame rates,
+/// This type is the foundation of every temporal quantity in CutReel. Frame rates,
 /// durations and positions are rationals -- never doubles. 29.97 is exactly
 /// 30000/1001 and nothing else; representing it as a float is how an editor
 /// accumulates a frame of drift over a long timeline and how audio slides out

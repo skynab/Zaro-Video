@@ -9,7 +9,7 @@ namespace {
 
 void usage() {
     std::printf(
-        "zaro-otio — convert between Zaro projects and OpenTimelineIO\n"
+        "zaro-otio — convert between CutReel projects and OpenTimelineIO\n"
         "\n"
         "  zaro-otio export <project.zaro> <out.otio> [--sequence <id>]\n"
         "  zaro-otio import <in.otio> <project.zaro>\n"

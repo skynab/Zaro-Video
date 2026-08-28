@@ -1353,7 +1353,7 @@ void PreviewWindow::openVersionMenu() {
 
 void PreviewWindow::openDialog() {
     const QString chosen =
-        QFileDialog::getOpenFileName(this, "Open project", {}, "Zaro projects (*.zaro)");
+        QFileDialog::getOpenFileName(this, "Open project", {}, "CutReel projects (*.zaro)");
     if (chosen.isEmpty()) {
         return;
     }
@@ -1396,7 +1396,7 @@ bool PreviewWindow::saveAs() {
     const QString chosen = QFileDialog::getSaveFileName(
         this, "Save project",
         QString::fromStdString(document_.path().empty() ? "project.zaro" : document_.path()),
-        "Zaro projects (*.zaro)");
+        "CutReel projects (*.zaro)");
     if (chosen.isEmpty()) {
         return false;
     }
@@ -1420,7 +1420,7 @@ void PreviewWindow::updateTitle() {
     // Said in the title, because read-only is a fact about the whole
     // window and finding out at the moment of saving is finding out too
     // late.
-    setWindowTitle(QString("%1%2%3 — Zaro")
+    setWindowTitle(QString("%1%2%3 — CutReel")
                        .arg(name, document_.commands().isModified() ? "*" : "",
                             document_.isReadOnly() ? " [read only]" : ""));
     if (bars_.statusLeft != nullptr) {
@@ -1749,8 +1749,8 @@ void PreviewWindow::bindCommands() {
     actions_.bind("reset-panels", [this] { setWorkspace(workspace_); });
     actions_.bind("hotkeys", [this] { showHotkeys(); });
     actions_.bind("about", [this] {
-        QMessageBox::about(this, "Zaro Video",
-                           "Zaro Video — a non-linear editor.\n\n"
+        QMessageBox::about(this, "CutReel",
+                           "CutReel — a non-linear editor.\n\n"
                            "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
     });
 }
@@ -1840,7 +1840,7 @@ void PreviewWindow::setWorkspace(const QString& name) {
     // The arrangement of the workspace being left is remembered, so coming
     // back to it finds the splitters where they were.
     if (topSplitter_ != nullptr && !workspace_.isEmpty()) {
-        QSettings settings("Zaro", "Zaro Video");
+        QSettings settings("CutReel", "CutReel");
         settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
         settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
     }
@@ -1893,7 +1893,7 @@ void PreviewWindow::setWorkspace(const QString& name) {
          entry != bars_.workspaceActions.constEnd(); ++entry) {
         entry.value()->setChecked(entry.key() == name);
     }
-    QSettings settings("Zaro", "Zaro Video");
+    QSettings settings("CutReel", "CutReel");
     if (const auto state = settings.value(layoutKey(name, "top")).toByteArray(); !state.isEmpty()) {
         topSplitter_->restoreState(state);
     }
@@ -1953,7 +1953,7 @@ void PreviewWindow::goToEnd() {
 }
 
 void PreviewWindow::saveWorkspace() {
-    QSettings settings("Zaro", "Zaro Video");
+    QSettings settings("CutReel", "CutReel");
     settings.setValue("window/geometry", saveGeometry());
     // Per workspace, because the panels differ between them: one saved
     // arrangement restored into a different set of visible panels is a
@@ -1964,7 +1964,7 @@ void PreviewWindow::saveWorkspace() {
 }
 
 void PreviewWindow::restoreWorkspace() {
-    QSettings settings("Zaro", "Zaro Video");
+    QSettings settings("CutReel", "CutReel");
     // Each restored only if it was stored, so a first run gets the
     // stretch factors set above rather than a collapsed layout.
     if (const auto geometry = settings.value("window/geometry").toByteArray();

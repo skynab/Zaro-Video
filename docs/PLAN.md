@@ -1,4 +1,4 @@
-# Zaro Video — Build Plan
+# CutReel — Build Plan
 
 A non-linear video editor in the mold of Adobe Premiere Pro.
 C++20 / CMake / Qt 6 / FFmpeg, GPU compositing via Qt RHI.

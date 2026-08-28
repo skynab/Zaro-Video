@@ -76,7 +76,7 @@ constexpr std::array kActions{
     ActionInfo{"safe-guides", "Safe Area Guides", "View", "Ctrl+'"},
     ActionInfo{"reset-panels", "Reset Panels", "Window", ""},
     ActionInfo{"hotkeys", "Keyboard Shortcuts…", "Window", ""},
-    ActionInfo{"about", "About Zaro", "Window", ""},
+    ActionInfo{"about", "About CutReel", "Window", ""},
 
     // --- Playback and marking ----------------------------------------------
     // The single letters, which are the ones every editor binds and every pair

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ZaroVideo
+project(CutReel
     VERSION 0.1.0
     DESCRIPTION "A non-linear video editor"
     LANGUAGES CXX)
@@ -38,7 +38,7 @@ if(ZARO_BUILD_TESTS)
 endif()
 
 message(STATUS "")
-message(STATUS "Zaro Video ${PROJECT_VERSION}")
+message(STATUS "CutReel ${PROJECT_VERSION}")
 message(STATUS "  build type ......... ${CMAKE_BUILD_TYPE}")
 message(STATUS "  tests .............. ${ZARO_BUILD_TESTS}")
 message(STATUS "  warnings as errors . ${ZARO_WARNINGS_AS_ERRORS}")

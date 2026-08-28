@@ -66,7 +66,7 @@ Result<std::string> bakeCube(const model::Clip& clip, media::TransferFunction tr
     const LutTable* look = clip.lut.isSet() ? looks.tableFor(clip.lut.path, transfer) : nullptr;
 
     std::ostringstream out;
-    out << "# Written by Zaro\n";
+    out << "# Written by CutReel\n";
     if (!title.empty()) {
         out << "TITLE \"" << title << "\"\n";
     }

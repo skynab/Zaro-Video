@@ -20,7 +20,7 @@ static_assert(sizeof(void*) >= 4, "unsupported target");
 __extension__ using Wide = __int128;
 #else
 #error \
-    "Zaro's rational arithmetic needs a 128-bit integer type. \
+    "CutReel's rational arithmetic needs a 128-bit integer type. \
 Port makeChecked() to a checked-64-bit path before enabling this target."
 #endif
 

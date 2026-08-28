@@ -229,7 +229,7 @@ void Keymap::resetAll() {
 
 std::string Keymap::encode() const {
     std::ostringstream out;
-    out << "# Zaro keymap. One line per changed shortcut: action-id = keystroke.\n";
+    out << "# CutReel keymap. One line per changed shortcut: action-id = keystroke.\n";
     out << "# An empty keystroke means the action has none. Delete a line to go\n";
     out << "# back to the default.\n";
     for (const auto& [id, shortcut] : changed_) {
