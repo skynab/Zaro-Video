@@ -9,6 +9,12 @@ add_library(zaro_app_ui STATIC
     PreviewWindow.h
     ActionRouter.cpp
     ActionRouter.h
+    Document.cpp
+    Document.h
+    chrome/Bars.cpp
+    chrome/Bars.h
+    chrome/Widgets.cpp
+    chrome/Widgets.h
     chrome/Choices.cpp
     chrome/Choices.h
     chrome/Menus.cpp

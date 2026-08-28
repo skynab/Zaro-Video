@@ -115,6 +115,7 @@
 #include "ColorPalette.h"
 #include "CurveEditor.h"
 #include "DeliverPanel.h"
+#include "Document.h"
 #include "EffectControls.h"
 #include "ExportDialog.h"
 #include "FrameThumb.h"
@@ -137,8 +138,10 @@
 #include "TimelineWidget.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
+#include "chrome/Bars.h"
 #include "chrome/Choices.h"
 #include "chrome/Menus.h"
+#include "chrome/Widgets.h"
 #include "commands/Analysis.h"
 #include "commands/Context.h"
 #include "commands/Media.h"
@@ -174,11 +177,11 @@ inline const QString kSupportUrl = "https://github.com/skynab/Zaro-Video";
 
 class PreviewWindow : public QWidget {
 public:
-    PreviewWindow(model::Project project, io::LoadedProject loaded, std::string path)
-        : project_{std::move(project)}, loaded_{std::move(loaded)}, path_{std::move(path)} {
-        sequenceId_ = project_.activeSequence();
-        // What was just loaded is what is on disk, by definition.
-        commands_.markSaved();
+    PreviewWindow(model::Project project, io::LoadedProject loaded, std::string path) {
+        // What was just loaded is what is on disk, by definition, and adopt
+        // marks it so.
+        document_.adopt(std::move(project), std::move(loaded), std::move(path));
+        sequenceId_ = document_.project().activeSequence();
 
         monitor_ = new app::ProgramMonitor(this);
         // Narrow enough that a source and a program fit side by side in a
@@ -209,23 +212,23 @@ public:
         viewerOverlay_ = new app::ViewerOverlay(monitor_, monitor_);
         maskOverlay_->raise();
 
-        timecode_ = new QLabel(this);
-        timecode_->setObjectName("timecode-big");
+        bars_.timecode = new QLabel(this);
+        bars_.timecode->setObjectName("timecode-big");
         // Ask the system for its fixed-width family rather than naming one:
         // a missing family costs a slow alias lookup and silently falls back.
         QFont monospace = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         monospace.setPointSize(17);
-        timecode_->setFont(monospace);
-        remaining_ = new QLabel(this);
+        bars_.timecode->setFont(monospace);
+        bars_.remaining = new QLabel(this);
         QFont smallMonospace = monospace;
         smallMonospace.setPointSize(11);
-        remaining_->setFont(smallMonospace);
-        remaining_->setProperty("muted", true);
-        playButton_ = new QPushButton(kPlayGlyph, this);
-        playButton_->setToolTip("Play or pause (Space)");
-        playButton_->setProperty("accent", true);
-        playButton_->setFixedSize(46, 30);
-        scrubber_ = new QSlider(Qt::Horizontal, this);
+        bars_.remaining->setFont(smallMonospace);
+        bars_.remaining->setProperty("muted", true);
+        bars_.playButton = new QPushButton(kPlayGlyph, this);
+        bars_.playButton->setToolTip("Play or pause (Space)");
+        bars_.playButton->setProperty("accent", true);
+        bars_.playButton->setFixedSize(46, 30);
+        bars_.scrubber = new QSlider(Qt::Horizontal, this);
 
         timeline_ = adopting(new app::TimelineWidget(this));
         effects_ = adopting(new app::EffectControls(this));
@@ -324,10 +327,10 @@ public:
         // ever answer "which one" -- never "both". Either can be off, including
         // both, because a window given over to the timeline is a real way to
         // work and the well is the largest thing to reclaim.
-        viewerWell_ = new QWidget(this);
-        viewerWell_->setObjectName("viewer-well");
-        viewerWell_->setAttribute(Qt::WA_StyledBackground, true);
-        auto* wellRow = new QHBoxLayout(viewerWell_);
+        bars_.viewerWell = new QWidget(this);
+        bars_.viewerWell->setObjectName("viewer-well");
+        bars_.viewerWell->setAttribute(Qt::WA_StyledBackground, true);
+        auto* wellRow = new QHBoxLayout(bars_.viewerWell);
         wellRow->setContentsMargins(12, 12, 12, 12);
         wellRow->setSpacing(12);
         wellRow->addWidget(source_, 1);
@@ -338,18 +341,19 @@ public:
         // that crosses the whole window is a glance nobody takes.
         scopes_->setFixedWidth(330);
         wellRow->addWidget(scopes_);
-        noMonitorLabel_ = new QLabel("No monitor shown \u2014 turn on Source or Program", this);
-        noMonitorLabel_->setAlignment(Qt::AlignCenter);
-        noMonitorLabel_->setProperty("muted", true);
-        wellRow->addWidget(noMonitorLabel_, 1);
+        bars_.noMonitorLabel =
+            new QLabel("No monitor shown \u2014 turn on Source or Program", this);
+        bars_.noMonitorLabel->setAlignment(Qt::AlignCenter);
+        bars_.noMonitorLabel->setProperty("muted", true);
+        wellRow->addWidget(bars_.noMonitorLabel, 1);
 
         auto* programColumn = new QWidget(this);
         auto* programLayout = new QVBoxLayout(programColumn);
         programLayout->setContentsMargins(0, 0, 0, 0);
         programLayout->setSpacing(0);
-        viewerBar_ = buildViewerBar();
-        programLayout->addWidget(viewerBar_);
-        programLayout->addWidget(viewerWell_, 1);
+        bars_.viewerBar = buildViewerBar();
+        programLayout->addWidget(bars_.viewerBar);
+        programLayout->addWidget(bars_.viewerWell, 1);
         // The console takes the centre in Audio, where the picture is in every
         // other workspace: a mix is read across ten channels at once, and a
         // column of strips squeezed into a side panel is a column nobody can
@@ -370,9 +374,9 @@ public:
         leftLayout->addWidget(loudness_);
         leftLayout->addWidget(stems_);
         leftLayout->addStretch(1);
-        audioSide_ = leftColumn;
+        bars_.audioSide = leftColumn;
 
-        topSplitter_->addWidget(audioSide_);
+        topSplitter_->addWidget(bars_.audioSide);
         topSplitter_->addWidget(gallery_);
         topSplitter_->addWidget(bin_);
         topSplitter_->addWidget(programColumn);
@@ -386,12 +390,12 @@ public:
         auto* gradeLayout = new QVBoxLayout(gradeColumn);
         gradeLayout->setContentsMargins(0, 0, 0, 0);
         gradeLayout->setSpacing(0);
-        nodesBox_ = new QWidget(gradeColumn);
-        nodesBox_->setObjectName("grade-nodes-box");
-        auto* nodesLayout = new QVBoxLayout(nodesBox_);
+        bars_.nodesBox = new QWidget(gradeColumn);
+        bars_.nodesBox->setObjectName("grade-nodes-box");
+        auto* nodesLayout = new QVBoxLayout(bars_.nodesBox);
         nodesLayout->setContentsMargins(12, 10, 12, 10);
         nodesLayout->addWidget(nodes_);
-        gradeLayout->addWidget(nodesBox_);
+        gradeLayout->addWidget(bars_.nodesBox);
         gradeLayout->addWidget(effects_, 1);
 
         auto* rightColumn = new QSplitter(Qt::Vertical, this);
@@ -474,23 +478,23 @@ public:
                 [this](const QString& path) { applyLookToSelection(path); });
 
         connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
-            if (const model::MediaRef* ref = project_.findMedia(id)) {
+            if (const model::MediaRef* ref = document_.project().findMedia(id)) {
                 source_->load(*ref);
                 // Opening a clip is a request to look at it.
                 setSourceShown(true);
             }
         });
-        connect(bin_, &app::ProjectBin::openSubclipRequested, this,
-                [this](zaro::model::SubclipId id) {
-                    const model::Subclip* subclip = project_.findSubclip(id);
-                    if (subclip == nullptr) {
-                        return;
-                    }
-                    if (const model::MediaRef* ref = project_.findMedia(subclip->source)) {
-                        source_->loadMarked(*ref, subclip->range);
-                        setSourceShown(true);
-                    }
-                });
+        connect(
+            bin_, &app::ProjectBin::openSubclipRequested, this, [this](zaro::model::SubclipId id) {
+                const model::Subclip* subclip = document_.project().findSubclip(id);
+                if (subclip == nullptr) {
+                    return;
+                }
+                if (const model::MediaRef* ref = document_.project().findMedia(subclip->source)) {
+                    source_->loadMarked(*ref, subclip->range);
+                    setSourceShown(true);
+                }
+            });
         connect(bin_, &app::ProjectBin::colorChanged, this, [this] {
             // The media source resolved each file's curve when it opened, so
             // correcting one means reopening -- the same swap the proxy toggle
@@ -510,7 +514,7 @@ public:
         connect(source_, &app::SourceMonitor::overwriteRequested, this,
                 [this] { placeFromSource(edit::PlaceMode::Overwrite); });
         connect(bin_, &app::ProjectBin::edited, this, [this] {
-            scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+            bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
             timeline_->update();
             monitor_->update();
             refresh();
@@ -519,8 +523,8 @@ public:
         mainSplitter_ = new QSplitter(Qt::Vertical, this);
         mainSplitter_->setHandleWidth(1);
         mainSplitter_->addWidget(topSplitter_);
-        timelinePane_ = buildTimelinePane();
-        mainSplitter_->addWidget(timelinePane_);
+        bars_.timelinePane = buildTimelinePane();
+        mainSplitter_->addWidget(bars_.timelinePane);
         // The grading palette takes the timeline's place in Color. Not beside
         // it: the design gives that workspace no timeline at all, because what
         // a colourist moves through is shots, and the strip under the viewer is
@@ -536,16 +540,16 @@ public:
         deliver_ = adopting(new app::DeliverPanel(this));
         connect(deliver_, &app::DeliverPanel::queueChanged, this, [this] { updateChrome(); });
 
-        workspaceStack_ = new QStackedWidget(this);
-        workspaceStack_->addWidget(mainSplitter_);
-        workspaceStack_->addWidget(deliver_);
+        bars_.workspaceStack = new QStackedWidget(this);
+        bars_.workspaceStack->addWidget(mainSplitter_);
+        bars_.workspaceStack->addWidget(deliver_);
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
         layout->addWidget(buildTitleBar());
         layout->addWidget(buildToolBar());
-        layout->addWidget(workspaceStack_, 1);
+        layout->addWidget(bars_.workspaceStack, 1);
         layout->addWidget(buildStatusBar());
 
         connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
@@ -559,7 +563,8 @@ public:
                     palette_->setSelection(track, clip);
                     clipStrip_->setSelection(track, clip);
                     refreshGradeChain();
-                    maskOverlay_->setTarget(&project_, sequenceId_, track, clip, &commands_);
+                    maskOverlay_->setTarget(&document_.project(), sequenceId_, track, clip,
+                                            &document_.commands());
                 });
         connect(scopes_, &app::ScopesPanel::measurementNeeded, this,
                 [this] { refreshInstruments(); });
@@ -599,7 +604,7 @@ public:
             mixer_->refresh();
             // An edit can change the duration, and can change what is under the
             // playhead, so both the scrubber and the picture need refreshing.
-            scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+            bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
             monitor_->update();
             refresh();
             // An edit invalidates whatever it shows on, so the bar has to be
@@ -609,8 +614,8 @@ public:
             updateTitle();
         });
 
-        connect(playButton_, &QPushButton::clicked, this, [this] { togglePlay(); });
-        connect(scrubber_, &QSlider::sliderMoved, this, [this](int value) {
+        connect(bars_.playButton, &QPushButton::clicked, this, [this] { togglePlay(); });
+        connect(bars_.scrubber, &QSlider::sliderMoved, this, [this](int value) {
             // Scrubbing stops playback: the playhead is being driven by hand,
             // and having the clock fight it is what makes scrubbing feel loose.
             stop();
@@ -671,12 +676,12 @@ public:
     /// while changing what it counts into is how a window ends up parked past
     /// the end of something.
     void setActiveSequence(model::SequenceId id) {
-        if (project_.findSequence(id) == nullptr) {
+        if (document_.project().findSequence(id) == nullptr) {
             return;
         }
-        project_.setActiveSequence(id);
+        document_.project().setActiveSequence(id);
         sequenceId_ = id;
-        position_ = time::RationalTime{0, project_.findSequence(id)->frameRate()};
+        position_ = time::RationalTime{0, document_.project().findSequence(id)->frameRate()};
         selectedTrack_ = model::TrackId{};
         selectedClip_ = model::ClipId{};
         renderCache_.clear();
@@ -694,14 +699,14 @@ public:
     /// but it is one list, and a panel that does not appear in it cannot be
     /// bound anywhere else either, which is a failure somebody notices.
     void rebindSequence() {
-        const ui::SequenceBinding binding{&project_, sequenceId_, &commands_};
+        const ui::SequenceBinding binding{&document_.project(), sequenceId_, &document_.commands()};
         for (ui::SequenceBound* panel : bound_) {
             if (panel != nullptr) {
                 panel->bind(binding);
             }
         }
         monitor_->setSource(liveSequence(), media_.get());
-        monitor_->setNesting(&project_, media_.get());
+        monitor_->setNesting(&document_.project(), media_.get());
         monitor_->setRenderCache(&renderCache_);
         monitor_->setTextRasterizer(&text_);
         monitor_->update();
@@ -713,13 +718,14 @@ public:
     /// window changes, and a cached copy would be a second answer to questions
     /// that already have one.
     [[nodiscard]] commands::Context editContext() {
-        return commands::Context{ui::SequenceBinding{&project_, sequenceId_, &commands_},
-                                 selectedTrack_,
-                                 selectedClip_,
-                                 position_,
-                                 media_.get(),
-                                 &renderCache_,
-                                 &text_};
+        return commands::Context{
+            ui::SequenceBinding{&document_.project(), sequenceId_, &document_.commands()},
+            selectedTrack_,
+            selectedClip_,
+            position_,
+            media_.get(),
+            &renderCache_,
+            &text_};
     }
 
     /// Show what an edit did.
@@ -729,7 +735,7 @@ public:
     /// needs none of this, and a caller that forgets one of them gets a picture
     /// that does not match the project rather than an error.
     void afterEdit() {
-        commands_.breakMerge();
+        document_.commands().breakMerge();
         renderCache_.clear();
         monitor_->update();
         timeline_->update();
@@ -766,7 +772,7 @@ public:
     template <typename Panel>
     Panel* adopting(Panel* panel) {
         bound_.push_back(panel);
-        panel->bind(ui::SequenceBinding{&project_, sequenceId_, &commands_});
+        panel->bind(ui::SequenceBinding{&document_.project(), sequenceId_, &document_.commands()});
         return panel;
     }
 
@@ -801,7 +807,7 @@ public:
     }
 
     [[nodiscard]] const model::Sequence* sequence() const { return liveSequence(); }
-    [[nodiscard]] model::Project& project() { return project_; }
+    [[nodiscard]] model::Project& project() { return document_.project(); }
 
     /// Block until the background peak generation has finished and its results
     /// have been delivered. For the self-test, which would otherwise capture
@@ -817,10 +823,10 @@ public:
     /// The active sequence, looked up each time. A handful of sequences and a
     /// linear scan: cheaper than any of the ways of getting this wrong.
     [[nodiscard]] const model::Sequence* liveSequence() const {
-        return project_.findSequence(sequenceId_);
+        return document_.project().findSequence(sequenceId_);
     }
 
-    [[nodiscard]] edit::CommandStack& commands() { return commands_; }
+    [[nodiscard]] edit::CommandStack& commands() { return document_.commands(); }
     [[nodiscard]] render::RenderCache& renderCache() { return renderCache_; }
 
     /// Match the selected clip to the frame being held as the reference.
@@ -907,7 +913,7 @@ public:
         }
         if (browser_->folder().empty()) {
             std::string start = std::filesystem::current_path().string();
-            for (const model::MediaRef& media : project_.media()) {
+            for (const model::MediaRef& media : document_.project().media()) {
                 const std::filesystem::path parent =
                     std::filesystem::path{media.path}.parent_path();
                 if (!parent.empty() && std::filesystem::is_directory(parent)) {
@@ -1147,74 +1153,35 @@ public:
     /// interface rather than from the filesystem, the interruption costs more
     /// than the protection is worth. `ZARO_LOCKING=1` turns it back on, and
     /// the self-test turns it on for the block that checks it.
-    static bool lockingEnabled() { return locking_; }
-    static void setLockingEnabled(bool enabled) { locking_ = enabled; }
+    static bool lockingEnabled() { return Document::lockingEnabled(); }
+    static void setLockingEnabled(bool enabled) { Document::setLockingEnabled(enabled); }
 
-    /// How to treat a project somebody else already has open.
-    enum class Sharing : std::uint8_t {
-        /// Take the lock if it is free or stale; refuse to open otherwise.
-        Exclusive,
-        /// Open it anyway, without saving over their work.
-        ReadOnly,
-        /// Their lock is stale or they have gone home: take it.
-        TakeOver,
-    };
+    using Sharing = Document::Sharing;
 
+    /// Open a project, deciding first whether anybody else has it.
     [[nodiscard]] Status openProject(const std::string& path,
                                      Sharing sharing = Sharing::Exclusive) {
-        auto loaded = io::loadProject(path);
-        if (!loaded) {
-            return loaded.error();
+        auto opened = document_.read(path, sharing);
+        if (!opened) {
+            return opened.error();
         }
-        if (loaded->project.findSequence(loaded->project.activeSequence()) == nullptr) {
-            return Error{ErrorCode::InvalidData, "that project has no active sequence"};
-        }
-
-        // Whether anybody else is in it, decided before anything is replaced:
-        // refusing after the window has already changed would be worse than
-        // not opening at all.
-        bool readOnly = false;
-        if (auto held = io::readLock(path); lockingEnabled() && held && !io::isOurs(*held)) {
-            const bool free = io::isStale(*held);
-            if (!free && sharing == Sharing::Exclusive) {
-                return Error{ErrorCode::InvalidData,
-                             held->user + " has this project open on " + held->host};
-            }
-            readOnly = !free && sharing == Sharing::ReadOnly;
-        }
-
-        releaseLock();
-        adopt(std::move(loaded->project), std::move(*loaded), path);
-        readOnly_ = readOnly;
-        if (lockingEnabled() && !readOnly_) {
-            // Advisory, so a volume that will not take one is not a reason to
-            // refuse to work: the failure is ignored on purpose.
-            static_cast<void>(io::writeLock(path, io::thisProcess()));
-        }
+        document_.releaseLock();
+        const bool readOnly = opened->readOnly;
+        model::Project project = opened->loaded.project;
+        adopt(std::move(project), std::move(opened->loaded), path, readOnly);
+        document_.takeLock();
         updateTitle();
         return {};
     }
 
     /// Whether this window may write over the project it has open.
-    [[nodiscard]] bool isReadOnly() const noexcept { return readOnly_; }
+    [[nodiscard]] bool isReadOnly() const noexcept { return document_.isReadOnly(); }
 
     /// Who else has this project, if anybody. Empty when it is ours or free.
-    [[nodiscard]] std::string heldBy() const {
-        if (path_.empty()) {
-            return {};
-        }
-        auto held = io::readLock(path_);
-        if (!held || io::isOurs(*held) || io::isStale(*held)) {
-            return {};
-        }
-        return held->user + " on " + held->host;
-    }
+    /// Who else has this project, if anybody.
+    [[nodiscard]] std::string heldBy() const { return document_.heldBy(); }
 
-    void releaseLock() {
-        if (!path_.empty() && !readOnly_) {
-            static_cast<void>(io::removeLock(path_));
-        }
-    }
+    void releaseLock() { document_.releaseLock(); }
 
     /// Start again, with somewhere to put something.
     void newProject() {
@@ -1227,27 +1194,27 @@ public:
     /// The same no-dialog bargain closing makes: whatever was unsaved is
     /// written to its recovery file first, so switching projects never asks a
     /// question and never loses anything.
-    void adopt(model::Project project, io::LoadedProject loaded, std::string path) {
-        autosave();
+    /// Replace what this window is showing.
+    ///
+    /// The document takes the project; everything here is the window catching
+    /// up with it -- rebinding the panels, reopening the media, and forgetting
+    /// what was selected in a project that has gone.
+    void adopt(model::Project project, io::LoadedProject loaded, std::string path,
+               bool readOnly = false) {
+        document_.autosave();
         stop();
 
-        project_ = std::move(project);
-        loaded_ = std::move(loaded);
-        path_ = std::move(path);
-        // Read-only is a fact about the file that has just gone, not about the
-        // window. Left set, it would follow somebody into a new project and
-        // refuse to save it, naming a person who has nothing to do with it.
-        readOnly_ = false;
-        sequenceId_ = project_.activeSequence();
-        position_ = time::RationalTime{0, project_.findSequence(sequenceId_)->frameRate()};
+        document_.adopt(std::move(project), std::move(loaded), std::move(path));
+        document_.setReadOnly(readOnly);
+        sequenceId_ = document_.project().activeSequence();
+        position_ =
+            time::RationalTime{0, document_.project().findSequence(sequenceId_)->frameRate()};
         selectedTrack_ = model::TrackId{};
         selectedClip_ = model::ClipId{};
 
-        // The history and the cache belong to the project that has just gone.
-        // A frame cached from it would be served for the new one -- the recipe
-        // covers what is in a sequence, not which project it came from.
-        commands_.clear();
-        commands_.markSaved();
+        // A frame cached from the project that has gone would be served for the
+        // new one: the recipe covers what is in a sequence, not which project
+        // it came from.
         renderCache_.clear();
 
         // Bound before the media is opened as well as after, so that a project
@@ -1272,36 +1239,30 @@ public:
     ///
     /// Returns false when it could not be written, so a caller that was about
     /// to do something irreversible knows not to.
+    /// Write the project back where it came from.
+    ///
+    /// Returns false when it could not be written, so a caller that was about
+    /// to do something irreversible knows not to.
     bool save() {
-        if (path_.empty()) {
+        if (document_.path().empty()) {
             return saveAs();
         }
-        if (readOnly_) {
-            // Said on stderr and in the title bar, never in a dialog.
-            //
-            // This one was the worst offender: a project with a stale lock
-            // beside it -- left by a killed process, or by a test -- turned
-            // every Ctrl+S into a box somebody had to dismiss before they could
-            // carry on. The window title already carries "[read only]", which
-            // is where a state belongs; a refusal does not also need to
-            // interrupt.
-            std::fprintf(stderr,
-                         "zaro: read only: %s has this project open; save a new "
-                         "version to keep your work\n",
-                         heldBy().empty() ? "somebody else" : heldBy().c_str());
-            return false;
-        }
-        if (Status written = io::saveProject(project_, path_, loaded_.unknown); !written) {
+        if (Status written = document_.save(); !written) {
+            if (document_.isReadOnly()) {
+                // Said on stderr and in the title bar, never in a dialog.
+                //
+                // This one was the worst offender: a project with a stale lock
+                // beside it -- left by a killed process, or by a test -- turned
+                // every Ctrl+S into a box somebody had to dismiss before they
+                // could carry on. The window title already carries
+                // "[read only]", which is where a state belongs; a refusal does
+                // not also need to interrupt.
+                std::fprintf(stderr, "zaro: %s\n", written.error().message().c_str());
+                return false;
+            }
             app::warn(this, "Save", QString::fromStdString(written.error().toString()));
             return false;
         }
-        commands_.markSaved();
-        // The recovery file describes work that is now in the project itself.
-        // Left behind, it would be offered on the next open as though it were
-        // newer, which is an alarming thing to be asked about a file that is
-        // already correct.
-        std::error_code code;
-        std::filesystem::remove(io::autosavePath(path_), code);
         updateTitle();
         return true;
     }
@@ -1312,36 +1273,25 @@ public:
     /// point: a version is a line somebody draws under what they had, and the
     /// next hour's work belongs after the line. The previous file is left
     /// exactly as it was, which is the other half of the point.
+    /// Save as the next version beside this one, and carry on in it.
     Result<std::string> saveNewVersion() {
-        if (path_.empty()) {
-            // Nowhere to count from. Asking where to put it is the honest
-            // answer, and after that there is a version one to count from.
-            return Error{ErrorCode::InvalidData, "save this project once before versioning it"};
+        auto next = document_.saveNewVersion();
+        if (next) {
+            updateTitle();
         }
-        const std::string next = io::nextVersionPath(path_);
-        if (Status written = io::saveProject(project_, next, loaded_.unknown); !written) {
-            return written.error();
-        }
-        setProjectPath(next);
-        // A new version is a different file, which nobody else has open.
-        readOnly_ = false;
-        commands_.markSaved();
-        std::error_code code;
-        std::filesystem::remove(io::autosavePath(next), code);
-        updateTitle();
         return next;
     }
 
     /// The versions beside this project, to jump between.
     void openVersionMenu() {
-        if (path_.empty()) {
+        if (document_.path().empty()) {
             app::say(this, "Version", "This project has not been saved yet.");
             return;
         }
         QMenu menu;
         std::map<QAction*, std::string> paths;
-        for (const std::string& version : io::versionsOf(path_)) {
-            const bool current = version == path_;
+        for (const std::string& version : io::versionsOf(document_.path())) {
+            const bool current = version == document_.path();
             QAction* action = menu.addAction(
                 QString::fromStdString(std::filesystem::path{version}.filename().string()));
             action->setCheckable(true);
@@ -1408,53 +1358,45 @@ public:
 
     bool saveAs() {
         const QString chosen = QFileDialog::getSaveFileName(
-            this, "Save project", QString::fromStdString(path_.empty() ? "project.zaro" : path_),
+            this, "Save project",
+            QString::fromStdString(document_.path().empty() ? "project.zaro" : document_.path()),
             "Zaro projects (*.zaro)");
         if (chosen.isEmpty()) {
             return false;
         }
-        // Saving somewhere else is exactly the way out of somebody else's
-        // lock, so it clears read-only rather than being refused by it -- the
-        // old advice was "save a new version to keep your work", which the
-        // program then would not let anybody do.
-        setProjectPath(chosen.toStdString());
-        readOnly_ = false;
-        return save();
+        if (Status written = document_.saveAs(chosen.toStdString()); !written) {
+            app::warn(this, "Save", QString::fromStdString(written.error().toString()));
+            return false;
+        }
+        updateTitle();
+        return true;
     }
 
     /// Write the recovery file, if there is anything to recover.
-    void autosave() {
-        if (path_.empty() || !commands_.isModified()) {
-            return;
-        }
-        // Failures are silent on purpose. An autosave is something the program
-        // does on its own, and a dialog interrupting somebody mid-edit to
-        // report it is worse than the missing file -- the next explicit save
-        // will report the same problem at a moment they are expecting an
-        // answer.
-        static_cast<void>(io::saveProject(project_, io::autosavePath(path_), loaded_.unknown));
-    }
+    void autosave() { document_.autosave(); }
 
-    [[nodiscard]] const std::string& projectPath() const noexcept { return path_; }
+    [[nodiscard]] const std::string& projectPath() const noexcept { return document_.path(); }
 
     /// Point Save at a different file. What Save As does once somebody has
     /// chosen one.
+    /// Point Save at a different file.
     void setProjectPath(std::string path) {
-        path_ = std::move(path);
+        document_.setPath(std::move(path));
         updateTitle();
     }
 
     /// The file name, and whether it differs from what is on disk.
     void updateTitle() {
-        const QString name = path_.empty() ? QString{"Untitled"}
-                                           : QFileInfo(QString::fromStdString(path_)).fileName();
+        const QString name = document_.path().empty()
+                                 ? QString{"Untitled"}
+                                 : QFileInfo(QString::fromStdString(document_.path())).fileName();
         // Said in the title, because read-only is a fact about the whole
         // window and finding out at the moment of saving is finding out too
         // late.
-        setWindowTitle(
-            QString("%1%2%3 — Zaro")
-                .arg(name, commands_.isModified() ? "*" : "", readOnly_ ? " [read only]" : ""));
-        if (statusLeft_ != nullptr) {
+        setWindowTitle(QString("%1%2%3 — Zaro")
+                           .arg(name, document_.commands().isModified() ? "*" : "",
+                                document_.isReadOnly() ? " [read only]" : ""));
+        if (bars_.statusLeft != nullptr) {
             updateChrome();
         }
     }
@@ -1465,7 +1407,7 @@ public:
         if (!found) {
             return;
         }
-        const model::MediaRef* ref = project_.findMedia(found->media);
+        const model::MediaRef* ref = document_.project().findMedia(found->media);
         if (ref == nullptr) {
             return;
         }
@@ -1533,8 +1475,8 @@ public:
             return;
         }
         const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
-        timeline_->setCachedSpans(
-            render::cachedSpans(renderCache_, &project_, *sequence, visible, timeline_->width()));
+        timeline_->setCachedSpans(render::cachedSpans(renderCache_, &document_.project(), *sequence,
+                                                      visible, timeline_->width()));
     }
 
     /// The work behind the menu entry, separated from the menu so that it can
@@ -1557,11 +1499,11 @@ public:
         progress.setMinimumDuration(400);
 
         render::RenderGraph graph{*media_};
-        graph.setProject(&project_);
+        graph.setProject(&document_.project());
         graph.setTextRasterizer(&text_);
         graph.setRenderCache(&renderCache_);
-        auto stats = render::prerender(graph, renderCache_, &project_, *sequence, visible,
-                                       [&progress](std::int32_t done, std::int32_t total) {
+        auto stats = render::prerender(graph, renderCache_, &document_.project(), *sequence,
+                                       visible, [&progress](std::int32_t done, std::int32_t total) {
                                            progress.setMaximum(total);
                                            progress.setValue(done);
                                            QCoreApplication::processEvents();
@@ -1576,7 +1518,7 @@ public:
     }
 
     Status openMedia() {
-        auto opened = platform::ffmpeg::ProjectMediaSource::open(project_);
+        auto opened = platform::ffmpeg::ProjectMediaSource::open(document_.project());
         if (!opened) {
             return opened.error();
         }
@@ -1588,7 +1530,7 @@ public:
         effects_->setAudioSource(media_.get());
         source_->setProvider(media_.get());
         startWaveforms();
-        scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+        bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
         refresh();
         return {};
     }
@@ -1709,46 +1651,6 @@ private:
     // The window's own furniture: a menu bar, a tool bar, the viewer's header,
     // the transport, the timeline's header and a status line. Built here rather
     // than in a designer file, in the order they are stacked on screen.
-
-    /// A small flat button, which is what most of the chrome is made of.
-    QPushButton* chromeButton(const QString& text, const QString& tip, bool checkable = false) {
-        auto* button = new QPushButton(text, this);
-        button->setToolTip(tip);
-        button->setProperty("flat", true);
-        button->setCheckable(checkable);
-        button->setFocusPolicy(Qt::NoFocus);
-        button->setMinimumWidth(0);
-        return button;
-    }
-
-    /// An icon button, which is what most of the timeline's own controls are.
-    ///
-    /// Same shape as the tool palette's buttons, so a row that mixes tools with
-    /// actions reads as one row rather than two.
-    QPushButton* chromeIconButton(app::icons::Glyph glyph, const QString& tip,
-                                  bool checkable = false) {
-        QPushButton* button = chromeButton({}, tip, checkable);
-        button->setIcon(app::icons::toolIcon(glyph));
-        button->setIconSize(QSize(17, 17));
-        button->setFixedSize(29, 26);
-        return button;
-    }
-
-    QFrame* chromeSeparator() {
-        auto* line = new QFrame(this);
-        line->setFrameShape(QFrame::VLine);
-        line->setFixedWidth(1);
-        line->setStyleSheet(
-            QString("background:%1;border:none").arg(app::theme::divider().name(QColor::HexRgb)));
-        line->setFixedHeight(20);
-        return line;
-    }
-
-    QLabel* mutedLabel(const QString& text = {}) {
-        auto* label = new QLabel(text, this);
-        label->setProperty("muted", true);
-        return label;
-    }
 
     /// Put a command on a menu, by id.
     ///
@@ -1883,8 +1785,8 @@ private:
         actions_.bind("zoom-fit", [this] { timeline_->zoomToFit(); });
         actions_.bindToggle("safe-guides", [this](bool on) {
             viewerOverlay_->setGuides(on);
-            if (guidesButton_ != nullptr) {
-                guidesButton_->setChecked(on);
+            if (bars_.guidesButton != nullptr) {
+                bars_.guidesButton->setChecked(on);
             }
         });
         actions_.bind("reset-panels", [this] { setWorkspace(workspace_); });
@@ -1897,8 +1799,8 @@ private:
     }
 
     void buildMenus() {
-        menuBar_ = chrome::buildMenuBar(
-            this, actions_, kWorkspaces, workspaceActions_,
+        bars_.menuBar = chrome::buildMenuBar(
+            this, actions_, kWorkspaces, bars_.workspaceActions,
             [this](const QString& name) { setWorkspace(name); },
             [this](QMenuBar* bar) {
                 QMenu* window = bar->addMenu("Window");
@@ -1927,31 +1829,7 @@ private:
                 [action, panel] { action->setChecked(panel()->isVisible()); });
     }
 
-    QWidget* buildTitleBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-titlebar");
-        bar->setFixedHeight(38);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(12, 0, 12, 0);
-        row->setSpacing(8);
-
-        auto* brand = new QLabel("Zaro", bar);
-        brand->setObjectName("chrome-brand");
-        row->addWidget(brand);
-        if (!menuBar_->isNativeMenuBar()) {
-            menuBar_->setParent(bar);
-            row->addWidget(menuBar_);
-        }
-        row->addStretch(1);
-
-        projectLabel_ = mutedLabel();
-        row->addWidget(projectLabel_);
-        row->addStretch(1);
-
-        autosaveLabel_ = mutedLabel();
-        row->addWidget(autosaveLabel_);
-        return bar;
-    }
+    QWidget* buildTitleBar() { return chrome::buildTitleBar(this, bars_); }
 
     /// The tool palette.
     ///
@@ -1959,330 +1837,41 @@ private:
     /// one of these tools acts on the timeline and nowhere else, and a control
     /// two panels away from the thing it changes is one people stop reaching
     /// for.
-    QWidget* buildToolPalette() {
-        // The tools, in the order a cut is made: pick, cut, trim, slip, then
-        // the two that move the view rather than the cut.
-        struct ToolEntry {
-            app::TimelineWidget::Tool tool;
-            app::icons::Glyph glyph;
-            const char* name;
-            const char* key;
+    /// The few things the bars do that are not commands. See chrome::Hooks.
+    [[nodiscard]] chrome::Hooks chromeHooks() {
+        chrome::Hooks hooks;
+        hooks.chooseWorkspace = [this](const QString& name) { setWorkspace(name); };
+        hooks.chooseTool = [this](app::TimelineWidget::Tool tool) { timeline_->setTool(tool); };
+        hooks.showSource = [this](bool on) { setSourceShown(on); };
+        hooks.showProgram = [this](bool on) { setProgramShown(on); };
+        hooks.setGuides = [this](bool on) { viewerOverlay_->setGuides(on); };
+        hooks.setSnapEnabled = [this](bool on) { timeline_->setSnapEnabled(on); };
+        hooks.setZoomFraction = [this](double fraction) { timeline_->setZoomFraction(fraction); };
+        hooks.queueRender = [this] { deliver_->queueCurrent(); };
+        hooks.toggleRendering = [this] {
+            deliver_->toggleRendering();
+            updateChrome();
         };
-        static const ToolEntry kTools[] = {
-            {app::TimelineWidget::Tool::Select, app::icons::Glyph::Cursor, "Select", "V"},
-            {app::TimelineWidget::Tool::Blade, app::icons::Glyph::Scissors, "Blade", "B"},
-            {app::TimelineWidget::Tool::Trim, app::icons::Glyph::TrimEdges, "Trim", "T"},
-            {app::TimelineWidget::Tool::Slip, app::icons::Glyph::SlipArrows, "Slip", "Y"},
-            {app::TimelineWidget::Tool::Hand, app::icons::Glyph::Hand, "Hand", "H"},
-            {app::TimelineWidget::Tool::Zoom, app::icons::Glyph::Magnifier, "Zoom", "Z"},
-        };
-        // No box around it. In the tool bar it needed one to say where the
-        // group ended; on the timeline header it is among the other buttons
-        // that act on the timeline, and a border there would be drawing a line
-        // between things that belong together.
-        auto* toolGroup = new QWidget(this);
-        auto* toolRow = new QHBoxLayout(toolGroup);
-        toolRow->setContentsMargins(2, 2, 2, 2);
-        toolRow->setSpacing(2);
-        for (const ToolEntry& entry : kTools) {
-            // The tooltip carries the key. A tool palette is aimed at rather
-            // than read -- the shape is what somebody learns -- and the letter
-            // is one hover away for as long as it takes to learn it.
-            QPushButton* button =
-                chromeButton({}, QString("%1 tool (%2)").arg(entry.name, entry.key), true);
-            button->setIcon(app::icons::toolIcon(entry.glyph));
-            button->setIconSize(QSize(17, 17));
-            button->setFixedSize(29, 26);
-            const auto tool = entry.tool;
-            connect(button, &QPushButton::clicked, this,
-                    [this, tool] { timeline_->setTool(tool); });
-            toolButtons_.push_back(button);
-            toolRow->addWidget(button);
-        }
-        return toolGroup;
+        return hooks;
     }
 
     QWidget* buildToolBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-toolbar");
-        bar->setFixedHeight(46);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(12, 0, 12, 0);
-        row->setSpacing(10);
-
-        // Snapping and markers used to be here. They belong with the timeline
-        // -- both of them are about where an edit lands, and the timeline is
-        // where edits land -- so they moved down with the tools.
-        formatLabel_ = mutedLabel();
-        row->addWidget(formatLabel_);
-        row->addStretch(1);
-
-        auto* tabGroup = new QWidget(bar);
-        tabGroup->setObjectName("tab-group");
-        // Fixed, and centred: without a height the group stretches to the whole
-        // bar, so its pill ran from the top edge to the bottom while the
-        // buttons beside it were thirty pixels tall in the middle.
-        tabGroup->setFixedHeight(30);
-        auto* tabRow = new QHBoxLayout(tabGroup);
-        tabRow->setContentsMargins(2, 2, 2, 2);
-        tabRow->setSpacing(2);
-        for (const QString& name : kWorkspaces) {
-            QPushButton* tab = chromeButton(name, QString("%1 workspace").arg(name), true);
-            tab->setFixedHeight(26);
-            connect(tab, &QPushButton::clicked, this, [this, name] { setWorkspace(name); });
-            workspaceTabs_.insert(name, tab);
-            tabRow->addWidget(tab);
-        }
-        row->addWidget(tabGroup, 0, Qt::AlignVCenter);
-        row->addStretch(1);
-
-        // Two clusters, one shown at a time: Import and Export belong to the
-        // workspaces where there is something to import into, and the queue
-        // buttons belong to Deliver. A bar that showed all four would offer
-        // Export and Start render side by side, which are the same intention
-        // asked twice.
-        actionStack_ = new QStackedWidget(bar);
-        actionStack_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
-
-        auto* editActions = new QWidget(actionStack_);
-        auto* editRow = new QHBoxLayout(editActions);
-        editRow->setContentsMargins(0, 0, 0, 0);
-        editRow->setSpacing(8);
-        auto* importButton = new QPushButton("Import", editActions);
-        importButton->setFixedHeight(30);
-        connect(importButton, &QPushButton::clicked, this, [this] { bin_->importFiles(); });
-        editRow->addWidget(importButton);
-        auto* exportButton = new QPushButton("Export", editActions);
-        exportButton->setProperty("accent", true);
-        exportButton->setFixedHeight(30);
-        connect(exportButton, &QPushButton::clicked, this, [this] { exportDialog(); });
-        editRow->addWidget(exportButton);
-        actionStack_->addWidget(editActions);
-
-        auto* deliverActions = new QWidget(actionStack_);
-        auto* deliverRow = new QHBoxLayout(deliverActions);
-        deliverRow->setContentsMargins(0, 0, 0, 0);
-        deliverRow->setSpacing(8);
-        auto* addToQueue = new QPushButton("Add to queue", deliverActions);
-        addToQueue->setFixedHeight(30);
-        connect(addToQueue, &QPushButton::clicked, this, [this] { deliver_->queueCurrent(); });
-        deliverRow->addWidget(addToQueue);
-        renderButton_ = new QPushButton("Start render", deliverActions);
-        renderButton_->setProperty("accent", true);
-        renderButton_->setFixedHeight(30);
-        connect(renderButton_, &QPushButton::clicked, this, [this] {
-            deliver_->toggleRendering();
-            updateChrome();
-        });
-        deliverRow->addWidget(renderButton_);
-        actionStack_->addWidget(deliverActions);
-        row->addWidget(actionStack_);
-
-        auto* donate = new app::SupportButton(bar);
-        donate->setObjectName("donate");
-        donate->setText("Donate");
-        donate->setToolTip(QString("Support Zaro — opens %1").arg(kSupportUrl));
-        donate->setFixedHeight(30);
-        connect(donate, &QPushButton::clicked, this,
-                [] { static_cast<void>(QDesktopServices::openUrl(QUrl{kSupportUrl})); });
-        row->addWidget(donate);
-        return bar;
+        return chrome::buildToolBar(this, bars_, actions_, chromeHooks(), kWorkspaces, kSupportUrl);
     }
 
     QWidget* buildViewerBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-viewer-bar");
-        bar->setFixedHeight(34);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(12, 0, 12, 0);
-        row->setSpacing(8);
-
-        auto* segment = new QWidget(bar);
-        segment->setObjectName("segment-group");
-        segment->setFixedHeight(28);
-        auto* segmentRow = new QHBoxLayout(segment);
-        segmentRow->setContentsMargins(2, 2, 2, 2);
-        segmentRow->setSpacing(2);
-        sourceTab_ = chromeButton("Source", "The clip opened from the bin", true);
-        programTab_ = chromeButton("Program", "The sequence at the playhead", true);
-        for (QPushButton* tab : {sourceTab_, programTab_}) {
-            tab->setFixedHeight(24);
-            segmentRow->addWidget(tab);
-        }
-        // The dot is what says "toggle" rather than "tab": two tabs in a group
-        // mean one of them is on, and these two are independent.
-        for (QPushButton* tab : {sourceTab_, programTab_}) {
-            tab->setIconSize(QSize(13, 13));
-        }
-        connect(sourceTab_, &QPushButton::toggled, this, [this](bool on) { setSourceShown(on); });
-        connect(programTab_, &QPushButton::toggled, this, [this](bool on) { setProgramShown(on); });
+        QWidget* bar = chrome::buildViewerBar(this, bars_, actions_, chromeHooks());
         syncViewers();
-        row->addWidget(segment, 0, Qt::AlignVCenter);
-
-        viewerLabel_ = mutedLabel();
-        row->addWidget(viewerLabel_);
-        row->addStretch(1);
-
-        guidesButton_ = chromeButton("Guides", "Action-safe, title-safe and the thirds", true);
-        guidesButton_->setFixedHeight(24);
-        connect(guidesButton_, &QPushButton::clicked, this, [this](bool on) {
-            viewerOverlay_->setGuides(on);
-            if (QAction* guides = actions_.find("safe-guides")) {
-                guides->setChecked(on);
-            }
-        });
-        row->addWidget(guidesButton_);
-
-        qualityLabel_ = mutedLabel();
-        row->addWidget(qualityLabel_);
         return bar;
     }
 
-    QWidget* buildTransportBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-transport");
-        auto* column = new QVBoxLayout(bar);
-        column->setContentsMargins(14, 6, 14, 8);
-        column->setSpacing(6);
-        column->addWidget(scrubber_);
-
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        timecode_->setMinimumWidth(140);
-        row->addWidget(timecode_);
-        row->addStretch(1);
-
-        struct TransportEntry {
-            const char* glyph;
-            const char* tip;
-            void (PreviewWindow::*action)();
-        };
-        static const TransportEntry kBefore[] = {
-            {"|◀", "Go to the start (Home)", &PreviewWindow::goToStart},
-            {"◁", "Back one frame (Left)", &PreviewWindow::stepBack},
-        };
-        static const TransportEntry kAfter[] = {
-            {"▷", "Forward one frame (Right)", &PreviewWindow::stepForward},
-            {"▶|", "Go to the end (End)", &PreviewWindow::goToEnd},
-        };
-        const auto addTransport = [&](const TransportEntry& entry) {
-            QPushButton* button = chromeButton(entry.glyph, entry.tip);
-            button->setFixedSize(32, 30);
-            const auto action = entry.action;
-            connect(button, &QPushButton::clicked, this, [this, action] { (this->*action)(); });
-            row->addWidget(button);
-        };
-        for (const TransportEntry& entry : kBefore) {
-            addTransport(entry);
-        }
-        row->addWidget(playButton_);
-        for (const TransportEntry& entry : kAfter) {
-            addTransport(entry);
-        }
-
-        row->addWidget(chromeSeparator());
-        QPushButton* markIn = chromeButton("[", "Mark in (I)");
-        markIn->setFixedSize(30, 30);
-        connect(markIn, &QPushButton::clicked, this, [this] { doMarkIn(); });
-        row->addWidget(markIn);
-        QPushButton* markOut = chromeButton("]", "Mark out (O)");
-        markOut->setFixedSize(30, 30);
-        connect(markOut, &QPushButton::clicked, this, [this] { doMarkOut(); });
-        row->addWidget(markOut);
-
-        row->addStretch(1);
-        remaining_->setMinimumWidth(140);
-        remaining_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(remaining_);
-        column->addLayout(row);
-        return bar;
-    }
+    QWidget* buildTransportBar() { return chrome::buildTransportBar(this, bars_, actions_); }
 
     QWidget* buildTimelinePane() {
-        auto* pane = new QWidget(this);
-        auto* column = new QVBoxLayout(pane);
-        column->setContentsMargins(0, 0, 0, 0);
-        column->setSpacing(0);
-
-        auto* bar = new QWidget(pane);
-        bar->setObjectName("chrome-timeline-bar");
-        bar->setFixedHeight(34);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(10, 0, 10, 0);
-        row->setSpacing(8);
-        auto* title = new QLabel("Timeline", bar);
-        row->addWidget(title);
-        timelineLabel_ = mutedLabel();
-        row->addWidget(timelineLabel_);
-        row->addWidget(chromeSeparator());
-        row->addWidget(buildToolPalette());
-
-        QPushButton* razor =
-            chromeIconButton(app::icons::Glyph::Split, "Razor at the playhead (C)");
-        connect(razor, &QPushButton::clicked, this, [this] { timeline_->razorAtPlayhead(); });
-        row->addWidget(razor);
-
-        QPushButton* dissolve = chromeIconButton(app::icons::Glyph::CrossFade,
-                                                 "Put a dissolve on the cut at the playhead");
-        connect(dissolve, &QPushButton::clicked, this,
-                [this] { timeline_->addDissolveAtPlayhead(); });
-        row->addWidget(dissolve);
-
-        row->addWidget(chromeSeparator());
-
-        snapButton_ = chromeIconButton(app::icons::Glyph::Magnet,
-                                       "Pull edits to the edit points near them (S)", true);
-        connect(snapButton_, &QPushButton::clicked, this,
-                [this](bool on) { timeline_->setSnapEnabled(on); });
-        row->addWidget(snapButton_);
-
-        QPushButton* markerButton =
-            chromeIconButton(app::icons::Glyph::Bookmark, "Add a marker at the playhead (M)");
-        connect(markerButton, &QPushButton::clicked, this,
-                [this] { timeline_->addMarkerAtPlayhead(); });
-        row->addWidget(markerButton);
-
-        row->addStretch(1);
-        snapLabel_ = mutedLabel();
-        row->addWidget(snapLabel_);
-        auto* zoomOut = chromeIconButton(app::icons::Glyph::Minus, "Zoom out (−)");
-        connect(zoomOut, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.0 / 1.4); });
-        row->addWidget(zoomOut);
-        zoomSlider_ = new QSlider(Qt::Horizontal, bar);
-        zoomSlider_->setFixedWidth(96);
-        zoomSlider_->setRange(0, 1000);
-        zoomSlider_->setFocusPolicy(Qt::NoFocus);
-        connect(zoomSlider_, &QSlider::valueChanged, this, [this](int value) {
-            if (zoomSlider_->isSliderDown()) {
-                timeline_->setZoomFraction(value / 1000.0);
-            }
-        });
-        row->addWidget(zoomSlider_);
-        auto* zoomIn = chromeIconButton(app::icons::Glyph::Plus, "Zoom in (+)");
-        connect(zoomIn, &QPushButton::clicked, this, [this] { timeline_->zoomBy(1.4); });
-        row->addWidget(zoomIn);
-
-        column->addWidget(bar);
-        column->addWidget(timeline_, 1);
-        return pane;
+        return chrome::buildTimelinePane(this, bars_, actions_, chromeHooks(), timeline_);
     }
 
-    QWidget* buildStatusBar() {
-        auto* bar = new QWidget(this);
-        bar->setObjectName("chrome-statusbar");
-        bar->setFixedHeight(26);
-        auto* row = new QHBoxLayout(bar);
-        row->setContentsMargins(12, 0, 12, 0);
-        row->setSpacing(16);
-        statusLeft_ = mutedLabel();
-        statusMiddle_ = mutedLabel();
-        statusRight_ = mutedLabel();
-        row->addWidget(statusLeft_);
-        row->addWidget(statusMiddle_);
-        row->addStretch(1);
-        row->addWidget(statusRight_);
-        return bar;
-    }
+    QWidget* buildStatusBar() { return chrome::buildStatusBar(this, bars_); }
 
     /// Show what is turned on, and say so on the toggles and in the well.
     ///
@@ -2292,14 +1881,14 @@ private:
     void syncViewers() {
         source_->setVisible(sourceShown_);
         monitor_->setVisible(programShown_);
-        noMonitorLabel_->setVisible(!sourceShown_ && !programShown_);
+        bars_.noMonitorLabel->setVisible(!sourceShown_ && !programShown_);
         // These do not re-enter: setChecked only emits when the value moves,
         // and by here it already is what it is being set to.
-        sourceTab_->setChecked(sourceShown_);
-        programTab_->setChecked(programShown_);
-        sourceTab_->setIcon(app::icons::toolIcon(
+        bars_.sourceTab->setChecked(sourceShown_);
+        bars_.programTab->setChecked(programShown_);
+        bars_.sourceTab->setIcon(app::icons::toolIcon(
             sourceShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
-        programTab_->setIcon(app::icons::toolIcon(
+        bars_.programTab->setIcon(app::icons::toolIcon(
             programShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
     }
 
@@ -2351,9 +1940,9 @@ public:
         const bool colour = name == "Color";
         const bool audio = name == "Audio";
         const bool deliver = name == "Deliver";
-        if (workspaceStack_ != nullptr) {
-            workspaceStack_->setCurrentIndex(deliver ? 1 : 0);
-            actionStack_->setCurrentIndex(deliver ? 1 : 0);
+        if (bars_.workspaceStack != nullptr) {
+            bars_.workspaceStack->setCurrentIndex(deliver ? 1 : 0);
+            bars_.actionStack->setCurrentIndex(deliver ? 1 : 0);
             if (deliver) {
                 deliver_->setPlayhead(position_);
             }
@@ -2370,15 +1959,15 @@ public:
         // the wheels take the bottom of the window.
         gallery_->setVisible(colour);
         clipStrip_->setVisible(colour);
-        nodesBox_->setVisible(colour);
+        bars_.nodesBox->setVisible(colour);
         palette_->setVisible(colour);
-        timelinePane_->setVisible(!colour && !deliver);
+        bars_.timelinePane->setVisible(!colour && !deliver);
         // Audio is a console: the mixer takes the centre, the loudness meter
         // and the channel's chain take the sides, and the picture stands down.
-        audioSide_->setVisible(audio);
+        bars_.audioSide->setVisible(audio);
         channel_->setVisible(audio);
-        viewerWell_->setVisible(!audio && !deliver);
-        viewerBar_->setVisible(!audio && !deliver);
+        bars_.viewerWell->setVisible(!audio && !deliver);
+        bars_.viewerBar->setVisible(!audio && !deliver);
         if (audio) {
             channel_->setTrack(mixer_->picked());
             refreshInstruments();
@@ -2389,12 +1978,12 @@ public:
             refreshGradeChain();
         }
 
-        for (auto entry = workspaceTabs_.constBegin(); entry != workspaceTabs_.constEnd();
+        for (auto entry = bars_.workspaceTabs.constBegin(); entry != bars_.workspaceTabs.constEnd();
              ++entry) {
             entry.value()->setChecked(entry.key() == name);
         }
-        for (auto entry = workspaceActions_.constBegin(); entry != workspaceActions_.constEnd();
-             ++entry) {
+        for (auto entry = bars_.workspaceActions.constBegin();
+             entry != bars_.workspaceActions.constEnd(); ++entry) {
             entry.value()->setChecked(entry.key() == name);
         }
 
@@ -2412,63 +2001,50 @@ public:
 
 private:
     /// Everything in the chrome that describes state rather than causing it.
+    /// Gather what the bars say, and hand it to the code that says it.
+    ///
+    /// The gathering is the window's -- these facts live in eight different
+    /// places and only the window knows all of them. The saying is not, and
+    /// used to be: fourteen setText calls formatting strings out of a project,
+    /// a timeline widget, a bin and a render queue. See chrome::refresh.
     void updateChrome() {
         const model::Sequence* sequence = liveSequence();
-        const QString name = path_.empty()
-                                 ? QString{"Untitled"}
-                                 : QFileInfo(QString::fromStdString(path_)).completeBaseName();
-        projectLabel_->setText(
-            QString("%1 · %2%3")
-                .arg(name,
-                     sequence != nullptr ? QString::fromStdString(sequence->name()) : QString{"—"},
-                     commands_.isModified() ? " •" : ""));
-        autosaveLabel_->setText(commands_.isModified() ? "Unsaved changes" : "Saved");
-
-        if (sequence != nullptr) {
-            const double fps = sequence->frameRate().toDouble();
-            formatLabel_->setText(QString("%1×%2 · %3 fps · Rec.709")
-                                      .arg(sequence->width())
-                                      .arg(sequence->height())
-                                      .arg(fps, 0, 'g', 5));
-            const bool dropFrame = time::supportsDropFrame(sequence->frameRate());
-            const time::Timecode duration = time::timecodeFromFrames(
-                sequence->duration().frames(), sequence->frameRate(), dropFrame);
-            timelineLabel_->setText(
-                QString("%1 · %2").arg(QString::fromStdString(sequence->name()),
-                                       QString::fromStdString(duration.toString())));
-            viewerLabel_->setText(
-                QString("%1 — %2").arg(name, QString::fromStdString(sequence->name())));
-        }
-        qualityLabel_->setText(monitor_->comparing() ? "Compare · CPU" : "Full · GPU");
-
         static const QString kToolNames[] = {"Select", "Blade", "Trim", "Slip", "Hand", "Zoom"};
-        statusLeft_->setText(QString("%1 tool · %2 workspace")
-                                 .arg(kToolNames[static_cast<int>(timeline_->tool())], workspace_));
-        const int items = bin_->count();
-        if (workspace_ == "Deliver" && deliver_ != nullptr) {
-            // In Deliver the interesting middle fact is the queue, not the bin,
-            // and the tool bar's left label is the range rather than the format.
-            statusMiddle_->setText(deliver_->statusSummary());
-            formatLabel_->setText(deliver_->rangeSummary());
-            renderButton_->setText(deliver_->rendering() ? "Stop render" : "Start render");
-        } else {
-            statusMiddle_->setText(QString("%1 %2 · %3")
-                                       .arg(items)
-                                       .arg(items == 1 ? "item" : "items",
-                                            commands_.isModified() ? "edited" : "clean"));
-        }
-        statusRight_->setText(QString("%1 · Qt %2").arg(kPlatformLabel, QT_VERSION_STR));
 
-        snapButton_->setChecked(timeline_->snapEnabled());
-        snapLabel_->setText(timeline_->snapEnabled() ? "Snap on" : "Snap off");
-        const auto tool = static_cast<std::size_t>(timeline_->tool());
-        for (std::size_t i = 0; i < toolButtons_.size(); ++i) {
-            toolButtons_[i]->setChecked(i == tool);
+        chrome::Status status;
+        status.projectName =
+            document_.path().empty()
+                ? QString{"Untitled"}
+                : QFileInfo(QString::fromStdString(document_.path())).completeBaseName();
+        status.haveSequence = sequence != nullptr;
+        status.modified = document_.commands().isModified();
+        if (sequence != nullptr) {
+            status.sequenceName = QString::fromStdString(sequence->name());
+            status.width = sequence->width();
+            status.height = sequence->height();
+            status.frameRate = sequence->frameRate().toDouble();
+            const bool dropFrame = time::supportsDropFrame(sequence->frameRate());
+            status.durationTimecode =
+                QString::fromStdString(time::timecodeFromFrames(sequence->duration().frames(),
+                                                                sequence->frameRate(), dropFrame)
+                                           .toString());
         }
-        if (!zoomSlider_->isSliderDown()) {
-            const QSignalBlocker blocker{zoomSlider_};
-            zoomSlider_->setValue(static_cast<int>(timeline_->zoomFraction() * 1000.0));
+        status.comparing = monitor_->comparing();
+        status.toolIndex = static_cast<std::size_t>(timeline_->tool());
+        status.toolName = kToolNames[status.toolIndex];
+        status.workspace = workspace_;
+        status.binItems = bin_->count();
+        status.snapEnabled = timeline_->snapEnabled();
+        status.zoomFraction = timeline_->zoomFraction();
+        status.inDeliver = workspace_ == "Deliver" && deliver_ != nullptr;
+        if (status.inDeliver) {
+            status.deliverStatus = deliver_->statusSummary();
+            status.deliverRange = deliver_->rangeSummary();
+            status.rendering = deliver_->rendering();
         }
+        status.platformLabel = kPlatformLabel;
+
+        chrome::refresh(bars_, status);
     }
 
     /// Two menu items and a toolbar button that were buttons in a row before.
@@ -2477,7 +2053,7 @@ private:
             return;
         }
         stop();
-        app::ExportDialog dialog{project_, liveSequence()->id(), this};
+        app::ExportDialog dialog{document_.project(), liveSequence()->id(), this};
         dialog.exec();
     }
 
@@ -2494,7 +2070,8 @@ private:
         if (path.isEmpty()) {
             return;
         }
-        if (Status saved = io::saveOtio(project_, liveSequence()->id(), path.toStdString());
+        if (Status saved =
+                io::saveOtio(document_.project(), liveSequence()->id(), path.toStdString());
             !saved) {
             app::warn(this, "OpenTimelineIO", QString::fromStdString(saved.error().toString()));
         }
@@ -2544,13 +2121,13 @@ private:
         if (sequence == nullptr || !selectedClip_.isValid()) {
             return;
         }
-        auto built = edit::makeStabilise(project_, {sequence->id(), selectedTrack_}, selectedClip_,
-                                         model::Curve{}, model::Curve{}, 1.0);
+        auto built = edit::makeStabilise(document_.project(), {sequence->id(), selectedTrack_},
+                                         selectedClip_, model::Curve{}, model::Curve{}, 1.0);
         if (!built) {
             return;
         }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
+        document_.commands().execute(document_.project(), std::move(*built));
+        document_.commands().breakMerge();
         renderCache_.clear();
         monitor_->update();
         effects_->refresh();
@@ -2764,15 +2341,15 @@ private:
         if (videoTracks.empty()) {
             return;
         }
-        auto built =
-            edit::makePlaceFromSource(project_, {liveSequence()->id(), videoTracks.front().id()},
-                                      source_->media(), *range, position_, mode);
+        auto built = edit::makePlaceFromSource(document_.project(),
+                                               {liveSequence()->id(), videoTracks.front().id()},
+                                               source_->media(), *range, position_, mode);
         if (!built) {
             return;
         }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
-        scrubber_->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+        document_.commands().execute(document_.project(), std::move(*built));
+        document_.commands().breakMerge();
+        bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
         timeline_->update();
         monitor_->update();
         refresh();
@@ -2815,7 +2392,7 @@ private:
         anchorClock_ = sink_ ? sink_->clockFrames() : 0;
         audioWritten_ = sink_ ? sink_->clockFrames() : 0;
         playing_ = true;
-        playButton_->setText(kPauseGlyph);
+        bars_.playButton->setText(kPauseGlyph);
 
         if (sink_) {
             // Audio on its own thread, for the reason ADR-006 records: sharing
@@ -2840,7 +2417,7 @@ private:
         if (sink_) {
             sink_->pause();
         }
-        playButton_->setText(kPlayGlyph);
+        bars_.playButton->setText(kPlayGlyph);
     }
 
     /// Peaks are generated off the UI thread: decoding a long file's audio
@@ -2865,7 +2442,7 @@ private:
         // becomes a missing waveform. Files without audio simply fail and are
         // skipped.
         std::vector<std::pair<model::MediaRefId, std::string>> wanted;
-        for (const model::MediaRef& ref : project_.media()) {
+        for (const model::MediaRef& ref : document_.project().media()) {
             wanted.emplace_back(ref.id, ref.path);
         }
         if (wanted.empty()) {
@@ -3000,7 +2577,7 @@ private:
         }
         render::RenderGraph graph{*media_};
         graph.setTextRasterizer(&text_);
-        graph.setProject(&project_);
+        graph.setProject(&document_.project());
         auto frame = graph.composite(*liveSequence(), position_);
         if (!frame) {
             if (wantScopes) {
@@ -3136,12 +2713,13 @@ private:
         model::LutRef look;
         look.path = path.toStdString();
         look.amount = 1.0;
-        auto built = edit::makeSetLut(project_, {sequenceId_, selectedTrack_}, selectedClip_, look);
+        auto built = edit::makeSetLut(document_.project(), {sequenceId_, selectedTrack_},
+                                      selectedClip_, look);
         if (!built) {
             return;
         }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
+        document_.commands().execute(document_.project(), std::move(*built));
+        document_.commands().breakMerge();
         renderCache_.clear();
         effects_->refresh();
         clipStrip_->refresh();
@@ -3154,15 +2732,16 @@ private:
     /// Attach proxies, make them, and switch between them and the originals.
     void proxyMenu() {
         std::vector<chrome::ProxyEntry> entries;
-        entries.reserve(project_.media().size());
-        for (const model::MediaRef& media : project_.media()) {
+        entries.reserve(document_.project().media().size());
+        for (const model::MediaRef& media : document_.project().media()) {
             entries.push_back(
                 {media.id, QString::fromStdString(media.name), !media.proxyPath.empty()});
         }
-        const chrome::ProxyChoice chosen = chrome::proxyMenu(entries, project_.usingProxies());
+        const chrome::ProxyChoice chosen =
+            chrome::proxyMenu(entries, document_.project().usingProxies());
         switch (chosen.kind) {
             case chrome::ProxyChoice::Kind::ToggleUsingProxies: {
-                project_.setUsingProxies(!project_.usingProxies());
+                document_.project().setUsingProxies(!document_.project().usingProxies());
                 // The media source resolved its paths when it opened, so
                 // switching means reopening. Cheaper than deciding per read,
                 // and it is the only moment the decision changes.
@@ -3198,7 +2777,7 @@ private:
                 if (path.isEmpty()) {
                     return;
                 }
-                for (model::MediaRef& media : project_.mediaMutable()) {
+                for (model::MediaRef& media : document_.project().mediaMutable()) {
                     if (media.id == chosen.media) {
                         media.proxyPath = path.toStdString();
                     }
@@ -3289,12 +2868,12 @@ private:
             state.soloed = track.isSoloed();
             state.gainDb = track.gainDb() + gain;
             state.pan = track.pan();
-            if (auto built =
-                    edit::makeSetTrackState(project_, liveSequence()->id(), track.id(), state)) {
-                commands_.execute(project_, std::move(*built));
+            if (auto built = edit::makeSetTrackState(document_.project(), liveSequence()->id(),
+                                                     track.id(), state)) {
+                document_.commands().execute(document_.project(), std::move(*built));
             }
         }
-        commands_.breakMerge();
+        document_.commands().breakMerge();
         mixer_->refresh();
     }
 
@@ -3355,12 +2934,12 @@ private:
     }
 
     void applyCaptions(const model::CaptionTrack& captions) {
-        auto built = edit::makeSetCaptions(project_, liveSequence()->id(), captions);
+        auto built = edit::makeSetCaptions(document_.project(), liveSequence()->id(), captions);
         if (!built) {
             return;
         }
-        commands_.execute(project_, std::move(*built));
-        commands_.breakMerge();
+        document_.commands().execute(document_.project(), std::move(*built));
+        document_.commands().breakMerge();
         monitor_->update();
         timeline_->update();
         refreshInstruments();
@@ -3373,9 +2952,9 @@ private:
         const bool dropFrame = time::supportsDropFrame(liveSequence()->frameRate());
         const time::Timecode code =
             time::timecodeFromFrames(position_.frames(), liveSequence()->frameRate(), dropFrame);
-        timecode_->setText(QString::fromStdString(code.toString()));
-        if (!scrubber_->isSliderDown()) {
-            scrubber_->setValue(static_cast<int>(position_.frames()));
+        bars_.timecode->setText(QString::fromStdString(code.toString()));
+        if (!bars_.scrubber->isSliderDown()) {
+            bars_.scrubber->setValue(static_cast<int>(position_.frames()));
         }
 
         if (deliver_ != nullptr) {
@@ -3385,7 +2964,7 @@ private:
         const time::Timecode left = time::timecodeFromFrames(
             std::max<std::int64_t>(0, liveSequence()->duration().frames() - position_.frames()),
             liveSequence()->frameRate(), dropFrame);
-        remaining_->setText("-" + QString::fromStdString(left.toString()));
+        bars_.remaining->setText("-" + QString::fromStdString(left.toString()));
 
         const model::Track* track = liveSequence()->findTrack(selectedTrack_);
         const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
@@ -3396,10 +2975,8 @@ private:
             track != nullptr ? QString::fromStdString(track->name()) : QString{});
     }
 
-    model::Project project_;
-    io::LoadedProject loaded_;
-    /// Where the project came from, and where Save writes.
-    std::string path_;
+    /// The project, its history, its path and its lock.
+    Document document_;
     QTimer* autosaveTimer_{nullptr};
     /// The active sequence, by id rather than by pointer.
     ///
@@ -3446,13 +3023,9 @@ private:
     app::FrameThumb* thumb_{nullptr};
     app::StemsPanel* stems_{nullptr};
     app::ChannelPanel* channel_{nullptr};
-    QWidget* audioSide_{nullptr};
-    QWidget* viewerBar_{nullptr};
     app::ClipStrip* clipStrip_{nullptr};
     app::GradeNodes* nodes_{nullptr};
     app::ColorPalette* palette_{nullptr};
-    QWidget* nodesBox_{nullptr};
-    QWidget* timelinePane_{nullptr};
     /// Every panel that is about a sequence, in one place. See rebindSequence.
     std::vector<ui::SequenceBound*> bound_;
     app::MediaBrowser* browser_{nullptr};
@@ -3461,49 +3034,18 @@ private:
 
     /// Which keystroke runs what, and everything that can be run.
     ActionRouter actions_{this};
-    /// Somebody else has this project open, so it must not be written over.
-    bool readOnly_{false};
-    static inline bool locking_{false};
     app::SourceMonitor* source_{nullptr};
     QSplitter* topSplitter_{nullptr};
     QSplitter* mainSplitter_{nullptr};
 
     /// The chrome. None of it owns anything: every one of these is a child of
     /// the window, and Qt deletes them with it.
-    QMenuBar* menuBar_{nullptr};
-    QWidget* viewerWell_{nullptr};
-    QLabel* noMonitorLabel_{nullptr};
+    chrome::Bars bars_;
     bool sourceShown_{false};
     bool programShown_{true};
-    QStackedWidget* workspaceStack_{nullptr};
-    QStackedWidget* actionStack_{nullptr};
     app::DeliverPanel* deliver_{nullptr};
-    QPushButton* renderButton_{nullptr};
     app::ViewerOverlay* viewerOverlay_{nullptr};
-    QLabel* projectLabel_{nullptr};
-    QLabel* autosaveLabel_{nullptr};
-    QLabel* formatLabel_{nullptr};
-    QLabel* viewerLabel_{nullptr};
-    QLabel* qualityLabel_{nullptr};
-    QLabel* timelineLabel_{nullptr};
-    QLabel* snapLabel_{nullptr};
-    QLabel* statusLeft_{nullptr};
-    QLabel* statusMiddle_{nullptr};
-    QLabel* statusRight_{nullptr};
-    QLabel* remaining_{nullptr};
-    QSlider* zoomSlider_{nullptr};
-    QPushButton* sourceTab_{nullptr};
-    QPushButton* programTab_{nullptr};
-    QPushButton* snapButton_{nullptr};
-    QPushButton* guidesButton_{nullptr};
-    std::vector<QPushButton*> toolButtons_;
-    QMap<QString, QPushButton*> workspaceTabs_;
-    QMap<QString, QAction*> workspaceActions_;
     QString workspace_{"Edit"};
-    edit::CommandStack commands_;
-    QLabel* timecode_{nullptr};
-    QPushButton* playButton_{nullptr};
-    QSlider* scrubber_{nullptr};
     QTimer* clockTimer_{nullptr};
 
     playback::Transport transport_;

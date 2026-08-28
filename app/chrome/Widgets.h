@@ -1,0 +1,60 @@
+// Small widget factories, and the bars that are only widgets.
+#pragma once
+
+#include <QPushButton>
+#include <QString>
+#include <QStringList>
+#include <QWidget>
+#include <functional>
+
+#include "../ActionRouter.h"
+#include "../Icons.h"
+#include "../TimelineWidget.h"
+#include "Bars.h"
+
+class QFrame;
+class QLabel;
+
+namespace zaro::app::chrome {
+
+QPushButton* button(QWidget* parent, const QString& text, const QString& tip,
+                    bool checkable = false);
+QPushButton* iconButton(QWidget* parent, app::icons::Glyph glyph, const QString& tip,
+                        bool checkable = false);
+QFrame* separator(QWidget* parent);
+QLabel* mutedLabel(QWidget* parent, const QString& text = {});
+
+/// The handful of things the bars do that are not commands.
+///
+/// Everything a bar can do that somebody could also reach from a menu or a
+/// keystroke goes through the router by id -- that is most of them. What is
+/// left is this: choices about how the window is arranged, which are not
+/// commands because there is nothing to put on a menu called "show the source
+/// viewer, off". Nine functions, written down, instead of a window pointer that
+/// would have let a bar call anything at all.
+struct Hooks {
+    std::function<void(const QString&)> chooseWorkspace;
+    std::function<void(app::TimelineWidget::Tool)> chooseTool;
+    std::function<void(bool)> showSource;
+    std::function<void(bool)> showProgram;
+    std::function<void(bool)> setGuides;
+    std::function<void(bool)> setSnapEnabled;
+    std::function<void(double)> setZoomFraction;
+    std::function<void()> queueRender;
+    std::function<void()> toggleRendering;
+};
+
+QWidget* buildTitleBar(QWidget* parent, Bars& bars);
+QWidget* buildStatusBar(QWidget* parent, Bars& bars);
+QWidget* buildToolPalette(QWidget* parent, Bars& bars,
+                          const std::function<void(app::TimelineWidget::Tool)>& chooseTool);
+
+QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const Hooks& hooks,
+                      const QStringList& workspaces, const QString& supportUrl);
+QWidget* buildViewerBar(QWidget* parent, Bars& bars, ActionRouter& router, const Hooks& hooks);
+QWidget* buildTransportBar(QWidget* parent, Bars& bars, ActionRouter& router);
+/// `timelineWidget` is the timeline itself, which the pane puts under its bar.
+QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, const Hooks& hooks,
+                           QWidget* timelineWidget);
+
+}  // namespace zaro::app::chrome
