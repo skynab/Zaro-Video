@@ -111,6 +111,36 @@ private:
         QToolButton* keyframe{nullptr};
     };
 
+    // Construction. The panel is eight groups of parameters and a scroll
+    // area around them; the constructor was six hundred and forty-six lines
+    // because it built all of them in one go. Split in strict source order,
+    // so the widgets are made and the rows are added exactly as before.
+    //
+    // The colour group is the one seam that is not tidy: the wheels and the
+    // vignette belong in it, but are built after the three groups that follow
+    // it, so buildColourGroup hands its form back and the constructor passes
+    // it on. Straightening that means changing the order widgets are created
+    // in, which changes tab order -- worth doing, separately and on purpose.
+
+    /// The spin boxes, the blend list and the enable box: every parameter
+    /// widget the groups below arrange, made before any of them.
+    void createParameterWidgets();
+    void buildMotionGroup();
+    /// Returns the colour group's form, which addWheelsTo and addVignetteTo
+    /// finish once the groups built between them are done.
+    QFormLayout* buildColourGroup();
+    void buildSecondaryGroup();
+    void buildMaskGroup();
+    void buildEffectsGroup();
+    void addWheelsTo(QFormLayout* colourForm);
+    void addVignetteTo(QFormLayout* colourForm);
+    void buildKeyGroup();
+    void buildGraphicGroup();
+    void buildAudioGroup();
+    /// The groups into a scrolled column, then the connections that need
+    /// every widget to exist first.
+    void assemblePanel();
+
     [[nodiscard]] const model::Clip* selectedClip() const;
     /// The playhead in the selected clip's source time, or nothing if the
     /// playhead is not over the clip. A keyframe outside the clip's own range

@@ -58,6 +58,27 @@ QDoubleSpinBox* makeSpin(double minimum, double maximum, double step, int decima
 }  // namespace
 
 EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
+    // In the order the panel is built, which is not the order it is read: the
+    // colour group is opened early and finished late, because the wheels and
+    // the vignette belong in it but are made after the groups that follow it.
+    // Kept that way deliberately -- the rows land in the same places, and the
+    // widgets are created in the same order, so this is a move and not a
+    // rearrangement.
+    createParameterWidgets();
+    buildMotionGroup();
+    QFormLayout* colourForm = buildColourGroup();
+    buildSecondaryGroup();
+    buildMaskGroup();
+    buildEffectsGroup();
+    addWheelsTo(colourForm);
+    addVignetteTo(colourForm);
+    buildKeyGroup();
+    buildGraphicGroup();
+    buildAudioGroup();
+    assemblePanel();
+}
+
+void EffectControls::createParameterWidgets() {
     title_ = new QLabel("No clip selected", this);
     title_->setStyleSheet("font-weight: 600;");
 
@@ -90,7 +111,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     gain_ = makeSpin(-96.0, 24.0, 0.5, 2, " dB");
     pan_ = makeSpin(-1.0, 1.0, 0.05, 3);
     enabled_ = new QCheckBox("Enabled", this);
+}
 
+void EffectControls::buildMotionGroup() {
     auto* motion = new QGroupBox("Motion", this);
     auto* motionForm = new QFormLayout(motion);
     addRow(motionForm, "Position X", model::Param::PositionX, positionX_);
@@ -186,7 +209,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         emit edited();
     });
     videoGroup_ = motion;
+}
 
+QFormLayout* EffectControls::buildColourGroup() {
     auto* colour = new QGroupBox("Colour", this);
     colourGroup_ = colour;
     auto* colourForm = new QFormLayout(colour);
@@ -247,7 +272,10 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         lut.amount = amount;
         pushLut(lut);
     });
+    return colourForm;
+}
 
+void EffectControls::buildSecondaryGroup() {
     // The secondary. Its correction is deliberately a subset of the primary's:
     // temperature, exposure and saturation are what a keyed correction is
     // almost always for, and every extra control here is one more thing
@@ -299,7 +327,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         }
         hueCentre_->setValue(centre);  // which pushes on its own
     });
+}
 
+void EffectControls::buildMaskGroup() {
     // A mask: where on the screen this clip shows through.
     maskShape_ = new QComboBox(this);
     maskShape_->setObjectName("mask-shape");
@@ -351,7 +381,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     }
     connect(maskShape_, &QComboBox::currentIndexChanged, this, [this] { pushMask(); });
     connect(maskInverted_, &QCheckBox::toggled, this, [this] { pushMask(); });
+}
 
+void EffectControls::buildEffectsGroup() {
     // The effect stack. A list, because order is what a list has: blurring and
     // then sharpening is not the same picture as sharpening and then blurring.
     effectList_ = new QListWidget(this);
@@ -484,7 +516,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     connect(effectDown_, &QPushButton::clicked, this, [move] { move(1); });
     connect(effectList_, &QListWidget::currentRowChanged, this, [this] { showEffects(); });
     connect(effectEnabled_, &QCheckBox::toggled, this, [this] { pushEffects(); });
+}
 
+void EffectControls::addWheelsTo(QFormLayout* colourForm) {
     // The three wheels. Nine numbers rather than three pucks: the arithmetic
     // is what makes a grade, and a puck is a way of typing two of these at
     // once. The engine is an ASC CDL either way -- see model::ColorWheels --
@@ -510,7 +544,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         wheelsForm->addRow(QString::fromUtf8(kWheelRows[row]), line);
     }
     colourForm->addRow(wheelsBox);
+}
 
+void EffectControls::addVignetteTo(QFormLayout* colourForm) {
     // The vignette. In the colour group because that is where somebody reaches
     // for it, even though the arithmetic is geometry -- see model::Vignette.
     vignetteAmount_ = makeSpin(-1.0, 1.0, 0.05, 2);
@@ -526,7 +562,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
          {vignetteAmount_, vignetteMidpoint_, vignetteFeather_, vignetteRoundness_}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushVignette(); });
     }
+}
 
+void EffectControls::buildKeyGroup() {
     // The keyer: what of this clip is transparent. Its own group rather than a
     // corner of the secondary, because it looks like a qualifier and answers a
     // different question -- one is "which pixels to correct", the other is
@@ -568,7 +606,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     }
     connect(keyKind_, &QComboBox::currentIndexChanged, this, [this] { pushKeyer(); });
     connect(keyShowMatte_, &QCheckBox::toggled, this, [this] { pushKeyer(); });
+}
 
+void EffectControls::buildGraphicGroup() {
     // A generated shape. Shown only for a clip that is one: the controls are
     // meaningless on a clip with media, and a panel full of inert fields is
     // worse than one that says nothing.
@@ -618,7 +658,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushGraphic(); });
     }
     connect(shapeKind_, &QComboBox::currentIndexChanged, this, [this] { pushGraphic(); });
+}
 
+void EffectControls::buildAudioGroup() {
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
     addRow(audioForm, "Gain", model::Param::GainDb, gain_);
@@ -640,7 +682,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     connect(role_, &QComboBox::currentIndexChanged, this, [this] { pushRole(); });
     connect(duck_, &QPushButton::clicked, this, [this] { duckUnderDialogue(); });
     audioGroup_ = audio;
+}
 
+void EffectControls::assemblePanel() {
     // Scrolled, because the panel is now taller than a short display: motion,
     // colour, a curve editor, a secondary and audio. Without this the last
     // group is simply unreachable, with nothing on screen to suggest it exists.
@@ -649,14 +693,14 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(title_);
     layout->addWidget(enabled_);
-    layout->addWidget(motion);
-    layout->addWidget(graphic);
-    layout->addWidget(maskBox);
-    layout->addWidget(colour);
-    layout->addWidget(secondary);
-    layout->addWidget(keyBox);
-    layout->addWidget(effectBox);
-    layout->addWidget(audio);
+    layout->addWidget(videoGroup_);
+    layout->addWidget(graphicGroup_);
+    layout->addWidget(maskGroup_);
+    layout->addWidget(colourGroup_);
+    layout->addWidget(secondaryGroup_);
+    layout->addWidget(keyGroup_);
+    layout->addWidget(effectGroup_);
+    layout->addWidget(audioGroup_);
     layout->addStretch(1);
 
     auto* scroll = new QScrollArea(this);
