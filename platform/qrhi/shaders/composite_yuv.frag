@@ -19,14 +19,44 @@ layout(binding = 1) uniform sampler2D planeY;
 layout(binding = 2) uniform sampler2D planeCb;   // Cb, or interleaved CbCr
 layout(binding = 3) uniform sampler2D planeCr;
 
+// One uniform block, shared by every stage of every pipeline, and it has to
+// stay that way: qsb lowers the block to a plain `uniform Block ubuf` struct
+// for OpenGL, where the vertex and fragment stages link into a single program.
+// Two stages declaring `ubuf` with different members are then two conflicting
+// declarations of one uniform, and Mesa rejects the program with "uniform
+// `ubuf' declared as type `Block' and type `Block'" -- which on the GUI runner
+// left every shot in a wipe unpainted. Vulkan, Metal and D3D never noticed,
+// because there each stage has its own descriptor.
+//
+// So the declarations below are identical in composite.vert, composite.frag
+// and composite_yuv.frag, down to the order. A field only one of them reads is
+// still declared in all three. composite.frag documents what each one carries.
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
-    // opacity, sampleScale, lumaOffset, lumaScale
-    vec4 params;
-    // chromaScale, midpoint, transferId, semiPlanar
-    vec4 chroma;
-    // crToR, crToG, cbToG, cbToB
-    vec4 coefficients;
+    vec4 params;  // opacity, sampleScale, lumaOffset, lumaScale
+    vec4 balance;
+    vec4 grade;
+    vec4 secBalance;
+    vec4 secGrade;
+    vec4 hueWindow;
+    vec4 satWindow;
+    vec4 lumaWindow;
+    vec4 look;
+    vec4 maskBox;
+    vec4 maskEdge;
+    vec4 keyColour;
+    vec4 keyEdge;
+    vec4 keyLuma;
+    vec4 keyFlags;
+    vec4 display;
+    vec4 cdlSlope;
+    vec4 cdlOffset;
+    vec4 cdlPower;
+    vec4 vignette;
+    vec4 wipeBox;
+    vec4 wipeEdge;
+    vec4 chroma;  // chromaScale, midpoint, transferId, semiPlanar
+    vec4 coefficients;  // crToR, crToG, cbToG, cbToB
 } ubuf;
 
 // Transfer curves, matching ColorPipeline.cpp. The CPU samples these into a

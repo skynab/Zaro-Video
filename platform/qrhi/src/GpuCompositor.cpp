@@ -24,9 +24,12 @@ constexpr std::array<float, 12> kQuad{
 
 /// 64 bytes of matrix plus a vec4, which satisfies std140 alignment.
 // mat4 transform, vec4 params, vec4 white balance + exposure, vec4 grade,
-// five for the secondary, one for the look, two for the mask, four for the key.
+// five for the secondary, one for the look, two for the mask, four for the key,
+// and two for the Y'CbCr conversion -- which only composite_yuv.frag reads, but
+// every shader declares, because OpenGL links the stages into one program and
+// will not have two `ubuf`s that disagree. See the note in composite.frag.
 constexpr int kUniformBytes =
-    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16 + 32;
+    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16 + 32 + 32;
 constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
@@ -259,8 +262,8 @@ void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask
     uniformData[58] = mask->shape == model::MaskShape::Ellipse ? 2.0F : 1.0F;
     uniformData[59] = mask->inverted ? 1.0F : 0.0F;
 }
-/// The YUV shader adds two more vec4s of colour parameters.
-constexpr int kYuvUniformBytes = 64 + 16 * 3;
+/// Where the Y'CbCr parameters sit in that block: the last two vec4s.
+constexpr std::size_t kChromaFloat = kUniformFloats - 8;
 
 QShader loadShader(const char* path) {
     QFile file(QString::fromUtf8(path));
@@ -1095,7 +1098,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                    0.5F * static_cast<float>(sourceSize.height()));
 
     auto convertUniforms = std::unique_ptr<QRhiBuffer>(
-        state.rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, kYuvUniformBytes));
+        state.rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, kUniformBytes));
     if (!convertUniforms->create()) {
         return Error{ErrorCode::Internal, "cannot allocate a uniform buffer"};
     }
@@ -1104,7 +1107,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     convertBindings->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
-            convertUniforms.get(), 0, static_cast<quint32>(kYuvUniformBytes)),
+            convertUniforms.get(), 0, static_cast<quint32>(kUniformBytes)),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
                                                   textureY, state.chromaSampler.get()),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
@@ -1116,7 +1119,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot create conversion bindings"};
     }
 
-    std::array<float, 28> convertData{};
+    std::array<float, kUniformFloats> convertData{};
     const float* identityData = identity.constData();
     for (int i = 0; i < 16; ++i) {
         convertData[static_cast<std::size_t>(i)] = identityData[i];
@@ -1125,15 +1128,15 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     convertData[17] = parameters.sampleScale;
     convertData[18] = parameters.lumaOffset;
     convertData[19] = parameters.lumaScale;
-    convertData[20] = parameters.chromaScale;
-    convertData[21] = parameters.midpoint;
-    convertData[22] = parameters.transferId;
-    convertData[23] = parameters.semiPlanar;
-    convertData[24] = parameters.crToR;
-    convertData[25] = parameters.crToG;
-    convertData[26] = parameters.cbToG;
-    convertData[27] = parameters.cbToB;
-    batch->updateDynamicBuffer(convertUniforms.get(), 0, kYuvUniformBytes, convertData.data());
+    convertData[kChromaFloat + 0] = parameters.chromaScale;
+    convertData[kChromaFloat + 1] = parameters.midpoint;
+    convertData[kChromaFloat + 2] = parameters.transferId;
+    convertData[kChromaFloat + 3] = parameters.semiPlanar;
+    convertData[kChromaFloat + 4] = parameters.crToR;
+    convertData[kChromaFloat + 5] = parameters.crToG;
+    convertData[kChromaFloat + 6] = parameters.cbToG;
+    convertData[kChromaFloat + 7] = parameters.cbToB;
+    batch->updateDynamicBuffer(convertUniforms.get(), 0, kUniformBytes, convertData.data());
 
     QRhiCommandBuffer* cb = state.commandBuffer;
     const QRhiCommandBuffer::VertexInput vertexInput(state.vertexBuffer.get(), 0);

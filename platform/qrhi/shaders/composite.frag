@@ -19,6 +19,18 @@ layout(binding = 2) uniform sampler2D curveTable;
 // render::LutTable already worked out. See ADR-012.
 layout(binding = 3) uniform sampler3D lutTable;
 
+// One uniform block, shared by every stage of every pipeline, and it has to
+// stay that way: qsb lowers the block to a plain `uniform Block ubuf` struct
+// for OpenGL, where the vertex and fragment stages link into a single program.
+// Two stages declaring `ubuf` with different members are then two conflicting
+// declarations of one uniform, and Mesa rejects the program with "uniform
+// `ubuf' declared as type `Block' and type `Block'" -- which on the GUI runner
+// left every shot in a wipe unpainted. Vulkan, Metal and D3D never noticed,
+// because there each stage has its own descriptor.
+//
+// So the declarations below are identical in composite.vert, composite.frag
+// and composite_yuv.frag, down to the order. A field only one of them reads is
+// still declared in all three.
 layout(std140, binding = 0) uniform Block {
     mat4 transform;
     vec4 params;  // x: opacity, z: frame width, w: frame height
@@ -61,6 +73,10 @@ layout(std140, binding = 0) uniform Block {
     // got to.
     vec4 wipeBox;     // xy: half size, zw: centre
     vec4 wipeEdge;    // x: corner radius, y: feather, z: shape, w: inverted
+    // Read by composite_yuv.frag alone, and declared here because the block is
+    // one shared declaration -- see the note above.
+    vec4 chroma;
+    vec4 coefficients;
 } ubuf;
 
 
