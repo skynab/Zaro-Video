@@ -127,9 +127,9 @@ void GradeNodes::paintEvent(QPaintEvent* /*event*/) {
         // Lit when the stage has something in it, muted when it is a pass
         // through. That is the whole reading of the picture: which of these
         // four has this shot been through.
-        const QColor ink = !enabled_             ? theme::textAt(0.22)
+        const QColor ink = !enabled_                                 ? theme::textAt(0.22)
                            : occupied_[static_cast<std::size_t>(at)] ? theme::accent(200)
-                                                                    : theme::textAt(0.40);
+                                                                     : theme::textAt(0.40);
         painter.drawPixmap(QPoint{box.center().x() - 7, box.top() + 9},
                            icons::pixmap(glyphFor(stage), 14, ink));
 

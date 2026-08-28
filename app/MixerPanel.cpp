@@ -85,7 +85,7 @@ void LevelMeter::paintEvent(QPaintEvent* /*event*/) {
     painter.fillRect(area, kMeterBack);
 
     const float position = meterPosition(level_);
-    const int filled = static_cast<int>(position * area.height());
+    const int filled = static_cast<int>(position * static_cast<float>(area.height()));
     if (filled > 0) {
         // Over full scale is red, close to it amber. The boundaries are the
         // ones a mixer's scale marks, not arbitrary fractions of the widget.
@@ -97,7 +97,8 @@ void LevelMeter::paintEvent(QPaintEvent* /*event*/) {
     }
 
     if (hold_ > 0.0F) {
-        const int y = area.bottom() - static_cast<int>(meterPosition(hold_) * area.height());
+        const int y = area.bottom() -
+                      static_cast<int>(meterPosition(hold_) * static_cast<float>(area.height()));
         painter.setPen(hold_ > 1.0F ? kMeterOver : kHoldLine);
         painter.drawLine(area.left(), y, area.right(), y);
     }

@@ -476,7 +476,7 @@ public:
                     monitor_->update();
                 });
         connect(gallery_, &app::GalleryPanel::lutChosen, this,
-                [this](const QString& path) { applyLookToSelection(path); });
+                [this](const QString& lut) { applyLookToSelection(lut); });
 
         connect(bin_, &app::ProjectBin::openRequested, this, [this](zaro::model::MediaRefId id) {
             if (const model::MediaRef* ref = document_.project().findMedia(id)) {

@@ -28,7 +28,7 @@ constexpr int kThumbHeight = 56;
 /// the name's hash, which is stable -- the same look is the same colour every
 /// time it is listed -- and says nothing it does not know.
 QPixmap swatchFor(const QString& name) {
-    uint hue = qHash(name) % 360;
+    uint hue = static_cast<uint>(qHash(name) % 360U);
     QPixmap pixmap{16, 16};
     pixmap.fill(Qt::transparent);
     QPainter painter{&pixmap};
@@ -77,8 +77,8 @@ GalleryPanel::GalleryPanel(QWidget* parent) : QWidget{parent} {
     setAttribute(Qt::WA_StyledBackground, true);
 
     QPushButton* grab = nullptr;
-    QWidget* stillsHeading =
-        heading(this, "Gallery", &count_, &grab, icons::Glyph::Camera, "Grab a still of this frame");
+    QWidget* stillsHeading = heading(this, "Gallery", &count_, &grab, icons::Glyph::Camera,
+                                     "Grab a still of this frame");
     connect(grab, &QPushButton::clicked, this, [this] { emit grabRequested(); });
 
     // An icon grid rather than hand-drawn tiles: two columns of thumbnails is
@@ -102,17 +102,16 @@ GalleryPanel::GalleryPanel(QWidget* parent) : QWidget{parent} {
     });
 
     QPushButton* browse = nullptr;
-    QWidget* lutHeading =
-        heading(this, "LUTs", nullptr, &browse, icons::Glyph::FolderOpen, "Choose a folder of .cube looks");
+    QWidget* lutHeading = heading(this, "LUTs", nullptr, &browse, icons::Glyph::FolderOpen,
+                                  "Choose a folder of .cube looks");
     connect(browse, &QPushButton::clicked, this, [this] { chooseLutFolder(); });
 
     luts_ = new QListWidget(this);
     luts_->setObjectName("gallery-luts");
     luts_->setFrameShape(QFrame::NoFrame);
     luts_->setIconSize(QSize{16, 16});
-    connect(luts_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
-        emit lutChosen(item->data(Qt::UserRole).toString());
-    });
+    connect(luts_, &QListWidget::itemDoubleClicked, this,
+            [this](QListWidgetItem* item) { emit lutChosen(item->data(Qt::UserRole).toString()); });
 
     auto* column = new QVBoxLayout(this);
     column->setContentsMargins(0, 0, 0, 0);
@@ -140,11 +139,13 @@ void GalleryPanel::addStill(const QImage& frame, const time::RationalTime& at,
     auto* item = new QListWidgetItem(QIcon{QPixmap::fromImage(stills_.back().frame)}, name, grid_);
     item->setToolTip(QString("%1 — click to compare against this frame").arg(name));
     item->setSizeHint(QSize{kThumbWidth + 8, kThumbHeight + 22});
-    count_->setText(QString("%1 %2").arg(stills_.size()).arg(stills_.size() == 1 ? "still" : "stills"));
+    count_->setText(
+        QString("%1 %2").arg(stills_.size()).arg(stills_.size() == 1 ? "still" : "stills"));
 }
 
 void GalleryPanel::chooseLutFolder() {
-    const QString folder = QFileDialog::getExistingDirectory(this, "Folder of .cube looks", folder_);
+    const QString folder =
+        QFileDialog::getExistingDirectory(this, "Folder of .cube looks", folder_);
     if (!folder.isEmpty()) {
         showLutFolder(folder);
     }

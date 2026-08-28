@@ -1258,8 +1258,8 @@ void TimelineWidget::wheelEvent(QWheelEvent* event) {
         // Scroll by a fraction of the visible span, so the feel is the same at
         // every zoom level.
         const time::TimeRange visible = layout_.visibleRange(seq->frameRate());
-        const std::int64_t delta =
-            static_cast<std::int64_t>(-steps * visible.duration().frames() / 6.0);
+        const std::int64_t delta = static_cast<std::int64_t>(
+            -steps * static_cast<double>(visible.duration().frames()) / 6.0);
         layout_.setScroll(layout_.scroll().rescaledTo(seq->frameRate()) +
                           time::RationalTime{delta, seq->frameRate()});
     }

@@ -37,15 +37,6 @@ target_compile_definitions(zaro_app_tests PRIVATE
     ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media"
 )
 
-# Qt's headers trip warnings that are right for our code and wrong for a
-# framework this size. Same set the application target carries.
-target_compile_options(zaro_app_tests PRIVATE
-    -Wno-old-style-cast
-    -Wno-sign-conversion
-    -Wno-conversion
-    -Wno-shadow
-)
-
 set_target_properties(zaro_app_tests PROPERTIES AUTOMOC ON)
 
 # Registered as one test rather than through catch_discover_tests, which runs

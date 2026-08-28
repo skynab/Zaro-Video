@@ -248,9 +248,9 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
 
     const auto brightPixels = [](const QImage& image, int threshold) {
         int count = 0;
-        for (int y = 0; y < image.height(); ++y) {
+        for (int scanY = 0; scanY < image.height(); ++scanY) {
             for (int x = 0; x < image.width(); ++x) {
-                if (qGray(image.pixel(x, y)) >= threshold) {
+                if (qGray(image.pixel(x, scanY)) >= threshold) {
                     ++count;
                 }
             }
@@ -608,22 +608,22 @@ TEST_CASE("Keyframing through the panel and the timeline", "[gui]") {
     // the whole widget measures the text rather than the keyframes.
     const auto lanePixels = [&] {
         const QImage shot = timeline->grab().toImage();
-        const auto row = timeline->rowFor(videoTrack.id());
-        if (!row) {
+        const auto laneRow = timeline->rowFor(videoTrack.id());
+        if (!laneRow) {
             return std::int64_t{-1};
         }
         const auto dpr = static_cast<int>(shot.devicePixelRatio());
         const int lane = timeline->layout().keyframeLaneHeight();
-        const int top = (row->top + row->height - lane) * dpr;
-        const int bottom = std::min((row->top + row->height) * dpr, shot.height());
+        const int top = (laneRow->top + laneRow->height - lane) * dpr;
+        const int bottom = std::min((laneRow->top + laneRow->height) * dpr, shot.height());
         std::int64_t found = 0;
-        for (int y = std::max(0, top); y < bottom; ++y) {
+        for (int scanY = std::max(0, top); scanY < bottom; ++scanY) {
             // Asked of the theme rather than written out: the diamond
             // is painted in a token, and a literal here would have to
             // be chased every time the palette moves.
             const QColor diamond = zaro::app::theme::neutral(200);
             for (int x = 0; x < shot.width(); ++x) {
-                const QColor pixel = shot.pixelColor(x, y);
+                const QColor pixel = shot.pixelColor(x, scanY);
                 if (std::abs(pixel.red() - diamond.red()) <= 6 &&
                     std::abs(pixel.green() - diamond.green()) <= 6 &&
                     std::abs(pixel.blue() - diamond.blue()) <= 6) {

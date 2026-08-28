@@ -100,8 +100,8 @@ void LoudnessPanel::paintEvent(QPaintEvent* /*event*/) {
     const QColor warn{0xd9, 0xc7, 0x6a};
     painter.setPen(!measured_ ? theme::textAt(0.35) : (onTarget ? good : warn));
     painter.drawText(QRect{12, 6, width() - 24, 16}, Qt::AlignRight | Qt::AlignVCenter,
-                     !measured_        ? QStringLiteral("Not measured")
-                     : onTarget        ? QStringLiteral("On target")
+                     !measured_             ? QStringLiteral("Not measured")
+                     : onTarget             ? QStringLiteral("On target")
                      : integrated > target_ ? QStringLiteral("Over target")
                                             : QStringLiteral("Under target"));
 
@@ -160,8 +160,7 @@ void LoudnessPanel::paintEvent(QPaintEvent* /*event*/) {
          measured_ ? QString("%1 dBFS").arg(result_.samplePeakDbfs, 0, 'f', 1)
                    : QStringLiteral("—"),
          QColor{0x8f, 0xc7, 0xd9}},
-        {QStringLiteral("Target"), QString("%1 LUFS").arg(target_, 0, 'f', 0),
-         theme::textAt(0.50)},
+        {QStringLiteral("Target"), QString("%1 LUFS").arg(target_, 0, 'f', 0), theme::textAt(0.50)},
     };
 
     const int left = bar.right() + 12;

@@ -27,7 +27,7 @@ void addHueStops(QConicalGradient& wheel) {
         double at;
         QColor colour;
     } kStops[] = {
-        {0.0, QColor{0xd9, 0x6a, 0x6a}},   {1.0 / 6.0, QColor{0xd9, 0xb6, 0x6a}},
+        {0.0, QColor{0xd9, 0x6a, 0x6a}},       {1.0 / 6.0, QColor{0xd9, 0xb6, 0x6a}},
         {2.0 / 6.0, QColor{0x7f, 0xd9, 0x8f}}, {3.0 / 6.0, QColor{0x6a, 0xc7, 0xd9}},
         {4.0 / 6.0, QColor{0x7f, 0x8f, 0xd9}}, {5.0 / 6.0, QColor{0xd9, 0x6a, 0xc7}},
         {1.0, QColor{0xd9, 0x6a, 0x6a}},
@@ -42,13 +42,13 @@ void addHueStops(QConicalGradient& wheel) {
 ColorWheel::ColorWheel(QString name, QWidget* parent) : QWidget{parent}, name_{std::move(name)} {
     setCursor(Qt::CrossCursor);
     setFocusPolicy(Qt::NoFocus);
-    setToolTip(name_ + " — drag the disc to balance, the bar below for master, double-click to reset");
+    setToolTip(name_ +
+               " — drag the disc to balance, the bar below for master, double-click to reset");
 }
 
 QSize ColorWheel::sizeHint() const {
-    return QSize{kDisc,
-                 kDisc + kNameGap + kLabelHeight + kNameGap + kTrackHeight + kNameGap +
-                     kReadoutHeight};
+    return QSize{kDisc, kDisc + kNameGap + kLabelHeight + kNameGap + kTrackHeight + kNameGap +
+                            kReadoutHeight};
 }
 
 QRect ColorWheel::discRect() const {
@@ -143,10 +143,7 @@ void ColorWheel::paintEvent(QPaintEvent* /*event*/) {
     painter.drawText(
         QRect{0, track.bottom() + kNameGap, width(), kReadoutHeight},
         Qt::AlignHCenter | Qt::AlignVCenter,
-        QString("%1  %2  %3")
-            .arg(x_, 0, 'f', 2)
-            .arg(y_, 0, 'f', 2)
-            .arg(master_, 0, 'f', 2));
+        QString("%1  %2  %3").arg(x_, 0, 'f', 2).arg(y_, 0, 'f', 2).arg(master_, 0, 'f', 2));
 }
 
 /// Where in the disc a point is, as a balance. Clamped to the rim rather than
@@ -211,7 +208,8 @@ void ColorWheel::mouseReleaseEvent(QMouseEvent* /*event*/) {
 }
 
 void ColorWheel::mouseDoubleClickEvent(QMouseEvent* event) {
-    if (discRect().contains(event->pos()) || masterRect().adjusted(-2, -8, 2, 8).contains(event->pos())) {
+    if (discRect().contains(event->pos()) ||
+        masterRect().adjusted(-2, -8, 2, 8).contains(event->pos())) {
         reset();
     }
 }

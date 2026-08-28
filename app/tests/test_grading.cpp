@@ -50,11 +50,11 @@ TEST_CASE("The scopes measure what the monitor is showing", "[gui]") {
         const int bottom = std::min((plot.bottom() + 1) * dpr, shot.height());
         double weighted = 0.0;
         std::int64_t lit = 0;
-        for (int y = top; y < bottom; ++y) {
+        for (int scanY = top; scanY < bottom; ++scanY) {
             for (int x = plot.left() * dpr; x < std::min((plot.right() + 1) * dpr, shot.width());
                  ++x) {
-                if (qGray(shot.pixel(x, y)) > 110) {
-                    weighted += y - top;
+                if (qGray(shot.pixel(x, scanY)) > 110) {
+                    weighted += scanY - top;
                     ++lit;
                 }
             }

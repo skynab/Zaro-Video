@@ -9,6 +9,8 @@
 
 #include "Analysis.h"
 
+#include <algorithm>
+
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/render/PathRaster.h"
 #include "zaro/core/render/Reframe.h"

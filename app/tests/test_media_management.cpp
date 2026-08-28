@@ -345,8 +345,8 @@ TEST_CASE("Metadata and search, through the real bin", "[gui]") {
     // be clicked shut but never selectable, which is what tells them apart.
     const auto visibleRows = [&] {
         int shown = 0;
-        for (int row = 0; row < binList->count(); ++row) {
-            const QListWidgetItem* item = binList->item(row);
+        for (int index = 0; index < binList->count(); ++index) {
+            const QListWidgetItem* item = binList->item(index);
             if (item->isHidden() || (item->flags() & Qt::ItemIsSelectable) == 0) {
                 continue;
             }

@@ -144,7 +144,7 @@ Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId s
     subclip.range = range;
     std::size_t existing = 0;
     for (const model::Subclip& other : context.project().subclips()) {
-        existing += other.source == ref->id ? 1 : 0;
+        existing += other.source == ref->id ? 1U : 0U;
     }
     subclip.name = ref->name + " [" + std::to_string(existing + 1) + "]";
     const model::SubclipId id = subclip.id;

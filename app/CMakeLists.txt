@@ -107,24 +107,9 @@ target_link_libraries(zaro_app_ui
 
 target_include_directories(zaro_app_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Qt's headers and moc output trip warnings that are right for our code and
-# wrong for a framework this size.
-target_compile_options(zaro_app_ui PRIVATE
-    -Wno-old-style-cast
-    -Wno-sign-conversion
-    -Wno-conversion
-    -Wno-shadow
-)
-
 set_target_properties(zaro_app_ui PROPERTIES AUTOMOC ON)
 
 add_executable(zaro-preview main.cpp)
 target_link_libraries(zaro-preview PRIVATE zaro_app_ui zaro::warnings)
-target_compile_options(zaro-preview PRIVATE
-    -Wno-old-style-cast
-    -Wno-sign-conversion
-    -Wno-conversion
-    -Wno-shadow
-)
 set_target_properties(zaro-preview PROPERTIES AUTOMOC ON)
 

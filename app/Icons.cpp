@@ -4,8 +4,8 @@
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPainterPath>
-#include <tuple>
 #include <QScreen>
+#include <tuple>
 
 #include "Theme.h"
 
@@ -367,8 +367,7 @@ QPainterPath pathFor(Glyph glyph) {
 /// The one glyph the design draws filled. Phosphor calls this weight `ph-fill`,
 /// and a heart is the shape that reads as an outline the least.
 bool isFilled(Glyph glyph) {
-    return glyph == Glyph::Heart || glyph == Glyph::DotsThree ||
-           glyph == Glyph::CircleHalf;
+    return glyph == Glyph::Heart || glyph == Glyph::DotsThree || glyph == Glyph::CircleHalf;
 }
 
 }  // namespace

@@ -84,8 +84,8 @@ void FrameThumb::paintEvent(QPaintEvent* /*event*/) {
         // frame's shape, and a cropped one quietly hides what is at the edges.
         const QSize fitted = frame_.size().scaled(picture.size(), Qt::KeepAspectRatio);
         const QRect into{picture.left() + ((picture.width() - fitted.width()) / 2),
-                         picture.top() + ((picture.height() - fitted.height()) / 2),
-                         fitted.width(), fitted.height()};
+                         picture.top() + ((picture.height() - fitted.height()) / 2), fitted.width(),
+                         fitted.height()};
         painter.drawImage(into, frame_);
 
         // The caption sits on the picture, as the design draws it, over a wash

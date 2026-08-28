@@ -1,5 +1,7 @@
 #include "zaro/core/render/RenderGraph.h"
 
+#include <algorithm>
+
 #include "zaro/core/render/EffectStack.h"
 #include "zaro/core/render/Grade.h"
 #include "zaro/core/render/Keyer.h"

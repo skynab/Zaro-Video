@@ -313,8 +313,8 @@ void ScopesPanel::paintHistogram(QPainter& painter, const QRect& area) const {
         QPolygonF shape;
         shape << QPointF(area.left(), area.bottom());
         for (std::size_t bin = 0; bin < bins.size(); ++bin) {
-            const double x =
-                area.left() + (static_cast<double>(bin) * area.width() / (bins.size() - 1));
+            const double x = area.left() + (static_cast<double>(bin) * area.width() /
+                                            static_cast<double>(bins.size() - 1));
             const double height =
                 static_cast<double>(bins[bin]) * (area.height() - 1) / scopes_.histogram.peak;
             shape << QPointF(x, area.bottom() - height);
