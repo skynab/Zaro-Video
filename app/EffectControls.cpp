@@ -226,7 +226,6 @@ QFormLayout* EffectControls::buildColourGroup() {
             [this](const model::ToneCurves& changed, bool committed) {
                 pushCurves(changed, committed);
             });
-    colorGroup_ = colour;
 
     // A look LUT. Shown inside the colour group, between the primary and the
     // curves, which is where it is applied.
@@ -808,7 +807,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     videoGroup_->setEnabled(enabled);
     graphicGroup_->setEnabled(enabled);
     maskGroup_->setEnabled(enabled);
-    colorGroup_->setEnabled(enabled);
+    colourGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
     keyGroup_->setEnabled(enabled);
     effectGroup_->setEnabled(enabled);
@@ -886,7 +885,7 @@ void EffectControls::applyToWidgets() {
     // Motion applies to picture, gain and pan to sound. Showing both for every
     // clip would offer controls that do nothing.
     videoGroup_->setVisible(isVideo);
-    colorGroup_->setVisible(isVideo);
+    colourGroup_->setVisible(isVideo);
     secondaryGroup_->setVisible(isVideo);
     keyGroup_->setVisible(isVideo);
     effectGroup_->setVisible(isVideo);

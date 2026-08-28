@@ -6,100 +6,104 @@ qt_standard_project_setup()
 # main(), and the GUI tests in app/tests link it in front of Catch2's. A test
 # cannot drive a window that only exists inside an executable.
 add_library(zaro_app_ui STATIC
-    PreviewWindow.cpp
-    PreviewWindow.h
     ActionRouter.cpp
     ActionRouter.h
-    Document.cpp
-    Document.h
-    PlaybackController.cpp
-    PlaybackController.h
-    chrome/Bars.cpp
-    chrome/Bars.h
-    chrome/Widgets.cpp
-    chrome/Widgets.h
-    chrome/Choices.cpp
-    chrome/Choices.h
-    chrome/Menus.cpp
-    chrome/Menus.h
-    commands/Context.h
-    commands/Analysis.cpp
-    commands/Analysis.h
-    commands/Music.cpp
-    commands/Music.h
-    commands/Multicam.cpp
-    commands/Multicam.h
-    commands/Media.cpp
-    commands/Media.h
-    commands/Review.cpp
-    commands/Review.h
-    commands/Structure.cpp
-    commands/Structure.h
-    commands/Templates.cpp
-    commands/Templates.h
-    FrameGrab.h
-    MaskOverlay.cpp
-    Hotkeys.cpp
-    Say.cpp
-    MediaBrowser.cpp
-    Transcript.cpp
-    ProgramMonitor.cpp
-    ProgramMonitor.h
-    TimelineWidget.cpp
-    TimelineWidget.h
-    DeliverPanel.cpp
-    DeliverPanel.h
     AudioStrip.cpp
+    AudioStrip.h
     ChannelPanel.cpp
     ChannelPanel.h
-    LoudnessPanel.cpp
-    LoudnessPanel.h
-    AudioStrip.h
     ClipStrip.cpp
     ClipStrip.h
     ColorPalette.cpp
     ColorPalette.h
+    ColorWheel.cpp
+    ColorWheel.h
+    CurveEditor.cpp
+    CurveEditor.h
+    DeliverPanel.cpp
+    DeliverPanel.h
+    Document.cpp
+    Document.h
+    EffectControls.cpp
+    EffectControls.h
+    ExportDialog.cpp
+    ExportDialog.h
+    FrameGrab.h
     FrameThumb.cpp
     FrameThumb.h
     GalleryPanel.cpp
     GalleryPanel.h
     GradeNodes.cpp
     GradeNodes.h
-    StemsPanel.cpp
-    StemsPanel.h
-    ColorWheel.cpp
-    ColorWheel.h
-    CurveEditor.cpp
+    Hotkeys.cpp
     HueBand.cpp
-    MixerPanel.cpp
-    EffectControls.cpp
-    ScopesPanel.cpp
-    CurveEditor.h
     HueBand.h
-    MixerPanel.h
-    EffectControls.h
-    ScopesPanel.h
-    ExportDialog.cpp
-    ExportDialog.h
-    ProjectBin.cpp
-    ProjectBin.h
-    SourceMonitor.cpp
-    SourceMonitor.h
-    SupportButton.cpp
-    SupportButton.h
     Icons.cpp
     Icons.h
+    LoudnessPanel.cpp
+    LoudnessPanel.h
+    MaskOverlay.cpp
+    MediaBrowser.cpp
+    MixerPanel.cpp
+    MixerPanel.h
+    PlaybackController.cpp
+    PlaybackController.h
+    PreviewWindow.cpp
+    PreviewWindow.h
+    ProgramMonitor.cpp
+    ProgramMonitor.h
+    ProjectBin.cpp
+    ProjectBin.h
+    Say.cpp
+    ScopesPanel.cpp
+    ScopesPanel.h
+    SourceMonitor.cpp
+    SourceMonitor.h
+    StemsPanel.cpp
+    StemsPanel.h
+    SupportButton.cpp
+    SupportButton.h
     Theme.cpp
     Theme.h
+    TimelineWidget.cpp
+    TimelineWidget.h
+    Transcript.cpp
     ViewerOverlay.cpp
     ViewerOverlay.h
+
+    chrome/Bars.cpp
+    chrome/Bars.h
+    chrome/Choices.cpp
+    chrome/Choices.h
+    chrome/FlowLayout.cpp
+    chrome/FlowLayout.h
+    chrome/Menus.cpp
+    chrome/Menus.h
+    chrome/Widgets.cpp
+    chrome/Widgets.h
+
+    commands/Analysis.cpp
+    commands/Analysis.h
+    commands/Context.h
+    commands/Media.cpp
+    commands/Media.h
+    commands/Multicam.cpp
+    commands/Multicam.h
+    commands/Music.cpp
+    commands/Music.h
+    commands/Review.cpp
+    commands/Review.h
+    commands/Structure.cpp
+    commands/Structure.h
+    commands/Templates.cpp
+    commands/Templates.h
 )
 
 target_link_libraries(zaro_app_ui
     PUBLIC
         zaro::ui_core
         zaro::platform_qrhi
-    zaro::platform_qtext
+        zaro::platform_qtext
         zaro::platform_ffmpeg
         zaro::platform_sdl
         zaro::warnings

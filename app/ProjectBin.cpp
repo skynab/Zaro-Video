@@ -41,6 +41,7 @@
 #include "Icons.h"
 #include "Say.h"
 #include "Theme.h"
+#include "chrome/FlowLayout.h"
 
 namespace zaro::app {
 namespace {
@@ -165,82 +166,6 @@ std::set<std::uint64_t> usedMedia(const model::Project& project) {
     }
     return used;
 }
-
-/// Left to right, wrapping when the row runs out of panel.
-///
-/// The design lays the filter chips out as flowing text, and no Qt box layout
-/// does that: a horizontal one squeezes six chips into the width of four and a
-/// grid needs to be told how many fit before it can know how many fit. This is
-/// Qt's own flow-layout example, kept to what this panel uses.
-class FlowLayout : public QLayout {
-public:
-    FlowLayout(QWidget* parent, int margin, int gap) : QLayout{parent} {
-        setContentsMargins(margin, margin, margin, margin);
-        setSpacing(gap);
-    }
-    ~FlowLayout() override {
-        while (QLayoutItem* item = takeAt(0)) {
-            delete item;
-        }
-    }
-    FlowLayout(const FlowLayout&) = delete;
-    FlowLayout& operator=(const FlowLayout&) = delete;
-
-    void addItem(QLayoutItem* item) override { items_.append(item); }
-    [[nodiscard]] int count() const override { return static_cast<int>(items_.size()); }
-    [[nodiscard]] QLayoutItem* itemAt(int at) const override { return items_.value(at); }
-    QLayoutItem* takeAt(int at) override {
-        return at >= 0 && at < items_.size() ? items_.takeAt(at) : nullptr;
-    }
-    [[nodiscard]] Qt::Orientations expandingDirections() const override { return {}; }
-    [[nodiscard]] bool hasHeightForWidth() const override { return true; }
-    [[nodiscard]] int heightForWidth(int width) const override {
-        return place(QRect{0, 0, width, 0}, true);
-    }
-    void setGeometry(const QRect& rect) override {
-        QLayout::setGeometry(rect);
-        place(rect, false);
-    }
-    [[nodiscard]] QSize sizeHint() const override { return minimumSize(); }
-    [[nodiscard]] QSize minimumSize() const override {
-        QSize size;
-        for (const QLayoutItem* item : items_) {
-            size = size.expandedTo(item->minimumSize());
-        }
-        const QMargins margins = contentsMargins();
-        return size + QSize{margins.left() + margins.right(), margins.top() + margins.bottom()};
-    }
-
-private:
-    /// Returns the height the rows came to, so `heightForWidth` and
-    /// `setGeometry` cannot disagree about where anything went.
-    int place(const QRect& rect, bool measureOnly) const {
-        const QMargins margins = contentsMargins();
-        const QRect area =
-            rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom());
-        int x = area.x();
-        int y = area.y();
-        int rowHeight = 0;
-        for (QLayoutItem* item : items_) {
-            const QSize hint = item->sizeHint();
-            int next = x + hint.width();
-            if (next > area.right() + 1 && rowHeight > 0) {
-                x = area.x();
-                y += rowHeight + spacing();
-                rowHeight = 0;
-                next = x + hint.width();
-            }
-            if (!measureOnly) {
-                item->setGeometry(QRect{QPoint{x, y}, hint});
-            }
-            x = next + spacing();
-            rowHeight = std::max(rowHeight, hint.height());
-        }
-        return y + rowHeight - rect.y() + margins.bottom();
-    }
-
-    QList<QLayoutItem*> items_;
-};
 
 /// The rows, painted.
 ///
@@ -503,7 +428,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
 
     // --- the counted chips ------------------------------------------------
     chipHolder_ = new QWidget(this);
-    auto* chipFlow = new FlowLayout{chipHolder_, 8, 5};
+    auto* chipFlow = new chrome::FlowLayout{chipHolder_, 8, 5};
     chipHolder_->setLayout(chipFlow);
     // Without this the column above says "one row of chips" for ever and the
     // second row is drawn over the list.

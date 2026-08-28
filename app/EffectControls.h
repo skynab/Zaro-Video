@@ -196,9 +196,9 @@ private:
     QDoubleSpinBox* saturation_{nullptr};
     QCheckBox* enabled_{nullptr};
     QWidget* videoGroup_{nullptr};
-    QWidget* colorGroup_{nullptr};
     CurveEditor* curves_{nullptr};
-    /// Held so `revealStage` can scroll to them.
+    /// Held so `revealStage` can scroll to it, and so the panel can grey it
+    /// out and hide it for a clip that is not video.
     QWidget* colourGroup_{nullptr};
     QScrollArea* scroll_{nullptr};
     QWidget* maskGroup_{nullptr};
