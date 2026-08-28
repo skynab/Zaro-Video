@@ -14,7 +14,14 @@ add_library(zaro_core
     src/Error.cpp
     src/edit/Command.cpp
     src/edit/CommandStack.cpp
-    src/edit/Operations.cpp
+    src/edit/OperationsAnnotation.cpp
+    src/edit/OperationsClip.cpp
+    src/edit/OperationsCommon.cpp
+    src/edit/OperationsCommon.h
+    src/edit/OperationsContent.cpp
+    src/edit/OperationsPlacement.cpp
+    src/edit/OperationsProject.cpp
+    src/edit/OperationsTrim.cpp
     src/edit/Snapping.cpp
     src/edit/Sync.cpp
     src/io/CubeLut.cpp
