@@ -43,9 +43,42 @@ add_subdirectory(app)
 if(ZARO_BUILD_TESTS)
     include(CTest)
     enable_testing()
+
+    # Catch2 is fetched and built as part of this project rather than found
+    # preinstalled, and it is done here rather than in core/tests. Both halves
+    # of that were bugs on Windows:
+    #
+    # * A find_package config file creates *directory-scoped* imported targets.
+    #   Found from core/tests, Catch2::Catch2WithMain existed in core/tests and
+    #   nowhere else, and the sibling suites failed to configure with "the
+    #   target was not found".
+    # * Catch2's own build asks for cxx_std_14, so a prebuilt copy -- vcpkg's,
+    #   Homebrew's, the distribution's -- has a library compiled without the
+    #   C++17 string_view stringifiers, while our C++20 test sources declare
+    #   and call them. That link fails on the one assertion that prints a
+    #   string_view, with an undefined Catch::StringMaker<string_view>.
+    #
+    # Both stayed hidden for as long as no machine had a Catch2 to find: macOS
+    # and Linux fetched one, which is a real target, global, and built to our
+    # standard. Only Windows, where vcpkg supplies one, took the other path.
+    # Fetching everywhere means every platform builds the same Catch2 the same
+    # way. A machine without network can still point at a local checkout with
+    # -DFETCHCONTENT_SOURCE_DIR_CATCH2=<path>.
+    include(FetchContent)
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.15.3
+        GIT_SHALLOW    TRUE
+    )
+    set(CATCH_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+    set(CATCH_INSTALL_EXTRAS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(Catch2)
+    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    # Brings in catch_discover_tests, which every suite below registers with.
+    include(Catch)
+
     add_subdirectory(core/tests)
     add_subdirectory(platform/tests)
-    # After core/tests, which is where Catch2 is found or fetched.
     add_subdirectory(app/tests)
 endif()
 

@@ -4,7 +4,6 @@
     "version": "0.1.0",
     "description": "A non-linear video editor",
     "dependencies": [
-        "catch2",
         "nlohmann-json",
         "sdl2",
         {
@@ -31,6 +30,10 @@
         "Qt is deliberately absent: building qtbase from source costs hours, so CI",
         "and developers both take it from the official binaries (aqt / Homebrew /",
         "the distribution) and point CMAKE_PREFIX_PATH at it.",
+        "",
+        "Catch2 is absent for a different reason: the top-level CMakeLists fetches",
+        "and builds it in-tree on every platform, because a prebuilt one is built",
+        "to C++14 and will not link against our C++20 test sources.",
         "",
         "pkgconf is a host dependency because cmake/FindFFmpeg.cmake locates FFmpeg",
         "through pkg-config, which Windows has no system copy of."
