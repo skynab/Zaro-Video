@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(CutReel
-    VERSION 0.1.0
+    VERSION 0.7.0
     DESCRIPTION "A non-linear video editor"
     LANGUAGES CXX)
 
@@ -21,6 +21,18 @@ option(ZARO_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ZARO_SANITIZE          "Enable ASan+UBSan (Debug only)"  OFF)
 
 include(CompilerWarnings)
+
+# The version, as a header, generated from project(VERSION) above so that the
+# number lives in exactly one place. Anything that wants to show it links
+# zaro::version and includes <zaro/Version.h>.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.h.in"
+    "${CMAKE_BINARY_DIR}/generated/include/zaro/Version.h"
+    @ONLY)
+add_library(zaro_version INTERFACE)
+add_library(zaro::version ALIAS zaro_version)
+target_include_directories(zaro_version
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated/include>)
 
 add_subdirectory(core)
 add_subdirectory(ui-core)

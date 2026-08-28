@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "Cli.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/playback/PlaybackScheduler.h"
 #include "zaro/core/playback/Transport.h"
@@ -34,11 +35,15 @@ void printUsage() {
     std::puts("  --no-audio        run the clock without opening a device");
     std::puts("  --queue <n>       frames of render lookahead (default 8)");
     std::puts("  --cpu             composite on the CPU instead of the GPU");
+    std::puts("  --version         print the version and exit");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (zaro::tools::handledVersion(argc, argv, "zaro-play")) {
+        return 0;
+    }
     if (argc < 2) {
         printUsage();
         return 2;

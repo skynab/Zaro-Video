@@ -1,0 +1,18 @@
+// Generated from cmake/Version.h.in at configure time. Do not edit; the one
+// source of the version number is the project() call in the top-level
+// CMakeLists.txt, so a release is a one-line change there and every build --
+// window title, About box, command line tools -- follows automatically.
+#pragma once
+
+#include <string_view>
+
+namespace zaro {
+
+inline constexpr std::string_view kAppName = "@PROJECT_NAME@";
+inline constexpr std::string_view kVersion = "@PROJECT_VERSION@";
+
+inline constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
+
+}  // namespace zaro

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Cli.h"
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
@@ -22,11 +23,15 @@ void printUsage() {
     std::puts("  --rate <r>      sequence frame rate (default: the first clip's)");
     std::puts("  --size <w>x<h>  sequence frame size (default: the first clip's)");
     std::puts("  --seconds <n>   use only the first n seconds of each clip");
+    std::puts("  --version       print the version and exit");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (zaro::tools::handledVersion(argc, argv, "zaro-cut")) {
+        return 0;
+    }
     if (argc < 3) {
         printUsage();
         return 2;

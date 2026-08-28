@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "Cli.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderGraph.h"
@@ -29,11 +30,15 @@ void printUsage() {
     std::puts("  --cache-mb <n>    frame cache budget in MB (default 64; export is");
     std::puts("                    linear, so a big cache buys nothing here)");
     std::puts("  --quiet           no progress output");
+    std::puts("  --version         print the version and exit");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (zaro::tools::handledVersion(argc, argv, "zaro-render")) {
+        return 0;
+    }
     if (argc < 3) {
         printUsage();
         return 2;

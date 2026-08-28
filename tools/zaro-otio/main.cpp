@@ -2,6 +2,7 @@
 #include <cstring>
 #include <string>
 
+#include "Cli.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
 
@@ -13,6 +14,7 @@ void usage() {
         "\n"
         "  zaro-otio export <project.zaro> <out.otio> [--sequence <id>]\n"
         "  zaro-otio import <in.otio> <project.zaro>\n"
+        "  zaro-otio --version\n"
         "\n"
         "Importing writes a project of its own rather than merging into one:\n"
         "an OTIO file names its media by URL, and matching those against media\n"
@@ -22,6 +24,9 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (zaro::tools::handledVersion(argc, argv, "zaro-otio")) {
+        return 0;
+    }
     if (argc < 4) {
         usage();
         return argc < 2 ? 1 : 0;

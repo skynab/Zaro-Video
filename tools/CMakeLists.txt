@@ -1,11 +1,17 @@
+# Cli.h, plus the generated version header it reads. Every tool links this so
+# that --version reports the same number the app's title bar shows.
+add_library(zaro_tool_cli INTERFACE)
+target_include_directories(zaro_tool_cli INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(zaro_tool_cli INTERFACE zaro::version)
+
 add_executable(zaro-probe zaro-probe/main.cpp)
-target_link_libraries(zaro-probe PRIVATE zaro::platform_ffmpeg zaro::warnings)
+target_link_libraries(zaro-probe PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::warnings)
 
 add_executable(zaro-frame zaro-frame/main.cpp)
-target_link_libraries(zaro-frame PRIVATE zaro::platform_ffmpeg zaro::warnings)
+target_link_libraries(zaro-frame PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::warnings)
 
 add_executable(zaro-cut zaro-cut/main.cpp)
-target_link_libraries(zaro-cut PRIVATE zaro::platform_ffmpeg zaro::warnings)
+target_link_libraries(zaro-cut PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::warnings)
 
 # zaro-render constructs a QGuiApplication itself -- Qt's font engine needs one
 # even with no window -- so it finds Qt rather than inheriting it. A library
@@ -17,12 +23,12 @@ find_package(Qt6 REQUIRED COMPONENTS Gui)
 # title would be the worst kind of wrong: a file that looks finished and is not.
 add_executable(zaro-render zaro-render/main.cpp)
 target_link_libraries(zaro-render
-    PRIVATE zaro::platform_ffmpeg zaro::platform_qtext Qt6::Gui zaro::warnings)
+    PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::platform_qtext Qt6::Gui zaro::warnings)
 
 # Interchange needs no media and no toolkit: it is a file conversion.
 add_executable(zaro-otio zaro-otio/main.cpp)
-target_link_libraries(zaro-otio PRIVATE zaro::core zaro::warnings)
+target_link_libraries(zaro-otio PRIVATE zaro_tool_cli zaro::core zaro::warnings)
 
 add_executable(zaro-play zaro-play/main.cpp)
 target_link_libraries(zaro-play
-    PRIVATE zaro::platform_ffmpeg zaro::platform_sdl zaro::platform_qrhi zaro::warnings)
+    PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::platform_sdl zaro::platform_qrhi zaro::warnings)

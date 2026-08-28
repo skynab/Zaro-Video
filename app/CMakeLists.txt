@@ -101,6 +101,7 @@ add_library(zaro_app_ui STATIC
 
 target_link_libraries(zaro_app_ui
     PUBLIC
+        zaro::version
         zaro::ui_core
         zaro::platform_qrhi
         zaro::platform_qtext

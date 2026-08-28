@@ -21,6 +21,8 @@
 
 #include "PreviewWindow.h"
 
+#include <zaro/Version.h>
+
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -30,6 +32,17 @@
 #include <QVBoxLayout>
 
 namespace zaro::app {
+namespace {
+
+QString appName() {
+    return QString::fromUtf8(kAppName.data(), static_cast<qsizetype>(kAppName.size()));
+}
+
+QString versionText() {
+    return QString::fromUtf8(kVersion.data(), static_cast<qsizetype>(kVersion.size()));
+}
+
+}  // namespace
 
 PreviewWindow::PreviewWindow(model::Project project, io::LoadedProject loaded, std::string path) {
     // What was just loaded is what is on disk, by definition, and adopt
@@ -1420,9 +1433,10 @@ void PreviewWindow::updateTitle() {
     // Said in the title, because read-only is a fact about the whole
     // window and finding out at the moment of saving is finding out too
     // late.
-    setWindowTitle(QString("%1%2%3 — CutReel")
+    setWindowTitle(QString("%1%2%3 — %4 %5")
                        .arg(name, document_.commands().isModified() ? "*" : "",
-                            document_.isReadOnly() ? " [read only]" : ""));
+                            document_.isReadOnly() ? " [read only]" : "", appName(),
+                            versionText()));
     if (bars_.statusLeft != nullptr) {
         updateChrome();
     }
@@ -1749,9 +1763,10 @@ void PreviewWindow::bindCommands() {
     actions_.bind("reset-panels", [this] { setWorkspace(workspace_); });
     actions_.bind("hotkeys", [this] { showHotkeys(); });
     actions_.bind("about", [this] {
-        QMessageBox::about(this, "CutReel",
-                           "CutReel — a non-linear editor.\n\n"
-                           "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
+        QMessageBox::about(this, QString("About %1").arg(appName()),
+                           QString("%1 %2 — a non-linear editor.\n\n"
+                                   "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.")
+                               .arg(appName(), versionText()));
     });
 }
 
