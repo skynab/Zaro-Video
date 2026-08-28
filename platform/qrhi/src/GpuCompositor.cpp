@@ -417,7 +417,14 @@ Result<std::unique_ptr<GpuCompositor>> GpuCompositor::create() {
 #elif defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
     state.ownedRhi.reset(QRhi::create(QRhi::D3D11, &params));
-#else
+// Qt only declares QRhiVulkanInitParams when it was built with Vulkan *and*
+// the Vulkan headers are present in this build environment -- the same
+// condition qrhi_platform.h guards the struct with. A machine without them
+// (a CI image with no libvulkan-dev, say) compiles to no branch at all and
+// leaves ownedRhi null, which the check below reports as an unsupported
+// backend. That is the same answer callers already get from a machine whose
+// Vulkan driver refuses to initialise, and the compositor tests skip on it.
+#elif QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
     QRhiVulkanInitParams params;
     state.ownedRhi.reset(QRhi::create(QRhi::Vulkan, &params));
 #endif
