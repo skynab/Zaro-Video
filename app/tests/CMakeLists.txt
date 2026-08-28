@@ -16,6 +16,7 @@ add_executable(zaro_app_tests
     test_masks.cpp
     test_time_and_transitions.cpp
     test_audio.cpp
+    test_playback.cpp
     test_titles_and_captions.cpp
     test_media_management.cpp
     test_project_lifecycle.cpp

@@ -127,6 +127,7 @@
 #include "MaskOverlay.h"
 #include "MediaBrowser.h"
 #include "MixerPanel.h"
+#include "PlaybackController.h"
 #include "ProgramMonitor.h"
 #include "ProjectBin.h"
 #include "Say.h"
@@ -622,6 +623,18 @@ public:
             setPosition(time::RationalTime{value, liveSequence()->frameRate()});
         });
 
+        // The clock drives the playhead, and the play button follows the clock
+        // rather than the click: pressing play when the device will not open
+        // leaves the transport stopped, and a button that already said "pause"
+        // would be describing something that is not happening.
+        connect(&playback_, &PlaybackController::moved, this,
+                [this](const time::RationalTime& at) { setPosition(at); });
+        connect(&playback_, &PlaybackController::playingChanged, this, [this](bool playing) {
+            if (bars_.playButton != nullptr) {
+                bars_.playButton->setText(playing ? kPauseGlyph : kPlayGlyph);
+            }
+        });
+
         // Meters at twenty a second. Faster is invisible on a meter with a peak
         // hold, and each tick is a mix of a short block when the transport is
         // stopped.
@@ -629,12 +642,6 @@ public:
         meterTimer_->setInterval(50);
         connect(meterTimer_, &QTimer::timeout, this, [this] { updateMeters(); });
         meterTimer_->start();
-
-        clockTimer_ = new QTimer(this);
-        // Faster than any display refresh, so the playhead is never waiting on
-        // the timer rather than on the clock.
-        clockTimer_->setInterval(4);
-        connect(clockTimer_, &QTimer::timeout, this, [this] { followClock(); });
 
         updateTitle();
         // Every thirty seconds, and only when something has changed. A timer
@@ -706,6 +713,7 @@ public:
             }
         }
         monitor_->setSource(liveSequence(), media_.get());
+        playback_.setSource(liveSequence(), media_.get());
         monitor_->setNesting(&document_.project(), media_.get());
         monitor_->setRenderCache(&renderCache_);
         monitor_->setTextRasterizer(&text_);
@@ -786,13 +794,8 @@ public:
         if (mixer_ == nullptr || liveSequence() == nullptr || !mixer_->isVisible()) {
             return;
         }
-        if (playing_) {
-            render::AudioGraph::Meters copy;
-            {
-                const std::lock_guard<std::mutex> guard{meterMutex_};
-                copy = latestMeters_;
-            }
-            mixer_->setMeters(copy);
+        if (playback_.isPlaying()) {
+            mixer_->setMeters(playback_.meters());
             return;
         }
         if (media_ == nullptr) {
@@ -1599,6 +1602,9 @@ public:
     /// can press a button that has no button.
     bool trigger(const std::string& actionId) { return actions_.trigger(actionId); }
 
+    [[nodiscard]] const time::RationalTime& position() const noexcept { return position_; }
+    [[nodiscard]] const PlaybackController& playback() const noexcept { return playback_; }
+
     /// Register something that has no menu item: playback, marking, stepping.
     ///
     /// These are the commands whose defaults are bare letters, which cannot be
@@ -1667,15 +1673,15 @@ private:
     void bindPlaybackActions() {
         bindAction("play-pause", [this] { togglePlay(); });
         bindAction("shuttle-back", [this] {
-            transport_.pressJ();
+            playback_.transport().pressJ();
             startIfPlaying();
         });
         bindAction("shuttle-stop", [this] {
-            transport_.pressK();
+            playback_.transport().pressK();
             stop();
         });
         bindAction("shuttle-forward", [this] {
-            transport_.pressL();
+            playback_.transport().pressL();
             startIfPlaying();
         });
         bindAction("step-back", [this] { step(-1); });
@@ -2355,70 +2361,11 @@ private:
         refresh();
     }
 
-    void togglePlay() {
-        if (playing_) {
-            transport_.pause();
-            stop();
-        } else {
-            transport_.play();
-            startIfPlaying();
-        }
-    }
+    void togglePlay() { playback_.togglePlay(position_); }
 
-    void startIfPlaying() {
-        if (transport_.speed().isZero()) {
-            stop();
-            return;
-        }
-        if (playing_) {
-            // Already running; the new speed is picked up from the transport on
-            // the next tick, re-anchored so the playhead does not jump.
-            anchorPosition_ = position_;
-            anchorClock_ = sink_ ? sink_->clockFrames() : 0;
-            return;
-        }
-        startClock();
-    }
+    void startIfPlaying() { playback_.startIfPlaying(position_); }
 
-    void startClock() {
-        const time::Rational& audioRate = liveSequence()->audioSampleRate();
-        if (!sink_) {
-            auto opened = platform::sdl::AudioSink::open(audioRate, 2);
-            if (opened) {
-                sink_ = std::move(*opened);
-            }
-        }
-        anchorPosition_ = position_;
-        anchorClock_ = sink_ ? sink_->clockFrames() : 0;
-        audioWritten_ = sink_ ? sink_->clockFrames() : 0;
-        playing_ = true;
-        bars_.playButton->setText(kPauseGlyph);
-
-        if (sink_) {
-            // Audio on its own thread, for the reason ADR-006 records: sharing
-            // one with rendering starves the device the moment a frame is slow.
-            audioRunning_.store(true, std::memory_order_relaxed);
-            audioThread_ = std::thread{[this] { pumpAudio(); }};
-            sink_->start();
-        }
-        clockTimer_->start();
-    }
-
-    void stop() {
-        if (!playing_) {
-            return;
-        }
-        playing_ = false;
-        clockTimer_->stop();
-        audioRunning_.store(false, std::memory_order_relaxed);
-        if (audioThread_.joinable()) {
-            audioThread_.join();
-        }
-        if (sink_) {
-            sink_->pause();
-        }
-        bars_.playButton->setText(kPlayGlyph);
-    }
+    void stop() { playback_.stop(); }
 
     /// Peaks are generated off the UI thread: decoding a long file's audio
     /// takes seconds, and a project that freezes while it opens is worse than
@@ -2475,75 +2422,6 @@ private:
         }};
     }
 
-    void pumpAudio() {
-        render::AudioGraph mixer{*media_};
-        // A compressor's envelope and a filter's delay line are state, so
-        // starting playback somewhere new has to begin from silence -- else the
-        // first moment after a jump is ducked by whatever was loud wherever the
-        // playhead was before.
-        mixer.resetProcessing();
-        const time::Rational& audioRate = liveSequence()->audioSampleRate();
-        constexpr std::int32_t kChannels = 2;
-
-        while (audioRunning_.load(std::memory_order_relaxed)) {
-            const std::int64_t target = sink_->clockFrames() + sink_->deviceBufferFrames() * 3;
-            while (audioWritten_ < target && audioRunning_.load(std::memory_order_relaxed)) {
-                const std::int64_t block = std::min<std::int64_t>(1024, target - audioWritten_);
-                if (sink_->ring().availableToWrite() < block) {
-                    break;
-                }
-                std::vector<float> interleaved(static_cast<std::size_t>(block * kChannels), 0.0F);
-
-                // Only at 1x: shuttling needs pitch handling to sound like
-                // anything, so it runs silent while the clock keeps time.
-                if (transport_.speed() == time::Rational::fromInt(1)) {
-                    const auto from = anchorPosition_.rescaledTo(audioRate) +
-                                      time::RationalTime{audioWritten_ - anchorClock_, audioRate};
-                    if (auto mixed = mixer.mix(*liveSequence(), from, block, kChannels)) {
-                        {
-                            // Copied under a lock for the UI to read. This
-                            // thread already allocates a buffer per block, so
-                            // it is not a realtime context -- the realtime path
-                            // is the device callback draining the ring.
-                            const std::lock_guard<std::mutex> guard{meterMutex_};
-                            latestMeters_ = mixer.meters();
-                        }
-                        for (std::int64_t i = 0; i < mixed->sampleCount(); ++i) {
-                            for (std::int32_t c = 0; c < kChannels; ++c) {
-                                interleaved[static_cast<std::size_t>(i * kChannels + c)] =
-                                    mixed->channel(c)[i];
-                            }
-                        }
-                    }
-                }
-                audioWritten_ += sink_->ring().write(interleaved.data(), block);
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    }
-
-    void followClock() {
-        if (!playing_) {
-            return;
-        }
-        const time::Rational& audioRate = liveSequence()->audioSampleRate();
-        const std::int64_t clock = sink_ ? sink_->clockFrames() : 0;
-
-        // Position is an exact rational function of elapsed audio, floored to
-        // the frame the playhead is inside -- the same arithmetic the scheduler
-        // uses, and for the same reason.
-        const time::Rational elapsed = time::Rational{clock - anchorClock_, 1} / audioRate;
-        const time::Rational advanced = elapsed * transport_.speed() * liveSequence()->frameRate();
-        const auto position = anchorPosition_ + time::RationalTime{advanced.floorToInt(),
-                                                                   liveSequence()->frameRate()};
-
-        if (position.frames() >= liveSequence()->duration().frames() || position.frames() < 0) {
-            stop();
-            return;
-        }
-        setPosition(position);
-    }
-
     /// Measure the frame at the playhead, if anyone is looking at the scopes.
     ///
     /// Not during playback, and not when the panel is hidden. Measuring means
@@ -2572,7 +2450,7 @@ private:
         }
         const bool wantScopes = scopes_ != nullptr && scopes_->wantsMeasurement();
         const bool wantThumb = thumb_ != nullptr && thumb_->isVisible();
-        if (playing_ || (!wantScopes && !wantThumb)) {
+        if (playback_.isPlaying() || (!wantScopes && !wantThumb)) {
             return;
         }
         render::RenderGraph graph{*media_};
@@ -2977,6 +2855,8 @@ private:
 
     /// The project, its history, its path and its lock.
     Document document_;
+    /// The transport, the audio clock and the thread that feeds it.
+    PlaybackController playback_{this};
     QTimer* autosaveTimer_{nullptr};
     /// The active sequence, by id rather than by pointer.
     ///
@@ -2990,7 +2870,6 @@ private:
     /// One font engine for the window: the preview, the scopes and the export
     /// dialog all draw the same titles.
     platform::qtext::QtTextRasterizer text_;
-    std::unique_ptr<platform::sdl::AudioSink> sink_;
     /// Composited frames, shared between the preview's CPU fallback and the
     /// pre-render. One cache: a frame rendered by the button is the frame the
     /// monitor asks for a moment later, and two caches would render it twice.
@@ -3014,8 +2893,6 @@ private:
     app::EffectControls* effects_{nullptr};
     app::ScopesPanel* scopes_{nullptr};
     app::MixerPanel* mixer_{nullptr};
-    std::mutex meterMutex_;
-    render::AudioGraph::Meters latestMeters_;
     QTimer* meterTimer_{nullptr};
     app::ProjectBin* bin_{nullptr};
     app::GalleryPanel* gallery_{nullptr};
@@ -3046,19 +2923,11 @@ private:
     app::DeliverPanel* deliver_{nullptr};
     app::ViewerOverlay* viewerOverlay_{nullptr};
     QString workspace_{"Edit"};
-    QTimer* clockTimer_{nullptr};
 
-    playback::Transport transport_;
     time::RationalTime position_{};
-    time::RationalTime anchorPosition_{};
-    std::int64_t anchorClock_{0};
-    std::int64_t audioWritten_{0};
-    bool playing_{false};
 
-    std::thread audioThread_;
     std::thread waveformThread_;
     std::atomic<bool> shuttingDown_{false};
-    std::atomic<bool> audioRunning_{false};
 };
 
 }  // namespace zaro::app

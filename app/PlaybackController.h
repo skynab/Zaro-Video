@@ -1,0 +1,116 @@
+// The transport: the audio clock, the thread that feeds it, and where that
+// puts the playhead.
+//
+// ADR-006 records why the clock is the audio device rather than a timer: a
+// timer drifts against the sound card, and picture that drifts against sound is
+// the one artefact an editor cannot ship. Everything here follows from that --
+// the position is a rational function of how many samples the device has
+// actually consumed, and the thread that fills the ring is separate so a slow
+// frame cannot starve it.
+//
+// It was eleven members and six methods on the window, which is why the window
+// had two threads in it. What the window actually needs from playback is three
+// things: start, stop, and being told where the clock has got to.
+#pragma once
+
+#include <QObject>
+#include <QTimer>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <thread>
+
+#include "zaro/core/model/Sequence.h"
+#include "zaro/core/playback/Transport.h"
+#include "zaro/core/render/AudioGraph.h"
+#include "zaro/core/time/RationalTime.h"
+#include "zaro/platform/ffmpeg/FFmpegRender.h"
+#include "zaro/platform/sdl/AudioSink.h"
+
+namespace zaro::app {
+
+class PlaybackController : public QObject {
+    Q_OBJECT
+
+public:
+    explicit PlaybackController(QObject* parent = nullptr);
+    ~PlaybackController() override;
+
+    PlaybackController(const PlaybackController&) = delete;
+    PlaybackController& operator=(const PlaybackController&) = delete;
+    PlaybackController(PlaybackController&&) = delete;
+    PlaybackController& operator=(PlaybackController&&) = delete;
+
+    /// What to play. Told again whenever the sequence or the media changes.
+    ///
+    /// Held as a pointer that the caller keeps good, the same bargain the
+    /// monitor takes: a sequence looked up per audio block would be a lookup
+    /// per two milliseconds on the thread that must not be late.
+    void setSource(const model::Sequence* sequence, platform::ffmpeg::ProjectMediaSource* media);
+
+    [[nodiscard]] playback::Transport& transport() noexcept { return transport_; }
+    [[nodiscard]] const playback::Transport& transport() const noexcept { return transport_; }
+    [[nodiscard]] bool isPlaying() const noexcept { return playing_; }
+
+    /// Whether there is an audio device to keep time by.
+    ///
+    /// ADR-006: the clock is the device. Without one the transport still runs
+    /// and still says it is playing, but nothing advances -- there is no
+    /// elapsed-sample count to be a function of. Worth being able to ask,
+    /// because "the playhead did not move" means something different on a
+    /// machine with no sound card than it does on one with.
+    [[nodiscard]] bool hasAudioClock() const noexcept { return sink_ != nullptr; }
+
+    /// Play or pause, from wherever the playhead is now.
+    void togglePlay(const time::RationalTime& from);
+
+    /// Start, or pick up a speed that has changed.
+    ///
+    /// Re-anchors rather than restarting, so changing shuttle speed mid-play
+    /// does not make the playhead jump.
+    void startIfPlaying(const time::RationalTime& from);
+
+    void stop();
+
+    /// Stop and join, for a window that is going away.
+    void shutDown();
+
+    /// The meters from the thread that is actually producing the audio.
+    [[nodiscard]] render::AudioGraph::Meters meters() const;
+
+signals:
+    /// The clock has moved the playhead.
+    void moved(const zaro::time::RationalTime& position);
+    /// Started or stopped, so whatever shows that can catch up.
+    void playingChanged(bool playing);
+
+private:
+    void startClock(const time::RationalTime& from);
+    void pumpAudio();
+    void followClock();
+
+    const model::Sequence* sequence_{nullptr};
+    platform::ffmpeg::ProjectMediaSource* media_{nullptr};
+
+    playback::Transport transport_;
+    std::unique_ptr<platform::sdl::AudioSink> sink_;
+    QTimer* clockTimer_{nullptr};
+
+    /// Where the playhead was when the clock was last anchored, and what the
+    /// device's frame counter said at that moment. Position is the difference
+    /// between them, which is why both are needed and why they are set
+    /// together.
+    time::RationalTime anchorPosition_{};
+    std::int64_t anchorClock_{0};
+    std::int64_t audioWritten_{0};
+    bool playing_{false};
+
+    std::thread audioThread_;
+    std::atomic<bool> audioRunning_{false};
+
+    mutable std::mutex meterMutex_;
+    render::AudioGraph::Meters latestMeters_;
+};
+
+}  // namespace zaro::app

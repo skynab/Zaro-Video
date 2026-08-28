@@ -11,6 +11,8 @@ add_library(zaro_app_ui STATIC
     ActionRouter.h
     Document.cpp
     Document.h
+    PlaybackController.cpp
+    PlaybackController.h
     chrome/Bars.cpp
     chrome/Bars.h
     chrome/Widgets.cpp
