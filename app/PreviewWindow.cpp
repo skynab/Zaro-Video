@@ -904,4 +904,1336 @@ void PreviewWindow::applyCaptions(const model::CaptionTrack& captions) {
     refreshInstruments();
 }
 
+void PreviewWindow::setActiveSequence(model::SequenceId id) {
+    if (document_.project().findSequence(id) == nullptr) {
+        return;
+    }
+    document_.project().setActiveSequence(id);
+    sequenceId_ = id;
+    position_ = time::RationalTime{0, document_.project().findSequence(id)->frameRate()};
+    selectedTrack_ = model::TrackId{};
+    selectedClip_ = model::ClipId{};
+    renderCache_.clear();
+    rebindSequence();
+    refresh();
+}
+
+void PreviewWindow::rebindSequence() {
+    const ui::SequenceBinding binding{&document_.project(), sequenceId_, &document_.commands()};
+    for (ui::SequenceBound* panel : bound_) {
+        if (panel != nullptr) {
+            panel->bind(binding);
+        }
+    }
+    monitor_->setSource(liveSequence(), media_.get());
+    playback_.setSource(liveSequence(), media_.get());
+    monitor_->setNesting(&document_.project(), media_.get());
+    monitor_->setRenderCache(&renderCache_);
+    monitor_->setTextRasterizer(&text_);
+    monitor_->update();
+}
+
+commands::Context PreviewWindow::editContext() {
+    return commands::Context{
+        ui::SequenceBinding{&document_.project(), sequenceId_, &document_.commands()},
+        selectedTrack_,
+        selectedClip_,
+        position_,
+        media_.get(),
+        &renderCache_,
+        &text_};
+}
+
+void PreviewWindow::afterEdit() {
+    document_.commands().breakMerge();
+    renderCache_.clear();
+    monitor_->update();
+    timeline_->update();
+    effects_->refresh();
+    updateCacheBar();
+    updateTitle();
+}
+
+void PreviewWindow::afterMediaChange() {
+    // Reopened here rather than by the operation that changed the paths:
+    // the source belongs to the window, and an operation that reached in to
+    // reopen it was an operation that could only be called from one.
+    if (Status reopened = openMedia(); !reopened) {
+        app::warn(this, "Media", QString::fromStdString(reopened.error().toString()));
+    }
+    renderCache_.clear();
+    monitor_->update();
+    timeline_->update();
+    bin_->refresh();
+    updateCacheBar();
+    updateTitle();
+}
+
+void PreviewWindow::updateMeters() {
+    if (mixer_ == nullptr || liveSequence() == nullptr || !mixer_->isVisible()) {
+        return;
+    }
+    if (playback_.isPlaying()) {
+        mixer_->setMeters(playback_.meters());
+        return;
+    }
+    if (media_ == nullptr) {
+        return;
+    }
+    render::AudioGraph meterMix{*media_};
+    const auto& audioRate = liveSequence()->audioSampleRate();
+    constexpr std::int64_t kBlock = 1024;
+    if (meterMix.mix(*liveSequence(), position_.rescaledTo(audioRate), kBlock, 2)) {
+        mixer_->setMeters(meterMix.meters());
+    }
+}
+
+void PreviewWindow::waitForWaveforms() {
+    if (waveformThread_.joinable()) {
+        waveformThread_.join();
+    }
+    // The results are handed over through the event loop, so they are not
+    // on screen until it has been given a chance to run.
+    QApplication::processEvents();
+}
+
+const model::Sequence* PreviewWindow::liveSequence() const {
+    return document_.project().findSequence(sequenceId_);
+}
+
+Result<render::ShotMatch> PreviewWindow::matchToReference() {
+    if (!comparing_) {
+        return Error{ErrorCode::InvalidData, "hold a frame to match against first"};
+    }
+    auto matched = commands::matchToReference(editContext(), referenceAt_);
+    if (matched && matched->usable) {
+        afterEdit();
+    }
+    return matched;
+}
+
+Result<commands::MaskTrack> PreviewWindow::trackMaskForward() {
+    auto tracked = commands::trackMaskForward(editContext());
+    if (tracked) {
+        afterEdit();
+    }
+    return tracked;
+}
+
+Result<render::StabiliseResult> PreviewWindow::stabiliseClip() {
+    auto steadied = commands::stabiliseClip(editContext());
+    if (steadied) {
+        afterEdit();
+    }
+    return steadied;
+}
+
+Result<io::RelinkReport> PreviewWindow::relinkMedia(const std::string& root) {
+    auto report = commands::relinkMedia(editContext(), root);
+    if (report) {
+        afterMediaChange();
+    }
+    return report;
+}
+
+Result<platform::ffmpeg::ProxySummary> PreviewWindow::buildProxy(model::MediaRefId mediaId,
+                                                                 std::int32_t width) {
+    auto built = commands::buildProxy(editContext(), mediaId, width);
+    if (built) {
+        afterMediaChange();
+    }
+    return built;
+}
+
+Result<bool> PreviewWindow::toggleCommentHere() {
+    auto toggled = commands::toggleCommentHere(editContext());
+    if (toggled) {
+        timeline_->update();
+        updateTitle();
+    }
+    return toggled;
+}
+
+Status PreviewWindow::writeReviewNotes(const std::string& path) {
+    return commands::writeReviewNotes(editContext(), path);
+}
+
+app::MediaBrowser* PreviewWindow::browseMedia() {
+    if (browser_ == nullptr) {
+        browser_ = adopting(new app::MediaBrowser(this));
+        connect(browser_, &app::MediaBrowser::imported, this, [this] {
+            if (Status reopened = openMedia(); !reopened) {
+                app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
+            }
+            bin_->refresh();
+            updateTitle();
+        });
+    }
+    if (browser_->folder().empty()) {
+        std::string start = std::filesystem::current_path().string();
+        for (const model::MediaRef& media : document_.project().media()) {
+            const std::filesystem::path parent = std::filesystem::path{media.path}.parent_path();
+            if (!parent.empty() && std::filesystem::is_directory(parent)) {
+                start = parent.string();
+            }
+        }
+        static_cast<void>(browser_->showFolder(start));
+    }
+    browser_->show();
+    browser_->raise();
+    return browser_;
+}
+
+app::Hotkeys* PreviewWindow::showHotkeys() {
+    if (hotkeys_ == nullptr) {
+        hotkeys_ = new app::Hotkeys(actions_.keymap(), this);
+        hotkeys_->setOnChanged([this] {
+            applyKeymap();
+            saveKeymap();
+        });
+    }
+    hotkeys_->refresh();
+    hotkeys_->show();
+    hotkeys_->raise();
+    return hotkeys_;
+}
+
+Result<io::ConsolidateReport> PreviewWindow::consolidateMedia(const std::string& destination) {
+    auto report = commands::consolidateMedia(editContext(), destination);
+    if (report) {
+        afterMediaChange();
+    }
+    return report;
+}
+
+app::Transcript* PreviewWindow::showTranscript() {
+    if (transcript_ == nullptr) {
+        transcript_ = adopting(new app::Transcript(this));
+        connect(transcript_, &app::Transcript::edited, this, [this] {
+            renderCache_.clear();
+            timeline_->update();
+            monitor_->update();
+            updateCacheBar();
+            updateTitle();
+            refresh();
+        });
+        connect(transcript_, &app::Transcript::scrubbed, this,
+                [this](time::RationalTime at) { setPosition(at); });
+    }
+    transcript_->show();
+    transcript_->raise();
+    return transcript_;
+}
+
+Result<render::RemixPlan> PreviewWindow::remixSelectedTo(double targetSeconds) {
+    auto plan = commands::remixSelectedTo(editContext(), targetSeconds);
+    if (plan) {
+        afterEdit();
+    }
+    return plan;
+}
+
+Result<render::ReframeResult> PreviewWindow::reframeClip() {
+    auto framed = commands::reframeClip(editContext());
+    if (framed) {
+        afterEdit();
+    }
+    return framed;
+}
+
+Result<model::ClipId> PreviewWindow::pinTo(model::ClipId host) {
+    auto pinned = commands::pinTo(editContext(), host);
+    if (pinned) {
+        afterEdit();
+    }
+    return pinned;
+}
+
+Result<model::ClipId> PreviewWindow::pinToClipBelow() {
+    auto pinned = commands::pinToClipBelow(editContext());
+    if (pinned) {
+        afterEdit();
+    }
+    return pinned;
+}
+
+Status PreviewWindow::saveGraphicTemplate(const std::string& path) {
+    return commands::saveGraphicTemplate(editContext(), path);
+}
+
+Result<model::ClipId> PreviewWindow::placeGraphicTemplate(const std::string& path,
+                                                          const time::RationalTime& at) {
+    auto placed = commands::placeGraphicTemplate(editContext(), path, at);
+    if (placed) {
+        afterEdit();
+    }
+    return placed;
+}
+
+void PreviewWindow::setComparing(bool on, const time::RationalTime& reference) {
+    comparing_ = on;
+    referenceAt_ = reference;
+    monitor_->setComparison(on, referenceAt_, compareMode_, compareSplit_);
+    monitor_->update();
+}
+
+void PreviewWindow::setCompareMode(render::CompareMode mode) {
+    compareMode_ = mode;
+    monitor_->setComparison(comparing_, referenceAt_, compareMode_, compareSplit_);
+    monitor_->update();
+}
+
+void PreviewWindow::setCompareSplit(double split) {
+    compareSplit_ = std::clamp(split, 0.0, 1.0);
+    monitor_->setComparison(comparing_, referenceAt_, compareMode_, compareSplit_);
+    monitor_->update();
+}
+
+void PreviewWindow::deliveryMenu() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+    const model::Sequence::Output current = sequence->output();
+    const chrome::DeliveryChoice chosen =
+        chrome::deliveryMenu(current.transfer, current.highlightKnee);
+    model::Sequence::Output wanted = current;
+    if (chosen.transfer.has_value()) {
+        wanted.transfer = *chosen.transfer;
+    } else if (chosen.highlightKnee.has_value()) {
+        wanted.highlightKnee = *chosen.highlightKnee;
+    } else {
+        return;
+    }
+    setDelivery(wanted);
+}
+
+bool PreviewWindow::setDelivery(const model::Sequence::Output& output) {
+    if (Status set = commands::setDelivery(editContext(), output); !set) {
+        app::warn(this, "Delivery", QString::fromStdString(set.error().toString()));
+        return false;
+    }
+    // Curves, secondaries and LUTs are all baked against the delivery
+    // curve, so every cached frame was made for the old one.
+    afterEdit();
+    return true;
+}
+
+std::int32_t PreviewWindow::detectScenes() {
+    // The dialog is the window's, and the operation's only view of it is a
+    // question it asks once a frame: keep going?
+    QProgressDialog progress("Looking for scene changes\u2026", "Cancel", 0, 1, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(400);
+    const std::int32_t cuts =
+        commands::detectScenes(editContext(), [&](std::int64_t done, std::int64_t total) {
+            progress.setMaximum(static_cast<int>(total));
+            progress.setValue(static_cast<int>(done));
+            QCoreApplication::processEvents();
+            return !progress.wasCanceled();
+        });
+    progress.reset();
+    if (cuts > 0) {
+        afterEdit();
+    }
+    return cuts;
+}
+
+Status PreviewWindow::openProject(const std::string& path, Sharing sharing) {
+    auto opened = document_.read(path, sharing);
+    if (!opened) {
+        return opened.error();
+    }
+    document_.releaseLock();
+    const bool readOnly = opened->readOnly;
+    model::Project project = opened->loaded.project;
+    adopt(std::move(project), std::move(opened->loaded), path, readOnly);
+    document_.takeLock();
+    updateTitle();
+    return {};
+}
+
+void PreviewWindow::newProject() {
+    model::Project fresh = model::newProject();
+    adopt(std::move(fresh), io::LoadedProject{}, {});
+}
+
+void PreviewWindow::adopt(model::Project project, io::LoadedProject loaded, std::string path,
+                          bool readOnly) {
+    document_.autosave();
+    stop();
+    document_.adopt(std::move(project), std::move(loaded), std::move(path));
+    document_.setReadOnly(readOnly);
+    sequenceId_ = document_.project().activeSequence();
+    position_ = time::RationalTime{0, document_.project().findSequence(sequenceId_)->frameRate()};
+    selectedTrack_ = model::TrackId{};
+    selectedClip_ = model::ClipId{};
+    // A frame cached from the project that has gone would be served for the
+    // new one: the recipe covers what is in a sequence, not which project
+    // it came from.
+    renderCache_.clear();
+    // Bound before the media is opened as well as after, so that a project
+    // whose files cannot be read still leaves every panel pointed at it.
+    // Otherwise the failure below shows a window full of panels describing
+    // the project that has gone.
+    rebindSequence();
+    if (Status opened = openMedia(); !opened) {
+        // The project is loaded and the window is bound to it; what failed
+        // is reading its files. Said plainly rather than swallowed: a
+        // timeline of clips that draw nothing is a puzzle.
+        app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
+    }
+    effects_->setSelection(model::TrackId{}, model::ClipId{});
+    timeline_->setCachedSpans({});
+    updateTitle();
+    refresh();
+    monitor_->update();
+}
+
+bool PreviewWindow::save() {
+    if (document_.path().empty()) {
+        return saveAs();
+    }
+    if (Status written = document_.save(); !written) {
+        if (document_.isReadOnly()) {
+            // Said on stderr and in the title bar, never in a dialog.
+            //
+            // This one was the worst offender: a project with a stale lock
+            // beside it -- left by a killed process, or by a test -- turned
+            // every Ctrl+S into a box somebody had to dismiss before they
+            // could carry on. The window title already carries
+            // "[read only]", which is where a state belongs; a refusal does
+            // not also need to interrupt.
+            std::fprintf(stderr, "zaro: %s\n", written.error().message().c_str());
+            return false;
+        }
+        app::warn(this, "Save", QString::fromStdString(written.error().toString()));
+        return false;
+    }
+    updateTitle();
+    return true;
+}
+
+Result<std::string> PreviewWindow::saveNewVersion() {
+    auto next = document_.saveNewVersion();
+    if (next) {
+        updateTitle();
+    }
+    return next;
+}
+
+void PreviewWindow::openVersionMenu() {
+    if (document_.path().empty()) {
+        app::say(this, "Version", "This project has not been saved yet.");
+        return;
+    }
+    QMenu menu;
+    std::map<QAction*, std::string> paths;
+    for (const std::string& version : io::versionsOf(document_.path())) {
+        const bool current = version == document_.path();
+        QAction* action = menu.addAction(
+            QString::fromStdString(std::filesystem::path{version}.filename().string()));
+        action->setCheckable(true);
+        action->setChecked(current);
+        action->setEnabled(!current);
+        paths.emplace(action, version);
+    }
+    if (paths.empty()) {
+        menu.addAction("No other versions")->setEnabled(false);
+    }
+    QAction* chosen = menu.exec(QCursor::pos());
+    const auto found = paths.find(chosen);
+    if (found == paths.end()) {
+        return;
+    }
+    if (Status opened = openProject(found->second); !opened) {
+        app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
+    }
+}
+
+void PreviewWindow::openDialog() {
+    const QString chosen =
+        QFileDialog::getOpenFileName(this, "Open project", {}, "Zaro projects (*.zaro)");
+    if (chosen.isEmpty()) {
+        return;
+    }
+    const std::string path = chosen.toStdString();
+    // Somebody else's lock is a question, not a refusal: often enough the
+    // answer is "let me look at it anyway", and often enough the other
+    // machine went home hours ago.
+    if (auto held = io::readLock(path); held && !io::isOurs(*held) && !io::isStale(*held)) {
+        QMessageBox ask{this};
+        ask.setWindowTitle("Open project");
+        ask.setText(
+            QString("%1 has this project open on %2.")
+                .arg(QString::fromStdString(held->user), QString::fromStdString(held->host)));
+        ask.setInformativeText(
+            "Opening it read-only lets you look without saving over "
+            "their work.");
+        QPushButton* readOnly = ask.addButton("Open Read-Only", QMessageBox::AcceptRole);
+        QPushButton* takeOver = ask.addButton("Take Over", QMessageBox::DestructiveRole);
+        ask.addButton(QMessageBox::Cancel);
+        ask.exec();
+        Sharing sharing = Sharing::Exclusive;
+        if (ask.clickedButton() == readOnly) {
+            sharing = Sharing::ReadOnly;
+        } else if (ask.clickedButton() == takeOver) {
+            sharing = Sharing::TakeOver;
+        } else {
+            return;
+        }
+        if (Status opened = openProject(path, sharing); !opened) {
+            app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
+        }
+        return;
+    }
+    if (Status opened = openProject(path); !opened) {
+        app::warn(this, "Open", QString::fromStdString(opened.error().toString()));
+    }
+}
+
+bool PreviewWindow::saveAs() {
+    const QString chosen = QFileDialog::getSaveFileName(
+        this, "Save project",
+        QString::fromStdString(document_.path().empty() ? "project.zaro" : document_.path()),
+        "Zaro projects (*.zaro)");
+    if (chosen.isEmpty()) {
+        return false;
+    }
+    if (Status written = document_.saveAs(chosen.toStdString()); !written) {
+        app::warn(this, "Save", QString::fromStdString(written.error().toString()));
+        return false;
+    }
+    updateTitle();
+    return true;
+}
+
+void PreviewWindow::setProjectPath(std::string path) {
+    document_.setPath(std::move(path));
+    updateTitle();
+}
+
+void PreviewWindow::updateTitle() {
+    const QString name = document_.path().empty()
+                             ? QString{"Untitled"}
+                             : QFileInfo(QString::fromStdString(document_.path())).fileName();
+    // Said in the title, because read-only is a fact about the whole
+    // window and finding out at the moment of saving is finding out too
+    // late.
+    setWindowTitle(QString("%1%2%3 — Zaro")
+                       .arg(name, document_.commands().isModified() ? "*" : "",
+                            document_.isReadOnly() ? " [read only]" : ""));
+    if (bars_.statusLeft != nullptr) {
+        updateChrome();
+    }
+}
+
+void PreviewWindow::matchFrame() {
+    auto found = commands::frameToMatch(editContext());
+    if (!found) {
+        return;
+    }
+    const model::MediaRef* ref = document_.project().findMedia(found->media);
+    if (ref == nullptr) {
+        return;
+    }
+    source_->showFrame(*ref, found->at);
+    setSourceShown(true);
+}
+
+void PreviewWindow::makeSubclip() {
+    const auto range = source_->markedRange();
+    if (!range || !source_->media().isValid()) {
+        return;
+    }
+    if (commands::makeSubclip(editContext(), source_->media(), *range)) {
+        bin_->refresh();
+    }
+}
+
+void PreviewWindow::replaceSelectedSource(model::MediaRefId media) {
+    if (Status replaced = commands::replaceSelectedSource(editContext(), media); !replaced) {
+        app::warn(this, "Replace footage", QString::fromStdString(replaced.error().toString()));
+        return;
+    }
+    afterEdit();
+}
+
+void PreviewWindow::syncAngles(bool byEar) {
+    auto report = commands::syncAngles(editContext(), byEar);
+    if (!report) {
+        app::warn(this, "Multicam", QString::fromStdString(report.error().toString()));
+        return;
+    }
+    if (report->synced > 0) {
+        afterEdit();
+    }
+    lastSyncCount_ = report->synced;
+    lastSyncSkipped_ = static_cast<std::int32_t>(report->skipped.size());
+    if (report->skipped.empty()) {
+        return;
+    }
+    QStringList lines;
+    for (const std::string& line : report->skipped) {
+        lines.append(QString::fromStdString(line));
+    }
+    app::say(this, "Multicam",
+             QString("Synced %1 of %2 angles.\n\nNot synced:\n%3")
+                 .arg(report->synced)
+                 .arg(report->total)
+                 .arg(lines.join("\n")));
+}
+
+void PreviewWindow::updateCacheBar() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+    const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
+    timeline_->setCachedSpans(render::cachedSpans(renderCache_, &document_.project(), *sequence,
+                                                  visible, timeline_->width()));
+}
+
+void PreviewWindow::renderVisibleRange() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr || media_ == nullptr) {
+        return;
+    }
+    const time::TimeRange visible = timeline_->layout().visibleRange(sequence->frameRate());
+    if (visible.isEmpty()) {
+        return;
+    }
+    QProgressDialog progress("Rendering…", "Cancel", 0,
+                             static_cast<int>(visible.duration().frames()), this);
+    progress.setWindowModality(Qt::WindowModal);
+    // A pre-render of a few frames is not worth a dialog appearing and
+    // vanishing; one of a few hundred is.
+    progress.setMinimumDuration(400);
+    render::RenderGraph graph{*media_};
+    graph.setProject(&document_.project());
+    graph.setTextRasterizer(&text_);
+    graph.setRenderCache(&renderCache_);
+    auto stats = render::prerender(graph, renderCache_, &document_.project(), *sequence, visible,
+                                   [&progress](std::int32_t done, std::int32_t total) {
+                                       progress.setMaximum(total);
+                                       progress.setValue(done);
+                                       QCoreApplication::processEvents();
+                                       return !progress.wasCanceled();
+                                   });
+    progress.reset();
+    if (!stats) {
+        app::warn(this, "Render", QString::fromStdString(stats.error().toString()));
+        return;
+    }
+    updateCacheBar();
+}
+
+Status PreviewWindow::openMedia() {
+    auto opened = platform::ffmpeg::ProjectMediaSource::open(document_.project());
+    if (!opened) {
+        return opened.error();
+    }
+    media_ = std::move(*opened);
+    // The project this opened media for may be a different one -- adopt
+    // calls through here -- so the panels are pointed at it again, along
+    // with the monitor.
+    rebindSequence();
+    effects_->setAudioSource(media_.get());
+    source_->setProvider(media_.get());
+    startWaveforms();
+    bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+    refresh();
+    return {};
+}
+
+void PreviewWindow::setPosition(const time::RationalTime& position) {
+    const std::int64_t last = std::max<std::int64_t>(0, liveSequence()->duration().frames() - 1);
+    const std::int64_t clamped = std::clamp<std::int64_t>(position.frames(), 0, last);
+    position_ = time::RationalTime{clamped, liveSequence()->frameRate()};
+    monitor_->setPosition(position_);
+    timeline_->setPlayhead(position_);
+    // The panel shows values at the playhead and writes keyframes there, so
+    // it has to know where the playhead is.
+    effects_->setPosition(position_);
+    refreshInstruments();
+    refresh();
+}
+
+void PreviewWindow::step(std::int64_t frames) {
+    stop();
+    setPosition(position_ + time::RationalTime{frames, liveSequence()->frameRate()});
+}
+
+std::string PreviewWindow::keystrokeOf(const QKeyEvent* event) {
+    switch (event->key()) {
+        case Qt::Key_Control:
+        case Qt::Key_Shift:
+        case Qt::Key_Alt:
+        case Qt::Key_Meta:
+            return {};  // a modifier on its own is not a keystroke
+        default:
+            break;
+    }
+    const QKeySequence sequence{event->keyCombination()};
+    auto normalised =
+        ui::normaliseShortcut(sequence.toString(QKeySequence::PortableText).toStdString());
+    return normalised ? *normalised : std::string{};
+}
+
+void PreviewWindow::keyPressEvent(QKeyEvent* event) {
+    // Whatever the keymap says this keystroke is, whether or not it has a
+    // menu item behind it. There used to be a table here of "the bindings
+    // that are not menu items" and a switch for playback underneath it,
+    // which meant three places knew what a key did and only one of them
+    // could be changed. Now there is one: the keymap.
+    const std::string keystroke = keystrokeOf(event);
+    const std::string wanted =
+        keystroke.empty() ? std::string{} : actions_.keymap().actionFor(keystroke);
+    if (!wanted.empty() && trigger(wanted)) {
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+bool PreviewWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == monitor_ && event->type() == QEvent::Resize) {
+        maskOverlay_->setGeometry(monitor_->rect());
+        viewerOverlay_->setGeometry(monitor_->rect());
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PreviewWindow::closeEvent(QCloseEvent* event) {
+    // Handed back on the way out, so the next person is not told a machine
+    // that has gone home still has it.
+    releaseLock();
+    // Never a dialog on the way out.
+    //
+    // "You have unsaved changes -- save?" is a question whose answer is
+    // almost always yes, asked at the moment somebody has already decided
+    // to leave. Writing the recovery file instead means quitting is always
+    // instant and never loses anything: the next open finds the autosave
+    // and offers it back. It also keeps the promise that the file somebody
+    // last chose to save stays as they left it.
+    autosave();
+    saveWorkspace();
+    shutDown();
+    QWidget::closeEvent(event);
+}
+
+QAction* PreviewWindow::menuItem(QMenu* menu, const char* actionId) {
+    QAction* action = actions_.action(actionId);
+    menu->addAction(action);
+    return action;
+}
+
+void PreviewWindow::bindPlaybackActions() {
+    bindAction("play-pause", [this] { togglePlay(); });
+    bindAction("shuttle-back", [this] {
+        playback_.transport().pressJ();
+        startIfPlaying();
+    });
+    bindAction("shuttle-stop", [this] {
+        playback_.transport().pressK();
+        stop();
+    });
+    bindAction("shuttle-forward", [this] {
+        playback_.transport().pressL();
+        startIfPlaying();
+    });
+    bindAction("step-back", [this] { step(-1); });
+    bindAction("step-forward", [this] { step(1); });
+    bindAction("go-to-start", [this] {
+        stop();
+        setPosition(time::RationalTime{0, liveSequence()->frameRate()});
+    });
+    bindAction("go-to-end", [this] {
+        stop();
+        setPosition(liveSequence()->duration());
+    });
+    bindAction("mark-in", [this] { doMarkIn(); });
+    bindAction("mark-out", [this] { doMarkOut(); });
+    bindAction("insert-from-source", [this] { doInsert(); });
+    bindAction("overwrite-from-source", [this] { doOverwrite(); });
+    bindAction("source-back", [this] { doSourceBack(); });
+    bindAction("source-forward", [this] { doSourceForward(); });
+}
+
+void PreviewWindow::bindCommands() {
+    actions_.bind("new-project", [this] { newProject(); });
+    actions_.bind("open-project", [this] { openDialog(); });
+    actions_.bind("save-project", [this] { static_cast<void>(save()); });
+    actions_.bind("save-project-as", [this] { static_cast<void>(saveAs()); });
+    actions_.bind("save-version", [this] {
+        auto saved = saveNewVersion();
+        if (!saved) {
+            app::say(this, "Version", QString::fromStdString(saved.error().message()));
+            return;
+        }
+        // Said out loud: the window title changes too, but a version
+        // that appeared to do nothing is one people press twice.
+        app::say(
+            this, "Version",
+            QString("Now working in %1")
+                .arg(QString::fromStdString(std::filesystem::path{*saved}.filename().string())));
+    });
+    actions_.bind("open-version", [this] { openVersionMenu(); });
+    actions_.bind("import-media", [this] { bin_->importFiles(); });
+    actions_.bind("browse-media", [this] { browseMedia(); });
+    actions_.bind("relink-media", [this] { relinkDialog(); });
+    actions_.bind("consolidate-media", [this] { consolidateDialog(); });
+    actions_.bind("export-sequence", [this] { exportDialog(); });
+    actions_.bind("export-otio", [this] { exportOtio(); });
+    actions_.bind("save-template", [this] { saveTemplateDialog(); });
+    actions_.bind("place-template", [this] { placeTemplateDialog(); });
+    actions_.bind("close-window", [this] { close(); });
+    actions_.bind("undo", [this] { timeline_->undo(); });
+    actions_.bind("redo", [this] { timeline_->redo(); });
+    actions_.bind("select-all", [this] { timeline_->selectAll(); });
+    actions_.bind("detect-scenes", [this] { static_cast<void>(detectScenes()); });
+    actions_.bind("match-frame", [this] { matchFrame(); });
+    actions_.bind("make-subclip", [this] { makeSubclip(); });
+    actions_.bind("proxies", [this] { proxyMenu(); });
+    actions_.bind("multicam", [this] { multicamMenu(); });
+    actions_.bind("captions", [this] { captionsMenu(); });
+    actions_.bind("razor", [this] { timeline_->razorAtPlayhead(); });
+    actions_.bind("add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
+    actions_.bind("render-range", [this] { renderMenu(); });
+    actions_.bind("delivery", [this] { deliveryMenu(); });
+    actions_.bind("loudness", [this] { loudnessMenu(); });
+    actions_.bind("show-transcript", [this] { showTranscript(); });
+    actions_.bind("fit-music", [this] {
+        const model::Sequence* sequence = liveSequence();
+        if (sequence == nullptr) {
+            return;
+        }
+        // The picture's length, less wherever the music starts: what
+        // has to be filled is what is left after it comes in.
+        const model::Track* track = sequence->findTrack(selectedTrack_);
+        const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+        const double from = clip != nullptr ? clip->start().toSecondsDouble() : 0.0;
+        const double wanted = sequence->duration().toSecondsDouble() - from;
+        auto plan = remixSelectedTo(wanted);
+        if (!plan) {
+            app::say(this, "Fit music", QString::fromStdString(plan.error().message()));
+            return;
+        }
+        app::say(this, "Fit music",
+                 QString("Cut %1 beats out at %2s, now %3s long.")
+                     .arg(plan->beatsRemoved)
+                     .arg(plan->cutAt, 0, 'f', 2)
+                     .arg(plan->seconds, 0, 'f', 2));
+    });
+    actions_.bind("add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
+    actions_.bind("next-marker", [this] { doNextMarker(); });
+    actions_.bind("previous-marker", [this] { doPreviousMarker(); });
+    actions_.bind("resolve-comment", [this] { static_cast<void>(toggleCommentHere()); });
+    actions_.bind("export-review", [this] { exportReviewNotes(); });
+    actions_.bindToggle("compare", [this](bool on) {
+        // Turning it on takes the frame showing now as the reference. That
+        // is the gesture: somebody looks at a shot they like and says
+        // "against this" -- asking them to nominate one first would be a
+        // step between the thought and the thing.
+        setComparing(on, on ? position_ : referenceAt_);
+    });
+    actions_.bind("match-shot", [this] { matchShot(); });
+    actions_.bind("zoom-in", [this] { timeline_->zoomBy(1.4); });
+    actions_.bind("zoom-out", [this] { timeline_->zoomBy(1.0 / 1.4); });
+    actions_.bind("zoom-fit", [this] { timeline_->zoomToFit(); });
+    actions_.bindToggle("safe-guides", [this](bool on) {
+        viewerOverlay_->setGuides(on);
+        if (bars_.guidesButton != nullptr) {
+            bars_.guidesButton->setChecked(on);
+        }
+    });
+    actions_.bind("reset-panels", [this] { setWorkspace(workspace_); });
+    actions_.bind("hotkeys", [this] { showHotkeys(); });
+    actions_.bind("about", [this] {
+        QMessageBox::about(this, "Zaro Video",
+                           "Zaro Video — a non-linear editor.\n\n"
+                           "C++20, Qt 6, FFmpeg, GPU compositing on Qt RHI.");
+    });
+}
+
+void PreviewWindow::buildMenus() {
+    bars_.menuBar = chrome::buildMenuBar(
+        this, actions_, kWorkspaces, bars_.workspaceActions,
+        [this](const QString& name) { setWorkspace(name); },
+        [this](QMenuBar* bar) {
+            QMenu* window = bar->addMenu("Window");
+            panelAction(window, "Project Bin", [this] { return bin_; });
+            panelAction(window, "Effect Controls",
+                        [this] { return static_cast<QWidget*>(effects_); });
+            panelAction(window, "Scopes", [this] { return static_cast<QWidget*>(scopes_); });
+            panelAction(window, "Audio Mixer", [this] { return static_cast<QWidget*>(mixer_); });
+            window->addSeparator();
+            menuItem(window, "reset-panels");
+            QMenu* help = bar->addMenu("Help");
+            menuItem(help, "hotkeys");
+            menuItem(help, "about");
+        });
+}
+
+chrome::Hooks PreviewWindow::chromeHooks() {
+    chrome::Hooks hooks;
+    hooks.chooseWorkspace = [this](const QString& name) { setWorkspace(name); };
+    hooks.chooseTool = [this](app::TimelineWidget::Tool tool) { timeline_->setTool(tool); };
+    hooks.showSource = [this](bool on) { setSourceShown(on); };
+    hooks.showProgram = [this](bool on) { setProgramShown(on); };
+    hooks.setGuides = [this](bool on) { viewerOverlay_->setGuides(on); };
+    hooks.setSnapEnabled = [this](bool on) { timeline_->setSnapEnabled(on); };
+    hooks.setZoomFraction = [this](double fraction) { timeline_->setZoomFraction(fraction); };
+    hooks.queueRender = [this] { deliver_->queueCurrent(); };
+    hooks.toggleRendering = [this] {
+        deliver_->toggleRendering();
+        updateChrome();
+    };
+    return hooks;
+}
+
+QWidget* PreviewWindow::buildToolBar() {
+    return chrome::buildToolBar(this, bars_, actions_, chromeHooks(), kWorkspaces, kSupportUrl);
+}
+
+QWidget* PreviewWindow::buildViewerBar() {
+    QWidget* bar = chrome::buildViewerBar(this, bars_, actions_, chromeHooks());
+    syncViewers();
+    return bar;
+}
+
+QWidget* PreviewWindow::buildTimelinePane() {
+    return chrome::buildTimelinePane(this, bars_, actions_, chromeHooks(), timeline_);
+}
+
+void PreviewWindow::syncViewers() {
+    source_->setVisible(sourceShown_);
+    monitor_->setVisible(programShown_);
+    bars_.noMonitorLabel->setVisible(!sourceShown_ && !programShown_);
+    // These do not re-enter: setChecked only emits when the value moves,
+    // and by here it already is what it is being set to.
+    bars_.sourceTab->setChecked(sourceShown_);
+    bars_.programTab->setChecked(programShown_);
+    bars_.sourceTab->setIcon(app::icons::toolIcon(
+        sourceShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
+    bars_.programTab->setIcon(app::icons::toolIcon(
+        programShown_ ? app::icons::Glyph::CheckCircle : app::icons::Glyph::Circle, 13));
+}
+
+void PreviewWindow::setSourceShown(bool on) {
+    sourceShown_ = on;
+    syncViewers();
+}
+
+void PreviewWindow::setProgramShown(bool on) {
+    programShown_ = on;
+    syncViewers();
+}
+
+QString PreviewWindow::layoutKey(const QString& workspace, const char* which) {
+    return QString("workspace/%1/%2-v3").arg(workspace, QString::fromUtf8(which));
+}
+
+void PreviewWindow::setWorkspace(const QString& name) {
+    if (!kWorkspaces.contains(name)) {
+        return;
+    }
+    // The arrangement of the workspace being left is remembered, so coming
+    // back to it finds the splitters where they were.
+    if (topSplitter_ != nullptr && !workspace_.isEmpty()) {
+        QSettings settings("Zaro", "Zaro Video");
+        settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
+        settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
+    }
+    workspace_ = name;
+    const bool colour = name == "Color";
+    const bool audio = name == "Audio";
+    const bool deliver = name == "Deliver";
+    if (bars_.workspaceStack != nullptr) {
+        bars_.workspaceStack->setCurrentIndex(deliver ? 1 : 0);
+        bars_.actionStack->setCurrentIndex(deliver ? 1 : 0);
+        if (deliver) {
+            deliver_->setPlayhead(position_);
+        }
+    }
+    // The bin and the parameter panel are both about picture; Audio has a
+    // console in the middle and a channel's chain on the right, and neither
+    // of those wants a clip's motion controls beside it.
+    bin_->setVisible(!colour && !deliver && !audio);
+    effects_->setVisible(!deliver && !audio);
+    scopes_->setVisible(colour);
+    mixer_->setVisible(audio);
+    // Color is a different room: the gallery and the shot strip replace the
+    // bin and the timeline, the grade chain sits over the parameters, and
+    // the wheels take the bottom of the window.
+    gallery_->setVisible(colour);
+    clipStrip_->setVisible(colour);
+    bars_.nodesBox->setVisible(colour);
+    palette_->setVisible(colour);
+    bars_.timelinePane->setVisible(!colour && !deliver);
+    // Audio is a console: the mixer takes the centre, the loudness meter
+    // and the channel's chain take the sides, and the picture stands down.
+    bars_.audioSide->setVisible(audio);
+    channel_->setVisible(audio);
+    bars_.viewerWell->setVisible(!audio && !deliver);
+    bars_.viewerBar->setVisible(!audio && !deliver);
+    if (audio) {
+        channel_->setTrack(mixer_->picked());
+        refreshInstruments();
+    }
+    if (colour) {
+        palette_->setSelection(selectedTrack_, selectedClip_);
+        clipStrip_->setSelection(selectedTrack_, selectedClip_);
+        refreshGradeChain();
+    }
+    for (auto entry = bars_.workspaceTabs.constBegin(); entry != bars_.workspaceTabs.constEnd();
+         ++entry) {
+        entry.value()->setChecked(entry.key() == name);
+    }
+    for (auto entry = bars_.workspaceActions.constBegin();
+         entry != bars_.workspaceActions.constEnd(); ++entry) {
+        entry.value()->setChecked(entry.key() == name);
+    }
+    QSettings settings("Zaro", "Zaro Video");
+    if (const auto state = settings.value(layoutKey(name, "top")).toByteArray(); !state.isEmpty()) {
+        topSplitter_->restoreState(state);
+    }
+    if (const auto state = settings.value(layoutKey(name, "main")).toByteArray();
+        !state.isEmpty()) {
+        mainSplitter_->restoreState(state);
+    }
+    updateChrome();
+}
+
+void PreviewWindow::updateChrome() {
+    const model::Sequence* sequence = liveSequence();
+    static const QString kToolNames[] = {"Select", "Blade", "Trim", "Slip", "Hand", "Zoom"};
+    chrome::Status status;
+    status.projectName =
+        document_.path().empty()
+            ? QString{"Untitled"}
+            : QFileInfo(QString::fromStdString(document_.path())).completeBaseName();
+    status.haveSequence = sequence != nullptr;
+    status.modified = document_.commands().isModified();
+    if (sequence != nullptr) {
+        status.sequenceName = QString::fromStdString(sequence->name());
+        status.width = sequence->width();
+        status.height = sequence->height();
+        status.frameRate = sequence->frameRate().toDouble();
+        const bool dropFrame = time::supportsDropFrame(sequence->frameRate());
+        status.durationTimecode =
+            QString::fromStdString(time::timecodeFromFrames(sequence->duration().frames(),
+                                                            sequence->frameRate(), dropFrame)
+                                       .toString());
+    }
+    status.comparing = monitor_->comparing();
+    status.toolIndex = static_cast<std::size_t>(timeline_->tool());
+    status.toolName = kToolNames[status.toolIndex];
+    status.workspace = workspace_;
+    status.binItems = bin_->count();
+    status.snapEnabled = timeline_->snapEnabled();
+    status.zoomFraction = timeline_->zoomFraction();
+    status.inDeliver = workspace_ == "Deliver" && deliver_ != nullptr;
+    if (status.inDeliver) {
+        status.deliverStatus = deliver_->statusSummary();
+        status.deliverRange = deliver_->rangeSummary();
+        status.rendering = deliver_->rendering();
+    }
+    status.platformLabel = kPlatformLabel;
+    chrome::refresh(bars_, status);
+}
+
+void PreviewWindow::goToStart() {
+    stop();
+    setPosition(time::RationalTime{0, liveSequence()->frameRate()});
+}
+
+void PreviewWindow::goToEnd() {
+    stop();
+    setPosition(liveSequence()->duration());
+}
+
+void PreviewWindow::saveWorkspace() {
+    QSettings settings("Zaro", "Zaro Video");
+    settings.setValue("window/geometry", saveGeometry());
+    // Per workspace, because the panels differ between them: one saved
+    // arrangement restored into a different set of visible panels is a
+    // collapsed bin and a mixer four pixels tall.
+    settings.setValue("workspace/current", workspace_);
+    settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
+    settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
+}
+
+void PreviewWindow::restoreWorkspace() {
+    QSettings settings("Zaro", "Zaro Video");
+    // Each restored only if it was stored, so a first run gets the
+    // stretch factors set above rather than a collapsed layout.
+    if (const auto geometry = settings.value("window/geometry").toByteArray();
+        !geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    }
+    const QString wanted = settings.value("workspace/current", "Edit").toString();
+    // Always through setWorkspace, so the panels, the tabs and the splitter
+    // states are one decision rather than three that can disagree.
+    workspace_.clear();
+    setWorkspace(kWorkspaces.contains(wanted) ? wanted : QString{"Edit"});
+}
+
+void PreviewWindow::shutDown() {
+    shuttingDown_.store(true, std::memory_order_relaxed);
+    stop();
+    if (waveformThread_.joinable()) {
+        waveformThread_.join();
+    }
+}
+
+void PreviewWindow::doNextMarker() {
+    if (const model::Marker* marker = liveSequence()->markerAfter(position_)) {
+        stop();
+        setPosition(marker->range.start());
+    }
+}
+
+void PreviewWindow::doPreviousMarker() {
+    if (const model::Marker* marker = liveSequence()->markerBefore(position_)) {
+        stop();
+        setPosition(marker->range.start());
+    }
+}
+
+void PreviewWindow::placeFromSource(edit::PlaceMode mode) {
+    const auto range = source_->markedRange();
+    if (!range || !source_->media().isValid()) {
+        return;
+    }
+    const auto& videoTracks = liveSequence()->videoTracks();
+    if (videoTracks.empty()) {
+        return;
+    }
+    auto built = edit::makePlaceFromSource(document_.project(),
+                                           {liveSequence()->id(), videoTracks.front().id()},
+                                           source_->media(), *range, position_, mode);
+    if (!built) {
+        return;
+    }
+    document_.commands().execute(document_.project(), std::move(*built));
+    document_.commands().breakMerge();
+    bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+    timeline_->update();
+    monitor_->update();
+    refresh();
+}
+
+void PreviewWindow::startWaveforms() {
+    // A scan may already be running -- reopening the media does this, which
+    // is what switching to proxies does. Assigning over a joinable thread
+    // is an immediate std::terminate, and that is exactly how it presented:
+    // the application aborted the moment proxies were switched on.
+    if (waveformThread_.joinable()) {
+        waveformThread_.join();
+    }
+    const std::filesystem::path cacheDirectory =
+        std::filesystem::temp_directory_path() / "zaro" / "waveforms";
+    // Every media reference is tried, rather than only those the project
+    // file says have audio. That cached info is a cache -- it can be stale,
+    // absent, or written by a build that did not record it -- and deciding
+    // whether to look at a file based on it means a missing field silently
+    // becomes a missing waveform. Files without audio simply fail and are
+    // skipped.
+    std::vector<std::pair<model::MediaRefId, std::string>> wanted;
+    for (const model::MediaRef& ref : document_.project().media()) {
+        wanted.emplace_back(ref.id, ref.path);
+    }
+    if (wanted.empty()) {
+        return;
+    }
+    waveformThread_ = std::thread{[this, wanted, cacheDirectory] {
+        platform::ffmpeg::WaveformStore store{cacheDirectory.string()};
+        const auto keepGoing = [this] { return !shuttingDown_.load(std::memory_order_relaxed); };
+        for (const auto& [id, path] : wanted) {
+            if (!keepGoing()) {
+                return;
+            }
+            // Cancellable mid-file, not just between files: one long clip
+            // is the common case, so checking only at file boundaries would
+            // still make quitting wait for the whole scan.
+            auto built = store.get(path, 512, keepGoing);
+            if (!built) {
+                continue;
+            }
+            auto shared = std::make_shared<const media::Waveform>(std::move(*built));
+            // Back to the UI thread to hand it over: the widget is not
+            // thread safe and neither is repainting.
+            QMetaObject::invokeMethod(
+                this, [this, id, shared] { timeline_->setWaveform(id, shared); },
+                Qt::QueuedConnection);
+        }
+    }};
+}
+
+void PreviewWindow::refreshInstruments() {
+    if (media_ == nullptr || liveSequence() == nullptr) {
+        return;
+    }
+    const bool wantScopes = scopes_ != nullptr && scopes_->wantsMeasurement();
+    const bool wantThumb = thumb_ != nullptr && thumb_->isVisible();
+    if (playback_.isPlaying() || (!wantScopes && !wantThumb)) {
+        return;
+    }
+    render::RenderGraph graph{*media_};
+    graph.setTextRasterizer(&text_);
+    graph.setProject(&document_.project());
+    auto frame = graph.composite(*liveSequence(), position_);
+    if (!frame) {
+        if (wantScopes) {
+            scopes_->clear();
+        }
+        if (wantThumb) {
+            thumb_->clearFrame();
+        }
+        return;
+    }
+    if (wantScopes) {
+        render::ScopeOptions options;
+        options.waveformColumns = std::max(64, scopes_->width());
+        // Every second row. The shape of a waveform does not change for
+        // being measured at half the vertical resolution, and this is
+        // running between scrubs.
+        options.rowStride = 2;
+        scopes_->setScopes(render::measure(*frame, options));
+    }
+    if (wantThumb) {
+        showThumbnail(*frame);
+    }
+}
+
+void PreviewWindow::showThumbnail(const render::RgbaImage& frame) {
+    const int wide = frame.width();
+    const int tall = frame.height();
+    if (wide <= 0 || tall <= 0) {
+        thumb_->clearFrame();
+        return;
+    }
+    const int stride = wide * 3;
+    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(stride) *
+                                  static_cast<std::size_t>(tall));
+    if (!render::toDisplayRgb24(frame, rgb.data(), stride)) {
+        thumb_->clearFrame();
+        return;
+    }
+    // Copied, because the QImage above only borrows the vector, and the
+    // vector is gone at the end of this function.
+    thumb_->setFrame(QImage{rgb.data(), wide, tall, stride, QImage::Format_RGB888}.copy());
+    const model::Sequence* sequence = liveSequence();
+    const model::Track* track = sequence != nullptr && !sequence->videoTracks().empty()
+                                    ? &sequence->videoTracks().front()
+                                    : nullptr;
+    const model::Clip* clip = track != nullptr ? track->clipAt(position_) : nullptr;
+    const bool dropFrame = sequence != nullptr && time::supportsDropFrame(sequence->frameRate());
+    thumb_->setCaption(
+        clip != nullptr ? QString::fromStdString(clip->name) : QString{"—"},
+        sequence != nullptr
+            ? QString::fromStdString(
+                  time::timecodeFromFrames(position_.frames(), sequence->frameRate(), dropFrame)
+                      .toString())
+            : QString{});
+}
+
+void PreviewWindow::measureProgramme() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    render::AudioGraph graph{*media_};
+    const time::TimeRange whole{time::RationalTime{0, sequence->frameRate()}, sequence->duration()};
+    auto measured = graph.measureLoudness(*sequence, whole);
+    QApplication::restoreOverrideCursor();
+    if (!measured) {
+        app::warn(this, "Loudness", QString::fromStdString(measured.error().message()));
+        return;
+    }
+    loudness_->setMeasurement(*measured);
+}
+
+void PreviewWindow::refreshGradeChain() {
+    const model::Sequence* sequence = liveSequence();
+    const model::Track* track = sequence != nullptr ? sequence->findTrack(selectedTrack_) : nullptr;
+    const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+    nodes_->setEnabledChain(clip != nullptr);
+    if (clip == nullptr) {
+        nodes_->setOccupied({false, false, false, false});
+        return;
+    }
+    nodes_->setOccupied({!clip->color.isIdentity() || !clip->wheels.isIdentity(),
+                         !clip->curves.isIdentity(), clip->secondary.qualifier.enabled,
+                         !clip->lut.path.empty()});
+}
+
+void PreviewWindow::grabStill() {
+    const QImage shot = monitor_->grab().toImage();
+    if (shot.isNull()) {
+        return;
+    }
+    const model::Sequence* sequence = liveSequence();
+    const bool dropFrame = sequence != nullptr && time::supportsDropFrame(sequence->frameRate());
+    const QString name =
+        sequence != nullptr
+            ? QString::fromStdString(
+                  time::timecodeFromFrames(position_.frames(), sequence->frameRate(), dropFrame)
+                      .toString())
+            : QString{"still"};
+    gallery_->addStill(shot, position_, name);
+}
+
+void PreviewWindow::applyLookToSelection(const QString& path) {
+    if (!selectedClip_.isValid()) {
+        app::say(this, "Look", "Pick a shot first — a look goes on a clip.");
+        return;
+    }
+    model::LutRef look;
+    look.path = path.toStdString();
+    look.amount = 1.0;
+    auto built =
+        edit::makeSetLut(document_.project(), {sequenceId_, selectedTrack_}, selectedClip_, look);
+    if (!built) {
+        return;
+    }
+    document_.commands().execute(document_.project(), std::move(*built));
+    document_.commands().breakMerge();
+    renderCache_.clear();
+    effects_->refresh();
+    clipStrip_->refresh();
+    refreshGradeChain();
+    monitor_->update();
+    refreshInstruments();
+    updateTitle();
+}
+
+void PreviewWindow::refresh() {
+    if (liveSequence() == nullptr) {
+        return;
+    }
+    const bool dropFrame = time::supportsDropFrame(liveSequence()->frameRate());
+    const time::Timecode code =
+        time::timecodeFromFrames(position_.frames(), liveSequence()->frameRate(), dropFrame);
+    bars_.timecode->setText(QString::fromStdString(code.toString()));
+    if (!bars_.scrubber->isSliderDown()) {
+        bars_.scrubber->setValue(static_cast<int>(position_.frames()));
+    }
+    if (deliver_ != nullptr) {
+        deliver_->setPlayhead(position_);
+    }
+    const time::Timecode left = time::timecodeFromFrames(
+        std::max<std::int64_t>(0, liveSequence()->duration().frames() - position_.frames()),
+        liveSequence()->frameRate(), dropFrame);
+    bars_.remaining->setText("-" + QString::fromStdString(left.toString()));
+    const model::Track* track = liveSequence()->findTrack(selectedTrack_);
+    const model::Clip* clip = track != nullptr ? track->find(selectedClip_) : nullptr;
+    viewerOverlay_->setInfo(
+        clip != nullptr ? QString::fromStdString(clip->name) : QString{},
+        QString::fromStdString(code.toString()),
+        QString("%1×%2").arg(liveSequence()->width()).arg(liveSequence()->height()),
+        track != nullptr ? QString::fromStdString(track->name()) : QString{});
+}
+
 }  // namespace zaro::app
