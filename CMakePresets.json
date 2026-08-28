@@ -32,12 +32,43 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "ZARO_SANITIZE": "ON"
             }
+        },
+        {
+            "name": "windows-base",
+            "hidden": true,
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "architecture": { "value": "x64", "strategy": "external" },
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "ZARO_WARNINGS_AS_ERRORS": "OFF"
+            }
+        },
+        {
+            "name": "windows-debug",
+            "inherits": "windows-base",
+            "displayName": "Windows Debug (MSVC + vcpkg)",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "windows-release",
+            "inherits": "windows-base",
+            "displayName": "Windows Release (MSVC + vcpkg)",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
         }
     ],
     "buildPresets": [
         { "name": "debug",   "configurePreset": "debug" },
         { "name": "release", "configurePreset": "release" },
-        { "name": "asan",    "configurePreset": "asan" }
+        { "name": "asan",    "configurePreset": "asan" },
+        { "name": "windows-debug",   "configurePreset": "windows-debug" },
+        { "name": "windows-release", "configurePreset": "windows-release" }
     ],
     "testPresets": [
         {
@@ -48,6 +79,12 @@
         },
         { "name": "debug",   "inherits": "base", "configurePreset": "debug" },
         { "name": "release", "inherits": "base", "configurePreset": "release" },
-        { "name": "asan",    "inherits": "base", "configurePreset": "asan" }
+        { "name": "asan",    "inherits": "base", "configurePreset": "asan" },
+        { "name": "windows-debug",   "inherits": "base", "configurePreset": "windows-debug" },
+        { "name": "windows-release", "inherits": "base", "configurePreset": "windows-release" }
+    ],
+    "packagePresets": [
+        { "name": "release",         "configurePreset": "release" },
+        { "name": "windows-release", "configurePreset": "windows-release" }
     ]
 }

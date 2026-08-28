@@ -32,3 +32,9 @@ target_link_libraries(zaro-otio PRIVATE zaro_tool_cli zaro::core zaro::warnings)
 add_executable(zaro-play zaro-play/main.cpp)
 target_link_libraries(zaro-play
     PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::platform_sdl zaro::platform_qrhi zaro::warnings)
+
+# The command-line tools ship alongside the app: the verification scripts drive
+# them, and they are the only way to use the renderer without a display.
+include(GNUInstallDirs)
+install(TARGETS zaro-probe zaro-frame zaro-cut zaro-render zaro-otio zaro-play
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime)

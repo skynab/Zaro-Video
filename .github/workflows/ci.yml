@@ -2,26 +2,38 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # One place to change the Qt version. Windows takes it from the official
+  # binaries; macOS and Linux take whatever Homebrew and the distribution ship,
+  # which is the same thing developers on those platforms have.
+  QT_VERSION: 6.8.3
+
 jobs:
   build-and-test:
-    name: ${{ matrix.os }} / ${{ matrix.preset }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04]
-        preset: [debug, release, asan]
-        exclude:
-          # One sanitizer run is enough signal; it is the slowest job by far.
-          - os: ubuntu-24.04
-            preset: asan
+        # Spelled out rather than a product, because the three platforms do not
+        # want the same presets: sanitizers are a Clang/GCC feature, and Windows
+        # pays a much larger setup cost per job than it is worth spending three
+        # times over.
+        include:
+          - { name: macos / debug,     os: macos-14,      preset: debug }
+          - { name: macos / release,   os: macos-14,      preset: release }
+          - { name: macos / asan,      os: macos-14,      preset: asan }
+          - { name: linux / debug,     os: ubuntu-24.04,  preset: debug }
+          - { name: linux / release,   os: ubuntu-24.04,  preset: release }
+          - { name: windows / debug,   os: windows-2022,  preset: windows-debug }
+          - { name: windows / release, os: windows-2022,  preset: windows-release }
 
     steps:
       - uses: actions/checkout@v4
@@ -42,10 +54,48 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev
 
+      # Windows has no system package manager for any of this, so it splits in
+      # two: the libraries we link come from the vcpkg manifest, and Qt -- which
+      # would take hours to build from source -- comes from the official binary
+      # archives.
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          # platform_qrhi wants GuiPrivate and the shader compiler; the private
+          # headers come with qtbase, qsb does not.
+          modules: qtshadertools
+          cache: true
+
+      # Restoring the whole installed tree turns the vcpkg step into a no-op
+      # when nothing in the manifest moved, which is the common case. The key
+      # carries the vcpkg revision as well as the manifest: the same manifest
+      # against a newer vcpkg is a different set of libraries.
+      - name: Cache vcpkg packages
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ env.VCPKG_INSTALLATION_ROOT }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Install FFmpeg CLI (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
       # Fixtures are generated rather than committed. Without them the media
       # tests skip rather than fail, so a generator failure would hide silently
       # -- hence the explicit check that they actually appeared.
       - name: Generate media fixtures
+        shell: bash
         run: |
           ./testdata/generate.sh
           test -f testdata/media/ladder_prores.mov
@@ -58,15 +108,21 @@ jobs:
 
       # The GUI suite is excluded here and run once, on its own, in the job
       # below. It needs a display and a working QRhi, which is a property of the
-      # runner rather than of the build, so running it nine times over would be
-      # nine chances to fail for a reason that is not ours.
+      # runner rather than of the build, so running it seven times over would be
+      # seven chances to fail for a reason that is not ours.
       - name: Test
         run: ctest --preset ${{ matrix.preset }} -E zaro_app_tests
 
+      # The two exit-criterion harnesses below are POSIX shell scripts that look
+      # for extensionless binaries, so they run on macOS and Linux only. Windows
+      # gets the compile-and-unit-test signal; the pixel-exactness claim is not
+      # platform-specific enough to be worth porting them for.
       - name: Verify frame exactness against FFmpeg
+        if: runner.os != 'Windows'
         run: ZARO_FRAME=build/${{ matrix.preset }}/bin/zaro-frame ./scripts/verify-frame-exact.sh
 
       - name: Verify audio/video sync in a rendered file
+        if: runner.os != 'Windows'
         run: |
           ZARO_CUT=build/${{ matrix.preset }}/bin/zaro-cut \
           ZARO_RENDER=build/${{ matrix.preset }}/bin/zaro-render \

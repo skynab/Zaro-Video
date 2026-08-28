@@ -49,6 +49,8 @@ if(ZARO_BUILD_TESTS)
     add_subdirectory(app/tests)
 endif()
 
+include(Packaging)
+
 message(STATUS "")
 message(STATUS "CutReel ${PROJECT_VERSION}")
 message(STATUS "  build type ......... ${CMAKE_BUILD_TYPE}")

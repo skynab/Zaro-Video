@@ -4,11 +4,35 @@
     "version": "0.1.0",
     "description": "A non-linear video editor",
     "dependencies": [
-        "catch2"
+        "catch2",
+        "nlohmann-json",
+        "sdl2",
+        {
+            "name": "ffmpeg",
+            "default-features": false,
+            "features": [
+                "avcodec",
+                "avformat",
+                "swresample",
+                "swscale"
+            ]
+        },
+        {
+            "name": "pkgconf",
+            "host": true
+        }
     ],
     "$comment": [
-        "Kept in sync from day one so Windows and Linux stay a build configuration",
-        "rather than a port. ffmpeg and qtbase join this list in Phase 1 and Phase 4;",
-        "on macOS they currently resolve through Homebrew via find_package."
+        "Consumed only when the build is configured with vcpkg's toolchain file,",
+        "which is what the windows-* presets do. macOS and Linux keep resolving",
+        "these through Homebrew and the distribution respectively, so this manifest",
+        "is inert there.",
+        "",
+        "Qt is deliberately absent: building qtbase from source costs hours, so CI",
+        "and developers both take it from the official binaries (aqt / Homebrew /",
+        "the distribution) and point CMAKE_PREFIX_PATH at it.",
+        "",
+        "pkgconf is a host dependency because cmake/FindFFmpeg.cmake locates FFmpeg",
+        "through pkg-config, which Windows has no system copy of."
     ]
 }

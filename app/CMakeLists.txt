@@ -119,3 +119,28 @@ add_executable(zaro-preview main.cpp)
 target_link_libraries(zaro-preview PRIVATE zaro_app_ui zaro::warnings)
 set_target_properties(zaro-preview PROPERTIES AUTOMOC ON)
 
+
+# --- Installation -------------------------------------------------------------
+# A bundle on macOS and a windowed executable on Windows, because that is what
+# the deployment tools below expect to find and what a double-click on either
+# platform expects to launch. On Linux it is a plain binary either way.
+set_target_properties(zaro-preview PROPERTIES
+    MACOSX_BUNDLE ON
+    WIN32_EXECUTABLE ON)
+
+include(GNUInstallDirs)
+install(TARGETS zaro-preview
+    BUNDLE  DESTINATION .                            COMPONENT runtime
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"    COMPONENT runtime)
+
+# Qt's own libraries and plugins are not on a user's machine, so the archive has
+# to carry them. windeployqt and macdeployqt know which ones; nothing else does.
+# Linux packages keep taking Qt from the distribution, so there is nothing to
+# deploy there.
+if(WIN32 OR APPLE)
+    qt_generate_deploy_app_script(
+        TARGET zaro-preview
+        OUTPUT_SCRIPT zaro_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR)
+    install(SCRIPT "${zaro_deploy_script}" COMPONENT runtime)
+endif()
