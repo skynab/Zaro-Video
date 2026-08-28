@@ -52,9 +52,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config ffmpeg nlohmann-json3-dev libsdl2-dev \
-            qt6-base-dev qt6-base-private-dev qt6-shadertools-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
-            libswscale-dev libswresample-dev
+            libswscale-dev libswresample-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -62,12 +64,14 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Qt (Windows)
-        if: runner.os == 'Windows'
+      # Windows and Linux both take Qt from the official binaries; the CI
+      # workflow explains why Linux cannot use the distribution's.
+      - name: Install Qt
+        if: runner.os != 'macOS'
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
-          arch: win64_msvc2022_64
+          arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || 'linux_gcc_64' }}
           modules: qtshadertools
           cache: true
 

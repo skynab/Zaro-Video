@@ -135,8 +135,11 @@ install(TARGETS zaro-preview
 
 # Qt's own libraries and plugins are not on a user's machine, so the archive has
 # to carry them. windeployqt and macdeployqt know which ones; nothing else does.
-# Linux packages keep taking Qt from the distribution, so there is nothing to
-# deploy there.
+#
+# Linux is left out because it has no equivalent tool: the Linux tarball
+# therefore expects a Qt of its own on the target machine, which is fine for a
+# developer and not for a user. An AppImage is the usual answer and is the
+# right thing to add the day the Linux build has users rather than builders.
 if(WIN32 OR APPLE)
     qt_generate_deploy_app_script(
         TARGET zaro-preview

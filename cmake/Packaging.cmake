@@ -10,13 +10,13 @@
 #
 # produces build/release/CutReel-<version>-<platform>.{tar.gz,zip}.
 
-# Known limitation: only zaro-preview.app is made self-contained, by the Qt
-# deployment step in app/CMakeLists.txt. The command-line tools in bin/ still
-# link Qt and FFmpeg by absolute path, so they run on a machine that has the
-# same dependencies the archive was built against and not otherwise. Making
-# them redistributable too needs an install(RUNTIME_DEPENDENCY_SET) pass, which
-# is worth doing the day the tools are something we ship at rather than build
-# with.
+# Known limitation: the only thing made self-contained is zaro-preview, and
+# only on Windows and macOS, by the Qt deployment step in app/CMakeLists.txt.
+# The command-line tools in bin/ still link Qt and FFmpeg by absolute path, so
+# they run on a machine carrying the same dependencies the archive was built
+# against and not otherwise. Making them redistributable too needs an
+# install(RUNTIME_DEPENDENCY_SET) pass, which is worth doing the day the tools
+# are something we ship rather than build with.
 
 include(GNUInstallDirs)
 

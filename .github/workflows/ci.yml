@@ -45,33 +45,46 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ffmpeg sdl2 qt pkg-config nlohmann-json
 
+      # Qt is deliberately absent from this list -- see the Qt step below.
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config ffmpeg nlohmann-json3-dev libsdl2-dev \
-            qt6-base-dev qt6-base-private-dev qt6-shadertools-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
-            libswscale-dev libswresample-dev
+            libswscale-dev libswresample-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
 
-      # Windows has no system package manager for any of this, so it splits in
-      # two: the libraries we link come from the vcpkg manifest, and Qt -- which
-      # would take hours to build from source -- comes from the official binary
-      # archives.
+      # Windows has no system package manager for the libraries we link, so they
+      # come from the vcpkg manifest instead.
       - name: Set up MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Install Qt (Windows)
-        if: runner.os == 'Windows'
+      # Qt comes from the official binaries on both Windows and Linux, and only
+      # from Homebrew on macOS.
+      #
+      # Windows has no system Qt at all. Linux has one, but Debian and Ubuntu
+      # ship no Qt6GuiPrivate CMake package in any package -- qt6-base-private-dev
+      # carries the private headers and not the config file that makes them
+      # findable -- so find_package(Qt6 COMPONENTS GuiPrivate) in
+      # platform/qrhi cannot be satisfied from apt however many -dev packages
+      # are installed. The official archives ship it, and as a side effect the
+      # two platforms now build against one known Qt version rather than
+      # whatever the runner image happens to carry this month.
+      #
+      # platform_qrhi wants GuiPrivate and the shader compiler; the private
+      # headers come with qtbase, qsb does not.
+      - name: Install Qt
+        if: runner.os != 'macOS'
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
-          arch: win64_msvc2022_64
-          # platform_qrhi wants GuiPrivate and the shader compiler; the private
-          # headers come with qtbase, qsb does not.
+          arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || 'linux_gcc_64' }}
           modules: qtshadertools
           cache: true
 
@@ -160,10 +173,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config ffmpeg nlohmann-json3-dev libsdl2-dev \
-            qt6-base-dev qt6-base-private-dev qt6-shadertools-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
             xvfb libgl1-mesa-dri mesa-vulkan-drivers
+
+      # The same Qt the build matrix uses; see the note there for why it is not
+      # the distribution's.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtshadertools
+          cache: true
 
       - name: Generate media fixtures
         run: |
