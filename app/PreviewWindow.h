@@ -56,6 +56,7 @@
 #include "zaro/core/edit/Sync.h"
 #include "zaro/core/io/CubeLut.h"
 #include "zaro/core/io/OtioIo.h"
+#include "zaro/core/io/PremiereXml.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/ProjectLock.h"
 #include "zaro/core/io/Relink.h"
@@ -664,6 +665,15 @@ private:
     void exportDialog();
 
     void exportOtio();
+
+    /// The two directions of the Premiere interchange.
+    ///
+    /// Both are here, unlike OTIO's, because an import that opens as an
+    /// untitled project loses nothing: it is what New already does, down to
+    /// the autosave `adopt` takes on the way past, and the cut somebody wants
+    /// to look at is in front of them rather than behind a command line.
+    void exportPremiere();
+    void importPremiere();
 
     void trackMask();
 

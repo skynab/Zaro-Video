@@ -4233,6 +4233,81 @@ design's vertical-reframe and proxy presets; audio-stem and still-frame
 delivery; loudness normalisation as part of a render rather than a separate
 step; and the farm and upload buttons, which have nothing behind them.
 
+### Phase 7v — Premiere interchange §7.7 ✅
+
+Read and write the format Premiere actually opens, a `zaro-premiere` conversion
+tool, and both directions from the window.
+
+**`.prproj` is not the deliverable, and could not have been.** A Premiere
+project file is gzipped XML over an internal, undocumented schema that moves
+with the application version — it is Premiere's memory written to disk, not a
+description of a cut. A reader for one would work against the version it was
+built from and silently mangle the next, which is worse than not having one.
+What Premiere does document is the door it leaves open: it has imported and
+exported **FCP7 XML** (`xmeml` version 4) since it took the format over from
+Final Cut Pro 7, and that is the file every facility moves a timeline on. So the
+extension is `.xml`, the two ends are Premiere's File ▸ Import and File ▸ Export
+▸ Final Cut Pro XML, and what travels is the edit rather than the application
+state.
+
+**A track here states where each clip is, and OTIO's does not.** This is the one
+structural difference between the two interchange writers and the reason they
+are not one: a `<clipitem>` carries `<start>` and `<end>` on the timeline
+outright, so a hole is a hole and needs no object to stand for it. The writer
+emits no gaps, and the reader must not assume the items arrive in order or
+contiguous. A test pins each half.
+
+**Timelines and sources are counted at different rates.** `<start>` and `<end>`
+are frames of the sequence; `<in>` and `<out>` are frames of the file, at the
+rate that file's own `<rate>` states. Conflating them retimes every clip whose
+media does not match the sequence, which on a real job is most of them — so
+there is a test with 24fps footage on a 25fps timeline whose only job is to fail
+if the two are ever read through one rate.
+
+**A rate is a timebase and an NTSC flag, which is exactly what a rate is.**
+23.976 is written `24` and `TRUE`. Nothing is approximated in either direction,
+which is precisely what OTIO's doubles cannot manage and the reason that reader
+needs a table of standard rates to snap back to.
+
+**Media is declared once and referred to by id after.** That is the format's own
+rule and not a size optimisation: a second full `<file>` under a second id is a
+second file to an importer, and a timeline that re-declares its media on every
+clip arrives in Premiere as forty copies of the same footage in the bin. The
+reader is the same rule backwards — an element with children defines, an element
+with only an `id` refers — and it also keys by path, because a document that
+declares one file twice is describing one file.
+
+**Two positions that cannot be honoured are refused rather than invented.** A
+clipitem with `start` of -1 is positioned by the transition it sits inside;
+there is no transition model to hang it on, and a clip placed at a guessed
+position is worse than one absent from a cut that is otherwise right. And a
+track in this model holds no overlaps while nothing stops a file from containing
+some, so an overlapping item is skipped — an import is the one place where the
+input is somebody else's, and the answer there cannot be an assertion.
+
+**An XML reader, written here.** `core/` links no toolkit, and taking a
+dependency would put an XML library on the include path of every consumer of
+core to serve one file format. `core/src/io/Xml.h` is deliberately not a general
+implementation — no namespaces, no schema, no mixed content — and it is tested
+directly rather than through a timeline, because a parser fails at its edges and
+a timeline exercises only its middle. A bare `&` is kept rather than refused:
+other programs write clip names containing one, and losing a two-hour cut over a
+character every browser forgives helps nobody.
+
+**Import is in the window this time**, unlike OTIO's. It opens as an untitled
+project, which is what New already does down to the autosave `adopt` takes on
+the way past — so nothing is lost, and the cut somebody wants to look at is in
+front of them rather than behind a command line. Saving it asks where to put it
+rather than writing over the `.xml`, which would replace an interchange file
+with something Premiere can no longer read. The dialog says plainly what did not
+cross: grades, effects, transitions and keyframes are the sort of absence
+somebody finds an hour later.
+
+Not done: transitions, which `xmeml` can carry and this model would have to map
+onto; and `<filter>` elements in either direction, which would mean guessing at
+another program's plugin identifiers — a grade that arrives wrong is harder to
+find than one that arrives absent.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
@@ -4284,7 +4359,8 @@ object/segment masking · auto tone mapping
 
 ### 7.7 Interchange and export
 Export presets and queue · H.264/HEVC/ProRes/DNx/AV1 · alpha/RGBA export · image
-sequences · audio-only · social presets · watch folders · EDL, AAF, XML, **OpenTimelineIO
+sequences · audio-only · social presets · watch folders · EDL, AAF, ✅ XML (FCP7 `xmeml`,
+which is what Premiere imports and exports), ✅ **OpenTimelineIO
 (highest leverage — get this early, it unlocks round-tripping with every other NLE)**
 
 ---

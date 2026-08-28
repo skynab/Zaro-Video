@@ -26,6 +26,9 @@ add_library(zaro_core
     src/edit/Sync.cpp
     src/io/CubeLut.cpp
     src/io/OtioIo.cpp
+    src/io/PremiereXml.cpp
+    src/io/Xml.h
+    src/io/Xml.cpp
     src/io/SubtitleIo.cpp
     src/io/ProjectIo.cpp
     src/io/ProjectJson.h

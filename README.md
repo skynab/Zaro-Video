@@ -8,7 +8,7 @@ locked in.
 
 ## Status
 
-**Phase 7u — the Deliver workspace.** Media can be imported, marked up in a
+**Phase 7v — Premiere interchange.** Media can be imported, marked up in a
 source monitor, cut into a timeline three-point with picture and sound linked,
 dissolved, marked, graded, masked, mixed, adjusted, watched and exported. The
 window is dressed as an editor: a menu bar, a timeline tool palette (select,
@@ -21,7 +21,9 @@ one that cuts picture and sound together where they are linked. Delivery has a
 workspace of its own: presets, settings that all reach the encoder, and a queue
 that renders them one at a time. On a 1080p59.94 timeline the GPU path holds
 the playhead to zero frames of offset with no audio underruns, presenting about
-47 of the 59.94 frames per second against the CPU path's 7.
+47 of the 59.94 frames per second against the CPU path's 7. A cut can leave
+for another program and come back: OpenTimelineIO for anything that reads it,
+and FCP7 XML — the format Premiere Pro imports and exports — for Premiere.
 
 | Phase | | |
 |---|---|---|
@@ -113,6 +115,7 @@ the playhead to zero frames of offset with no audio underruns, presenting about
 | 7s | Timeline alignment: snap guides, and a blade that shows its cut | **done** |
 | 7t | Cutting a linked pair, and a clip that says it is linked | **done** |
 | 7u | The Deliver workspace: presets, settings and a render queue | **done** |
+| 7v | Premiere interchange: FCP7 XML in and out, `zaro-premiere` | **done** |
 
 ## Building
 
@@ -150,7 +153,14 @@ zaro-frame <file> --benchmark 150        decode throughput
 zaro-cut out.zaro a.mov b.mov            build a project from media
 zaro-render project.zaro out.mov         render it, headless
 zaro-play project.zaro --seconds 10       play it on the GPU, and report sync
+zaro-otio export project.zaro out.otio   hand the cut to any other NLE
+zaro-premiere import cut.xml out.zaro    take one back from Premiere
 ```
+
+The Premiere pair speaks FCP7 XML (`xmeml`), which is what Premiere Pro's
+File ▸ Import and File ▸ Export ▸ Final Cut Pro XML read and write. A `.prproj`
+is Premiere's own memory in an undocumented schema that moves with the
+application version, and is not an interchange format in either direction.
 
 Two verification scripts back the claims the tests cannot make on their own:
 
@@ -170,14 +180,15 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   edit/     commands, undo stack, edit operations, snapping
   render/   colour pipeline, compositor, render graph, mixer, cache
   playback/ scheduler, transport (JKL), audio ring buffer
-  io/       versioned JSON project files
+  io/       versioned JSON project files, OTIO and Premiere interchange
 ui-core/    presentation logic with no toolkit: timeline geometry
 app/        the Qt shell: chrome and theme, monitors, timeline, panels
 platform/
   ffmpeg/   the only place libav* headers are included
   qrhi/     GPU compositor and its shaders
   sdl/      audio output device
-tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render, zaro-play
+tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render, zaro-play,
+            zaro-otio, zaro-premiere
 testdata/   fixture generator
 cmake/      warning policy, find modules
 docs/       plan and architecture decision records

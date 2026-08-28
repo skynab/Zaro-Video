@@ -21,8 +21,6 @@
 
 #include "PreviewWindow.h"
 
-#include <zaro/Version.h>
-
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -30,6 +28,8 @@
 #include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+
+#include <zaro/Version.h>
 
 namespace zaro::app {
 namespace {
@@ -558,6 +558,58 @@ void PreviewWindow::exportOtio() {
         !saved) {
         app::warn(this, "OpenTimelineIO", QString::fromStdString(saved.error().toString()));
     }
+}
+
+void PreviewWindow::exportPremiere() {
+    if (liveSequence() == nullptr) {
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(this, "Export Premiere XML", "timeline.xml",
+                                                      "Final Cut Pro XML (*.xml)");
+    if (path.isEmpty()) {
+        return;
+    }
+    if (Status saved =
+            io::savePremiereXml(document_.project(), liveSequence()->id(), path.toStdString());
+        !saved) {
+        app::warn(this, "Premiere XML", QString::fromStdString(saved.error().toString()));
+    }
+}
+
+void PreviewWindow::importPremiere() {
+    const QString path =
+        QFileDialog::getOpenFileName(this, "Import Premiere XML", {}, "Final Cut Pro XML (*.xml)");
+    if (path.isEmpty()) {
+        return;
+    }
+    auto imported = io::loadPremiereXml(path.toStdString());
+    if (!imported) {
+        app::warn(this, "Premiere XML", QString::fromStdString(imported.error().toString()));
+        return;
+    }
+    // Read out before the move below, not after it.
+    const model::Sequence& sequence = imported->sequences().front();
+    const QString name = QString::fromStdString(sequence.name());
+    const std::size_t tracks = sequence.videoTracks().size() + sequence.audioTracks().size();
+    const std::size_t media = imported->media().size();
+
+    // Adopted with no path, exactly as New does: what came in is a cut, not a
+    // project file, and letting Save write straight over the .xml would replace
+    // an interchange file with something Premiere can no longer read.
+    adopt(std::move(*imported), io::LoadedProject{}, {});
+    updateTitle();
+
+    // Said rather than assumed. Only the cut crosses this format -- what did
+    // not is the sort of thing somebody finds an hour later, in a grade that is
+    // not there.
+    app::say(this, "Premiere XML",
+             QString("Imported \u201c%1\u201d: %2 tracks, %3 media file%4.\n\n"
+                     "Grades, effects, transitions and keyframes do not cross this "
+                     "format and were not read. Save to keep this as a project.")
+                 .arg(name)
+                 .arg(tracks)
+                 .arg(media)
+                 .arg(media == 1 ? "" : "s"));
 }
 
 void PreviewWindow::trackMask() {
@@ -1698,6 +1750,8 @@ void PreviewWindow::bindCommands() {
     actions_.bind("consolidate-media", [this] { consolidateDialog(); });
     actions_.bind("export-sequence", [this] { exportDialog(); });
     actions_.bind("export-otio", [this] { exportOtio(); });
+    actions_.bind("export-premiere", [this] { exportPremiere(); });
+    actions_.bind("import-premiere", [this] { importPremiere(); });
     actions_.bind("save-template", [this] { saveTemplateDialog(); });
     actions_.bind("place-template", [this] { placeTemplateDialog(); });
     actions_.bind("close-window", [this] { close(); });

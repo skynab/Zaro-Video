@@ -28,6 +28,8 @@ constexpr std::array kActions{
     ActionInfo{"consolidate-media", "Consolidate Media…", "File", ""},
     ActionInfo{"export-sequence", "Export…", "File", "Ctrl+E"},
     ActionInfo{"export-otio", "Export OpenTimelineIO…", "File", ""},
+    ActionInfo{"export-premiere", "Export Premiere XML…", "File", ""},
+    ActionInfo{"import-premiere", "Import Premiere XML…", "File", ""},
     ActionInfo{"save-template", "Save Graphic as Template…", "File", ""},
     ActionInfo{"place-template", "Place Graphic Template…", "File", ""},
     ActionInfo{"close-window", "Close Window", "File", "Ctrl+W"},

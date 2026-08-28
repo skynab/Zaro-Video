@@ -45,6 +45,8 @@ add_executable(zaro_core_tests
     io/test_templates.cpp
     io/test_cube_lut.cpp
     io/test_otio.cpp
+    io/test_premiere.cpp
+    io/test_xml.cpp
     io/test_subtitles.cpp
     io/test_project_io.cpp
     io/test_saving.cpp
@@ -96,9 +98,16 @@ target_link_libraries(zaro_core_tests
 )
 
 # ModelFixtures.h lives alongside the tests rather than in the library.
+#
+# core/src is on the path too, for the one private header worth testing
+# directly: the XML reader behind the Premiere interchange. It is a parser
+# written by hand, so its edges -- entities, CDATA, a truncated document -- are
+# exactly what has to be pinned down, and reaching them only through a timeline
+# format would test them by implication.
 target_include_directories(zaro_core_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/render)
+    ${CMAKE_CURRENT_SOURCE_DIR}/render
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/io)
 
 # Somewhere for the serialization tests to write a file.
 target_compile_definitions(zaro_core_tests PRIVATE
