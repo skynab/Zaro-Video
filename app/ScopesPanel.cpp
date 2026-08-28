@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include "Theme.h"
 

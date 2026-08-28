@@ -21,6 +21,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <utility>
 

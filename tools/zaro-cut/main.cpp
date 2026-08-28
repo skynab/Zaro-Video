@@ -4,6 +4,7 @@
 // that the render path can be exercised without a UI, and so the sync
 // verification has something real to render.
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>

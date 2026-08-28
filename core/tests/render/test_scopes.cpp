@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 
 #include <catch2/catch_approx.hpp>

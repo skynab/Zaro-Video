@@ -6,6 +6,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <cstdint>
 #include <filesystem>
 
 #include "zaro/core/edit/Operations.h"

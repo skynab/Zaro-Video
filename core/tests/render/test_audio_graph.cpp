@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>

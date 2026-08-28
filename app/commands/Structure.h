@@ -1,6 +1,8 @@
 // Operations that change the shape of the cut rather than the look of it.
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/Error.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/render/SceneDetect.h"

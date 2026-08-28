@@ -1,5 +1,6 @@
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"

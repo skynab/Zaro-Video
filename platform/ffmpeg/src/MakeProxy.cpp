@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 
 #include "zaro/core/render/Resample.h"

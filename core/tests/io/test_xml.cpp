@@ -3,6 +3,7 @@
 // Tested directly rather than only through a timeline, because a parser fails
 // at its edges and a timeline exercises only its middle.
 
+#include <cstdint>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>

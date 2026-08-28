@@ -1,5 +1,6 @@
 #include "zaro/core/media/VideoFrame.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 

@@ -1,6 +1,7 @@
 #include "zaro/core/io/Relink.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <set>

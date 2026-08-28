@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QMouseEvent>
+#include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
 

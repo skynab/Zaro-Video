@@ -28,6 +28,7 @@
 #include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <cstdint>
 
 #include <zaro/Version.h>
 

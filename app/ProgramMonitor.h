@@ -2,6 +2,7 @@
 
 #include <QRectF>
 #include <QRhiWidget>
+#include <cstdint>
 #include <memory>
 
 #include "zaro/core/model/Sequence.h"

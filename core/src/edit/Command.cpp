@@ -1,5 +1,7 @@
 #include "zaro/core/edit/Command.h"
 
+#include <cstdint>
+
 #include "zaro/core/Check.h"
 
 namespace zaro::edit {

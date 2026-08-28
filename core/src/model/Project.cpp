@@ -1,5 +1,6 @@
 #include "zaro/core/model/Project.h"
 
+#include <cstdint>
 #include <set>
 #include <vector>
 

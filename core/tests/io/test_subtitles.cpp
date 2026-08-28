@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <string>
 
 #include <catch2/catch_approx.hpp>

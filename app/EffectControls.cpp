@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 
 #include "zaro/core/edit/Operations.h"

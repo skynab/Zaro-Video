@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 
 namespace zaro::time {

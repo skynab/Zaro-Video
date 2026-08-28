@@ -1,6 +1,7 @@
 #include "zaro/core/render/TransitionShape.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace zaro::render {
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/model/Vignette.h"

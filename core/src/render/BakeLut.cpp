@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 
 #include "zaro/core/render/ColorPipeline.h"

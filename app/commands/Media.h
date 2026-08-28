@@ -6,6 +6,8 @@
 // PreviewWindow::afterMediaChange.
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/Error.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/io/Relink.h"

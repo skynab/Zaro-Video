@@ -3,6 +3,7 @@
 #include <QPoint>
 #include <QRect>
 #include <QWidget>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>

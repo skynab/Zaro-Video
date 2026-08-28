@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/render/RgbaImage.h"
 
 namespace zaro::render {

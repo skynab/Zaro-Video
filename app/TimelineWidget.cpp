@@ -8,6 +8,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Snapping.h"

@@ -4,6 +4,7 @@
 #include <QString>
 #include <QWidget>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <thread>
 #include <vector>

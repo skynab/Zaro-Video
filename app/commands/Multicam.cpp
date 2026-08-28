@@ -2,6 +2,8 @@
 
 #include "Multicam.h"
 
+#include <cstdint>
+
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Sync.h"
 

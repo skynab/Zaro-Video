@@ -5,6 +5,7 @@
 
 #include <QLineEdit>
 #include <QListWidget>
+#include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
 

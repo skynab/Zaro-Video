@@ -1,6 +1,7 @@
 #include "zaro/core/playback/AudioRingBuffer.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 #include "zaro/core/Check.h"

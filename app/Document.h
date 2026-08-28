@@ -17,6 +17,7 @@
 // loaded rather than installing it.
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "zaro/core/Error.h"

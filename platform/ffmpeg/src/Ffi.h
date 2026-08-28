@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // The single place libav* headers are included. Everything that touches an
 // AVFrame or an AVFormatContext lives behind this file.
 

@@ -6,6 +6,7 @@
 #include <QSlider>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cstdint>
 
 #include "zaro/core/time/Timecode.h"
 

@@ -11,6 +11,7 @@
 #include <QPixmap>
 #include <QStringList>
 #include <QSysInfo>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>

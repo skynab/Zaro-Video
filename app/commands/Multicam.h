@@ -1,6 +1,7 @@
 // Lining up the angles of a multicam clip.
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

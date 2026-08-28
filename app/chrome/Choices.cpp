@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCursor>
 #include <QMenu>
+#include <cstdint>
 #include <map>
 
 namespace zaro::app::chrome {

@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderGraph.h"

@@ -1,6 +1,7 @@
 #include "zaro/core/media/PixelFormat.h"
 
 #include <array>
+#include <cstdint>
 
 namespace zaro::media {
 namespace {

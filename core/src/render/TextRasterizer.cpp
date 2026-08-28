@@ -1,6 +1,7 @@
 #include "zaro/core/render/TextRasterizer.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace zaro::render {
 

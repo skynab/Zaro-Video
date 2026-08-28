@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <vector>
 
 #include "zaro/core/render/ColorPipeline.h"

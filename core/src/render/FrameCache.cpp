@@ -1,5 +1,6 @@
 #include "zaro/core/render/FrameCache.h"
 
+#include <cstdint>
 #include <functional>
 
 namespace zaro::render {

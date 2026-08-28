@@ -7,6 +7,7 @@
 
 #include "Media.h"
 
+#include <cstdint>
 #include <filesystem>
 
 #include "zaro/core/io/ProjectIo.h"

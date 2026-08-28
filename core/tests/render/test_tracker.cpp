@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <random>
 
 #include <catch2/catch_approx.hpp>

@@ -2,6 +2,8 @@
 
 #include "Structure.h"
 
+#include <cstdint>
+
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/render/SceneDetect.h"
 

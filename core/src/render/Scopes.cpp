@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 
 #include "zaro/core/Check.h"
 #include "zaro/core/render/ColorPipeline.h"

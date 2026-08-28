@@ -1,5 +1,7 @@
 #include "zaro/core/render/SmartRender.h"
 
+#include <cstdint>
+
 namespace zaro::render {
 namespace {
 

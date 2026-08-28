@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include "zaro/core/media/AudioAlign.h"
 #include "zaro/core/media/AudioBuffer.h"

@@ -1,6 +1,7 @@
 #include "zaro/core/playback/PlaybackScheduler.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 
 #include "zaro/core/Check.h"

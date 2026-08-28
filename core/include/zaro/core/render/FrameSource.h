@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/Error.h"
 #include "zaro/core/media/AudioBuffer.h"
 #include "zaro/core/media/VideoFrame.h"

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/model/Project.h"
 #include "zaro/core/model/Sequence.h"
 #include "zaro/core/render/Compositing.h"

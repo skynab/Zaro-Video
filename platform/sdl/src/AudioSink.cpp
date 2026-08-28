@@ -1,5 +1,6 @@
 #include "zaro/platform/sdl/AudioSink.h"
 
+#include <cstdint>
 #include <string>
 
 #include <SDL.h>

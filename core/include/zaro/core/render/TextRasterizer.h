@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "zaro/core/Error.h"
 #include "zaro/core/model/Caption.h"
 #include "zaro/core/model/Graphic.h"

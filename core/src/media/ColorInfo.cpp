@@ -1,5 +1,6 @@
 #include "zaro/core/media/ColorInfo.h"
 
+#include <cstdint>
 #include <cstring>
 
 namespace zaro::media {

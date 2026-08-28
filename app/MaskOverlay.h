@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <cstdint>
 #include <optional>
 
 #include "zaro/core/edit/CommandStack.h"

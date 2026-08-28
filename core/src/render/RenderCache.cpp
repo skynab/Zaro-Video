@@ -1,6 +1,7 @@
 #include "zaro/core/render/RenderCache.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/render/RenderGraph.h"

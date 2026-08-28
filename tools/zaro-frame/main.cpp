@@ -5,6 +5,7 @@
 // seeking and decoding are frame-exact rather than approximately right.
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>

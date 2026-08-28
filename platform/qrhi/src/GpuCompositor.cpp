@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QImage>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <vector>
 

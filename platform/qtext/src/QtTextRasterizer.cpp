@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QRectF>
 #include <QString>
+#include <cstdint>
 
 namespace zaro::platform::qtext {
 

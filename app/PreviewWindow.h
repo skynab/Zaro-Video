@@ -40,6 +40,7 @@
 #include <QTimer>
 #include <QWidget>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>

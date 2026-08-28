@@ -20,6 +20,7 @@
 #include <QStackedWidget>
 #include <QString>
 #include <QWidget>
+#include <cstdint>
 #include <vector>
 
 namespace zaro::app::chrome {
