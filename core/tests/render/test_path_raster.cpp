@@ -7,8 +7,8 @@
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/render/PathRaster.h"
-#include "zaro/core/render/ShapeRaster.h"
 #include "zaro/core/render/RenderGraph.h"
+#include "zaro/core/render/ShapeRaster.h"
 
 #include "ModelFixtures.h"
 #include "TestSources.h"
@@ -228,8 +228,7 @@ TEST_CASE("A shape converts to the path that draws it", "[render][path]") {
     // anybody can see -- which is what makes it safe to offer as one click.
     for (std::int32_t y = 0; y < 40; ++y) {
         for (std::int32_t x = 0; x < 40; ++x) {
-            const float analytic =
-                render::maskCoverage(rectangle, 40, 40, x, y);
+            const float analytic = render::maskCoverage(rectangle, 40, 40, x, y);
             INFO("at " << x << "," << y);
             REQUIRE(std::fabs(at(fromPath, 40, x, y) - analytic) < 0.02F);
         }

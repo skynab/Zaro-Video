@@ -2,9 +2,10 @@
 #include <cstring>
 #include <string>
 
-#include "Cli.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/ProjectIo.h"
+
+#include "Cli.h"
 
 namespace {
 

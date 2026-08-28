@@ -13,7 +13,6 @@
 #include <thread>
 #include <vector>
 
-#include "Cli.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/playback/PlaybackScheduler.h"
 #include "zaro/core/playback/Transport.h"
@@ -23,6 +22,8 @@
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 #include "zaro/platform/sdl/AudioSink.h"
+
+#include "Cli.h"
 
 namespace {
 

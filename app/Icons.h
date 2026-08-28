@@ -15,38 +15,38 @@ namespace zaro::app::icons {
 /// Phosphor's regular weight, which is the one dependency-free way to have the
 /// icon the design asks for and have it look the same everywhere.
 enum class Glyph {
-    Cursor,      ///< Select
-    Scissors,    ///< Blade
-    TrimEdges,   ///< Trim: a span between two hard edges
-    SlipArrows,  ///< Slip: the same span with nothing pinning it
-    Hand,        ///< Hand
-    Magnifier,   ///< Zoom
-    Magnet,      ///< Snapping
-    Bookmark,    ///< Add marker
-    Split,       ///< Razor at the playhead
-    CrossFade,   ///< Add dissolve
-    Link,        ///< Picture and sound edited as one
-    Plus,        ///< Zoom in
-    Minus,       ///< Zoom out
-    Heart,       ///< Support: the one filled glyph, as the design draws it
-    FilmStrip,   ///< A picture file, in the bin
-    Waveform,    ///< A sound file, in the bin
-    Image,       ///< A still, in the bin
-    CaretDown,   ///< An open group heading
-    CaretRight,  ///< A closed group heading
-    DotsThree,   ///< The overflow menu: the second filled glyph
-    Rows,        ///< The list/thumbnail view toggle
-    Circle,      ///< A monitor toggle that is off
-    CheckCircle, ///< A monitor toggle that is on
-    Camera,      ///< Grab a still
-    FolderOpen,  ///< Choose a folder of looks
-    CircleHalf,  ///< A graded clip, in the strip: the third filled glyph
-    CircleDashed,///< An ungraded clip
-    Swap,        ///< A / B: this grade against the one before it
-    Selection,   ///< The secondary: which pixels get corrected
-    BezierCurve, ///< The tone curves
-    Headphones,  ///< Clear every solo
-    Revert,      ///< Faders back to unity
+    Cursor,        ///< Select
+    Scissors,      ///< Blade
+    TrimEdges,     ///< Trim: a span between two hard edges
+    SlipArrows,    ///< Slip: the same span with nothing pinning it
+    Hand,          ///< Hand
+    Magnifier,     ///< Zoom
+    Magnet,        ///< Snapping
+    Bookmark,      ///< Add marker
+    Split,         ///< Razor at the playhead
+    CrossFade,     ///< Add dissolve
+    Link,          ///< Picture and sound edited as one
+    Plus,          ///< Zoom in
+    Minus,         ///< Zoom out
+    Heart,         ///< Support: the one filled glyph, as the design draws it
+    FilmStrip,     ///< A picture file, in the bin
+    Waveform,      ///< A sound file, in the bin
+    Image,         ///< A still, in the bin
+    CaretDown,     ///< An open group heading
+    CaretRight,    ///< A closed group heading
+    DotsThree,     ///< The overflow menu: the second filled glyph
+    Rows,          ///< The list/thumbnail view toggle
+    Circle,        ///< A monitor toggle that is off
+    CheckCircle,   ///< A monitor toggle that is on
+    Camera,        ///< Grab a still
+    FolderOpen,    ///< Choose a folder of looks
+    CircleHalf,    ///< A graded clip, in the strip: the third filled glyph
+    CircleDashed,  ///< An ungraded clip
+    Swap,          ///< A / B: this grade against the one before it
+    Selection,     ///< The secondary: which pixels get corrected
+    BezierCurve,   ///< The tone curves
+    Headphones,    ///< Clear every solo
+    Revert,        ///< Faders back to unity
 };
 
 /// One glyph, in one colour, at a size in logical pixels.

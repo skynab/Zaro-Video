@@ -9,11 +9,12 @@
 #include <string>
 #include <vector>
 
-#include "Cli.h"
 #include "zaro/core/edit/CommandStack.h"
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
+
+#include "Cli.h"
 
 namespace {
 

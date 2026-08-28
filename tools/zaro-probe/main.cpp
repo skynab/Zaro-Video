@@ -7,8 +7,9 @@
 #include <cstdio>
 #include <string>
 
-#include "Cli.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
+
+#include "Cli.h"
 
 namespace {
 

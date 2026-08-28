@@ -9,9 +9,10 @@
 #include <cstdlib>
 #include <string>
 
-#include "Cli.h"
 #include "zaro/core/time/Timecode.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
+
+#include "Cli.h"
 
 namespace {
 

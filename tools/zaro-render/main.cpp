@@ -11,13 +11,14 @@
 #include <cstdlib>
 #include <string>
 
-#include "Cli.h"
 #include "zaro/core/io/ProjectIo.h"
 #include "zaro/core/render/AudioGraph.h"
 #include "zaro/core/render/RenderGraph.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 #include "zaro/platform/qtext/QtTextRasterizer.h"
+
+#include "Cli.h"
 
 namespace {
 

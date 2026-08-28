@@ -153,13 +153,20 @@ jobs:
       - name: Install clang-format
         run: pipx install clang-format==22.1.8
 
+      # Every directory is checked before the job gives up. Letting the first
+      # failure abort the loop -- which is what the step's own `bash -e` does
+      # unless the status is caught -- means a report that stops at whichever
+      # directory happened to sort first, and a second push to discover the
+      # rest.
       - name: Check formatting
         run: |
+          status=0
           for dir in core ui-core platform app tools; do
             [ -d "$dir" ] || continue
             find "$dir" \( -name '*.cpp' -o -name '*.h' \) -print0 \
-              | xargs -0 --no-run-if-empty clang-format --dry-run --Werror
+              | xargs -0 --no-run-if-empty clang-format --dry-run --Werror || status=1
           done
+          exit $status
 
   gui:
     name: GUI tests
