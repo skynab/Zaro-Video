@@ -1,4 +1,8 @@
-find_package(Qt6 REQUIRED COMPONENTS Gui GuiPrivate ShaderTools)
+# 6.9 is a floor, not a preference: it is the first release where private
+# modules ship their own CMake package, and so the first where GuiPrivate can
+# be asked for as a component at all. Against 6.8 this line fails with a
+# missing-component error that says nothing about the version being the reason.
+find_package(Qt6 6.9 REQUIRED COMPONENTS Gui GuiPrivate ShaderTools)
 
 qt_standard_project_setup()
 

@@ -13,7 +13,7 @@ env:
   # One place to change the Qt version. Windows takes it from the official
   # binaries; macOS and Linux take whatever Homebrew and the distribution ship,
   # which is the same thing developers on those platforms have.
-  QT_VERSION: 6.8.3
+  QT_VERSION: 6.9.3
 
 jobs:
   build-and-test:
@@ -68,14 +68,15 @@ jobs:
       # Qt comes from the official binaries on both Windows and Linux, and only
       # from Homebrew on macOS.
       #
-      # Windows has no system Qt at all. Linux has one, but Debian and Ubuntu
-      # ship no Qt6GuiPrivate CMake package in any package -- qt6-base-private-dev
-      # carries the private headers and not the config file that makes them
-      # findable -- so find_package(Qt6 COMPONENTS GuiPrivate) in
-      # platform/qrhi cannot be satisfied from apt however many -dev packages
-      # are installed. The official archives ship it, and as a side effect the
-      # two platforms now build against one known Qt version rather than
-      # whatever the runner image happens to carry this month.
+      # Windows has no system Qt at all. Linux has one, but Ubuntu 24.04 is on
+      # Qt 6.4, and private modules did not get their own CMake package until
+      # 6.9 -- so the GuiPrivate component platform/qrhi asks for cannot be
+      # satisfied from apt at any number of -dev packages. Pinning the version
+      # here also means the two platforms build against one known Qt rather
+      # than whatever the runner image happens to carry this month.
+      #
+      # 6.9.3 is the newest the online installer serves; keep this in step with
+      # the floor in platform/qrhi/CMakeLists.txt.
       #
       # platform_qrhi wants GuiPrivate and the shader compiler; the private
       # headers come with qtbase, qsb does not.
