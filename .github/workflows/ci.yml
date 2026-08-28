@@ -5,9 +5,14 @@ on:
     branches: [main, dev]
   pull_request:
 
+# Superseded pull-request runs are worth cancelling; superseded branch runs are
+# not. A push to main or dev is a commit that will exist forever and whose CI
+# result someone will want to look up later, and the Windows jobs take long
+# enough that a run of pushes would cancel each one in turn and never produce a
+# result for any of them.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # One place to change the Qt version. Windows takes it from the official
@@ -19,6 +24,9 @@ jobs:
   build-and-test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Generous enough for a cold Windows dependency build, short enough that a
+    # deadlocked test is reported the same day.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -89,17 +97,35 @@ jobs:
           modules: qtshadertools
           cache: true
 
-      # Restoring the whole installed tree turns the vcpkg step into a no-op
-      # when nothing in the manifest moved, which is the common case. The key
-      # carries the vcpkg revision as well as the manifest: the same manifest
-      # against a newer vcpkg is a different set of libraries.
-      - name: Cache vcpkg packages
+      # Restore and save are split deliberately. actions/cache writes its entry
+      # from a post-step, and post-steps do not run when a job is cancelled --
+      # so a single cache action throws away a completed FFmpeg build every time
+      # a run is superseded, and the next run starts from source again. Saving
+      # in a step of its own, on failure as well as success, makes the
+      # dependency build survive whatever our own build then does.
+      - name: Restore vcpkg packages
+        id: vcpkg-cache
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ env.VCPKG_INSTALLATION_ROOT }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-
+
+      # Built as its own step rather than as a side effect of configuring, so
+      # that the log says plainly how much of the job is other people's code.
+      - name: Build vcpkg dependencies
+        if: runner.os == 'Windows'
+        run: >-
+          vcpkg install --triplet x64-windows
+          --x-install-root=${{ github.workspace }}/vcpkg_installed
+
+      - name: Save vcpkg packages
+        if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
 
       - name: Install FFmpeg CLI (Windows)
         if: runner.os == 'Windows'
@@ -145,6 +171,7 @@ jobs:
   format:
     name: clang-format
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -171,6 +198,7 @@ jobs:
   gui:
     name: GUI tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
