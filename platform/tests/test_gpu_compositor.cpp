@@ -1020,7 +1020,8 @@ TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][c
     for (std::int32_t y = 0; y < 16; ++y) {
         Rgba* row = source.row(y);
         for (std::int32_t x = 0; x < 16; ++x) {
-            row[x] = Rgba{x / 15.0F, y / 15.0F, 0.37F, 1.0F};
+            row[x] =
+                Rgba{static_cast<float>(x) / 15.0F, static_cast<float>(y) / 15.0F, 0.37F, 1.0F};
         }
     }
 

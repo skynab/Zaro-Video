@@ -898,7 +898,7 @@ Result<CommandPtr> makeDeleteSpans(Project& project, model::SequenceId sequenceI
 
     model::IdGenerator& ids = project.ids();
     return makeCommand(sequenceId, merged.size() == 1 ? "Delete span" : "Delete spans", {},
-                       [merged, &ids](Sequence& sequence) {
+                       [merged, &ids](Sequence& seq) {
                            // Latest first: closing one gap moves everything after it, so a
                            // span removed by position early would be somewhere else by the
                            // time its turn came.
@@ -906,7 +906,7 @@ Result<CommandPtr> makeDeleteSpans(Project& project, model::SequenceId sequenceI
                                Track* first = nullptr;
                                for (const model::TrackKind kind :
                                     {model::TrackKind::Video, model::TrackKind::Audio}) {
-                                   for (Track& track : sequence.tracksMutable(kind)) {
+                                   for (Track& track : seq.tracksMutable(kind)) {
                                        if (track.isLocked()) {
                                            continue;
                                        }
@@ -917,10 +917,10 @@ Result<CommandPtr> makeDeleteSpans(Project& project, model::SequenceId sequenceI
                                    }
                                }
                                if (first != nullptr) {
-                                   rippleFrom(sequence, *first, span->endExclusive(),
-                                              -span->duration(), true);
+                                   rippleFrom(seq, *first, span->endExclusive(), -span->duration(),
+                                              true);
                                }
-                               removeSpanFromCaptions(sequence.captions(), *span);
+                               removeSpanFromCaptions(seq.captions(), *span);
                            }
                        });
 }
@@ -1375,14 +1375,14 @@ Result<CommandPtr> makeRemix(Project& project, const EditTarget& target, ClipId 
             ZARO_CHECK(track != nullptr, "track vanished between build and apply");
             const Clip* existing = track->find(clipId);
             ZARO_CHECK(existing != nullptr, "clip vanished between build and apply");
-            const Clip original = *existing;
+            const Clip before = *existing;
 
-            Clip head = original;
+            Clip head = before;
             head.sourceRange =
-                time::TimeRange{original.sourceRange.start(), cut - original.sourceRange.start()};
-            head.timelineRange = time::TimeRange{original.start(), head.sourceRange.duration()};
+                time::TimeRange{before.sourceRange.start(), cut - before.sourceRange.start()};
+            head.timelineRange = time::TimeRange{before.start(), head.sourceRange.duration()};
 
-            Clip tail = original;
+            Clip tail = before;
             tail.id = tailId;
             tail.sourceRange = time::TimeRange{resume, sourceEnd - resume};
             // Butted, not overlapped: a track holds that its clips are in
@@ -1591,15 +1591,15 @@ Result<CommandPtr> makeMoveKeyframe(Project& project, const EditTarget& target, 
     return modifyClip(project, target, clipId,
                       std::string{"Move "} + model::toString(param) + " keyframe",
                       keyframeKey(clipId, param, from), [param, from, to](Clip& clip) {
-                          model::Curve& curve = clip.animation.curve(param);
-                          const model::Keyframe* found = curve.at(from);
-                          if (found == nullptr) {
+                          model::Curve& animated = clip.animation.curve(param);
+                          const model::Keyframe* keyframe = animated.at(from);
+                          if (keyframe == nullptr) {
                               return;
                           }
-                          model::Keyframe moved = *found;
+                          model::Keyframe moved = *keyframe;
                           moved.time = to;
-                          curve.removeAt(from);
-                          curve.set(moved);
+                          animated.removeAt(from);
+                          animated.set(moved);
                       });
 }
 
@@ -1619,14 +1619,14 @@ Result<CommandPtr> makeSetKeyframeInterpolation(Project& project, const EditTarg
     return modifyClip(project, target, clipId,
                       std::string{"Set keyframe to "} + model::toString(interpolation), {},
                       [param, sourceTime, interpolation](Clip& clip) {
-                          model::Curve& curve = clip.animation.curve(param);
-                          const model::Keyframe* found = curve.at(sourceTime);
-                          if (found == nullptr) {
+                          model::Curve& animated = clip.animation.curve(param);
+                          const model::Keyframe* keyframe = animated.at(sourceTime);
+                          if (keyframe == nullptr) {
                               return;
                           }
-                          model::Keyframe changed = *found;
+                          model::Keyframe changed = *keyframe;
                           changed.interpolation = interpolation;
-                          curve.set(changed);
+                          animated.set(changed);
                       });
 }
 
@@ -2824,8 +2824,8 @@ Result<CommandPtr> makeSetTrackState(Project& project, model::SequenceId sequenc
     // Keyed by track, so a fader drag is one undo step and the strip next to it
     // is a separate one.
     return makeCommand(sequenceId, "Adjust track", "track:" + std::to_string(trackId.value()),
-                       [trackId, state, pan](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
+                       [trackId, state, pan](Sequence& seq) {
+                           Track* track = seq.findTrack(trackId);
                            if (track == nullptr) {
                                return;
                            }
@@ -2852,8 +2852,8 @@ Result<CommandPtr> makeSetTrackProcessing(Project& project, model::SequenceId se
     }
     return makeCommand(sequenceId, "Adjust processing",
                        "processing:" + std::to_string(trackId.value()),
-                       [trackId, eq, compressor](Sequence& sequence) {
-                           Track* track = sequence.findTrack(trackId);
+                       [trackId, eq, compressor](Sequence& seq) {
+                           Track* track = seq.findTrack(trackId);
                            if (track != nullptr) {
                                track->setEq(eq);
                                track->setCompressor(compressor);

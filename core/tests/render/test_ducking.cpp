@@ -29,7 +29,7 @@ public:
                 std::int64_t sampleCount, const time::Rational& sampleRate,
                 media::AudioBuffer& out) override {
         out = media::AudioBuffer{2, sampleCount, sampleRate};
-        const double start = sourceStart.rescaledTo(sampleRate).frames() /
+        const double start = static_cast<double>(sourceStart.rescaledTo(sampleRate).frames()) /
                              static_cast<double>(sampleRate.toDouble());
         const auto found = speech_.find(media.value());
         const auto tone = steady_.find(media.value());

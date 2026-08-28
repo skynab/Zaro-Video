@@ -137,8 +137,9 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             const double speed = clip.speed();
             const bool retimed = clip.reversed || std::fabs(speed - 1.0) > 1e-9;
             const std::int64_t toRead =
-                retimed ? std::max<std::int64_t>(
-                              2, static_cast<std::int64_t>(std::ceil(wanted * speed)) + 2)
+                retimed ? std::max<std::int64_t>(2, static_cast<std::int64_t>(std::ceil(
+                                                        static_cast<double>(wanted) * speed)) +
+                                                        2)
                         : wanted;
             const time::RationalTime readFrom =
                 clip.reversed ? clip.activeBaseSourceTimeAt(overlap->endExclusive() -
