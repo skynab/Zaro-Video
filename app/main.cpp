@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QStringList>
 #include <QSysInfo>
 #include <cstdio>

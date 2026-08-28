@@ -7,6 +7,8 @@
 // advances. That is the design working, not a failure, and the checks that
 // depend on a moving playhead say so rather than failing on a build machine.
 
+#include <QElapsedTimer>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "../FrameGrab.h"

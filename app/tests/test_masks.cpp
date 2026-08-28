@@ -3,6 +3,11 @@
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QMouseEvent>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "../FrameGrab.h"
