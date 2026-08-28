@@ -28,6 +28,9 @@ add_library(zaro_core
     src/io/OtioIo.cpp
     src/io/SubtitleIo.cpp
     src/io/ProjectIo.cpp
+    src/io/ProjectJson.h
+    src/io/ProjectJsonDecode.cpp
+    src/io/ProjectJsonEncode.cpp
     src/playback/AudioRingBuffer.cpp
     src/playback/PlaybackScheduler.cpp
     src/playback/Transport.cpp
