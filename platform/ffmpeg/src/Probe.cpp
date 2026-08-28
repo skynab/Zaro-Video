@@ -11,11 +11,20 @@ namespace zaro::platform::ffmpeg {
 namespace {
 
 std::int32_t rotationFrom(const AVStream& stream) {
-    // The display matrix moved from the stream onto AVCodecParameters in
-    // FFmpeg 7.0, and the old accessor is deprecated there. Support both so the
-    // Linux builds, which trail a release or two behind Homebrew, still work.
+    // The display matrix moved from the stream onto AVCodecParameters in FFmpeg
+    // 6.1, which deprecated the old accessor in the same release that added the
+    // replacement -- so there is no version where either one alone is right.
+    // Support both, so the Linux builds, which trail a release or two behind
+    // Homebrew, still work.
+    //
+    // The test is on libavcodec and not libavformat because that is where both
+    // halves of the new API live: av_packet_side_data_get() arrived in lavc
+    // 60.29.100 and AVCodecParameters::coded_side_data in 60.30.100, so the
+    // later of the two is the boundary. Keying this on a libavformat major
+    // instead put the boundary at 7.0 and left every 6.1 build -- Ubuntu 24.04
+    // among them -- compiling the deprecated call under -Werror.
     const std::uint8_t* data = nullptr;
-#if LIBAVFORMAT_VERSION_MAJOR >= 61
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(60, 30, 100)
     const AVCodecParameters& par = *stream.codecpar;
     const AVPacketSideData* side = av_packet_side_data_get(
         par.coded_side_data, par.nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
