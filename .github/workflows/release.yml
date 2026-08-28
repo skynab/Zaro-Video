@@ -57,7 +57,8 @@ jobs:
             libswscale-dev libswresample-dev \
             libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libvulkan-dev
 
       - name: Set up MSVC
         if: runner.os == 'Windows'

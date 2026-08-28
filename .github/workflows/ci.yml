@@ -63,7 +63,8 @@ jobs:
             libswscale-dev libswresample-dev \
             libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libvulkan-dev mesa-vulkan-drivers
 
       # Windows has no system package manager for the libraries we link, so they
       # come from the vcpkg manifest instead.
@@ -214,6 +215,7 @@ jobs:
             libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libvulkan-dev \
             xvfb libgl1-mesa-dri mesa-vulkan-drivers
 
       # The same Qt the build matrix uses; see the note there for why it is not
