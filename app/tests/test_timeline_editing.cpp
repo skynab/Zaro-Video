@@ -7,6 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/edit/Operations.h"
+
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -21,6 +23,91 @@ using zaro::app::settledGrab;
 // The edit operations themselves are covered headlessly; what this
 // checks is the wiring -- that a drag reaches the right operation with
 // the right arguments, and that undo steps over the whole gesture.
+// A drag acts on the clip under the pointer, not on whichever member of the
+// selection happens to be first.
+//
+// The regression: pressing an edge anchored the trim to the pressed clip but
+// applied the delta to the primary selection. With a second clip selected ahead
+// of it, the trim went to the wrong clip -- and where the delta made no sense
+// against that clip's edges the operation was refused, so the drag did nothing
+// at all. It surfaced as an intermittent failure in the trim test above,
+// because whether it fired depended on what selection the previous test left
+// behind.
+TEST_CASE("Dragging an edge of a selected clip acts on that clip", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto& audioTrack = sequence.audioTracks().front();
+    const auto target = videoTrack.clips().front();
+    const auto other = audioTrack.clips().front();
+    const auto row = timeline->rowFor(videoTrack.id());
+    REQUIRE(row.has_value());
+    const int y = row->top + row->height / 2;
+
+    // Unlinked first, so the two outcomes are distinguishable: while the pair is
+    // linked, trimming either one trims both, and a trim that went to the wrong
+    // clip would still leave the right one looking correctly trimmed.
+    {
+        auto built = zaro::edit::makeUnlinkClips(window.project(), {sequence.id(), videoTrack.id()},
+                                                 target.id);
+        REQUIRE(built.hasValue());
+        window.commands().execute(window.project(), std::move(*built));
+        window.commands().breakMerge();
+    }
+
+    // Something else leads the selection, and the clip we are about to press is
+    // in it but not first -- the state the previous test used to leave behind.
+    timeline->selectOnly(audioTrack.id(), other.id);
+
+    const int outX = static_cast<int>(timeline->layout().xForTime(target.endExclusive()));
+    int pressX = 0;
+    for (const int offset : {2, 3, 4, 5, 6}) {
+        const auto hit = timeline->layout().hitTest(sequence, outX - offset, y);
+        if (hit && hit->clip == target.id && hit->part == zaro::ui::TimelineLayout::Part::OutEdge) {
+            pressX = outX - offset;
+            break;
+        }
+    }
+    if (pressX == 0) {
+        zaro::app::testing::failf("no out edge to grab within 6px of x=%d on row y=%d\n", outX, y);
+    }
+    // Shift-click adds it to the set without making it the primary.
+    QMouseEvent add(QEvent::MouseButtonPress, QPointF(pressX, y), QPointF(pressX, y),
+                    Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+    QCoreApplication::sendEvent(timeline, &add);
+
+    dragOnTimeline(timeline, pressX, pressX - 120, y);
+
+    const auto* seqNow = window.project().findSequence(sequence.id());
+    const zaro::model::Clip* trimmed = seqNow->videoTracks().front().find(target.id);
+    if (trimmed == nullptr) {
+        zaro::app::testing::failf("the clip disappeared\n");
+    }
+    const zaro::model::Clip* untouched = seqNow->audioTracks().front().find(other.id);
+    const std::int64_t shortened = target.duration().frames() - trimmed->duration().frames();
+    std::printf("  pressed clip %lld -> %lld, the one leading the selection %lld -> %lld\n",
+                static_cast<long long>(target.duration().frames()),
+                static_cast<long long>(trimmed->duration().frames()),
+                static_cast<long long>(other.duration().frames()),
+                static_cast<long long>(untouched->duration().frames()));
+    if (shortened <= 0) {
+        zaro::app::testing::failf(
+            "dragging the pressed clip's out edge did not trim it: it is still %lld frames\n",
+            static_cast<long long>(trimmed->duration().frames()));
+    }
+    // The other half of the same bug: the trim must not have landed on the clip
+    // that merely happened to lead the selection.
+    if (untouched->duration() != other.duration()) {
+        zaro::app::testing::failf(
+            "the trim landed on the wrong clip: the one leading the selection went from %lld to "
+            "%lld frames\n",
+            static_cast<long long>(other.duration().frames()),
+            static_cast<long long>(untouched->duration().frames()));
+    }
+}
+
 TEST_CASE("Trimming a clip's out point with the mouse, and undoing it", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

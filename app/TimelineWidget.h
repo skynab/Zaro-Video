@@ -229,6 +229,9 @@ private:
 
     [[nodiscard]] bool isSelected(model::ClipId clip) const;
     void selectOnly(const ui::TimelineLayout::Hit& hit);
+    /// Move an already-selected clip to the front of the set, so it is the one
+    /// a drag acts on. The set is unchanged; only which of them leads it.
+    void makePrimary(const ui::TimelineLayout::Hit& hit);
     void toggleSelected(const ui::TimelineLayout::Hit& hit);
     void announceSelection();
     void removeSelection(bool ripple);

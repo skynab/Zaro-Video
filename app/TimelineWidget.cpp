@@ -335,6 +335,26 @@ void TimelineWidget::selectOnly(const ui::TimelineLayout::Hit& hit) {
     announceSelection();
 }
 
+void TimelineWidget::makePrimary(const ui::TimelineLayout::Hit& hit) {
+    const auto found =
+        std::find_if(selection_.begin(), selection_.end(),
+                     [&hit](const edit::ClipRef& ref) { return ref.clip == hit.clip; });
+    if (found == selection_.end()) {
+        return;
+    }
+    if (found != selection_.begin()) {
+        std::rotate(selection_.begin(), found, found + 1);
+    }
+    // Announced even when it was already at the front, because being at the
+    // front is not the thing that has to be true: `selected_` is what a drag
+    // acts on, and it is set from the front of the set only when something
+    // announces. A selection can outlive the announcement that produced it --
+    // a clip removed and restored by undo, a sequence rebound underneath it --
+    // and then the set says one thing and `selected_` another. Announcing
+    // unconditionally is what makes the press authoritative.
+    announceSelection();
+}
+
 void TimelineWidget::toggleSelected(const ui::TimelineLayout::Hit& hit) {
     const auto found =
         std::find_if(selection_.begin(), selection_.end(),
@@ -991,9 +1011,17 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
     // Clicking something already selected keeps the selection, so a set can be
-    // dragged by any of its members.
+    // dragged by any of its members -- but the one under the pointer becomes
+    // the primary. Everything a drag then does is aimed at the primary
+    // selection: `beginDrag` anchors the trim to the clip that was pressed,
+    // while `updateTrim` and `updateSlip` act on `selected_`. Leaving the
+    // primary alone here let those two disagree, and a trim aimed at one clip
+    // was applied to another -- or, when the delta made no sense against the
+    // other clip's edges, refused, so the drag silently did nothing.
     if (!isSelected(hit->clip)) {
         selectOnly(*hit);
+    } else {
+        makePrimary(*hit);
     }
     // Alt turns a trim into a ripple trim, closing the gap it would leave
     // instead of opening one.
