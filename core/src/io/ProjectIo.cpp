@@ -24,7 +24,18 @@ using json = nlohmann::json;
 /// merged back from here.
 class UnknownFields {
 public:
-    explicit UnknownFields(json document) : document_{std::move(document)} {}
+    // Parenthesised, not braced, and it has to stay that way.
+    //
+    // `json x{y}` is list-initialisation, and nlohmann's initializer-list
+    // constructor is viable for it: a lone json is convertible to the json_ref
+    // that list takes, so the braces can build a one-element *array* holding
+    // the document instead of moving the document in. Which of the two the
+    // overload set picks is not settled the same way by every compiler --
+    // Clang moved, GCC wrapped -- so the carrier came out of a load as
+    // `[{...}]` on Linux, `contains` found nothing on it, and every field a
+    // newer build had written was dropped by the next save. Parentheses cannot
+    // reach the initializer-list constructor at all.
+    explicit UnknownFields(json document) : document_(std::move(document)) {}
     [[nodiscard]] const json& document() const noexcept { return document_; }
 
 private:
