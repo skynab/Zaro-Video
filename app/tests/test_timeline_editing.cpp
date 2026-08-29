@@ -121,7 +121,6 @@ TEST_CASE("Trimming a clip's out point with the mouse, and undoing it", "[gui]")
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // Trim the out point inwards by dragging its right edge left.
     //
@@ -202,7 +201,6 @@ TEST_CASE("A razor cuts picture and sound together", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto& rate = sequence.frameRate();
     const auto& videoStart = sequence.videoTracks().front();
@@ -273,7 +271,6 @@ TEST_CASE("A cut snaps to the edit point it was aimed at", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     if (sequence.audioTracks().empty() || sequence.audioTracks().front().clips().empty()) {
         zaro::app::testing::failf("no audio track to align against\n");
@@ -420,7 +417,6 @@ TEST_CASE("Three-point editing through the source monitor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const zaro::model::MediaRef& firstMedia = window.project().media().front();
     window.sourceMonitor()->load(firstMedia);
@@ -481,7 +477,6 @@ TEST_CASE("Multi-selection, driven as a rubber band", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto* seq = window.project().findSequence(sequence.id());
     const auto lastRow = timeline->rowFor(seq->audioTracks().back().id());

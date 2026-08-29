@@ -23,6 +23,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // A parameter change has to reach the picture, not just the model.
 // Rendering the same frame at full and at low opacity should differ;
 // if they do not, the compositor is not seeing what the panel wrote.
@@ -38,7 +48,6 @@ TEST_CASE("Lowering opacity reaches the compositor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     window.setPosition(
         zaro::time::RationalTime{sequence.duration().frames() / 2, sequence.frameRate()});
@@ -84,7 +93,6 @@ TEST_CASE("A keyframed fade reaches the GPU compositor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // Undo the dim above before taking any pointer into the model: undo
     // restores a snapshot, which replaces the clips wholesale.
@@ -177,7 +185,6 @@ TEST_CASE("A shape layer, created and edited through the panel", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto videoTrackId = videoTrack.id();
 
@@ -252,7 +259,6 @@ TEST_CASE("The effect stack, added and ordered through the panel", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto brightPixels = [](const QImage& image, int threshold) {
         int count = 0;
@@ -481,7 +487,6 @@ TEST_CASE("The curve editor, driven with the mouse", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* editor = window.effects()->findChild<app::CurveEditor*>();
     if (editor == nullptr) {
@@ -597,7 +602,6 @@ TEST_CASE("Keyframing through the panel and the timeline", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* stopwatch = window.effects()->findChild<QToolButton*>("stopwatch:opacity");
     auto* keyButton = window.effects()->findChild<QToolButton*>("keyframe:opacity");

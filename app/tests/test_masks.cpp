@@ -21,6 +21,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // A bezier mask, through the real preview.
 //
 // A path is the one mask shape the GPU compositor cannot answer from
@@ -40,7 +50,6 @@ TEST_CASE("A bezier mask, through the real preview", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto pathSequenceId = window.project().activeSequence();
     const auto& pathTracks = window.project().findSequence(pathSequenceId)->videoTracks();
@@ -292,7 +301,6 @@ TEST_CASE("Mask tracking follows motion with a known answer", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto trackSequenceId = window.project().activeSequence();
     const auto* trackSequence = window.project().findSequence(trackSequenceId);
@@ -473,7 +481,6 @@ TEST_CASE("Stabilisation steadies a clip that shakes", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto probed =
         zaro::platform::ffmpeg::probe(zaro::app::testing::mediaFixture("shaky_texture.mov"));
@@ -655,7 +662,6 @@ TEST_CASE("Chroma keying, through the real compositor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto keySequenceId = window.project().activeSequence();
     const auto& keyTracks = window.project().findSequence(keySequenceId)->videoTracks();
@@ -753,7 +759,6 @@ TEST_CASE("A mask, through the panel and the compositor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* shapeBox = window.effects()->findChild<QComboBox*>("mask-shape");
     auto* inverted = window.effects()->findChild<QCheckBox*>("mask-inverted");

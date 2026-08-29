@@ -37,7 +37,6 @@ TEST_CASE("Roles and auto-ducking", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto duckSequenceId = window.project().activeSequence();
     const auto* duckSequence = window.project().findSequence(duckSequenceId);
@@ -150,7 +149,6 @@ TEST_CASE("Loudness, measured and normalised", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     zaro::render::AudioGraph loudnessMix{window.media()};
     const zaro::time::TimeRange whole{zaro::time::RationalTime{0, sequence.frameRate()},
@@ -207,7 +205,6 @@ TEST_CASE("The processing chain, through the mixer", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto audioTrackId =
         window.project().findSequence(sequence.id())->audioTracks().front().id();
@@ -282,7 +279,6 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* audioTrack = window.project()
                            .findSequence(sequence.id())

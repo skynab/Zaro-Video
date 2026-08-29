@@ -17,6 +17,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // Motion graphics templates: save a title, drop it in somewhere else.
 TEST_CASE("A graphic template, saved and placed again", "[gui]") {
     auto& window = zaro::app::testing::gui();
@@ -30,7 +40,6 @@ TEST_CASE("A graphic template, saved and placed again", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto tplSequenceId = window.project().activeSequence();
     const auto* tplSequence = window.project().findSequence(tplSequenceId);
@@ -172,7 +181,6 @@ TEST_CASE("Captions imported, burned in and measured", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // The file is written here rather than found: this block used to
     // read a .srt from the scratch folder of the session that wrote it,
@@ -259,7 +267,6 @@ TEST_CASE("A text layer, through the real font engine", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     std::int64_t darkFrame = 0;
     double darkest = 1e9;
@@ -328,7 +335,6 @@ TEST_CASE("Pinning a title to the shot under it", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto pinSequenceId = window.project().activeSequence();
     if (window.project().findSequence(pinSequenceId)->videoTracks().size() < 2) {

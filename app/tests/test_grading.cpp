@@ -20,6 +20,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // The scopes, end to end: a measurement has to reach the panel and be
 // drawn there, and it has to be drawn the right way up. Where the trace
 // sits is the assertion, not how many pixels it covers -- the
@@ -38,7 +48,6 @@ TEST_CASE("The scopes measure what the monitor is showing", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // Scopes are up in the Color workspace. Grabbing a panel that is
     // not on screen returns something, but not what a colourist would
@@ -122,7 +131,6 @@ TEST_CASE("Colour correction reaches the picture", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* exposure = window.effects()
                          ->findChild<QToolButton*>("keyframe:exposure")
@@ -216,7 +224,6 @@ TEST_CASE("The colour wheels lift the shadows", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto wheelSequenceId = window.project().activeSequence();
     const auto wheelTrackId =
@@ -284,7 +291,6 @@ TEST_CASE("Shot matching brings two shots together", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto matchSequenceId = window.project().activeSequence();
     const auto matchTrackId =
@@ -389,7 +395,6 @@ TEST_CASE("The comparison view splits the picture", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto cmpRate =
         window.project().findSequence(window.project().activeSequence())->frameRate();
@@ -466,7 +471,6 @@ TEST_CASE("A look baked out as a .cube and read back", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto bakeSequenceId = window.project().activeSequence();
     const auto bakeTrackId =
@@ -551,7 +555,6 @@ TEST_CASE("A vignette pulls the corners down", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto vigSequenceId = window.project().activeSequence();
     const auto vigTrackId =
@@ -617,7 +620,6 @@ TEST_CASE("A look LUT loaded from a real file", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto clipNow = [&]() {
         return window.project()
@@ -729,7 +731,6 @@ TEST_CASE("The secondary, through its panel", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* enable = window.effects()->findChild<QCheckBox*>("qualifier-enabled");
     auto* mask = window.effects()->findChild<QCheckBox*>("qualifier-show-mask");
@@ -812,7 +813,6 @@ TEST_CASE("An adjustment layer, through the real preview", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto adjustSequenceId = sequence.id();
     // This fixture has one video track, and an adjustment layer needs

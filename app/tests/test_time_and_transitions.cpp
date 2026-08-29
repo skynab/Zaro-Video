@@ -19,6 +19,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // Time remapping and freeze frames, through the real panel.
 //
 // A freeze is the one retime whose effect is visible in a single frame:
@@ -37,7 +47,6 @@ TEST_CASE("Time remapping and freeze frames", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto grayAt = [&](std::int64_t frame) {
         window.setPosition(zaro::time::RationalTime{frame, sequence.frameRate()});
@@ -125,7 +134,6 @@ TEST_CASE("Responsive timing survives a trim", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto respSequenceId = window.project().activeSequence();
     const auto* respSequence = window.project().findSequence(respSequenceId);
@@ -261,7 +269,6 @@ TEST_CASE("Wipes and slides, through the real compositor", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto wipeSequenceId = window.project().activeSequence();
     const auto& wipeTracks = window.project().findSequence(wipeSequenceId)->videoTracks();
@@ -394,7 +401,6 @@ TEST_CASE("Scene edit detection over the real footage", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto sceneSequenceId = window.project().activeSequence();
     const auto sceneTrackId =
@@ -440,7 +446,6 @@ TEST_CASE("Text-based editing takes the picture with it", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto textSequenceId = window.project().activeSequence();
     const auto textRate = window.project().findSequence(textSequenceId)->frameRate();
@@ -538,7 +543,6 @@ TEST_CASE("Fitting music to a length", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto probedClick =
         zaro::platform::ffmpeg::probe(zaro::app::testing::mediaFixture("click_track.wav"));
@@ -656,7 +660,6 @@ TEST_CASE("Auto-reframe for a different shape", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto originalSequenceId = window.project().activeSequence();
     // A tall sequence, which is what reframing is for: 320x240 footage

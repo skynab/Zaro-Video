@@ -21,6 +21,16 @@ using zaro::app::dragOnTimeline;
 using zaro::app::PreviewWindow;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // Deliver: the panel actually renders a file.
 //
 // The export dialog is covered by the render tests; what this checks is
@@ -40,7 +50,6 @@ TEST_CASE("The Deliver panel renders a file", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path deliverRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-deliver";
@@ -105,7 +114,6 @@ TEST_CASE("The delivery curve a sequence goes out through", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto deliverySequenceId = window.project().activeSequence();
     const auto wasOutput = window.project().findSequence(deliverySequenceId)->output();
@@ -171,7 +179,6 @@ TEST_CASE("Saving, and the recovery file", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path scratch =
         std::filesystem::temp_directory_path() / "zaro-selftest-save";
@@ -286,7 +293,6 @@ TEST_CASE("Multicam, switched with the keyboard", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto outerSequenceId = sequence.id();
     const auto trackId = videoTrack.id();
@@ -369,7 +375,6 @@ TEST_CASE("Multicam sync across angles", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto syncSequenceId = window.project().activeSequence();
     const auto syncTrackId =
@@ -479,7 +484,6 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* manager = window.showHotkeys();
     if (manager == nullptr) {
@@ -587,7 +591,6 @@ TEST_CASE("The render cache, through the real window", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto cacheSequenceId = window.project().activeSequence();
     if (window.project().findSequence(cacheSequenceId)->videoTracks().size() < 2) {
@@ -706,7 +709,6 @@ TEST_CASE("A nested sequence renders through the parent", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // Captured by value first: adding a sequence reallocates the
     // project's vector, and the reference this self-test has been
@@ -796,7 +798,6 @@ TEST_CASE("Review comments, ticked off and sent", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto reviewSequenceId = window.project().activeSequence();
     const auto reviewRate = window.project().findSequence(reviewSequenceId)->frameRate();
@@ -905,7 +906,6 @@ TEST_CASE("A lock beside the project, and what it stops", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     PreviewWindow::setLockingEnabled(true);
     const std::filesystem::path lockRoot =
@@ -996,7 +996,6 @@ TEST_CASE("Saving a new version and carrying on in it", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path versionRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-versions";
@@ -1064,7 +1063,6 @@ TEST_CASE("New and Open, through the real window", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     // The project the fixture is on, asked for rather than written down: this
     // was an absolute path into a scratch directory on the machine the test was

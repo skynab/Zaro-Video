@@ -19,6 +19,16 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::settledGrab;
 
+// meanGray is named here rather than aliased inside each test, which is how it
+// arrived: the suite was one main() sharing local lambdas, and the conversion
+// left every test opening with a reference bound to this function. MSVC's
+// constexpr evaluator crashes on a call made through such a reference when the
+// result initialises a const double -- an internal compiler error, not a
+// diagnostic -- so `const double bright = meanGray(image);` took the whole
+// build down. Calling the function by its own name is what every other
+// compiler was doing anyway.
+using zaro::app::testing::meanGray;
+
 // Interpreting footage: telling the program what a file's curve really
 // is, and having the decoder believe it.
 //
@@ -43,7 +53,6 @@ TEST_CASE("Interpreting a file's colour curve", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto interpretMediaId = window.project().media().front().id;
     const auto interpretRate =
@@ -115,7 +124,6 @@ TEST_CASE("A subclip made from what is marked", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const auto sourceSequenceId = window.project().activeSequence();
     const auto sourceTrackId =
@@ -249,7 +257,6 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path proxyFolder =
         std::filesystem::temp_directory_path() / "zaro-selftest-proxy-swap";
@@ -335,7 +342,6 @@ TEST_CASE("Metadata and search, through the real bin", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     auto* binPanel = window.bin();
     auto* binSearch = binPanel->findChild<QLineEdit*>();
@@ -468,7 +474,6 @@ TEST_CASE("Transcoding on the way in", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path ingestRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-ingest";
@@ -550,7 +555,6 @@ TEST_CASE("Making a proxy, then editing against it", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path proxyRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-proxy";
@@ -657,7 +661,6 @@ TEST_CASE("Consolidating the project's media into one folder", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path gatherRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-consolidate";
@@ -739,7 +742,6 @@ TEST_CASE("Relinking a file that really moved", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path relinkRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-relink";
@@ -830,7 +832,6 @@ TEST_CASE("The media browser imports what is wanted", "[gui]") {
     [[maybe_unused]] const auto row = timeline->rowFor(videoTrack.id());
     REQUIRE(row.has_value());
     [[maybe_unused]] const int y = row->top + row->height / 2;
-    [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
     const std::filesystem::path browseRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-browse";
