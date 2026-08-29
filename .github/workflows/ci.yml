@@ -210,6 +210,21 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # Shaders are generated for every backend from one GLSL source and
+      # compiled for none of them, so a construct HLSL rejects builds cleanly
+      # and fails at runtime as "cannot create a graphics pipeline" -- which is
+      # how a dynamic index used as an l-value in composite.frag reached us as
+      # thirty red GPU tests. fxc is the same compiler QRhi's D3D11 backend
+      # hands them to, so asking it here turns that into a build failure naming
+      # the file, the line and the error.
+      #
+      # Both Windows rows: the check costs seconds and the debug row is the one
+      # that runs the GPU tests it protects.
+      - name: Check the shaders compile as HLSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh scripts/check-hlsl.ps1 -BuildDir build/${{ matrix.preset }}
+
       # CPack's WIX generator drives WiX 3's candle.exe and light.exe, which it
       # finds through the WIX environment variable the toolset's installer sets.
       # The runner image ships WiX, but a step's own environment is not the

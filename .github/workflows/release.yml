@@ -154,6 +154,13 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # The same check the CI workflow runs; see it for why. A shader the
+      # D3D11 backend cannot compile must not reach a release archive.
+      - name: Check the shaders compile as HLSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh scripts/check-hlsl.ps1 -BuildDir build/${{ matrix.preset }}
+
       # CPack's WIX generator drives WiX 3's candle.exe and light.exe, which it
       # finds through the WIX environment variable the toolset's installer sets.
       # See the CI workflow for why it is read back rather than assumed.
