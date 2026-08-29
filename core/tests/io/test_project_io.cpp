@@ -116,19 +116,19 @@ TEST_CASE("Fields written by a newer build are not destroyed", "[io]") {
     REQUIRE(text);
 
     std::string enriched = *text;
-    const auto injectAfter = [&enriched](const std::string& anchor, const std::string& addition) {
-        const auto at = enriched.find(anchor);
-        REQUIRE(at != std::string::npos);
-        enriched.insert(at + anchor.size(), addition);
-    };
-    injectAfter("\"activeSequence\":", "");
-    injectAfter("{\n", "  \"effectsFromTheFuture\": [\"lumetri\", \"warp\"],\n");
+    REQUIRE(enriched.find("\"activeSequence\":") != std::string::npos);
+    // The document's own opening brace, not some nested one: this field
+    // belongs at the top level, which is where an older build would meet it
+    // and have to leave it alone.
+    REQUIRE(enriched.starts_with("{\n"));
+    enriched.insert(2, "  \"effectsFromTheFuture\": [\"lumetri\", \"warp\"],\n");
 
     const auto loaded = io::loadProjectFromString(enriched);
     REQUIRE(loaded);
     const auto resaved = io::saveProjectToString(loaded->project, loaded->unknown);
     REQUIRE(resaved);
 
+    INFO("resaved:\n" << *resaved);
     CHECK(resaved->find("effectsFromTheFuture") != std::string::npos);
     CHECK(resaved->find("lumetri") != std::string::npos);
 
@@ -144,11 +144,23 @@ TEST_CASE("Unknown fields on a clip follow the clip", "[io]") {
     const auto text = io::saveProjectToString(f.project);
     REQUIRE(text);
 
-    // Attach something to the first clip, then reorder the timeline so the clip
-    // is no longer at the same array index.
+    // Attach something to the clip this test is about -- the first on V1 --
+    // and then reorder the timeline so that clip is no longer at the same
+    // array index.
+    //
+    // Anchored on that clip's own id rather than on the first "sourceRange" in
+    // the document, which is not the same thing: "audioTracks" sorts before
+    // "videoTracks", so the first one belongs to the audio clip, and this test
+    // used to enrich a clip it never moved and then check that the field
+    // survived a move it was not part of.
+    const model::ClipId moving = f.track(f.v1).clips()[0].id;
+    const std::string anchor = "\"id\": " + std::to_string(moving.value()) + ",";
     std::string enriched = *text;
-    const auto clipAt = enriched.find("\"sourceRange\"");
+    const auto clipAt = enriched.find(anchor);
     REQUIRE(clipAt != std::string::npos);
+    // Ids come from one counter shared by every kind of object, so this one
+    // appears exactly once and cannot enrich something else by accident.
+    REQUIRE(enriched.find(anchor, clipAt + anchor.size()) == std::string::npos);
     enriched.insert(clipAt, "\"speed\": \"1/2\",\n          ");
 
     auto loaded = io::loadProjectFromString(enriched);
@@ -165,6 +177,10 @@ TEST_CASE("Unknown fields on a clip follow the clip", "[io]") {
     const auto resaved = io::saveProjectToString(loaded->project, loaded->unknown);
     REQUIRE(resaved);
     // Matched by id rather than by position, so the reorder does not lose it.
+    // Printed only on failure, and worth the noise: which clip was enriched
+    // and what came back are the two things anyone diagnosing this from a CI
+    // log has to guess at otherwise.
+    INFO("enriched the clip with id " << moving.value() << "; resaved:\n" << *resaved);
     CHECK(resaved->find("\"speed\"") != std::string::npos);
 }
 
