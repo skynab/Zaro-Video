@@ -24,6 +24,7 @@
 #include "zaro/platform/qrhi/GpuRenderGraph.h"
 
 #include "ModelFixtures.h"
+#include "StatusChecks.h"
 
 using namespace zaro;
 using Catch::Approx;
@@ -132,13 +133,13 @@ Pair renderBoth(platform::qrhi::GpuCompositor& compositor, const RgbaImage& sour
     }
     render::drawTransformed(source, pair.cpu, transform, blend);
 
-    REQUIRE(compositor.beginFrame(width, height).ok());
+    ZARO_REQUIRE_OK(compositor.beginFrame(width, height));
     if (background.a > 0.0F || background.r > 0.0F) {
         RgbaImage backdrop = filled(width, height, background);
-        REQUIRE(compositor.draw(backdrop, Transform{}, BlendMode::Normal).ok());
+        ZARO_REQUIRE_OK(compositor.draw(backdrop, Transform{}, BlendMode::Normal));
     }
-    REQUIRE(compositor.draw(source, transform, blend).ok());
-    REQUIRE(compositor.endFrame(pair.gpu).ok());
+    ZARO_REQUIRE_OK(compositor.draw(source, transform, blend));
+    ZARO_REQUIRE_OK(compositor.endFrame(pair.gpu));
     return pair;
 }
 
@@ -149,6 +150,10 @@ TEST_CASE("A GPU backend is available", "[gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     INFO("backend: " << compositor->backendName());
     CHECK_FALSE(compositor->backendName().empty());
 }
@@ -158,9 +163,13 @@ TEST_CASE("An empty GPU frame is transparent", "[gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    REQUIRE(compositor->beginFrame(16, 16).ok());
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
     RgbaImage out;
-    REQUIRE(compositor->endFrame(out).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
     CHECK(out.width() == 16);
     CHECK(out.at(8, 8).a == Approx(0.0F).margin(1e-6));
 }
@@ -170,6 +179,10 @@ TEST_CASE("GPU and CPU agree on an untransformed draw", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(64, 64);
     const Pair pair = renderBoth(*compositor, source, Transform{}, BlendMode::Normal, 64, 64);
 
@@ -186,6 +199,10 @@ TEST_CASE("GPU and CPU agree on scale, position and opacity", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(32, 32);
 
     struct Case {
@@ -248,6 +265,10 @@ TEST_CASE("GPU and CPU agree on rotation, including its direction", "[gpu][golde
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(32, 32);
 
     for (const double degrees : {15.0, 45.0, 90.0, -30.0, 180.0}) {
@@ -270,6 +291,10 @@ TEST_CASE("GPU and CPU agree on blend modes", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     const RgbaImage source = filled(32, 32, premultiplied(0.5F, 0.5F, 0.5F, 1.0F));
     const Rgba background = premultiplied(0.5F, 0.25F, 0.75F, 1.0F);
 
@@ -288,6 +313,10 @@ TEST_CASE("A half-transparent GPU draw composites over what is beneath", "[gpu][
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
     const RgbaImage source = filled(16, 16, premultiplied(1.0F, 0.0F, 0.0F, 1.0F));
     Transform transform;
     transform.opacity = 0.5;
@@ -309,6 +338,10 @@ TEST_CASE("Compositing throughput, CPU against GPU", "[.benchmark][gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     constexpr std::int32_t kWidth = 1920;
     constexpr std::int32_t kHeight = 1080;
@@ -332,9 +365,9 @@ TEST_CASE("Compositing throughput, CPU against GPU", "[.benchmark][gpu]") {
     RgbaImage gpuOut;
     const auto gpuStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
-        REQUIRE(compositor->beginFrame(kWidth, kHeight).ok());
-        REQUIRE(compositor->draw(source, transform, BlendMode::Normal).ok());
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(kWidth, kHeight));
+        ZARO_REQUIRE_OK(compositor->draw(source, transform, BlendMode::Normal));
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
     }
     const double gpuSeconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - gpuStart).count();
@@ -382,7 +415,7 @@ TEST_CASE("Where the frame time actually goes at 1080p", "[.benchmark][gpu]") {
     RgbaImage linear;
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
-        REQUIRE(render::toLinear(yuv, linear).ok());
+        ZARO_REQUIRE_OK(render::toLinear(yuv, linear));
     }
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -445,6 +478,10 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -475,17 +512,17 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
 
         // Reference: convert on the CPU, then composite.
         RgbaImage converted;
-        REQUIRE(render::toLinear(frame, converted).ok());
+        ZARO_REQUIRE_OK(render::toLinear(frame, converted));
         RgbaImage cpuOut{64, 64};
         render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal);
 
         // Under test: hand the planes to the GPU and let the shader do both.
-        REQUIRE(compositor->beginFrame(64, 64).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(64, 64));
         const auto drawn =
             compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal);
-        REQUIRE(drawn.ok());
+        ZARO_REQUIRE_OK(drawn);
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -504,6 +541,10 @@ TEST_CASE("The GPU YUV path honours transforms", "[gpu][golden][yuv]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     Transform transform;
     transform.scaleX = 1.75;
@@ -516,16 +557,15 @@ TEST_CASE("The GPU YUV path honours transforms", "[gpu][golden][yuv]") {
         const media::VideoFrame frame =
             yuvPattern(32, 32, format, media::ColorRange::Limited, media::ColorMatrix::BT709);
         RgbaImage converted;
-        REQUIRE(render::toLinear(frame, converted).ok());
+        ZARO_REQUIRE_OK(render::toLinear(frame, converted));
         RgbaImage cpuOut{96, 96};
         render::drawTransformed(converted, cpuOut, transform, BlendMode::Normal);
 
-        REQUIRE(compositor->beginFrame(96, 96).ok());
-        REQUIRE(
-            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
-                .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(96, 96));
+        ZARO_REQUIRE_OK(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
         return compare(cpuOut, gpuOut, 2);
     };
 
@@ -567,7 +607,11 @@ TEST_CASE("The GPU YUV path refuses what it cannot handle", "[gpu][yuv]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    REQUIRE(compositor->beginFrame(16, 16).ok());
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
 
     // A curve with no formula. PQ and HLG used to be here; they have formulas
     // now, and what is left to refuse is a tag nothing knows how to invert --
@@ -590,11 +634,11 @@ TEST_CASE("The GPU YUV path refuses what it cannot handle", "[gpu][yuv]") {
     media::ColorInfo pq = hdr.color();
     pq.transfer = media::TransferFunction::PQ;
     hdr.setColor(pq);
-    CHECK(
-        compositor->drawSource(hdr, Transform{}, render::GradeConstants{}, BlendMode::Normal).ok());
+    ZARO_CHECK_OK(
+        compositor->drawSource(hdr, Transform{}, render::GradeConstants{}, BlendMode::Normal));
 
     RgbaImage out;
-    REQUIRE(compositor->endFrame(out).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
 }
 
 TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu][yuv]") {
@@ -606,6 +650,10 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     constexpr std::int32_t kWidth = 1920;
     constexpr std::int32_t kHeight = 1080;
@@ -624,7 +672,7 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     RgbaImage cpuOut{kWidth, kHeight};
     const auto cpuStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
-        REQUIRE(render::toLinear(frame, converted).ok());
+        ZARO_REQUIRE_OK(render::toLinear(frame, converted));
         cpuOut.clear();
         render::drawTransformed(converted, cpuOut, transform, BlendMode::Normal);
     }
@@ -634,11 +682,10 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     // The GPU pipeline as a preview would run it: planes up, nothing back.
     const auto previewStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
-        REQUIRE(compositor->beginFrame(kWidth, kHeight).ok());
-        REQUIRE(
-            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
-                .ok());
-        REQUIRE(compositor->endFrameOnGpu().ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(kWidth, kHeight));
+        ZARO_REQUIRE_OK(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal));
+        ZARO_REQUIRE_OK(compositor->endFrameOnGpu());
     }
     const double previewSeconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - previewStart).count();
@@ -647,11 +694,10 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     RgbaImage gpuOut;
     const auto readbackStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i) {
-        REQUIRE(compositor->beginFrame(kWidth, kHeight).ok());
-        REQUIRE(
-            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal)
-                .ok());
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(kWidth, kHeight));
+        ZARO_REQUIRE_OK(
+            compositor->drawSource(frame, transform, render::GradeConstants{}, BlendMode::Normal));
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
     }
     const double readbackSeconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - readbackStart).count();
@@ -673,6 +719,10 @@ TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     // Asymmetric on purpose: white across the top third, black below.
     RgbaImage source{32, 30};
@@ -683,21 +733,21 @@ TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
         }
     }
 
-    REQUIRE(compositor->beginFrame(32, 30).ok());
-    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal).ok());
-    REQUIRE(compositor->endFrameOnGpu().ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(32, 30));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal));
+    ZARO_REQUIRE_OK(compositor->endFrameOnGpu());
 
     SECTION("the top of the picture stays at the top") {
         RgbaImage presented;
         // Same aspect ratio, so there are no bars to complicate it.
-        REQUIRE(compositor->presentToImage(64, 60, presented).ok());
+        ZARO_REQUIRE_OK(compositor->presentToImage(64, 60, presented));
         CHECK(presented.at(32, 5).r > 0.5F);   // near the top: white
         CHECK(presented.at(32, 50).r < 0.5F);  // near the bottom: black
     }
 
     SECTION("a wider target gets bars at the sides, not the top") {
         RgbaImage presented;
-        REQUIRE(compositor->presentToImage(160, 60, presented).ok());
+        ZARO_REQUIRE_OK(compositor->presentToImage(160, 60, presented));
         // The frame is 32x30, so in a 160x60 target it occupies the middle
         // 64 pixels horizontally and the full height.
         CHECK(presented.at(4, 30).a > 0.5F);  // bar: opaque black backdrop
@@ -708,7 +758,7 @@ TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
 
     SECTION("a taller target gets bars above and below") {
         RgbaImage presented;
-        REQUIRE(compositor->presentToImage(64, 200, presented).ok());
+        ZARO_REQUIRE_OK(compositor->presentToImage(64, 200, presented));
         CHECK(presented.at(32, 4).r < 0.1F);    // bar at the top
         CHECK(presented.at(32, 196).r < 0.1F);  // bar at the bottom
         // Picture occupies the middle 60 rows: 70..130. Its own top third is
@@ -768,6 +818,10 @@ TEST_CASE("The GPU and CPU render graphs agree across a dissolve", "[gpu][golden
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     zaro::testing::Fixture f;
     f.sequence().setSize(16, 16);
@@ -813,9 +867,9 @@ TEST_CASE("The GPU and CPU render graphs agree across a dissolve", "[gpu][golden
         const auto at = f.at(frame);
 
         RgbaImage onGpu;
-        REQUIRE(gpuGraph.compositeInto(f.sequence(), at, onGpu).ok());
+        ZARO_REQUIRE_OK(gpuGraph.compositeInto(f.sequence(), at, onGpu));
         RgbaImage onCpu;
-        REQUIRE(cpuGraph.compositeInto(f.sequence(), at, onCpu).ok());
+        ZARO_REQUIRE_OK(cpuGraph.compositeInto(f.sequence(), at, onCpu));
 
         const Difference difference = compare(onCpu, onGpu, 1);
         INFO("frame " << frame << ": worst " << difference.worst << ", mean " << difference.mean);
@@ -833,6 +887,10 @@ TEST_CASE("The GPU grade agrees with the CPU reference", "[gpu][golden][grade]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -880,10 +938,10 @@ TEST_CASE("The GPU grade agrees with the CPU reference", "[gpu][golden][grade]")
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.grade = grade.isIdentity() ? nullptr : &grade});
 
-        REQUIRE(compositor->beginFrame(32, 32).ok());
-        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(32, 32));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, grade));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -901,6 +959,10 @@ TEST_CASE("A grade on the GPU survives a fade without changing", "[gpu][golden][
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     model::ColorCorrection correction;
     correction.exposure = 0.5;
@@ -914,15 +976,15 @@ TEST_CASE("A grade on the GPU survives a fade without changing", "[gpu][golden][
     Transform fading;
     fading.opacity = 0.35;
 
-    REQUIRE(compositor->beginFrame(16, 16).ok());
-    REQUIRE(compositor->draw(source, fading, BlendMode::Normal, grade).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, fading, BlendMode::Normal, grade));
     RgbaImage faded;
-    REQUIRE(compositor->endFrame(faded).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(faded));
 
-    REQUIRE(compositor->beginFrame(16, 16).ok());
-    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, grade));
     RgbaImage full;
-    REQUIRE(compositor->endFrame(full).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(full));
 
     const Rgba& partial = faded.at(8, 8);
     const Rgba& opaque = full.at(8, 8);
@@ -940,6 +1002,10 @@ TEST_CASE("The GPU tone curve agrees with the CPU reference", "[gpu][golden][cur
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     const auto through = [](std::initializer_list<model::CurvePoint> points) {
         model::ToneCurve curve;
@@ -995,10 +1061,10 @@ TEST_CASE("The GPU tone curve agrees with the CPU reference", "[gpu][golden][cur
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.grade = &neutral, .curves = &table});
 
-        REQUIRE(compositor->beginFrame(32, 32).ok());
-        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, &table).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(32, 32));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, &table));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1016,6 +1082,10 @@ TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][c
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     RgbaImage source{16, 16};
     for (std::int32_t y = 0; y < 16; ++y) {
@@ -1029,12 +1099,11 @@ TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][c
     const render::CurveTable identity{model::ToneCurves{}, media::TransferFunction::BT709};
     REQUIRE(identity.isIdentity());
 
-    REQUIRE(compositor->beginFrame(16, 16).ok());
-    REQUIRE(compositor
-                ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{}, &identity)
-                .ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal,
+                                     render::GradeConstants{}, &identity));
     RgbaImage out;
-    REQUIRE(compositor->endFrame(out).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
 
     for (std::int32_t y = 0; y < 16; ++y) {
         for (std::int32_t x = 0; x < 16; ++x) {
@@ -1055,6 +1124,10 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     const media::VideoFrame frame = yuvPattern(
         64, 64, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
@@ -1067,18 +1140,16 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
     REQUIRE_FALSE(table.isIdentity());
 
     RgbaImage plain;
-    REQUIRE(compositor->beginFrame(64, 64).ok());
-    REQUIRE(compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal)
-                .ok());
-    REQUIRE(compositor->endFrame(plain).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(64, 64));
+    ZARO_REQUIRE_OK(
+        compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal));
+    ZARO_REQUIRE_OK(compositor->endFrame(plain));
 
     RgbaImage curved;
-    REQUIRE(compositor->beginFrame(64, 64).ok());
-    REQUIRE(
-        compositor
-            ->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal, &table)
-            .ok());
-    REQUIRE(compositor->endFrame(curved).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(64, 64));
+    ZARO_REQUIRE_OK(compositor->drawSource(frame, Transform{}, render::GradeConstants{},
+                                           BlendMode::Normal, &table));
+    ZARO_REQUIRE_OK(compositor->endFrame(curved));
 
     // The curve lifts black a long way, so every pixel should have moved.
     double moved = 0.0;
@@ -1092,7 +1163,7 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
 
     // And it agrees with the CPU doing the same thing to the same frame.
     RgbaImage converted;
-    REQUIRE(render::toLinear(frame, converted).ok());
+    ZARO_REQUIRE_OK(render::toLinear(frame, converted));
     RgbaImage cpuOut{64, 64};
     const render::GradeConstants neutral;
     render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal,
@@ -1113,6 +1184,10 @@ TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][seco
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1228,12 +1303,11 @@ TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][seco
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.grade = &neutral, .secondary = &secondary});
 
-        REQUIRE(compositor->beginFrame(48, 48).ok());
-        REQUIRE(
-            compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, &secondary)
-                .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(48, 48));
+        ZARO_REQUIRE_OK(
+            compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, &secondary));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1252,6 +1326,10 @@ TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]"
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     const auto cubeText = [](int size, int mode) {
         std::ostringstream out;
@@ -1304,13 +1382,11 @@ TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]"
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.grade = &neutral, .lut = &table, .lutAmount = testCase.amount});
 
-        REQUIRE(compositor->beginFrame(32, 32).ok());
-        REQUIRE(compositor
-                    ->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, nullptr,
-                           &table, testCase.amount)
-                    .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(32, 32));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr,
+                                         nullptr, &table, testCase.amount));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1329,6 +1405,10 @@ TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1364,13 +1444,12 @@ TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.mask = &testCase.mask});
 
-        REQUIRE(compositor->beginFrame(64, 64).ok());
-        REQUIRE(compositor
-                    ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
-                           nullptr, nullptr, nullptr, 1.0F, &testCase.mask)
-                    .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(64, 64));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal,
+                                         render::GradeConstants{}, nullptr, nullptr, nullptr, 1.0F,
+                                         &testCase.mask));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1389,6 +1468,10 @@ TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1488,13 +1571,11 @@ TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]")
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.grade = &neutral, .keyer = &keyer});
 
-        REQUIRE(compositor->beginFrame(48, 48).ok());
-        REQUIRE(compositor
-                    ->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr, nullptr,
-                           nullptr, 1.0F, nullptr, &keyer)
-                    .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(48, 48));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr,
+                                         nullptr, nullptr, 1.0F, nullptr, &keyer));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1521,31 +1602,35 @@ TEST_CASE("Switching output size and source size does not wreck the pipeline",
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     const media::VideoFrame small = yuvPattern(
         64, 48, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
     const media::VideoFrame large = yuvPattern(
         96, 64, media::PixelFormat::YUV420P, media::ColorRange::Limited, media::ColorMatrix::BT709);
 
-    REQUIRE(compositor->beginFrame(64, 48).ok());
-    REQUIRE(compositor->drawSource(small, Transform{}, render::GradeConstants{}).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(64, 48));
+    ZARO_REQUIRE_OK(compositor->drawSource(small, Transform{}, render::GradeConstants{}));
     RgbaImage first;
-    REQUIRE(compositor->endFrame(first).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(first));
 
     // A different output size clears the conversion pipeline; a different
     // source size recreates the staging surface it was built against.
-    REQUIRE(compositor->beginFrame(96, 64).ok());
-    REQUIRE(compositor->drawSource(large, Transform{}, render::GradeConstants{}).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(96, 64));
+    ZARO_REQUIRE_OK(compositor->drawSource(large, Transform{}, render::GradeConstants{}));
     RgbaImage second;
-    REQUIRE(compositor->endFrame(second).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(second));
     CHECK(second.width() == 96);
 
     // And back again, which is what closing one project and opening another
     // looks like from here.
-    REQUIRE(compositor->beginFrame(64, 48).ok());
-    REQUIRE(compositor->drawSource(small, Transform{}, render::GradeConstants{}).ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(64, 48));
+    ZARO_REQUIRE_OK(compositor->drawSource(small, Transform{}, render::GradeConstants{}));
     RgbaImage third;
-    REQUIRE(compositor->endFrame(third).ok());
+    ZARO_REQUIRE_OK(compositor->endFrame(third));
     CHECK(third.width() == 64);
 }
 
@@ -1560,6 +1645,10 @@ TEST_CASE("The GPU agrees with the CPU on log and HDR curves", "[gpu][golden][lo
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1579,16 +1668,15 @@ TEST_CASE("The GPU agrees with the CPU on log and HDR curves", "[gpu][golden][lo
         frame.setColor(color);
 
         RgbaImage converted;
-        REQUIRE(render::toLinear(frame, converted).ok());
+        ZARO_REQUIRE_OK(render::toLinear(frame, converted));
         RgbaImage cpuOut{64, 64};
         render::drawTransformed(converted, cpuOut, Transform{}, BlendMode::Normal);
 
-        REQUIRE(compositor->beginFrame(64, 64).ok());
-        REQUIRE(
-            compositor->drawSource(frame, Transform{}, render::GradeConstants{}, BlendMode::Normal)
-                .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(64, 64));
+        ZARO_REQUIRE_OK(compositor->drawSource(frame, Transform{}, render::GradeConstants{},
+                                               BlendMode::Normal));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1612,6 +1700,10 @@ TEST_CASE("The presented frame rolls off its highlights like the encoder does",
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     // A ramp that runs well past white, so most of it is above any knee.
     RgbaImage source{32, 1};
@@ -1621,12 +1713,12 @@ TEST_CASE("The presented frame rolls off its highlights like the encoder does",
     }
 
     constexpr double knee = 0.7;
-    REQUIRE(compositor->beginFrame(32, 1).ok());
-    REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal).ok());
-    REQUIRE(compositor->endFrameOnGpu().ok());
+    ZARO_REQUIRE_OK(compositor->beginFrame(32, 1));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal));
+    ZARO_REQUIRE_OK(compositor->endFrameOnGpu());
     compositor->setPresentKnee(knee);
     RgbaImage presented;
-    REQUIRE(compositor->presentToImage(32, 1, presented).ok());
+    ZARO_REQUIRE_OK(compositor->presentToImage(32, 1, presented));
 
     // The reference: the same rolloff the encoder applies, on the CPU.
     RgbaImage expected = source.clone();
@@ -1646,7 +1738,7 @@ TEST_CASE("The presented frame rolls off its highlights like the encoder does",
     SECTION("and with no rolloff the ramp clips, as it always did") {
         compositor->setPresentKnee(1.0);
         RgbaImage plain;
-        REQUIRE(compositor->presentToImage(32, 1, plain).ok());
+        ZARO_REQUIRE_OK(compositor->presentToImage(32, 1, plain));
         CHECK(plain.at(31, 0).g >= 0.99F);
     }
 }
@@ -1661,6 +1753,10 @@ TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][whe
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1709,10 +1805,10 @@ TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][whe
         RgbaImage cpuOut{48, 48};
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal, {.grade = &grade});
 
-        REQUIRE(compositor->beginFrame(48, 48).ok());
-        REQUIRE(compositor->draw(source, Transform{}, BlendMode::Normal, grade).ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(48, 48));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, grade));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1730,6 +1826,10 @@ TEST_CASE("The GPU agrees with the CPU on the vignette", "[gpu][golden][vignette
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     struct Case {
         const char* name;
@@ -1772,13 +1872,12 @@ TEST_CASE("The GPU agrees with the CPU on the vignette", "[gpu][golden][vignette
         render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                 {.vignette = &testCase.vignette});
 
-        REQUIRE(compositor->beginFrame(64, 36).ok());
-        REQUIRE(compositor
-                    ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
-                           nullptr, nullptr, nullptr, 1.0F, nullptr, nullptr, &testCase.vignette)
-                    .ok());
+        ZARO_REQUIRE_OK(compositor->beginFrame(64, 36));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal,
+                                         render::GradeConstants{}, nullptr, nullptr, nullptr, 1.0F,
+                                         nullptr, nullptr, &testCase.vignette));
         RgbaImage gpuOut;
-        REQUIRE(compositor->endFrame(gpuOut).ok());
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
         const Difference difference = compare(cpuOut, gpuOut, 1);
         INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
@@ -1798,6 +1897,10 @@ TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") 
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
+    // Named on every failure: which backend a test ran on is the first thing
+    // anybody reading a red CI log needs, and it is the one thing the machine
+    // knows that we do not.
+    INFO("backend: " << compositor->backendName());
 
     model::Transition transition;
     transition.kind = model::TransitionKind::Wipe;
@@ -1817,14 +1920,13 @@ TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") 
             render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
                                     {.wipe = shape.wipe.isSet() ? &shape.wipe : nullptr});
 
-            REQUIRE(compositor->beginFrame(64, 36).ok());
-            REQUIRE(compositor
-                        ->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{},
-                               nullptr, nullptr, nullptr, 1.0F, nullptr, nullptr, nullptr,
-                               shape.wipe.isSet() ? &shape.wipe : nullptr)
-                        .ok());
+            ZARO_REQUIRE_OK(compositor->beginFrame(64, 36));
+            ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal,
+                                             render::GradeConstants{}, nullptr, nullptr, nullptr,
+                                             1.0F, nullptr, nullptr, nullptr,
+                                             shape.wipe.isSet() ? &shape.wipe : nullptr));
             RgbaImage gpuOut;
-            REQUIRE(compositor->endFrame(gpuOut).ok());
+            ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
 
             const Difference difference = compare(cpuOut, gpuOut, 1);
             INFO(model::toString(direction) << " at " << progress << ": worst " << difference.worst
