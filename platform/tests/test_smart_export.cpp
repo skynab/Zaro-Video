@@ -149,6 +149,9 @@ TEST_CASE("a copied export decodes to the same pixels as the source", "[smartexp
         CHECK(identical);
     }
 
+    // Windows will not unlink a file that still has an open handle, and the
+    // reader holds one on the copy until it is destroyed.
+    copyReader->reset();
     std::filesystem::remove(out);
 }
 
