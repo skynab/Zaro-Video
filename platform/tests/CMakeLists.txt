@@ -1,6 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
 add_executable(zaro_media_tests
+    QtMessageLog.cpp
     test_gpu_compositor.cpp
     test_probe.cpp
     test_make_proxy.cpp
