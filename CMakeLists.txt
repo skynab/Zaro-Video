@@ -95,6 +95,9 @@ if(ZARO_BUILD_TESTS)
     add_subdirectory(app/tests)
 endif()
 
+# After every target, because it is about what sits beside them in bin/.
+include(WindowsRuntimeDeps)
+
 include(Packaging)
 
 message(STATUS "")

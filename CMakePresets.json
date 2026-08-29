@@ -47,6 +47,7 @@
                 "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake",
                 "VCPKG_TARGET_TRIPLET": "x64-windows",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
                 "ZARO_WARNINGS_AS_ERRORS": "OFF"
             }
         },
