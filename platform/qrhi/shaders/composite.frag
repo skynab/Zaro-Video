@@ -253,14 +253,33 @@ vec3 suppressSpill(vec3 colour)
     if (ubuf.keyColour.w > 1.5 || ubuf.keyEdge.z <= 0.0) {
         return colour;
     }
-    int index = int(ubuf.keyEdge.w + 0.5);
-    float dominant = colour[index];
-    float ceiling = (colour[(index + 1) % 3] + colour[(index + 2) % 3]) * 0.5;
+    // The spill channel as a mask rather than as an index.
+    //
+    // `colour[index] = ...` is the natural spelling and the one HLSL cannot
+    // compile: a vec3 local lives in a register rather than in addressable
+    // memory, so fxc rejects a dynamic index used as an l-value outright --
+    // "error X3500: array reference cannot be used as an l-value; not natively
+    // addressable" -- and the whole pipeline fails to build. Every draw on the
+    // D3D11 backend builds this shader, whether or not it keys anything, so
+    // every draw on Windows failed on account of these four lines.
+    //
+    // Clamped where the index is formed, because render::suppressSpill clamps
+    // its own and the two are required to agree.
+    int index = clamp(int(ubuf.keyEdge.w + 0.5), 0, 2);
+    vec3 pick = vec3(index == 0 ? 1.0 : 0.0, index == 1 ? 1.0 : 0.0, index == 2 ? 1.0 : 0.0);
+
+    float dominant = dot(colour, pick);
+    // The mean of the other two channels, reached by zeroing the dominant one
+    // rather than by indexing past it. Adding an exact zero changes nothing and
+    // addition commutes, so this is the same value to the last bit as the CPU's
+    // colour[(index + 1) % 3] + colour[(index + 2) % 3] -- which matters,
+    // because a golden test compares the two.
+    vec3 others = colour * (1.0 - pick);
+    float ceiling = (others.r + others.g + others.b) * 0.5;
     if (dominant <= ceiling) {
         return colour;
     }
-    colour[index] = dominant + ((ceiling - dominant) * ubuf.keyEdge.z);
-    return colour;
+    return colour + (pick * ((ceiling - dominant) * ubuf.keyEdge.z));
 }
 
 // Must agree with render::vignetteGain. Brightness, not coverage: a vignette
