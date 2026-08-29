@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  Two things the MSI carries that CPack cannot express on its own: a desktop
+  shortcut, and the .zaro file association.
+
+  CPACK_CREATE_DESKTOP_LINKS is the obvious variable for the first and does
+  nothing here; only the NSIS and Inno Setup generators implement it, so for
+  WiX a shortcut has to be written out by hand. The association has no CPack variable at
+  all.
+
+  Everything below hangs off #PRODUCT and #PRODUCTFEATURE, the two fragment ids
+  CPack documents as stable. The alternative is patching a generated component
+  such as CM_CP_bin.zaro_preview.exe, whose spelling depends on how CPack
+  mangles a path into a WiX identifier, and a guess that is wrong there fails
+  at link time rather than doing something visible.
+
+  Paths are written against INSTALL_ROOT, the directory id CPack's own template
+  gives the install location (see WIX.template.in, which points
+  WIXUI_INSTALLDIR at it). It expands with a trailing separator.
+
+  HKMU rather than HKLM or HKCU: WiX resolves it to the machine hive for an
+  all-users install and the user's for a per-user one, so neither component
+  can be the one that fails for want of permission.
+-->
+
+<CPackWiXPatch>
+
+  <CPackWiXFragment Id="#PRODUCT">
+
+    <!-- WiX 3 does not predefine the standard directories; a reference to one
+         needs it in the tree. CPack never emits this one, precisely because it
+         has no desktop-shortcut support to emit it for. -->
+    <DirectoryRef Id="TARGETDIR">
+      <Directory Id="DesktopFolder" Name="Desktop"/>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="CutReelDesktopShortcut" Guid="ABBC33BB-54D2-450A-9619-EFA28D2636B6">
+        <!-- No arguments: the application asks for a project when it is
+             started without one. -->
+        <Shortcut Id="CutReelDesktopLink"
+                  Name="CutReel"
+                  Description="A non-linear video editor"
+                  Target="[INSTALL_ROOT]bin\zaro-preview.exe"
+                  WorkingDirectory="INSTALL_ROOT"/>
+        <!-- A component needs a key path, and a shortcut cannot be one. No
+             RemoveFolder here on purpose: the shortcut goes when the component
+             does, and the Desktop is not ours to remove. -->
+        <RegistryValue Root="HKMU"
+                       Key="Software\CutReel"
+                       Name="DesktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="INSTALL_ROOT">
+      <Component Id="CutReelProjectAssociation" Guid="E348BD09-C967-431B-B26D-15517B281559">
+        <!-- Written as plain registry values rather than as ProgId/Extension/
+             Verb, which would need the WiX file id of the installed
+             executable, the generated name this patch exists to avoid
+             depending on. -->
+        <RegistryValue Root="HKMU"
+                       Key="Software\Classes\.zaro"
+                       Value="CutReel.Project"
+                       Type="string"
+                       KeyPath="yes"/>
+        <RegistryValue Root="HKMU"
+                       Key="Software\Classes\CutReel.Project"
+                       Value="CutReel project"
+                       Type="string"/>
+        <RegistryValue Root="HKMU"
+                       Key="Software\Classes\CutReel.Project\DefaultIcon"
+                       Value="[INSTALL_ROOT]bin\zaro-preview.exe,0"
+                       Type="string"/>
+        <!-- %1 reaches the program as argv[1], which is the project path it
+             wants. Quoted, because somebody's project lives in a folder with a
+             space in it. -->
+        <RegistryValue Root="HKMU"
+                       Key="Software\Classes\CutReel.Project\shell\open\command"
+                       Value="&quot;[INSTALL_ROOT]bin\zaro-preview.exe&quot; &quot;%1&quot;"
+                       Type="string"/>
+      </Component>
+    </DirectoryRef>
+
+  </CPackWiXFragment>
+
+  <!-- Nothing is installed until it belongs to a feature. -->
+  <CPackWiXFragment Id="#PRODUCTFEATURE">
+    <ComponentRef Id="CutReelDesktopShortcut"/>
+    <ComponentRef Id="CutReelProjectAssociation"/>
+  </CPackWiXFragment>
+
+</CPackWiXPatch>

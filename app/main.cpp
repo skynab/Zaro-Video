@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QStringList>
@@ -85,7 +86,25 @@ int main(int argc, char** argv) {
         std::puts("  --selftest-quit   quit with background work in flight, exit");
         std::puts("  --locking         take a lock on the project, and honour other people's");
         std::puts("  --quiet           say things on stderr instead of in dialogs");
-        return 2;
+
+        // A shortcut carries no arguments, and on Windows this is a GUI binary
+        // with no console for any of the above to appear in -- so an installed
+        // copy launched from the Start Menu printed into nothing and exited,
+        // which from the outside is a program that does not start at all.
+        //
+        // So ask. Cancelling is an answer rather than a failure, hence zero:
+        // somebody who opened the program and changed their mind has not hit
+        // an error. Never when quiet -- that is the self-tests and the scripts,
+        // and a dialog is precisely what they must never meet.
+        if (zaro::app::isQuiet()) {
+            return 2;
+        }
+        const QString chosen = QFileDialog::getOpenFileName(
+            nullptr, "Open a project", QString{}, "CutReel projects (*.zaro);;All files (*)");
+        if (chosen.isEmpty()) {
+            return 0;
+        }
+        arguments.append(chosen);
     }
 
     zaro::platform::ffmpeg::installLogHandler(false);
@@ -109,12 +128,16 @@ int main(int argc, char** argv) {
 
     auto loaded = zaro::io::loadProject(openPath);
     if (!loaded) {
-        std::fprintf(stderr, "zaro-preview: %s\n", loaded.error().toString().c_str());
+        // Through say/warn rather than stderr, for the same reason as above: a
+        // window-less binary has no console, so a project that will not open
+        // looked exactly like a program that does not start.
+        zaro::app::warn(nullptr, "Cannot open the project",
+                        QString::fromStdString(loaded.error().toString()));
         return 1;
     }
     zaro::model::Project project = loaded->project;
     if (project.findSequence(project.activeSequence()) == nullptr) {
-        std::fprintf(stderr, "zaro-preview: this project has no active sequence\n");
+        zaro::app::warn(nullptr, "Cannot open the project", "This project has no active sequence.");
         return 1;
     }
 
@@ -123,7 +146,8 @@ int main(int argc, char** argv) {
     // stale for ever.
     PreviewWindow window{std::move(project), std::move(*loaded), projectPath};
     if (const auto status = window.openMedia(); !status) {
-        std::fprintf(stderr, "zaro-preview: %s\n", status.error().toString().c_str());
+        zaro::app::warn(&window, "Cannot open the media",
+                        QString::fromStdString(status.error().toString()));
         return 1;
     }
     window.resize(960, 620);
