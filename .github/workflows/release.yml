@@ -70,11 +70,60 @@ jobs:
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
             libvulkan-dev
 
+      # What ilammy/msvc-dev-cmd@v1 was doing, done directly. That action is
+      # the last node20 one in this workflow and has no newer major to move
+      # to -- its master branch still says `using: node20` -- and all it does
+      # is run vcvars64.bat and hand the resulting environment to the steps
+      # that follow. GITHUB_ENV does that part for us.
+      #
+      # Only the variables vcvars actually changes are exported, rather than
+      # the whole environment: GITHUB_ENV is parsed line by line, and cmd's
+      # `set` prints entries that are not name=value pairs at all.
       - name: Set up MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere" }
+          $install = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $install) { throw "No Visual Studio with the C++ toolset is installed" }
+          $vcvars = Join-Path $install "VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
+          Write-Host "Using $vcvars"
+
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+
+          $exported = 0
+          # `call`, so that control returns and `set` actually runs; stderr is
+          # left alone so that a vcvars failure says why rather than vanishing.
+          foreach ($line in (cmd /c "call `"$vcvars`" >nul && set")) {
+            $pair = $line -split '=', 2
+            if ($pair.Count -ne 2) { continue }
+            $name = $pair[0]
+            $value = $pair[1]
+            # A name is never empty and never starts with '='; a value that
+            # spans lines cannot be written to GITHUB_ENV in this form.
+            if (-not $name -or $name.StartsWith('=') -or $value -match "`n") { continue }
+            if ($before[$name] -ne $value) {
+              Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
+              $exported++
+            }
+          }
+          Write-Host "Exported $exported variables from vcvars64.bat"
+          if ($exported -eq 0) { throw "vcvars64.bat changed nothing; the toolchain is not set up" }
+
+      # The environment above only reaches the *next* step, so this is both the
+      # check that it worked and the first place it could be checked. Without
+      # it a failure here would surface as CMake not finding a compiler.
+      - name: Check the MSVC toolchain
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          where cl.exe
+          where link.exe
 
       # Windows and Linux both take Qt from the official binaries; the CI
       # workflow explains why Linux cannot use the distribution's.
