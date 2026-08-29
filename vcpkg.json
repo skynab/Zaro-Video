@@ -13,7 +13,10 @@
                 "avcodec",
                 "avformat",
                 "swresample",
-                "swscale"
+                "swscale",
+                "gpl",
+                "x264",
+                "x265"
             ]
         },
         {
@@ -22,6 +25,18 @@
         }
     ],
     "$comment": [
+        "x264 and x265 are external libraries behind feature flags, and this build",
+        "asks for them because the code asks for them by name: MakeProxy.cpp",
+        "encodes proxies with libx264, Encoder.cpp defaults to it for anything",
+        "that is not a .mov, and the Deliver panel offers an HEVC preset that",
+        "names libx265. Without these features avcodec_find_encoder_by_name",
+        "returns null on Windows alone, and the proxy and render paths fail",
+        "there while passing everywhere else -- macOS and Linux take FFmpeg",
+        "from Homebrew and the distribution, and both ship it with x264 built",
+        "in. The gpl feature is what x264 and x265 require; naming it here",
+        "makes the licence of the Windows binary a stated choice rather than a",
+        "side effect, and it matches what the other two platforms already link.",
+        "",
         "Consumed only when the build is configured with vcpkg's toolchain file,",
         "which is what the windows-* presets do. macOS and Linux keep resolving",
         "these through Homebrew and the distribution respectively, so this manifest",
