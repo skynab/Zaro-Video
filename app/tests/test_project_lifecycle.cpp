@@ -1066,7 +1066,15 @@ TEST_CASE("New and Open, through the real window", "[gui]") {
     [[maybe_unused]] const int y = row->top + row->height / 2;
     [[maybe_unused]] const auto& meanGray = zaro::app::testing::meanGray;
 
-    const std::string originalPath = "/tmp/play/linked.zaro";
+    // The project the fixture is on, asked for rather than written down: this
+    // was an absolute path into a scratch directory on the machine the test was
+    // written on, so the reopen below found nothing anywhere else -- which is a
+    // failure at "opening the original project failed", after New has already
+    // replaced the window and with no way back to what it replaced.
+    const std::string originalPath = window.projectPath();
+    if (originalPath.empty()) {
+        zaro::app::testing::failf("the fixture project has no path to reopen\n");
+    }
     const std::size_t originalMedia = window.project().media().size();
 
     // Something to undo, so that "New cleared the history" is a check
