@@ -1,6 +1,7 @@
 # Catch2 and catch_discover_tests come from the top-level CMakeLists.
 
 add_executable(zaro_core_tests
+    time/test_int128.cpp
     time/test_rational.cpp
     time/test_rational_time.cpp
     time/test_time_range.cpp

@@ -10,6 +10,7 @@
 #include <numeric>
 
 #include "zaro/core/Check.h"
+#include "zaro/core/time/Int128.h"
 
 namespace zaro::time {
 namespace {
@@ -20,9 +21,9 @@ static_assert(sizeof(void*) >= 4, "unsupported target");
 // __extension__ keeps -Wpedantic quiet about the non-ISO type.
 __extension__ using Wide = __int128;
 #else
-#error \
-    "CutReel's rational arithmetic needs a 128-bit integer type. \
-Port makeChecked() to a checked-64-bit path before enabling this target."
+// MSVC has no 128-bit integer type, so it gets ours. Same representation, same
+// division semantics; see Int128.h.
+using Wide = detail::Int128;
 #endif
 
 constexpr Wide wideAbs(Wide v) noexcept {

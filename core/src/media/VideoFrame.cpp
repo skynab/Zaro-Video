@@ -4,6 +4,16 @@
 #include <cstdlib>
 #include <cstring>
 
+// MSVC has never provided std::aligned_alloc: on Windows the block it returns
+// could not be handed to free(), which is what the C standard requires of it,
+// so the runtime offers _aligned_malloc and a matching _aligned_free instead.
+// The two allocators are not interchangeable -- freeing an _aligned_malloc
+// block with free() corrupts the heap -- so the deleter below is switched in
+// step with the allocation.
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
+
 #include "zaro/core/Check.h"
 
 namespace zaro::media {
@@ -16,7 +26,11 @@ std::size_t alignUp(std::size_t value, std::size_t alignment) {
 }  // namespace
 
 void VideoFrame::FreeDeleter::operator()(void* p) const noexcept {
+#if defined(_MSC_VER)
+    _aligned_free(p);
+#else
     std::free(p);
+#endif
 }
 
 VideoFrame VideoFrame::allocate(std::int32_t width, std::int32_t height, PixelFormat format,
@@ -51,7 +65,13 @@ VideoFrame VideoFrame::allocate(std::int32_t width, std::int32_t height, PixelFo
     // cache behaviour and lets the whole frame be uploaded to the GPU in a
     // single transfer later.
     frame.byteSize_ = total;
-    auto* raw = static_cast<std::uint8_t*>(std::aligned_alloc(align, alignUp(total, align)));
+    const std::size_t bytes = alignUp(total, align);
+#if defined(_MSC_VER)
+    // Note the reversed argument order against std::aligned_alloc.
+    auto* raw = static_cast<std::uint8_t*>(_aligned_malloc(bytes, align));
+#else
+    auto* raw = static_cast<std::uint8_t*>(std::aligned_alloc(align, bytes));
+#endif
     ZARO_CHECK(raw != nullptr, "out of memory allocating a video frame");
     frame.storage_.reset(raw);
 
