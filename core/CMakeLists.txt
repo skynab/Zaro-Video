@@ -11,6 +11,7 @@ endif()
 
 add_library(zaro_core
     src/Check.cpp
+    src/Environment.cpp
     src/Error.cpp
     src/edit/Command.cpp
     src/edit/CommandStack.cpp

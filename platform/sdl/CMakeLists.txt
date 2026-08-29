@@ -12,4 +12,11 @@ target_link_libraries(zaro_platform_sdl
     PRIVATE zaro::warnings PkgConfig::SDL2
 )
 # SDL's headers are C and trip the same warnings FFmpeg's do.
-target_compile_options(zaro_platform_sdl PRIVATE -Wno-old-style-cast -Wno-sign-conversion)
+#
+# These are GCC and Clang spellings, and MSVC is not offered them: cl reads
+# `-Wno-x` as `/W` with a bad numeric argument and stops with D8021 rather
+# than ignoring what it does not know. It does not need them either -- the
+# third-party headers reach it as /external: includes at /external:W0.
+if(NOT MSVC)
+    target_compile_options(zaro_platform_sdl PRIVATE -Wno-old-style-cast -Wno-sign-conversion)
+endif()

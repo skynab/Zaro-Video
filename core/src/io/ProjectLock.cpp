@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 #if defined(_WIN32)
@@ -18,6 +19,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "zaro/core/Environment.h"
+
 namespace zaro::io {
 namespace {
 
@@ -25,8 +28,8 @@ using json = nlohmann::json;
 
 [[nodiscard]] std::string hostName() {
 #if defined(_WIN32)
-    const char* name = std::getenv("COMPUTERNAME");
-    return name != nullptr ? name : "unknown";
+    const std::optional<std::string> name = environmentValue("COMPUTERNAME");
+    return name.has_value() ? *name : "unknown";
 #else
     std::array<char, 256> buffer{};
     if (::gethostname(buffer.data(), buffer.size() - 1) == 0) {
@@ -38,8 +41,9 @@ using json = nlohmann::json;
 
 [[nodiscard]] std::string userName() {
     for (const char* variable : {"USER", "USERNAME", "LOGNAME"}) {
-        if (const char* value = std::getenv(variable); value != nullptr && *value != '\0') {
-            return value;
+        if (const std::optional<std::string> value = environmentValue(variable);
+            value.has_value() && !value->empty()) {
+            return *value;
         }
     }
     return "somebody";

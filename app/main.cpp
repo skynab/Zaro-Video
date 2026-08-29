@@ -17,6 +17,8 @@
 #include <string>
 #include <utility>
 
+#include "zaro/core/Environment.h"
+
 #include "FrameGrab.h"
 #include "PreviewWindow.h"
 #include "Say.h"
@@ -46,24 +48,25 @@ int main(int argc, char** argv) {
     // Quiet: say things on stderr rather than in a box somebody has to
     // dismiss. On for the self-tests always, because a test that stops for a
     // dialog is a test that hangs.
-    const char* quietWanted = std::getenv("ZARO_QUIET");
+    const auto quietWanted = zaro::environmentValue("ZARO_QUIET");
     PreviewWindow::setQuietMode(arguments.removeAll("--quiet") > 0 ||
-                                (quietWanted != nullptr && *quietWanted == '1') || selfTest ||
-                                editTest || quitTest);
+                                (quietWanted.has_value() && quietWanted->starts_with('1')) ||
+                                selfTest || editTest || quitTest);
 
     // A keymap of its own for the self-tests, and for anybody who wants one
     // beside a project: the tests rebind commands, and rebinding somebody's
     // real Save key because they ran a test is not on.
-    if (const char* wanted = std::getenv("ZARO_KEYMAP"); wanted != nullptr) {
-        PreviewWindow::setKeymapPath(QString::fromUtf8(wanted));
+    if (const auto wanted = zaro::environmentValue("ZARO_KEYMAP"); wanted.has_value()) {
+        PreviewWindow::setKeymapPath(QString::fromStdString(*wanted));
     } else if (selfTest || editTest || quitTest) {
         PreviewWindow::setKeymapPath(QDir::temp().filePath("zaro-selftest-keymap.conf"));
     }
 
     // Project locking is off unless asked for. See PreviewWindow::lockingEnabled.
-    const char* lockingWanted = std::getenv("ZARO_LOCKING");
-    PreviewWindow::setLockingEnabled(arguments.removeAll("--locking") > 0 ||
-                                     (lockingWanted != nullptr && *lockingWanted == '1'));
+    const auto lockingWanted = zaro::environmentValue("ZARO_LOCKING");
+    PreviewWindow::setLockingEnabled(
+        arguments.removeAll("--locking") > 0 ||
+        (lockingWanted.has_value() && lockingWanted->starts_with('1')));
     QString capturePath;
     if (const auto at = arguments.indexOf("--capture"); at >= 0 && at + 1 < arguments.size()) {
         capturePath = arguments.at(at + 1);

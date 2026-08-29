@@ -24,6 +24,7 @@ add_executable(zaro_core_tests
     io/test_relink.cpp
     io/test_review_notes.cpp
     io/test_media_browser.cpp
+    io/test_environment.cpp
     io/test_project_lock.cpp
     io/test_versions.cpp
     io/test_templates.cpp
