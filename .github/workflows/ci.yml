@@ -34,14 +34,18 @@ jobs:
         # want the same presets: sanitizers are a Clang/GCC feature, and Windows
         # pays a much larger setup cost per job than it is worth spending three
         # times over.
+        #
+        # `artifact` names the archive a row uploads, and only the three
+        # release rows carry one: a debug or sanitizer build is not something
+        # to hand anybody, and the three that are cover the three platforms.
         include:
           - { name: macos / debug,     os: macos-14,      preset: debug }
-          - { name: macos / release,   os: macos-14,      preset: release }
+          - { name: macos / release,   os: macos-14,      preset: release,         artifact: macos }
           - { name: macos / asan,      os: macos-14,      preset: asan }
           - { name: linux / debug,     os: ubuntu-24.04,  preset: debug }
-          - { name: linux / release,   os: ubuntu-24.04,  preset: release }
+          - { name: linux / release,   os: ubuntu-24.04,  preset: release,         artifact: linux }
           - { name: windows / debug,   os: windows-2022,  preset: windows-debug }
-          - { name: windows / release, os: windows-2022,  preset: windows-release }
+          - { name: windows / release, os: windows-2022,  preset: windows-release, artifact: windows }
 
     steps:
       - uses: actions/checkout@v4
@@ -146,6 +150,45 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+
+      # Packaged before the tests run, not after, so that a run whose tests
+      # fail still leaves something to download and try -- which is exactly
+      # when somebody wants to look at a build by hand. cpack installs the
+      # runtime component only, so no test binary reaches the archive.
+      #
+      # The same three archives the Release workflow attaches to a draft
+      # release; this makes them available from every run rather than only
+      # from a tag. Their known limitation is the one recorded in
+      # cmake/Packaging.cmake: zaro-preview carries its Qt, and the
+      # command-line tools in bin/ expect the libraries they were built
+      # against to be on the machine.
+      - name: Package
+        if: matrix.artifact != ''
+        run: cpack --preset ${{ matrix.preset }}
+
+      - name: Collect the archive
+        if: matrix.artifact != ''
+        shell: bash
+        run: |
+          mkdir -p dist
+          # CPack drops the archive in the build tree next to everything else.
+          find "build/${{ matrix.preset }}" -maxdepth 1 \
+            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \) -exec cp {} dist/ \;
+          ls -l dist
+          # An empty upload is a green job that shipped nothing, which is worse
+          # than a red one.
+          test -n "$(ls -A dist)"
+
+      - name: Upload the archive
+        if: matrix.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cutreel-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          # Shorter than the 90-day default: these are every-push builds, and
+          # the ones worth keeping are on the Releases page instead.
+          retention-days: 14
 
       # The GUI suite is excluded here and run once, on its own, in the job
       # below. It needs a display and a working QRhi, which is a property of the
