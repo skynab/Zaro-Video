@@ -105,9 +105,17 @@ void Vectorscope::add(std::int32_t x, std::int32_t y) {
 }
 
 void Vectorscope::plotFor(float r, float g, float b, std::int32_t size, float& x, float& y) {
-    const float luma = (kLumaR * r) + (kLumaG * g) + (kLumaB * b);
-    const float cb = (b - luma) * kCbScale;
-    const float cr = (r - luma) * kCrScale;
+    // Written as weighted *differences* rather than as (channel - luma).
+    // The two are the same number -- the luma weights sum to one, so
+    // b - (kR*r + kG*g + kB*b) is kR*(b-r) + kG*(b-g) -- but only this form is
+    // exactly zero for a neutral colour on every compiler. The other adds
+    // three rounded products and subtracts them from the channel, which lands
+    // an ulp either side of zero depending on how the machine fused the
+    // multiplies; an ulp below zero puts neutral grey at bin 127 instead of
+    // 128, because the plot truncates. Here every term is a difference of
+    // equal numbers, so neutral is zero by construction rather than by luck.
+    const float cb = ((kLumaR * (b - r)) + (kLumaG * (b - g))) * kCbScale;
+    const float cr = ((kLumaG * (r - g)) + (kLumaB * (r - b))) * kCrScale;
     const float half = static_cast<float>(size) * 0.5F;
     // Cr upwards, so the plot matches every graticule ever printed: on a
     // vectorscope red is up and to the right, not down.

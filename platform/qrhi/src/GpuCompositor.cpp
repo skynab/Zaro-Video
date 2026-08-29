@@ -10,6 +10,19 @@
 #include <QMatrix4x4>
 #include <rhi/qrhi.h>
 
+// The condition Qt guards QRhiVulkanInitParams with in rhi/qrhi_platform.h:
+// its own build had Vulkan, and the Vulkan headers are here now. Named once
+// and used by the member, the include and the branch in create(), so the three
+// cannot drift apart. QVulkanInstance's header self-guards the same way, so
+// including it where the answer is no would declare nothing.
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
+#define ZARO_HAS_VULKAN 1
+#include <QGuiApplication>
+#include <QVulkanInstance>
+#else
+#define ZARO_HAS_VULKAN 0
+#endif
+
 #include "zaro/core/render/ColorPipeline.h"
 
 namespace zaro::platform::qrhi {
@@ -308,6 +321,14 @@ void configureBlend(QRhiGraphicsPipeline::TargetBlend& target, BlendMode mode) {
 }  // namespace
 
 struct GpuCompositor::State {
+#if ZARO_HAS_VULKAN
+    /// The instance the Vulkan device was created from, when that is the
+    /// backend and we created it. Declared before ownedRhi so that it is
+    /// destroyed *after* it: the device outlives nothing, the instance
+    /// outlives the device.
+    std::unique_ptr<QVulkanInstance> vulkanInstance;
+#endif
+
     /// Set only when this compositor created the device. When a device is
     /// adopted this stays null and `rhi` points at someone else's.
     std::unique_ptr<QRhi> ownedRhi;
@@ -420,15 +441,34 @@ Result<std::unique_ptr<GpuCompositor>> GpuCompositor::create() {
 #elif defined(Q_OS_WIN)
     QRhiD3D11InitParams params;
     state.ownedRhi.reset(QRhi::create(QRhi::D3D11, &params));
-// Qt only declares QRhiVulkanInitParams when it was built with Vulkan *and*
-// the Vulkan headers are present in this build environment -- the same
-// condition qrhi_platform.h guards the struct with. A machine without them
-// (a CI image with no libvulkan-dev, say) compiles to no branch at all and
-// leaves ownedRhi null, which the check below reports as an unsupported
-// backend. That is the same answer callers already get from a machine whose
-// Vulkan driver refuses to initialise, and the compositor tests skip on it.
-#elif QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
+// Where Vulkan is unavailable -- Qt built without it, or a machine with no
+// Vulkan headers, such as a CI image with no libvulkan-dev -- no branch is
+// compiled at all, ownedRhi stays null, and the check below reports an
+// unsupported backend. That is the same answer callers get from a machine
+// whose driver refuses to initialise, and the compositor tests skip on it.
+#elif ZARO_HAS_VULKAN
+    // Vulkan is the one backend that needs an instance before it can have a
+    // device, and QRhi will not make one: it dereferences params.inst during
+    // create(). Leaving it null is not a failed create returning null, it is a
+    // null-pointer crash inside Qt -- which is what every GPU test did on the
+    // first CI machine to have the Vulkan headers installed.
+    //
+    // And a QVulkanInstance is built by the platform integration, which exists
+    // only once a QGuiApplication does. Asking for one before then is the same
+    // crash a step earlier, so a caller without a GUI application -- the
+    // headless test binaries, among others -- is told there is no backend
+    // rather than being taken down.
+    if (qGuiApp == nullptr) {
+        return Error{ErrorCode::Unsupported,
+                     "Vulkan needs a QGuiApplication before a device can be created"};
+    }
+    auto instance = std::make_unique<QVulkanInstance>();
+    if (!instance->create()) {
+        return Error{ErrorCode::Unsupported, "no Vulkan instance is available"};
+    }
     QRhiVulkanInitParams params;
+    params.inst = instance.get();
+    state.vulkanInstance = std::move(instance);
     state.ownedRhi.reset(QRhi::create(QRhi::Vulkan, &params));
 #endif
     if (!state.ownedRhi) {
