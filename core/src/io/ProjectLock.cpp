@@ -6,11 +6,15 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <sstream>
 
 #if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <process.h>
+#include <windows.h>
 #else
 #include <csignal>
 
@@ -50,16 +54,31 @@ using json = nlohmann::json;
 }
 
 [[nodiscard]] bool processIsRunning(std::int64_t pid) {
-#if defined(_WIN32)
-    // No cheap way to ask without opening a handle, and the answer would be
-    // wrong across sessions anyway. Assumed alive, which errs towards leaving
-    // somebody else's lock alone.
-    static_cast<void>(pid);
-    return true;
-#else
     if (pid <= 0) {
         return false;
     }
+#if defined(_WIN32)
+    if (pid > static_cast<std::int64_t>(std::numeric_limits<DWORD>::max())) {
+        return false;  // not a process id this machine could ever have issued
+    }
+    // PROCESS_QUERY_LIMITED_INFORMATION rather than the full right: it is
+    // granted across integrity levels, so a lock left by an elevated session
+    // still answers instead of looking dead.
+    const HANDLE handle =
+        ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (handle == nullptr) {
+        // Access denied means the process is there and belongs to somebody
+        // else, which is still alive. Anything else -- ERROR_INVALID_PARAMETER
+        // for a pid nobody holds -- means it is gone.
+        return ::GetLastError() == ERROR_ACCESS_DENIED;
+    }
+    DWORD exitCode = 0;
+    // A pid is reused once the last handle to the process closes, so a handle
+    // that opens can still name something that has exited.
+    const bool running = ::GetExitCodeProcess(handle, &exitCode) != 0 && exitCode == STILL_ACTIVE;
+    ::CloseHandle(handle);
+    return running;
+#else
     // Signal zero: the permission and existence checks run, nothing is sent.
     if (::kill(static_cast<pid_t>(pid), 0) == 0) {
         return true;

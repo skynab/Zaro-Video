@@ -19,7 +19,13 @@ struct Card {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }
-    ~Card() { std::filesystem::remove_all(root); }
+    ~Card() {
+        // The non-throwing overload: a destructor that throws terminates the
+        // process, and Windows refuses to unlink a file some handle is still
+        // holding -- which would turn a readable test failure into a crash.
+        std::error_code code;
+        std::filesystem::remove_all(root, code);
+    }
     Card(const Card&) = delete;
     Card& operator=(const Card&) = delete;
 

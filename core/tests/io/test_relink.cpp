@@ -24,17 +24,27 @@ struct Scratch {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }
-    ~Scratch() { std::filesystem::remove_all(root); }
+    ~Scratch() {
+        // The non-throwing overload: a destructor that throws terminates the
+        // process, and Windows refuses to unlink a file some handle is still
+        // holding -- which would turn a readable test failure into a crash.
+        std::error_code code;
+        std::filesystem::remove_all(root, code);
+    }
 
     Scratch(const Scratch&) = delete;
     Scratch& operator=(const Scratch&) = delete;
 
+    /// The path in the platform's own spelling. `relative` is written with
+    /// forward slashes for readability, and Windows hands back backslashes
+    /// from its directory walks -- so a path built here would not compare
+    /// equal to the same file found by `findRelinks`.
     std::string write(const std::string& relative, const std::string& contents) {
-        const std::filesystem::path path = root / relative;
+        std::filesystem::path path = root / relative;
         std::filesystem::create_directories(path.parent_path());
         std::ofstream file{path, std::ios::binary};
         file << contents;
-        return path.string();
+        return path.make_preferred().string();
     }
 };
 
