@@ -6,6 +6,7 @@
 #include <QPainterPath>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 #include "Theme.h"
 
@@ -247,7 +248,7 @@ void AudioStrip::paintEvent(QPaintEvent* /*event*/) {
     // The pointer sweeps 270 degrees, centre up, as every pan pot does.
     const double sweep = pan_ * 135.0;
     const QPointF centre = QRectF{pan}.center();
-    const double radians = (sweep - 90.0) * M_PI / 180.0;
+    const double radians = (sweep - 90.0) * std::numbers::pi / 180.0;
     painter.setPen(QPen{accentInk, 1.5});
     painter.drawLine(centre, centre + QPointF{std::cos(radians) * 11.0, std::sin(radians) * 11.0});
 

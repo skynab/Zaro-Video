@@ -12,6 +12,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# The sources are UTF-8, and MSVC has to be told so.
+#
+# Every other compiler here assumes it. cl assumes the machine's ANSI code page
+# instead, so the em dashes and the middle dots that the panels put on screen --
+# "EQ - off", "1920 x 1080", "-inf" -- come out of a narrow literal as two
+# mojibake characters rather than one, and every file carrying one draws a
+# C4819. Set globally rather than through zaro::warnings: what a byte in a
+# string literal means is not a warning policy, and it has to be the same answer
+# for the third-party code compiled in this tree as for ours.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
