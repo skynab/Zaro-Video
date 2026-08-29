@@ -109,6 +109,11 @@ Difference compare(const RgbaImage& a, const RgbaImage& b, std::int32_t margin) 
     return result;
 }
 
+/// A compositor on whatever backend this machine has, or nothing.
+///
+/// Every test that uses one follows it with `INFO("backend: " ...)`: which
+/// backend a test ran on is the first thing anybody reading a red CI log needs,
+/// and it is the one thing the machine knows that we do not.
 std::unique_ptr<platform::qrhi::GpuCompositor> gpu() {
     auto created = platform::qrhi::GpuCompositor::create();
     if (!created) {
@@ -150,12 +155,127 @@ TEST_CASE("A GPU backend is available", "[gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
-    INFO("backend: " << compositor->backendName());
     INFO("backend: " << compositor->backendName());
     CHECK_FALSE(compositor->backendName().empty());
+}
+
+// --- Does the device do it at all --------------------------------------------
+//
+// Everything below this block checks a picture: it draws through both paths and
+// compares pixels, so a failure means either "the GPU refused" or "the numbers
+// disagree" and the test name cannot say which. These five say only whether the
+// call succeeded, and between them they cover every resource GpuCompositor::draw
+// has to make -- the pipeline, the source texture, the uniform buffer, the
+// bindings, the curve texture, and the present pass's own pipeline.
+//
+// They exist for the machine nobody can attach a debugger to. When a CI summary
+// lists nothing but test names, which of these five is red is the diagnosis.
+
+TEST_CASE("A GPU draw completes", "[gpu][smoke]") {
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    // The smallest thing draw() can be asked to do: one opaque image, no grade,
+    // no curve, no look, no mask. If this is red, nothing else about the GPU
+    // path is worth reading -- the compositor cannot build a pipeline, a
+    // texture, a uniform buffer or a binding set on this device.
+    const RgbaImage source = gradient(16, 16);
+    RgbaImage out;
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal));
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
+    CHECK(out.width() == 16);
+}
+
+TEST_CASE("A GPU draw completes in every blend mode", "[gpu][smoke]") {
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    // One pipeline per blend mode, each built on first use. A device that
+    // refuses one particular blend state fails here and nowhere else.
+    const RgbaImage source = gradient(16, 16);
+    for (const BlendMode blend :
+         {BlendMode::Normal, BlendMode::Add, BlendMode::Multiply, BlendMode::Screen}) {
+        INFO("blend mode: " << model::toString(blend));
+        RgbaImage out;
+        ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, blend));
+        ZARO_REQUIRE_OK(compositor->endFrame(out));
+    }
+}
+
+TEST_CASE("A GPU draw completes with a grade", "[gpu][smoke]") {
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    // Same resources as a plain draw -- a grade is uniform data, not a texture.
+    // Red here and green above would mean the uniform block is the problem.
+    model::ColorCorrection correction;
+    correction.exposure = 0.5;
+    correction.contrast = 35.0;
+    correction.saturation = 140.0;
+
+    const RgbaImage source = gradient(16, 16);
+    RgbaImage out;
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal,
+                                     render::gradeConstantsFor(correction)));
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
+}
+
+TEST_CASE("A GPU draw completes with a tone curve", "[gpu][smoke]") {
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    // The one path that allocates a texture per draw rather than reusing a
+    // placeholder, so it is the one that can fail where the others do not.
+    model::ToneCurves curves;
+    curves.master.set({0.0, 0.25});
+    curves.master.set({0.5, 0.7});
+    curves.master.set({1.0, 1.0});
+    const render::CurveTable table{curves, media::TransferFunction::BT709};
+    REQUIRE_FALSE(table.isIdentity());
+
+    const RgbaImage source = gradient(16, 16);
+    RgbaImage out;
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(
+        compositor->draw(source, Transform{}, BlendMode::Normal, render::GradeConstants{}, &table));
+    ZARO_REQUIRE_OK(compositor->endFrame(out));
+}
+
+TEST_CASE("A GPU present completes", "[gpu][smoke]") {
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    // The present pass has a pipeline of its own, built from the same shaders
+    // against a different target. It can fail on its own.
+    // endFrameOnGpu rather than endFrame: the composited frame stays on the
+    // device for the present pass to read, which is the arrangement presenting
+    // exists for and the one presentToImage requires.
+    const RgbaImage source = gradient(16, 16);
+    ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
+    ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal));
+    ZARO_REQUIRE_OK(compositor->endFrameOnGpu());
+
+    RgbaImage presented;
+    ZARO_REQUIRE_OK(compositor->presentToImage(16, 16, presented));
+    CHECK(presented.width() == 16);
 }
 
 TEST_CASE("An empty GPU frame is transparent", "[gpu]") {
@@ -163,9 +283,6 @@ TEST_CASE("An empty GPU frame is transparent", "[gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
     RgbaImage out;
@@ -179,9 +296,6 @@ TEST_CASE("GPU and CPU agree on an untransformed draw", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(64, 64);
     const Pair pair = renderBoth(*compositor, source, Transform{}, BlendMode::Normal, 64, 64);
@@ -199,9 +313,6 @@ TEST_CASE("GPU and CPU agree on scale, position and opacity", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(32, 32);
 
@@ -265,9 +376,6 @@ TEST_CASE("GPU and CPU agree on rotation, including its direction", "[gpu][golde
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     const RgbaImage source = gradient(32, 32);
 
@@ -291,9 +399,6 @@ TEST_CASE("GPU and CPU agree on blend modes", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     const RgbaImage source = filled(32, 32, premultiplied(0.5F, 0.5F, 0.5F, 1.0F));
     const Rgba background = premultiplied(0.5F, 0.25F, 0.75F, 1.0F);
@@ -313,9 +418,6 @@ TEST_CASE("A half-transparent GPU draw composites over what is beneath", "[gpu][
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     const RgbaImage source = filled(16, 16, premultiplied(1.0F, 0.0F, 0.0F, 1.0F));
     Transform transform;
@@ -338,9 +440,6 @@ TEST_CASE("Compositing throughput, CPU against GPU", "[.benchmark][gpu]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     constexpr std::int32_t kWidth = 1920;
@@ -478,9 +577,6 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -541,9 +637,6 @@ TEST_CASE("The GPU YUV path honours transforms", "[gpu][golden][yuv]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     Transform transform;
@@ -607,9 +700,6 @@ TEST_CASE("The GPU YUV path refuses what it cannot handle", "[gpu][yuv]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
     ZARO_REQUIRE_OK(compositor->beginFrame(16, 16));
 
@@ -650,9 +740,6 @@ TEST_CASE("The YUV path against the CPU pipeline it replaces", "[.benchmark][gpu
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     constexpr std::int32_t kWidth = 1920;
@@ -719,9 +806,6 @@ TEST_CASE("Presenting preserves orientation and letterboxes", "[gpu][golden]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     // Asymmetric on purpose: white across the top third, black below.
@@ -818,9 +902,6 @@ TEST_CASE("The GPU and CPU render graphs agree across a dissolve", "[gpu][golden
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     zaro::testing::Fixture f;
@@ -887,9 +968,6 @@ TEST_CASE("The GPU grade agrees with the CPU reference", "[gpu][golden][grade]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -959,9 +1037,6 @@ TEST_CASE("A grade on the GPU survives a fade without changing", "[gpu][golden][
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     model::ColorCorrection correction;
@@ -1002,9 +1077,6 @@ TEST_CASE("The GPU tone curve agrees with the CPU reference", "[gpu][golden][cur
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     const auto through = [](std::initializer_list<model::CurvePoint> points) {
@@ -1082,9 +1154,6 @@ TEST_CASE("An identity curve leaves the GPU picture untouched", "[gpu][golden][c
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     RgbaImage source{16, 16};
@@ -1124,9 +1193,6 @@ TEST_CASE("The GPU YUV path honours a tone curve", "[gpu][golden][curves][yuv]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     const media::VideoFrame frame = yuvPattern(
@@ -1184,9 +1250,6 @@ TEST_CASE("The GPU secondary agrees with the CPU reference", "[gpu][golden][seco
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1326,9 +1389,6 @@ TEST_CASE("The GPU look LUT agrees with the CPU reference", "[gpu][golden][lut]"
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     const auto cubeText = [](int size, int mode) {
@@ -1405,9 +1465,6 @@ TEST_CASE("The GPU mask agrees with the CPU reference", "[gpu][golden][mask]") {
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1468,9 +1525,6 @@ TEST_CASE("The GPU keyer agrees with the CPU reference", "[gpu][golden][keyer]")
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1602,9 +1656,6 @@ TEST_CASE("Switching output size and source size does not wreck the pipeline",
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     const media::VideoFrame small = yuvPattern(
@@ -1645,9 +1696,6 @@ TEST_CASE("The GPU agrees with the CPU on log and HDR curves", "[gpu][golden][lo
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1700,9 +1748,6 @@ TEST_CASE("The presented frame rolls off its highlights like the encoder does",
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     // A ramp that runs well past white, so most of it is above any knee.
@@ -1753,9 +1798,6 @@ TEST_CASE("The GPU agrees with the CPU on the colour wheels", "[gpu][golden][whe
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1826,9 +1868,6 @@ TEST_CASE("The GPU agrees with the CPU on the vignette", "[gpu][golden][vignette
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     struct Case {
@@ -1897,9 +1936,6 @@ TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") 
     if (!compositor) {
         SKIP("no GPU backend on this machine");
     }
-    // Named on every failure: which backend a test ran on is the first thing
-    // anybody reading a red CI log needs, and it is the one thing the machine
-    // knows that we do not.
     INFO("backend: " << compositor->backendName());
 
     model::Transition transition;
