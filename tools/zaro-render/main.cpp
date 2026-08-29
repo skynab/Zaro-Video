@@ -6,6 +6,7 @@
 // renderer to keep in agreement with the playback one.
 
 #include <QGuiApplication>
+#include <QtGlobal>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -128,6 +129,23 @@ int main(int argc, char** argv) {
     // here rather than inside the rasteriser: one per process, and a library
     // that constructs one behind its caller's back is a library that fights
     // whatever the caller already made.
+    //
+    // On a machine with no display it also has to be told there is no screen.
+    // Constructing one chooses a platform plugin, and on Linux that is xcb by
+    // default: with nothing to connect to, Qt calls qFatal and a renderer that
+    // needs no window at all aborts before it writes a frame. That is every
+    // render farm, container, CI runner and ssh session. Offscreen is what
+    // this tool wants in all of them, and it is set only when nobody has asked
+    // for a platform and there is no display to be had -- a desktop session
+    // and an explicit QT_QPA_PLATFORM are both left as they are. Not done on
+    // macOS or Windows, where the plugin their Qt was built around is always
+    // there and the deployed copy may carry no other.
+#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN)
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM") && !qEnvironmentVariableIsSet("DISPLAY") &&
+        !qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    }
+#endif
     QGuiApplication fonts{argc, argv};
     zaro::platform::qtext::QtTextRasterizer text;
 
