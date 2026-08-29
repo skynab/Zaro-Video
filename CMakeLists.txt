@@ -29,6 +29,18 @@ if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
 
+# Where the Linux packages put the libraries they carry: Qt, FFmpeg, SDL and
+# everything those pull in, kept apart from the system's own so that installing
+# CutReel cannot change what any other program links against.
+#
+# A literal rather than CMAKE_INSTALL_LIBDIR, and deliberately: this path is
+# also written into every executable's RPATH, and the two have to agree. LIBDIR
+# is lib, lib64 or lib/x86_64-linux-gnu depending on the distribution and on the
+# prefix in force when GNUInstallDirs was included -- which is not the prefix
+# CPack packages with. One spelling, decided here, used in both places.
+set(ZARO_PRIVATE_LIBDIR "lib/cutreel")
+set(ZARO_PRIVATE_RPATH "$ORIGIN/../${ZARO_PRIVATE_LIBDIR}")
+
 option(ZARO_BUILD_TESTS       "Build the test suite"           ON)
 option(ZARO_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ZARO_SANITIZE          "Enable ASan+UBSan (Debug only)"  OFF)

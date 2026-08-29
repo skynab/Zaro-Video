@@ -130,20 +130,74 @@ set_target_properties(zaro-preview PROPERTIES
 
 include(GNUInstallDirs)
 install(TARGETS zaro-preview
+    RUNTIME_DEPENDENCY_SET zaro_runtime_deps
     BUNDLE  DESTINATION .                            COMPONENT runtime
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"    COMPONENT runtime)
 
 # Qt's own libraries and plugins are not on a user's machine, so the archive has
 # to carry them. windeployqt and macdeployqt know which ones; nothing else does.
-#
-# Linux is left out because it has no equivalent tool: the Linux tarball
-# therefore expects a Qt of its own on the target machine, which is fine for a
-# developer and not for a user. An AppImage is the usual answer and is the
-# right thing to add the day the Linux build has users rather than builders.
 if(WIN32 OR APPLE)
     qt_generate_deploy_app_script(
         TARGET zaro-preview
         OUTPUT_SCRIPT zaro_deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR)
     install(SCRIPT "${zaro_deploy_script}" COMPONENT runtime)
+endif()
+
+# --- Linux ---------------------------------------------------------------------
+# Linux has no deployment tool of Qt's, so the two halves are done by hand: the
+# shared libraries come from the runtime dependency set in cmake/Packaging.cmake,
+# which resolves them the way the loader would, and the plugins come from here,
+# because no dependency walk can see them. Qt opens a platform plugin by name at
+# startup; nothing links it, so nothing points at it.
+if(UNIX AND NOT APPLE)
+    set_target_properties(zaro-preview PROPERTIES INSTALL_RPATH "${ZARO_PRIVATE_RPATH}")
+
+    # xcb is what a desktop session wants and offscreen is what a render farm,
+    # a container and an ssh session want -- zaro-render selects the second for
+    # itself when there is no display. Missing either one is a program that
+    # aborts on startup with "could not load the Qt platform plugin", which
+    # says nothing about a file having been left out of a package.
+    #
+    # Added to the same dependency set as the executables: a plugin has
+    # libraries of its own, and on Linux they are not always ones the
+    # application already pulled in.
+    set(zaro_qt_plugins "")
+    foreach(plugin
+            Qt6::QXcbIntegrationPlugin
+            Qt6::QOffscreenIntegrationPlugin
+            Qt6::QMinimalIntegrationPlugin)
+        if(TARGET ${plugin})
+            list(APPEND zaro_qt_plugins ${plugin})
+        endif()
+    endforeach()
+    if(NOT zaro_qt_plugins)
+        message(WARNING
+            "No Qt platform plugins found to install; the packaged zaro-preview "
+            "will not start on a machine without a Qt of its own.")
+    else()
+        install(IMPORTED_RUNTIME_ARTIFACTS ${zaro_qt_plugins}
+            RUNTIME_DEPENDENCY_SET zaro_runtime_deps
+            LIBRARY DESTINATION "${ZARO_PRIVATE_LIBDIR}/plugins/platforms"
+                    COMPONENT runtime)
+    endif()
+
+    # Image formats, for anything the interface draws that is not a PNG -- PNG
+    # is built into Qt Gui and needs no plugin.
+    foreach(plugin Qt6::QJpegPlugin Qt6::QSvgPlugin)
+        if(TARGET ${plugin})
+            install(IMPORTED_RUNTIME_ARTIFACTS ${plugin}
+                RUNTIME_DEPENDENCY_SET zaro_runtime_deps
+                LIBRARY DESTINATION "${ZARO_PRIVATE_LIBDIR}/plugins/imageformats"
+                        COMPONENT runtime)
+        endif()
+    endforeach()
+
+    # And how anything in bin/ finds those plugins. Qt reads qt.conf from beside
+    # the executable before it does anything else, and a relative Prefix in it
+    # is resolved against that same directory -- so this one file serves the app
+    # and all seven tools, wherever the package was unpacked or installed.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/qt.conf"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT runtime)
 endif()

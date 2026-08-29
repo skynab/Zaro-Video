@@ -32,6 +32,23 @@ if(MSVC AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
                     ${zaro_vcpkg_dlls} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
             COMMENT "Copying vcpkg runtime DLLs into bin/"
             VERBATIM)
+
+        # The same DLLs into the package, and for the same reason. The build
+        # tree got them so that a developer can run what they just built; the
+        # archive needs them so that anybody else can. Without this, bin/ ships
+        # our executables and the Qt libraries windeployqt brings, and nothing
+        # else -- and the first thing every one of them does on a machine that
+        # is not a build machine is fail to start, because avcodec is not there
+        # to load. That is the whole of "the artifact does not work".
+        #
+        # Whole-directory rather than a resolved set: these are the libraries
+        # vcpkg built for this triplet and nothing else, they total a few tens
+        # of megabytes, and the alternative is a dependency walk that has to be
+        # right about transitive DLLs nobody names anywhere.
+        include(GNUInstallDirs)
+        install(FILES ${zaro_vcpkg_dlls}
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            COMPONENT runtime)
     else()
         message(WARNING
             "No vcpkg DLLs found in ${zaro_vcpkg_bin}; built executables will not run "

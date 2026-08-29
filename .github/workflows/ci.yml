@@ -210,17 +210,42 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # CPack's WIX generator drives WiX 3's candle.exe and light.exe, which it
+      # finds through the WIX environment variable the toolset's installer sets.
+      # The runner image ships WiX, but a step's own environment is not the
+      # machine's, so it is read back explicitly here -- and installed if a
+      # future image ever stops shipping it. Failing here says "no WiX"; failing
+      # in cpack says "Cannot find candle" three hundred lines into a log.
+      - name: Set up WiX
+        if: runner.os == 'Windows' && matrix.artifact != ''
+        shell: pwsh
+        run: |
+          $wix = $env:WIX
+          if (-not $wix) { $wix = [Environment]::GetEnvironmentVariable("WIX", "Machine") }
+          if (-not $wix) {
+            Write-Host "WiX is not on this image; installing it"
+            choco install wixtoolset --no-progress -y
+            $wix = [Environment]::GetEnvironmentVariable("WIX", "Machine")
+          }
+          if (-not $wix -or -not (Test-Path (Join-Path $wix "bin\candle.exe"))) {
+            throw "WiX 3 toolset not found; cpack cannot build the MSI"
+          }
+          Write-Host "Using WiX at $wix"
+          Add-Content -Path $env:GITHUB_ENV  -Value "WIX=$wix"
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $wix "bin")
+
       # Packaged before the tests run, not after, so that a run whose tests
       # fail still leaves something to download and try -- which is exactly
       # when somebody wants to look at a build by hand. cpack installs the
       # runtime component only, so no test binary reaches the archive.
       #
-      # The same three archives the Release workflow attaches to a draft
-      # release; this makes them available from every run rather than only
-      # from a tag. Their known limitation is the one recorded in
-      # cmake/Packaging.cmake: zaro-preview carries its Qt, and the
-      # command-line tools in bin/ expect the libraries they were built
-      # against to be on the machine.
+      # The same archives the Release workflow attaches to a draft release,
+      # plus the Windows MSI; this makes them available from every run rather
+      # than only from a tag. Windows is self-contained -- Qt, FFmpeg, SDL and
+      # the MSVC runtime all travel with it. macOS and Linux are not, for the
+      # reason recorded in cmake/Packaging.cmake: only zaro-preview.app carries
+      # its Qt, and the command-line tools in bin/ expect the libraries they
+      # were built against to be on the machine.
       - name: Package
         if: matrix.artifact != ''
         run: cpack --preset ${{ matrix.preset }}
@@ -232,11 +257,41 @@ jobs:
           mkdir -p dist
           # CPack drops the archive in the build tree next to everything else.
           find "build/${{ matrix.preset }}" -maxdepth 1 \
-            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \) -exec cp {} dist/ \;
+            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \
+               -o -name 'CutReel-*.msi' -o -name 'cutreel_*.deb' \) -exec cp {} dist/ \;
           ls -l dist
           # An empty upload is a green job that shipped nothing, which is worse
           # than a red one.
           test -n "$(ls -A dist)"
+
+      # The claim the Linux packages make is that they run on a machine holding
+      # none of the build's dependencies, and the only way to know is to try.
+      # This is a fair test on the runner despite Qt and FFmpeg being installed
+      # on it: the Qt is at a path install-qt-action chose, which the loader
+      # does not search, and the build tree's RPATH is replaced by the relative
+      # one at install time -- so a tarball unpacked somewhere else and run with
+      # LD_LIBRARY_PATH cleared resolves through lib/cutreel or not at all.
+      #
+      # zaro-render as well as zaro-probe, because it is the tool that needs Qt
+      # and a platform plugin, which is the half no dependency walk can find.
+      - name: Check the Linux tarball is self-contained
+        if: runner.os == 'Linux' && matrix.artifact != ''
+        shell: bash
+        run: |
+          rm -rf /tmp/unpacked && mkdir -p /tmp/unpacked
+          tar xzf dist/CutReel-*.tar.gz -C /tmp/unpacked --strip-components=1
+          status=0
+          for tool in zaro-probe zaro-render zaro-cut zaro-otio; do
+            missing=$(env -u LD_LIBRARY_PATH ldd "/tmp/unpacked/bin/$tool" | grep 'not found' || true)
+            if [ -n "$missing" ]; then
+              echo "$tool is missing libraries:"
+              echo "$missing"
+              status=1
+              continue
+            fi
+            env -i "PATH=$PATH" "HOME=$HOME" "/tmp/unpacked/bin/$tool" --version || status=1
+          done
+          exit $status
 
       - name: Upload the archive
         if: matrix.artifact != ''

@@ -38,6 +38,21 @@ target_link_libraries(zaro-play
 
 # The command-line tools ship alongside the app: the verification scripts drive
 # them, and they are the only way to use the renderer without a display.
+set(ZARO_TOOLS zaro-probe zaro-frame zaro-cut zaro-render zaro-otio zaro-premiere zaro-play)
+
 include(GNUInstallDirs)
-install(TARGETS zaro-probe zaro-frame zaro-cut zaro-render zaro-otio zaro-premiere zaro-play
+install(TARGETS ${ZARO_TOOLS}
+    RUNTIME_DEPENDENCY_SET zaro_runtime_deps
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime)
+
+# On Linux the tools carry their libraries with them, and this is how they find
+# them: a relative RPATH, resolved against the executable rather than against
+# the machine. It is what makes the same binary work from an unpacked tarball
+# in a home directory and from /usr/bin after a .deb -- bin/../lib/cutreel
+# either way. See cmake/Packaging.cmake for what fills that directory.
+#
+# Not on macOS, which uses @loader_path and has its own deployment tool, and
+# not on Windows, which has no such concept and looks beside the executable.
+if(UNIX AND NOT APPLE)
+    set_target_properties(${ZARO_TOOLS} PROPERTIES INSTALL_RPATH "${ZARO_PRIVATE_RPATH}")
+endif()

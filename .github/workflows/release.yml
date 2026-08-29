@@ -154,6 +154,27 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # CPack's WIX generator drives WiX 3's candle.exe and light.exe, which it
+      # finds through the WIX environment variable the toolset's installer sets.
+      # See the CI workflow for why it is read back rather than assumed.
+      - name: Set up WiX
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wix = $env:WIX
+          if (-not $wix) { $wix = [Environment]::GetEnvironmentVariable("WIX", "Machine") }
+          if (-not $wix) {
+            Write-Host "WiX is not on this image; installing it"
+            choco install wixtoolset --no-progress -y
+            $wix = [Environment]::GetEnvironmentVariable("WIX", "Machine")
+          }
+          if (-not $wix -or -not (Test-Path (Join-Path $wix "bin\candle.exe"))) {
+            throw "WiX 3 toolset not found; cpack cannot build the MSI"
+          }
+          Write-Host "Using WiX at $wix"
+          Add-Content -Path $env:GITHUB_ENV  -Value "WIX=$wix"
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $wix "bin")
+
       - name: Package
         run: cpack --preset ${{ matrix.preset }}
 
@@ -163,7 +184,8 @@ jobs:
           mkdir -p dist
           # CPack drops the archive in the build tree next to everything else.
           find "build/${{ matrix.preset }}" -maxdepth 1 \
-            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \) -exec cp {} dist/ \;
+            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \
+               -o -name 'CutReel-*.msi' -o -name 'cutreel_*.deb' \) -exec cp {} dist/ \;
           ls -l dist
           # An empty upload is a green job that shipped nothing, which is worse
           # than a red one.
