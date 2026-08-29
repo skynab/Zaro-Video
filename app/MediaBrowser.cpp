@@ -6,6 +6,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 
