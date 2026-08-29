@@ -37,7 +37,7 @@ jobs:
           - { name: windows, os: windows-2022, preset: windows-release }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -81,7 +81,7 @@ jobs:
       # tree CI already paid for instead of rebuilding FFmpeg from source.
       - name: Restore vcpkg packages
         if: runner.os == 'Windows'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: vcpkg_installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
@@ -110,7 +110,7 @@ jobs:
           # than a red one.
           test -n "$(ls -A dist)"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cutreel-${{ matrix.name }}
           path: dist/*
@@ -124,11 +124,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v4
+      # v8 rather than the v6 the other actions are pinned to: v6 of this one is
+      # still a node20 action, and v7 is the first that is not.
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
