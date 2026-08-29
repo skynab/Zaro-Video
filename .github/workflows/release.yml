@@ -41,8 +41,18 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
+      # Ninja comes with every runner image this workflow uses -- 1.13.2 on
+      # ubuntu-24.04, macos-14 and windows-2022 alike -- so it is taken from
+      # there rather than installed. The action that used to do it,
+      # gha-setup-ninja, is one of the node20 actions GitHub now warns about,
+      # and it was fetching a tool already on the machine.
+      #
+      # Checked rather than assumed: if an image ever stops shipping it, this
+      # says so here instead of at Configure, where the failure is about
+      # CMAKE_MAKE_PROGRAM and never mentions Ninja.
+      - name: Check for Ninja
+        shell: bash
+        run: ninja --version
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
