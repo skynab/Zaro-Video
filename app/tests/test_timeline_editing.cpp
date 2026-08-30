@@ -3,6 +3,8 @@
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <cstdint>
 
@@ -618,4 +620,84 @@ TEST_CASE("Multi-selection, driven as a rubber band", "[gui]") {
     }
 
     window.commands().undo(window.project());
+}
+
+TEST_CASE("Renaming a track from its header, and undoing it", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto trackId = sequence.videoTracks().front().id();
+    const std::string before = sequence.videoTracks().front().name();
+
+    const auto row = timeline->rowFor(trackId);
+    REQUIRE(row.has_value());
+    // The name band sits after the V1 badge and before the three buttons on the
+    // right. Aimed at the middle of the header rather than at the text, because
+    // a track with no name still has somewhere to double-click.
+    const int x = 60;
+    const int y = row->top + row->height / 2;
+
+    const QPointF at(x, y);
+    QMouseEvent press(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &press);
+    QMouseEvent twice(QEvent::MouseButtonDblClick, at, at, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &twice);
+
+    auto* editor = timeline->findChild<QLineEdit*>();
+    if (editor == nullptr || !editor->isVisible()) {
+        zaro::app::testing::failf("double-clicking a track header opened no name editor\n");
+    }
+
+    editor->setText("Dialogue");
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QCoreApplication::sendEvent(editor, &enter);
+
+    const model::Track* renamed = window.sequence()->findTrack(trackId);
+    REQUIRE(renamed != nullptr);
+    if (renamed->name() != "Dialogue") {
+        zaro::app::testing::failf("the track is called %s, not the name that was typed\n",
+                                  renamed->name().c_str());
+    }
+
+    // A rename is an edit like any other, so it comes back off the stack.
+    window.commands().undo(window.project());
+    const model::Track* restored = window.sequence()->findTrack(trackId);
+    REQUIRE(restored != nullptr);
+    if (restored->name() != before) {
+        zaro::app::testing::failf("undo left the track called %s, not %s\n",
+                                  restored->name().c_str(), before.c_str());
+    }
+}
+
+TEST_CASE("Escape abandons a track rename", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto trackId = window.sequence()->videoTracks().front().id();
+    const std::string before = window.sequence()->videoTracks().front().name();
+
+    const auto row = timeline->rowFor(trackId);
+    REQUIRE(row.has_value());
+    const QPointF at(60, row->top + row->height / 2);
+    QMouseEvent press(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &press);
+    QMouseEvent twice(QEvent::MouseButtonDblClick, at, at, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &twice);
+
+    auto* editor = timeline->findChild<QLineEdit*>();
+    REQUIRE(editor != nullptr);
+    editor->setText("Not this");
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(editor, &escape);
+
+    const model::Track* track = window.sequence()->findTrack(trackId);
+    REQUIRE(track != nullptr);
+    if (track->name() != before) {
+        zaro::app::testing::failf("escape still renamed the track to %s\n", track->name().c_str());
+    }
 }

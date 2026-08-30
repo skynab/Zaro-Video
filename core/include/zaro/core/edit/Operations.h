@@ -674,6 +674,16 @@ struct TrackState {
                                                   model::SequenceId sequence, model::TrackId track,
                                                   bool locked, bool syncLocked);
 
+/// Rename a track.
+///
+/// The name is what the track is *for* -- "Dialogue", "B-roll" -- as distinct
+/// from V1 or A2, which say where it sits and are not stored at all. Blank is
+/// allowed and means the track has only its position, which is how a sequence
+/// starts before anybody has decided what goes where.
+[[nodiscard]] Result<CommandPtr> makeRenameTrack(model::Project& project,
+                                                 model::SequenceId sequence, model::TrackId track,
+                                                 std::string name);
+
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,
                                               model::TrackKind kind, std::string name);
 

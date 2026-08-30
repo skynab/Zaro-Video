@@ -1,9 +1,14 @@
 #include "TimelineWidget.h"
 
+#include <QAction>
+#include <QContextMenuEvent>
+#include <QCursor>
 #include <QEvent>
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -169,6 +174,9 @@ void TimelineWidget::setSnapEnabled(bool enabled) {
 }
 
 void TimelineWidget::bind(const ui::SequenceBinding& binding) {
+    // Whatever was being typed belonged to the old sequence. Abandoned rather
+    // than committed, because the track it named may not be in the new one.
+    finishRename(false);
     project_ = binding.project;
     sequenceId_ = binding.sequence;
     commands_ = binding.commands;
@@ -542,20 +550,42 @@ void TimelineWidget::paintMarkers(QPainter& painter) {
     }
 }
 
+QFont TimelineWidget::badgeFont() const {
+    // The mono face the V1/A2 badge is set in. Worked out from the widget's own
+    // font so a change of application font carries through.
+    QFont badge = font();
+    badge.setStyleHint(QFont::Monospace);
+    badge.setFamily(QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+    badge.setPointSizeF(9.0);
+    return badge;
+}
+
+QString TimelineWidget::trackBadge(const ui::TimelineLayout::Row& row) {
+    return (row.kind == model::TrackKind::Audio ? QStringLiteral("A") : QStringLiteral("V")) +
+           QString::number(row.index + 1);
+}
+
+QRect TimelineWidget::trackNameRect(const ui::TimelineLayout::Row& row,
+                                    const model::Track& track) const {
+    // `A9` sizes the badge column, so names line up down the header instead of
+    // stepping in and out with the digit.
+    const int badgeWidth = QFontMetrics(badgeFont()).horizontalAdvance(QStringLiteral("A9")) + 8;
+    // What is left after the buttons on the right and the badge on the left,
+    // less the sync-lock mark when that is showing.
+    int right = layout_.metrics().headerWidth - (3 * kControlSize + kControlMargin) - 4;
+    if (!track.isSyncLocked()) {
+        right -= QFontMetrics(font()).horizontalAdvance(kSyncUnlocked) + 4;
+    }
+    const int left = 10 + badgeWidth;
+    return {left, row.top, std::max(0, right - left), row.height};
+}
+
 void TimelineWidget::paintTracks(QPainter& painter) {
     const model::Sequence& seq = *sequence();
     const auto& metrics = layout_.metrics();
 
-    // The header's two faces, worked out once rather than per row: the mono one
-    // the V1/A2 badge is set in, and whatever the widget was already using for
-    // the track's name. `A9` sizes the badge column, so the names line up down
-    // the header instead of stepping in and out with the digit.
     const QFont nameFont = painter.font();
-    QFont badgeFont = nameFont;
-    badgeFont.setStyleHint(QFont::Monospace);
-    badgeFont.setFamily(QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
-    badgeFont.setPointSizeF(9.0);
-    const int badgeWidth = QFontMetrics(badgeFont).horizontalAdvance(QStringLiteral("A9")) + 8;
+    const QFont badges = badgeFont();
 
     for (const ui::TimelineLayout::Row& row : layout_.rows(seq)) {
         const QRect lane(metrics.headerWidth, row.top, width() - metrics.headerWidth, row.height);
@@ -579,10 +609,9 @@ void TimelineWidget::paintTracks(QPainter& painter) {
         // editor gave the track follows it, because that is the part that
         // changes from project to project.
         const bool isAudio = row.kind == model::TrackKind::Audio;
-        const QString badge =
-            (isAudio ? QStringLiteral("A") : QStringLiteral("V")) + QString::number(row.index + 1);
+        const QString badge = trackBadge(row);
 
-        painter.setFont(badgeFont);
+        painter.setFont(badges);
         painter.setPen(track->isMuted() ? kDimText : (isAudio ? kAudioTrackId : kVideoTrackId));
         painter.drawText(header.adjusted(10, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, badge);
         // Put the face back before anything else draws. The mono one belongs to
@@ -591,28 +620,26 @@ void TimelineWidget::paintTracks(QPainter& painter) {
         // whatever the painter is currently carrying.
         painter.setFont(nameFont);
 
-        // What is left after the buttons on the right and the badge on the
-        // left. Sync lock has no button of its own -- the design gives the
-        // header three, and this is the one nobody presses mid-edit -- so it
-        // takes a sliver of that space as a mark, and only when it is off,
-        // which is the state worth knowing about.
-        int nameRight = metrics.headerWidth - (3 * kControlSize + kControlMargin) - 4;
+        // Sync lock has no button of its own -- the design gives the header
+        // three, and this is the one nobody presses mid-edit -- so it takes a
+        // sliver of the name's space as a mark, and only when it is off, which
+        // is the state worth knowing about.
         if (!track->isSyncLocked()) {
             const int markWidth = QFontMetrics(nameFont).horizontalAdvance(kSyncUnlocked) + 4;
+            const QRect nameBox = trackNameRect(row, *track);
             painter.setPen(kTrackFlag);
-            painter.drawText(QRect(nameRight - markWidth, row.top, markWidth, row.height),
+            painter.drawText(QRect(nameBox.right(), row.top, markWidth, row.height),
                              Qt::AlignVCenter | Qt::AlignRight, kSyncUnlocked);
-            nameRight -= markWidth;
         }
 
         // A new sequence names its tracks V1 and A1, and so do most of the
         // formats we import -- so the name is very often the badge again.
         // Drawn only when it says something the badge did not, because "V1 V1"
-        // is a header that has used its width to repeat itself.
+        // is a header that has used its width to repeat itself. The row being
+        // renamed draws nothing here: the editor is sitting on top of it.
         const QString name = QString::fromStdString(track->name());
-        if (name.compare(badge, Qt::CaseInsensitive) != 0) {
-            const int nameLeft = 10 + badgeWidth;
-            const QRect nameBox(nameLeft, row.top, std::max(0, nameRight - nameLeft), row.height);
+        if (name.compare(badge, Qt::CaseInsensitive) != 0 && row.track != renamingTrack_) {
+            const QRect nameBox = trackNameRect(row, *track);
             painter.setPen(track->isMuted() ? kDimText : theme::textAt(0.72));
             // Elided rather than clipped: a name cut mid-letter reads as a
             // rendering fault, and an ellipsis reads as "there is more".
@@ -796,6 +823,88 @@ void TimelineWidget::updateHeaderHover(int x, int y) {
     update();
 }
 
+void TimelineWidget::beginRenameTrack(model::TrackId trackId) {
+    const model::Sequence* seq = sequence();
+    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(trackId);
+    if (track == nullptr) {
+        return;
+    }
+    // A locked track is one somebody has said not to change. Renaming it is
+    // harmless to the cut, but the lock is a statement about the whole track
+    // and honouring it selectively is how a lock stops meaning anything.
+    if (track->isLocked()) {
+        return;
+    }
+    const auto row = rowFor(trackId);
+    if (!row) {
+        return;
+    }
+
+    finishRename(true);
+    renamingTrack_ = trackId;
+    if (renameEditor_ == nullptr) {
+        renameEditor_ = new QLineEdit(this);
+        renameEditor_->setFrame(false);
+        connect(renameEditor_, &QLineEdit::returnPressed, this, [this] { finishRename(true); });
+        // Losing focus commits too: clicking away from a half-typed name is
+        // how somebody says "that will do", not "throw it away". Escape is
+        // what throws it away, and that is handled in the event filter below.
+        connect(renameEditor_, &QLineEdit::editingFinished, this, [this] { finishRename(true); });
+        renameEditor_->installEventFilter(this);
+    }
+
+    const QRect box = trackNameRect(*row, *track);
+    renameEditor_->setGeometry(box.adjusted(-2, 3, 2, -3));
+    renameEditor_->setFont(font());
+    // The badge is not offered for editing: it is the track's position, which
+    // is not stored and cannot be typed over. A track called V1 starts empty,
+    // because that name is the badge repeating itself.
+    const QString name = QString::fromStdString(track->name());
+    renameEditor_->setText(name.compare(trackBadge(*row), Qt::CaseInsensitive) == 0 ? QString{}
+                                                                                    : name);
+    renameEditor_->setPlaceholderText(QStringLiteral("Track name"));
+    renameEditor_->selectAll();
+    renameEditor_->show();
+    renameEditor_->setFocus(Qt::MouseFocusReason);
+    update();
+}
+
+void TimelineWidget::finishRename(bool keep) {
+    if (renameEditor_ == nullptr || !renamingTrack_.isValid()) {
+        return;
+    }
+    // Cleared first, so the editingFinished that hiding provokes finds nothing
+    // to do rather than re-entering this and committing twice.
+    const model::TrackId trackId = renamingTrack_;
+    const QString typed = renameEditor_->text().trimmed();
+    renamingTrack_ = {};
+    renameEditor_->hide();
+    setFocus();
+
+    const model::Sequence* seq = sequence();
+    if (!keep || project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        update();
+        return;
+    }
+    const model::Track* track = seq->findTrack(trackId);
+    if (track == nullptr || typed.toStdString() == track->name()) {
+        update();
+        return;
+    }
+    auto built = edit::makeRenameTrack(*project_, sequenceId_, trackId, typed.toStdString());
+    if (!built) {
+        update();
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+}
+
 void TimelineWidget::toggleTrackMute(model::TrackId trackId) {
     const model::Sequence* seq = sequence();
     if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
@@ -849,6 +958,11 @@ void TimelineWidget::removeTrack(model::TrackId trackId) {
     if (project_ == nullptr || commands_ == nullptr) {
         return;
     }
+    // Abandoned rather than committed: a name typed into a track that is about
+    // to stop existing is not a rename anybody wants applied on the way out.
+    if (renamingTrack_ == trackId) {
+        finishRename(false);
+    }
     auto built = edit::makeRemoveTrack(*project_, sequenceId_, trackId);
     if (!built) {
         return;
@@ -874,6 +988,9 @@ void TimelineWidget::addTrack(model::TrackKind kind) {
     if (project_ == nullptr || commands_ == nullptr) {
         return;
     }
+    // Adding a track moves the rows, so the editor would be left floating over
+    // the wrong one. Commit what is there and let the layout change.
+    finishRename(true);
     // Unnamed, in effect: the badge already says V4, and a placeholder name
     // would only be something to clear before typing a real one.
     const model::Sequence* seq = sequence();
@@ -1481,6 +1598,14 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     if (seq == nullptr) {
         return;
     }
+    // Left button only. Everything below acts -- toggles a track's mute, starts
+    // a drag, cuts -- and a right-click is a request to be told what something
+    // does, not to do it. Without this, right-clicking the mute icon would both
+    // silence the track and open the menu offering to silence it.
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
     setFocus();
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
@@ -1669,6 +1794,97 @@ void TimelineWidget::updateTrim(int x) {
 
     emit edited();
     update();
+}
+
+bool TimelineWidget::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == renameEditor_ && event->type() == QEvent::KeyPress) {
+        if (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+            finishRename(false);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void TimelineWidget::trackHeaderMenu(model::TrackId trackId, const QPoint& at) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(trackId);
+    const auto row = rowFor(trackId);
+    if (track == nullptr || !row) {
+        return;
+    }
+    const bool isAudio = row->kind == model::TrackKind::Audio;
+    const bool muted = track->isMuted();
+    const bool locked = track->isLocked();
+
+    QMenu menu;
+    QAction* rename = menu.addAction(QStringLiteral("Rename…"));
+    // Offered but refused would be worse than not offered: the rename editor
+    // declines a locked track, so the menu says so rather than doing nothing
+    // when it is picked.
+    rename->setEnabled(!locked);
+    menu.addSeparator();
+    // A video track is hidden and an audio track is muted. One flag in the
+    // model, because "leave this track out" is one idea -- but naming it for
+    // the wrong sense is how a menu item stops being findable.
+    QAction* silence =
+        menu.addAction(isAudio ? (muted ? QStringLiteral("Unmute") : QStringLiteral("Mute"))
+                               : (muted ? QStringLiteral("Show") : QStringLiteral("Hide")));
+    QAction* lock = menu.addAction(locked ? QStringLiteral("Unlock") : QStringLiteral("Lock"));
+    menu.addSeparator();
+    QAction* remove = menu.addAction(isAudio ? QStringLiteral("Remove audio track")
+                                             : QStringLiteral("Remove video track"));
+
+    const QAction* picked = menu.exec(at);
+    if (picked == rename) {
+        beginRenameTrack(trackId);
+    } else if (picked == silence) {
+        toggleTrackMute(trackId);
+    } else if (picked == lock) {
+        toggleTrackLock(trackId);
+    } else if (picked == remove) {
+        removeTrack(trackId);
+    }
+}
+
+void TimelineWidget::contextMenuEvent(QContextMenuEvent* event) {
+    const HeaderHit hit = headerHitTest(event->pos().x(), event->pos().y());
+    if (!hit.track.isValid()) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+    // Anywhere in the header, including on the buttons: a right-click on a
+    // control is somebody asking what it does, not pressing it.
+    event->accept();
+    trackHeaderMenu(hit.track, event->globalPos());
+}
+
+void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    const int x = static_cast<int>(event->position().x());
+    const int y = static_cast<int>(event->position().y());
+
+    // Only the name band. The badge, the buttons and the corner box all mean
+    // something else on a double click, and the second click of one has already
+    // been delivered as a press.
+    const HeaderHit hit = headerHitTest(x, y);
+    if (hit.control == HeaderControl::None && hit.track.isValid()) {
+        if (const auto row = rowFor(hit.track)) {
+            const model::Track* track = seq->findTrack(hit.track);
+            if (track != nullptr && trackNameRect(*row, *track).contains(x, y)) {
+                beginRenameTrack(hit.track);
+                return;
+            }
+        }
+    }
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {

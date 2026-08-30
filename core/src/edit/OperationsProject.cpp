@@ -224,6 +224,27 @@ Result<CommandPtr> makeSetTrackProcessing(Project& project, model::SequenceId se
                        });
 }
 
+Result<CommandPtr> makeRenameTrack(Project& project, model::SequenceId sequenceId, TrackId trackId,
+                                   std::string name) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (sequence->findTrack(trackId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such track in this sequence"};
+    }
+    // Keyed by track, so renaming two tracks in a row is two undo steps rather
+    // than one that puts both back.
+    return makeCommand(sequenceId, "Rename track", "rename:" + std::to_string(trackId.value()),
+                       [trackId, name = std::move(name)](Sequence& seq) {
+                           Track* track = seq.findTrack(trackId);
+                           if (track == nullptr) {
+                               return;
+                           }
+                           track->setName(name);
+                       });
+}
+
 Result<CommandPtr> makeAddTrack(Project& project, model::SequenceId sequenceId,
                                 model::TrackKind kind, std::string name) {
     if (project.findSequence(sequenceId) == nullptr) {

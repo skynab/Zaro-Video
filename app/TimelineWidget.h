@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QFont>
 #include <QPoint>
 #include <QRect>
+#include <QString>
 #include <QWidget>
 #include <cstdint>
 #include <map>
@@ -18,6 +20,8 @@
 #include "zaro/core/time/TimeRange.h"
 #include "zaro/ui/SequenceBinding.h"
 #include "zaro/ui/TimelineLayout.h"
+
+class QLineEdit;
 
 namespace zaro::app {
 
@@ -127,6 +131,12 @@ signals:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    /// Escape in the rename editor abandons the edit. It has to be caught here
+    /// rather than in keyPressEvent: while the editor has focus, the key events
+    /// are its, not ours.
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -202,6 +212,29 @@ private:
         model::TrackId track;
         HeaderControl control{HeaderControl::None};
     };
+
+    /// The mono face the V1/A2 badge is set in, and the badge itself.
+    [[nodiscard]] QFont badgeFont() const;
+    [[nodiscard]] static QString trackBadge(const ui::TimelineLayout::Row& row);
+    /// Where a track's name is drawn, and where the editor sits to change it.
+    /// One function so the two cannot disagree about it.
+    [[nodiscard]] QRect trackNameRect(const ui::TimelineLayout::Row& row,
+                                      const model::Track& track) const;
+
+    /// Edit a track's name in place.
+    ///
+    /// In the header rather than in a dialog: naming tracks is something done
+    /// in a run, at the start of a cut, and a modal that has to be dismissed
+    /// between each one turns six names into six interruptions.
+    void beginRenameTrack(model::TrackId track);
+    /// Everything a track header can do, on its own right-click.
+    ///
+    /// The same four actions the header already carries, named. The three
+    /// buttons are quicker once you know which is which; this is where you find
+    /// out, and it is the only place Rename is written down.
+    void trackHeaderMenu(model::TrackId track, const QPoint& at);
+    /// Commit what was typed, or abandon it. Both end the edit.
+    void finishRename(bool keep);
 
     [[nodiscard]] QRect headerControlRect(const ui::TimelineLayout::Row& row,
                                           HeaderControl control) const;
@@ -355,6 +388,10 @@ private:
         time::RationalTime time{};
     };
     BladeMark bladeMark_;
+    /// The track whose name is being edited, and the editor doing it. The
+    /// editor is a child widget, so it is destroyed with this one.
+    model::TrackId renamingTrack_;
+    QLineEdit* renameEditor_{nullptr};
     HeaderHit hoverHeader_;
     CornerControl hoverCorner_{CornerControl::None};
     std::map<std::uint64_t, std::shared_ptr<const media::Waveform>> waveforms_;
