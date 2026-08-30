@@ -265,6 +265,30 @@ jobs:
         if: matrix.artifact != ''
         run: cpack --preset ${{ matrix.preset }}
 
+      # The one thing a failed `cpack -G WIX` does not tell you is what WiX
+      # said. CPack prints "Problem running WiX. Please check '.../wix.log'"
+      # and then the runner is thrown away with the log still in it, which is
+      # how the ICE57 error that blocked every MSI for five commits stayed
+      # invisible. Both the log and the generated sources go into the run.
+      - name: Show the WiX log (on failure)
+        if: failure() && runner.os == 'Windows' && matrix.artifact != ''
+        shell: pwsh
+        run: |
+          $wix = "build/${{ matrix.preset }}/_CPack_Packages/win64/WIX"
+          $log = Join-Path $wix "wix.log"
+          if (Test-Path $log) {
+            Write-Host "===== wix.log ====="
+            Get-Content $log
+          } else {
+            Write-Host "No wix.log at $log; cpack failed before running WiX."
+          }
+          # candle and light report by file and line number, so the sources
+          # are worth as much as the log itself.
+          foreach ($f in Get-ChildItem $wix -Include *.wxs,*.wxi -Recurse -ErrorAction SilentlyContinue) {
+            Write-Host "===== $($f.Name) ====="
+            Get-Content $f.FullName
+          }
+
       - name: Collect the archive
         if: matrix.artifact != ''
         shell: bash

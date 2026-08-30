@@ -19,9 +19,19 @@
   gives the install location (see WIX.template.in, which points
   WIXUI_INSTALLDIR at it). It expands with a trailing separator.
 
-  HKMU rather than HKLM or HKCU: WiX resolves it to the machine hive for an
-  all-users install and the user's for a per-user one, so neither component
-  can be the one that fails for want of permission.
+  The two registry roots below are not interchangeable, and it is ICE57 that
+  decides them rather than taste. It reads each component's data as per-user
+  or per-machine and refuses any component whose keypath does not agree with
+  it. It refuses as an error rather than a warning, so nothing builds. The
+  shortcut sits in DesktopFolder, which ICE57 counts as per-user whatever
+  ALLUSERS says, so that component is keyed on HKCU; the association sits in
+  INSTALL_ROOT, which is per-machine, so it is keyed on HKLM. HKMU, meaning
+  "either", is the one root that satisfies neither, and it is what this file
+  used to say.
+
+  Both roots are writable because the package installs perMachine and the
+  installer therefore runs elevated; see CPACK_WIX_INSTALL_SCOPE in
+  cmake/Packaging.cmake.
 -->
 
 <CPackWiXPatch>
@@ -46,8 +56,12 @@
                   WorkingDirectory="INSTALL_ROOT"/>
         <!-- A component needs a key path, and a shortcut cannot be one. No
              RemoveFolder here on purpose: the shortcut goes when the component
-             does, and the Desktop is not ours to remove. -->
-        <RegistryValue Root="HKMU"
+             does, and the Desktop is not ours to remove.
+
+             HKCU, per the header: ICE38 and ICE43 ask it of any component
+             carrying a non-advertised shortcut, and ICE57 turns the ask into
+             a hard error. -->
+        <RegistryValue Root="HKCU"
                        Key="Software\CutReel"
                        Name="DesktopShortcut"
                        Type="integer"
@@ -62,23 +76,23 @@
              Verb, which would need the WiX file id of the installed
              executable, the generated name this patch exists to avoid
              depending on. -->
-        <RegistryValue Root="HKMU"
+        <RegistryValue Root="HKLM"
                        Key="Software\Classes\.zaro"
                        Value="CutReel.Project"
                        Type="string"
                        KeyPath="yes"/>
-        <RegistryValue Root="HKMU"
+        <RegistryValue Root="HKLM"
                        Key="Software\Classes\CutReel.Project"
                        Value="CutReel project"
                        Type="string"/>
-        <RegistryValue Root="HKMU"
+        <RegistryValue Root="HKLM"
                        Key="Software\Classes\CutReel.Project\DefaultIcon"
                        Value="[INSTALL_ROOT]bin\zaro-preview.exe,0"
                        Type="string"/>
         <!-- %1 reaches the program as argv[1], which is the project path it
              wants. Quoted, because somebody's project lives in a folder with a
              space in it. -->
-        <RegistryValue Root="HKMU"
+        <RegistryValue Root="HKLM"
                        Key="Software\Classes\CutReel.Project\shell\open\command"
                        Value="&quot;[INSTALL_ROOT]bin\zaro-preview.exe&quot; &quot;%1&quot;"
                        Type="string"/>

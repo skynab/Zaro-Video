@@ -67,6 +67,24 @@ if(WIN32)
     # the first, with two Start Menu entries and no way back.
     set(CPACK_WIX_UPGRADE_GUID "0FC6F111-2EC6-47EE-955D-32DCD93A32D2")
 
+    # One machine, one copy, in Program Files. Stated rather than left to the
+    # default, which is still the "NONE" CPack 3.28 and older used: no
+    # InstallScope at all, so ALLUSERS is never set and every shortcut and
+    # registry key the package carries is per-user data sitting in a
+    # per-machine install. WiX's validator refuses to build that -- ICE57 on
+    # the desktop shortcut below, whose HKMU keypath cannot resolve to a hive
+    # when nothing has said which context the install runs in -- and ICE90
+    # says the same thing about the Start Menu entry CPack writes itself.
+    #
+    # perMachine settles it: the installer asks for elevation, DesktopFolder
+    # and ProgramMenuFolder are the all-users ones, and HKMU is HKLM.
+    #
+    # Safe to state now and not later: an install made without an
+    # InstallScope cannot be cleanly upgraded by one that has it, and no MSI
+    # has ever been released -- this is the error that stopped every one of
+    # them from being built.
+    set(CPACK_WIX_INSTALL_SCOPE "perMachine")
+
     # Program Files\CutReel, one Start Menu entry, pointing at the app rather
     # than at one of the seven command-line tools beside it.
     set(CPACK_WIX_PROGRAM_MENU_FOLDER "CutReel")
