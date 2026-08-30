@@ -65,7 +65,15 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg sdl2 qt pkg-config nlohmann-json
+        # The runner image ships aws/tap pre-tapped for the AWS CLI, and
+        # Homebrew 6 refuses to use an untrusted tap, so every brew command
+        # prints a block about it. Nothing here comes from that tap -- all five
+        # formulae are homebrew/core -- so dropping it is quieter and narrower
+        # than granting whole-tap trust or setting HOMEBREW_NO_REQUIRE_TAP_TRUST.
+        # Tolerant of the tap being absent, in case a later image stops shipping it.
+        run: |
+          brew untap aws/tap || true
+          brew install ffmpeg sdl2 qt pkg-config nlohmann-json
 
       # Qt is deliberately absent from this list -- see the Qt step below.
       - name: Install dependencies (Linux)

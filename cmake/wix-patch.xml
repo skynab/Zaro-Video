@@ -47,8 +47,8 @@
 
     <DirectoryRef Id="DesktopFolder">
       <Component Id="CutReelDesktopShortcut" Guid="ABBC33BB-54D2-450A-9619-EFA28D2636B6">
-        <!-- No arguments: the application asks for a project when it is
-             started without one. -->
+        <!-- No arguments: the application opens an untitled project when it
+             is started without one, the same thing File > New builds. -->
         <Shortcut Id="CutReelDesktopLink"
                   Name="CutReel"
                   Description="A non-linear video editor"

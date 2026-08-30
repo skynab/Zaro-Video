@@ -64,8 +64,10 @@ Notes that cost time to discover:
 - **The binary is inside the `.app` bundle.** `build/debug/bin/zaro-preview` is a
   stale leftover that will not have your changes — using it is the easiest way to
   waste ten minutes here.
-- A project path is **required**. With no arguments it opens a file dialog and
-  blocks.
+- A project path is optional. With no arguments it opens an untitled, empty
+  project, the same thing File > New builds -- so pass a project when you want
+  to look at one. Under `--quiet` a missing project is an error (exit 2)
+  instead, so scripts fail rather than silently getting an empty timeline.
 - `--quiet` puts errors on stderr instead of in modal dialogs. Always pass it
   when launching from a script.
 

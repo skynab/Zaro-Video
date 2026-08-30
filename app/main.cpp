@@ -7,7 +7,6 @@
 
 #include <QApplication>
 #include <QDir>
-#include <QFileDialog>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QStringList>
@@ -112,62 +111,74 @@ int main(int argc, char** argv) {
 
         // A shortcut carries no arguments, and on Windows this is a GUI binary
         // with no console for any of the above to appear in -- so an installed
-        // copy launched from the Start Menu printed into nothing and exited,
-        // which from the outside is a program that does not start at all.
+        // copy launched from the Start Menu or the desktop printed into
+        // nothing and exited, which from the outside is a program that does
+        // not start at all.
         //
-        // So ask. Cancelling is an answer rather than a failure, hence zero:
-        // somebody who opened the program and changed their mind has not hit
-        // an error. Never when quiet -- that is the self-tests and the scripts,
-        // and a dialog is precisely what they must never meet.
+        // So start an untitled project instead, which is what every other
+        // editor does when it is opened rather than handed a file, and exactly
+        // what File > New builds. Asking first -- an open dialog before any
+        // window exists -- was the previous answer, and it made the installed
+        // shortcut look like it opened a file picker rather than the program:
+        // somebody who wants to start a new cut has nothing to pick, and
+        // cancelling quit outright.
+        //
+        // Quiet is still an error: that is the self-tests and the scripts, and
+        // every one of them is asking for a specific project. Silently giving
+        // them an empty one turns a mistyped path into a green run.
         if (zaro::app::isQuiet()) {
             return 2;
         }
-        const QString chosen = QFileDialog::getOpenFileName(
-            nullptr, "Open a project", QString{}, "CutReel projects (*.zaro);;All files (*)");
-        if (chosen.isEmpty()) {
-            return 0;
-        }
-        arguments.append(chosen);
     }
 
     zaro::platform::ffmpeg::installLogHandler(false);
 
-    const std::string projectPath = arguments.at(1).toStdString();
+    // Empty when nothing was named, and it stays empty: an untitled project
+    // has no file until the first Save asks for one.
+    const std::string projectPath = arguments.size() < 2 ? std::string{} : arguments.at(1).toStdString();
 
-    // A recovery file newer than the project means the last session ended
-    // without an explicit save. Offered rather than opened: the autosave is
-    // what somebody was in the middle of, and only they know whether they want
-    // it. Declining leaves the file alone, so the choice can be made again.
-    std::string openPath = projectPath;
-    if (!quitTest && !selfTest && !editTest && zaro::io::hasNewerAutosave(projectPath)) {
-        const auto answer = QMessageBox::question(
-            nullptr, "Recover",
-            QString("There is a more recent recovery file for %1.\n\nOpen it instead?")
-                .arg(QString::fromStdString(projectPath)));
-        if (answer == QMessageBox::Yes) {
-            openPath = zaro::io::autosavePath(projectPath);
+    zaro::model::Project project;
+    zaro::io::LoadedProject loadedProject{};
+    if (projectPath.empty()) {
+        project = zaro::model::newProject();
+    } else {
+        // A recovery file newer than the project means the last session ended
+        // without an explicit save. Offered rather than opened: the autosave is
+        // what somebody was in the middle of, and only they know whether they want
+        // it. Declining leaves the file alone, so the choice can be made again.
+        std::string openPath = projectPath;
+        if (!quitTest && !selfTest && !editTest && zaro::io::hasNewerAutosave(projectPath)) {
+            const auto answer = QMessageBox::question(
+                nullptr, "Recover",
+                QString("There is a more recent recovery file for %1.\n\nOpen it instead?")
+                    .arg(QString::fromStdString(projectPath)));
+            if (answer == QMessageBox::Yes) {
+                openPath = zaro::io::autosavePath(projectPath);
+            }
         }
-    }
 
-    auto loaded = zaro::io::loadProject(openPath);
-    if (!loaded) {
-        // Through say/warn rather than stderr, for the same reason as above: a
-        // window-less binary has no console, so a project that will not open
-        // looked exactly like a program that does not start.
-        zaro::app::warn(nullptr, "Cannot open the project",
-                        QString::fromStdString(loaded.error().toString()));
-        return 1;
-    }
-    zaro::model::Project project = loaded->project;
-    if (project.findSequence(project.activeSequence()) == nullptr) {
-        zaro::app::warn(nullptr, "Cannot open the project", "This project has no active sequence.");
-        return 1;
+        auto loaded = zaro::io::loadProject(openPath);
+        if (!loaded) {
+            // Through say/warn rather than stderr, for the same reason as above: a
+            // window-less binary has no console, so a project that will not open
+            // looked exactly like a program that does not start.
+            zaro::app::warn(nullptr, "Cannot open the project",
+                            QString::fromStdString(loaded.error().toString()));
+            return 1;
+        }
+        project = loaded->project;
+        if (project.findSequence(project.activeSequence()) == nullptr) {
+            zaro::app::warn(nullptr, "Cannot open the project",
+                            "This project has no active sequence.");
+            return 1;
+        }
+        loadedProject = std::move(*loaded);
     }
 
     // Recovered work is saved back to the *project*, not to the recovery file:
     // opening an autosave and then saving into it would leave the real project
     // stale for ever.
-    PreviewWindow window{std::move(project), std::move(*loaded), projectPath};
+    PreviewWindow window{std::move(project), std::move(loadedProject), projectPath};
     if (const auto status = window.openMedia(); !status) {
         zaro::app::warn(&window, "Cannot open the media",
                         QString::fromStdString(status.error().toString()));
