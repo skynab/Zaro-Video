@@ -65,6 +65,21 @@ public:
     [[nodiscard]] const time::RationalTime& playhead() const noexcept { return playhead_; }
     void setPlayhead(const time::RationalTime& position);
 
+    /// How tall the rows of one kind are drawn.
+    ///
+    /// Per kind rather than per track, which is how the layout stores it and
+    /// how the question is usually asked: sound wants room when you are
+    /// working on sound, and the picture tracks can shrink while you do it.
+    ///
+    /// Clamped, and clamped again against the panel: the tracks do not scroll
+    /// vertically, so a height that pushed a track off the bottom would make it
+    /// unreachable rather than roomy. Growing redistributes the space there is.
+    void setTrackHeight(model::TrackKind kind, int pixels);
+    [[nodiscard]] int trackHeight(model::TrackKind kind) const;
+    /// The heights the panel opens with, for the double-click that resets one.
+    static constexpr int kDefaultVideoTrackHeight = 62;
+    static constexpr int kDefaultAudioTrackHeight = 48;
+
     void zoomToFit();
     /// Zoom about the middle of the view, which is what a button press means:
     /// there is no pointer position to anchor on.
@@ -258,6 +273,19 @@ private:
     /// button that does not react to being pointed at does not look like one.
     void updateHeaderHover(int x, int y);
 
+    /// The kind whose height the boundary under this point would resize, if the
+    /// point is on one.
+    ///
+    /// A boundary belongs to the row above it. Every row's bottom edge moves
+    /// down as its own kind grows -- video stacks upward from the audio block,
+    /// audio downward from it -- so "drag the edge down to make this taller"
+    /// holds for all of them without exception.
+    [[nodiscard]] std::optional<model::TrackKind> headerResizeAt(int x, int y) const;
+    void updateTrackHeight(int y);
+    /// Put the asked-for heights into the layout, squashed to whatever the
+    /// panel can actually show.
+    void applyTrackHeights();
+
     /// A track's own settings, each one command on the stack.
     ///
     /// `muted` is what an eye means on a video track and what a speaker means
@@ -340,6 +368,7 @@ private:
     enum class Drag {
         None,
         Scrub,
+        TrackHeight,
         MoveClip,
         TrimIn,
         TrimOut,
@@ -405,6 +434,16 @@ private:
     /// editor is a child widget, so it is destroyed with this one.
     model::TrackId renamingTrack_;
     QLineEdit* renameEditor_{nullptr};
+    /// The kind being resized, where the drag started, and the height it
+    /// started from -- so each move measures the whole gesture rather than
+    /// accumulating steps that a clamp would make lossy.
+    /// The heights asked for, which is not always what is on screen -- see
+    /// applyTrackHeights.
+    int wantedVideoHeight_{kDefaultVideoTrackHeight};
+    int wantedAudioHeight_{kDefaultAudioTrackHeight};
+    std::optional<model::TrackKind> resizeKind_;
+    int resizeAnchorY_{0};
+    int resizeStartHeight_{0};
     HeaderHit hoverHeader_;
     CornerControl hoverCorner_{CornerControl::None};
     std::map<std::uint64_t, std::shared_ptr<const media::Waveform>> waveforms_;

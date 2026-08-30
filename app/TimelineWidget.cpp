@@ -75,6 +75,14 @@ constexpr int kPillGap = 5;
 /// What a badge is shadowed with when it sits over a picture.
 const QColor kBadgeShadow{0, 0, 0, 170};
 
+/// How close to a row's bottom edge counts as grabbing it.
+constexpr int kResizeGrabPixels = 4;
+/// The range a track height may be dragged to. The floor is what the three
+/// header buttons and a legible clip need; the ceiling is where a taller row
+/// has stopped telling you anything more.
+constexpr int kMinTrackHeight = 26;
+constexpr int kMaxTrackHeight = 220;
+
 /// The mark a track carries when it will not shift under a ripple.
 const QString kSyncUnlocked = QStringLiteral("\u2226");
 
@@ -221,6 +229,63 @@ void TimelineWidget::followPlayhead() {
     layout_.setScroll(time::RationalTime{std::max<std::int64_t>(0, start), rate});
 }
 
+int TimelineWidget::trackHeight(model::TrackKind kind) const {
+    return kind == model::TrackKind::Audio ? layout_.metrics().audioTrackHeight
+                                           : layout_.metrics().videoTrackHeight;
+}
+
+void TimelineWidget::setTrackHeight(model::TrackKind kind, int pixels) {
+    // What was asked for is remembered separately from what fits. A panel
+    // dragged short squashes the rows, and dragging it tall again should give
+    // back the height that was chosen -- which it cannot do if the squashed
+    // value has overwritten it.
+    (kind == model::TrackKind::Audio ? wantedAudioHeight_ : wantedVideoHeight_) =
+        std::clamp(pixels, kMinTrackHeight, kMaxTrackHeight);
+    applyTrackHeights();
+}
+
+void TimelineWidget::applyTrackHeights() {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    ui::TimelineLayout::Metrics metrics = layout_.metrics();
+
+    // Rows do not scroll vertically, so the tallest a kind may be is the height
+    // that still leaves every other row on screen. Asked of the layout rather
+    // than rebuilt here, which would be a second copy of its arithmetic to keep
+    // in step.
+    const auto fit = [&](model::TrackKind kind, int wanted) {
+        const int count = static_cast<int>(kind == model::TrackKind::Audio
+                                               ? seq->audioTracks().size()
+                                               : seq->videoTracks().size());
+        if (count == 0) {
+            return wanted;
+        }
+        ui::TimelineLayout::Metrics probe = metrics;
+        (kind == model::TrackKind::Audio ? probe.audioTrackHeight : probe.videoTrackHeight) =
+            wanted;
+        const int over = ui::TimelineLayout{probe}.contentHeight(*seq) - height();
+        if (over <= 0) {
+            return wanted;
+        }
+        // Share the overflow across the rows of this kind, then floor it: when
+        // the panel is too small even for the minimum, there is nothing better
+        // to do than be as compact as possible.
+        return std::max(kMinTrackHeight, wanted - (over + count - 1) / count);
+    };
+
+    metrics.videoTrackHeight = fit(model::TrackKind::Video, wantedVideoHeight_);
+    metrics.audioTrackHeight = fit(model::TrackKind::Audio, wantedAudioHeight_);
+    if (metrics.videoTrackHeight == layout_.metrics().videoTrackHeight &&
+        metrics.audioTrackHeight == layout_.metrics().audioTrackHeight) {
+        return;
+    }
+    layout_.setMetrics(metrics);
+    emit viewChanged();
+    update();
+}
+
 void TimelineWidget::zoomToFit() {
     const model::Sequence* seq = sequence();
     if (seq == nullptr) {
@@ -337,6 +402,10 @@ std::optional<ui::TimelineLayout::Row> TimelineWidget::rowFor(model::TrackId tra
 
 void TimelineWidget::resizeEvent(QResizeEvent* event) {
     layout_.setViewportSize(width(), height());
+    // A shorter panel may no longer fit the heights that fitted the tall one.
+    // Re-derived from what was asked for, so dragging the splitter down and
+    // back up gives those heights back rather than leaving them squashed.
+    applyTrackHeights();
     if (pendingFit_) {
         pendingFit_ = false;
         zoomToFit();
@@ -809,6 +878,31 @@ TimelineWidget::CornerControl TimelineWidget::cornerHitTest(int x, int y) const 
         }
     }
     return CornerControl::None;
+}
+
+std::optional<model::TrackKind> TimelineWidget::headerResizeAt(int x, int y) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || !layout_.isInHeaders(x) || y < layout_.metrics().rulerHeight) {
+        return std::nullopt;
+    }
+    for (const ui::TimelineLayout::Row& row : layout_.rows(*seq)) {
+        const int bottom = row.top + row.height;
+        if (std::abs(y - bottom) <= kResizeGrabPixels) {
+            return row.kind;
+        }
+    }
+    return std::nullopt;
+}
+
+void TimelineWidget::updateTrackHeight(int y) {
+    if (!resizeKind_) {
+        return;
+    }
+    // Measured from where the gesture started rather than from the last move.
+    // A clamped drag would otherwise lose the difference between "the pointer
+    // has gone 40 past the limit" and "the pointer is back at the limit", and
+    // the row would not start shrinking again until the pointer caught up.
+    setTrackHeight(*resizeKind_, resizeStartHeight_ + (y - resizeAnchorY_));
 }
 
 void TimelineWidget::updateHeaderHover(int x, int y) {
@@ -1632,6 +1726,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
     if (layout_.isInHeaders(x)) {
+        // The boundary first. It is a thin band at the very bottom of a row and
+        // the buttons are centred in it, so the two do not overlap until a row
+        // is at its minimum -- and there, resizing is what the pointer is for.
+        if (const auto kind = headerResizeAt(x, y)) {
+            resizeKind_ = kind;
+            resizeAnchorY_ = y;
+            resizeStartHeight_ = trackHeight(*kind);
+            drag_ = Drag::TrackHeight;
+            return;
+        }
         const HeaderHit hit = headerHitTest(x, y);
         switch (hit.control) {
             case HeaderControl::Mute:
@@ -1930,6 +2034,14 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     // Only the name band. The badge, the buttons and the corner box all mean
     // something else on a double click, and the second click of one has already
     // been delivered as a press.
+    // A boundary resets to the height the panel opened with, which is the
+    // usual way back from having dragged something to a size you regret.
+    if (const auto kind = headerResizeAt(x, y)) {
+        setTrackHeight(*kind, *kind == model::TrackKind::Audio ? kDefaultAudioTrackHeight
+                                                               : kDefaultVideoTrackHeight);
+        return;
+    }
+
     const HeaderHit hit = headerHitTest(x, y);
     if (hit.control == HeaderControl::None && hit.track.isValid()) {
         if (const auto row = rowFor(hit.track)) {
@@ -1949,8 +2061,19 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
 
     if (drag_ == Drag::None) {
         updateHeaderHover(x, y);
+        if (layout_.isInHeaders(x)) {
+            // Answered here and gone: nothing further down the function is
+            // about the headers, and applyCursor at the end would put the
+            // arrow back over a boundary that wants the resize cursor.
+            setCursor(headerResizeAt(x, y) ? Qt::SizeVerCursor : Qt::ArrowCursor);
+            return;
+        }
     }
 
+    if (drag_ == Drag::TrackHeight) {
+        updateTrackHeight(y);
+        return;
+    }
     if (drag_ == Drag::Keyframe) {
         dragKeyframeTo(x);
         return;
@@ -2054,10 +2177,14 @@ void TimelineWidget::finishDrag() {
     if (drag_ == Drag::Pan && tool_ == Tool::Hand) {
         setCursor(Qt::OpenHandCursor);
     }
-    if (drag_ != Drag::None && drag_ != Drag::Scrub && drag_ != Drag::Pan && commands_ != nullptr) {
+    // Scrub, pan and a track resize change the view rather than the cut, so
+    // there is no merge group of theirs to close.
+    if (drag_ != Drag::None && drag_ != Drag::Scrub && drag_ != Drag::Pan &&
+        drag_ != Drag::TrackHeight && commands_ != nullptr) {
         // Close the merge group, so the next gesture is a separate undo step.
         commands_->breakMerge();
     }
+    resizeKind_.reset();
     drag_ = Drag::None;
     rippleTrim_ = false;
     // The guide belongs to the gesture that made it. Left up, it becomes a

@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QIcon>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QStringList>
@@ -28,6 +29,27 @@ using namespace zaro;
 using zaro::app::dragOnTimeline;
 using zaro::app::PreviewWindow;
 using zaro::app::settledGrab;
+
+namespace {
+
+/// The application icon, out of the Qt resources built from
+/// resources/branding by app/CMakeLists.txt.
+///
+/// Every size added by hand rather than one file left to be scaled: QIcon picks
+/// the nearest it was given and a 512 taken down to a 16-pixel title bar loses
+/// the blades entirely. Windows has the same artwork a second time, in the
+/// executable's own resources -- that one is what Explorer and the shortcuts
+/// read without running anything, and this one is what the running window and
+/// its dialogs use.
+QIcon windowIcon() {
+    QIcon icon;
+    for (const int size : {16, 32, 48, 64, 128, 256, 512}) {
+        icon.addFile(QString{":/branding/CutReel-%1.png"}.arg(size));
+    }
+    return icon;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
     // Line buffered, always. The self-tests print as they go and are usually
@@ -63,6 +85,7 @@ int main(int argc, char** argv) {
     // widget looks like the moment it is constructed, and a window built first
     // flashes the platform's own colours on its way to these.
     zaro::app::theme::apply(application);
+    QApplication::setWindowIcon(windowIcon());
 
     QStringList arguments = QApplication::arguments();
     const bool selfTest = arguments.removeAll("--selftest") > 0;

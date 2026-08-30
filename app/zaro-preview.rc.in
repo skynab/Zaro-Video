@@ -1,0 +1,10 @@
+// The Windows executable's icon.
+//
+// Configured rather than committed as-is so the path can be absolute: rc.exe
+// resolves a relative one against its own working directory, which is the
+// build tree, and the icon is not there.
+//
+// Resource id 1, and it has to be the lowest in the file: Explorer shows the
+// first icon in id order for the executable, and that is what a shortcut, the
+// taskbar and the .zaro document icon all end up displaying.
+1 ICON "@ZARO_ICON_ICO@"

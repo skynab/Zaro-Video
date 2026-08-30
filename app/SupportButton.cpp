@@ -1,10 +1,14 @@
 #include "SupportButton.h"
 
 #include <QFontMetrics>
+#include <QHideEvent>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QShowEvent>
+#include <QTimer>
+#include <cmath>
 
 #include "Icons.h"
 #include "Theme.h"
@@ -22,6 +26,34 @@ const QColor kSpectrum[] = {
 
 const QColor kHeart{0xd9, 0x6a, 0x9c};
 
+/// One lap of the spectrum, and how often it is redrawn. Slow enough to read
+/// as drifting rather than as flashing -- the point is to catch an eye that
+/// happens to pass, not to hold one.
+constexpr int kCycleMs = 9000;
+constexpr int kFrameMs = 33;
+
+/// How many stops the travelling ring is drawn with. The spectrum is sampled
+/// rather than mapped one-colour-to-one-stop, because a gradient that moves has
+/// to wrap: the colour leaving the right edge is the one arriving at the left.
+constexpr int kRingStops = 28;
+
+/// The spectrum as a loop, sampled at `t` in [0,1) with the ends joined.
+QColor spectrumAt(double t) {
+    const auto count = static_cast<int>(std::size(kSpectrum));
+    const double scaled = (t - std::floor(t)) * count;
+    const auto first = static_cast<int>(scaled) % count;
+    const int second = (first + 1) % count;
+    // Mixed in float, which is what QColor's component accessors are: doing it
+    // in double only to hand the result back as float is a conversion at every
+    // stop and a warning at every build.
+    const auto mix = static_cast<float>(scaled - std::floor(scaled));
+    const QColor& a = kSpectrum[first];
+    const QColor& b = kSpectrum[second];
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * mix,
+                            a.greenF() + (b.greenF() - a.greenF()) * mix,
+                            a.blueF() + (b.blueF() - a.blueF()) * mix);
+}
+
 constexpr double kRingWidth = 1.5;
 constexpr double kRadius = 8.0;
 constexpr int kIconSize = 14;
@@ -34,6 +66,26 @@ SupportButton::SupportButton(QWidget* parent) : QPushButton{parent} {
     setFlat(true);
     setCursor(Qt::PointingHandCursor);
     setAttribute(Qt::WA_Hover, true);
+
+    // Not started here: showEvent does that, so a button built into a workspace
+    // nobody has opened yet costs nothing until it is looked at.
+    clock_ = new QTimer(this);
+    clock_->setInterval(kFrameMs);
+    connect(clock_, &QTimer::timeout, this, [this] {
+        phase_ += static_cast<double>(kFrameMs) / kCycleMs;
+        phase_ -= std::floor(phase_);
+        update();
+    });
+}
+
+void SupportButton::showEvent(QShowEvent* event) {
+    QPushButton::showEvent(event);
+    clock_->start();
+}
+
+void SupportButton::hideEvent(QHideEvent* event) {
+    QPushButton::hideEvent(event);
+    clock_->stop();
 }
 
 QSize SupportButton::sizeHint() const {
@@ -46,9 +98,11 @@ void SupportButton::paintEvent(QPaintEvent* /*event*/) {
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     QLinearGradient ring{QPointF(0, 0), QPointF(width(), 0)};
-    const auto stops = static_cast<int>(std::size(kSpectrum));
-    for (int i = 0; i < stops; ++i) {
-        QColor colour = kSpectrum[i];
+    for (int i = 0; i <= kRingStops; ++i) {
+        const double along = static_cast<double>(i) / kRingStops;
+        // Minus the phase, so the colours travel left to right: the sample
+        // taken from further back in the spectrum arrives here as time passes.
+        QColor colour = spectrumAt(along - phase_);
         // Hover brightens the ring and a press dims it, which is the whole of
         // this button's state: it has nothing to be checked or disabled about.
         if (underMouse() && !isDown()) {
@@ -56,7 +110,7 @@ void SupportButton::paintEvent(QPaintEvent* /*event*/) {
         } else if (isDown()) {
             colour = colour.darker(112);
         }
-        ring.setColorAt(static_cast<double>(i) / (stops - 1), colour);
+        ring.setColorAt(along, colour);
     }
 
     const QRectF outer = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);

@@ -117,9 +117,55 @@ target_include_directories(zaro_app_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 set_target_properties(zaro_app_ui PROPERTIES AUTOMOC ON)
 
+# --- Branding -------------------------------------------------------------------
+# One directory of artwork, three platforms that each want it in their own
+# shape. See resources/branding/README.md for what every file is for.
+set(ZARO_BRANDING_DIR "${CMAKE_SOURCE_DIR}/resources/branding")
+
 add_executable(zaro-preview main.cpp)
 target_link_libraries(zaro-preview PRIVATE zaro_app_ui zaro::warnings)
 set_target_properties(zaro-preview PROPERTIES AUTOMOC ON)
+
+# The window icon, on every platform. Compiled in rather than loaded from a
+# file beside the binary, which is a file that goes missing the first time
+# somebody moves the executable.
+#
+# On the executable and not on zaro_app_ui: a Qt resource inside a static
+# library is only registered if something drags its initialiser in, and a
+# library nobody references by name from main is exactly the case where the
+# linker drops it. On the executable there is nothing to drop.
+qt_add_resources(zaro-preview "branding"
+    PREFIX "/branding"
+    BASE "${ZARO_BRANDING_DIR}"
+    FILES
+        "${ZARO_BRANDING_DIR}/CutReel-16.png"
+        "${ZARO_BRANDING_DIR}/CutReel-32.png"
+        "${ZARO_BRANDING_DIR}/CutReel-48.png"
+        "${ZARO_BRANDING_DIR}/CutReel-64.png"
+        "${ZARO_BRANDING_DIR}/CutReel-128.png"
+        "${ZARO_BRANDING_DIR}/CutReel-256.png"
+        "${ZARO_BRANDING_DIR}/CutReel-512.png")
+
+# The executable's own icon, which is a different thing from the window's: it
+# is what Explorer, the taskbar, the desktop shortcut the MSI installs and the
+# .zaro document association all display, and none of them ever runs the
+# program to ask Qt.
+if(WIN32)
+    set(ZARO_ICON_ICO "${ZARO_BRANDING_DIR}/CutReel.ico")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/zaro-preview.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/zaro-preview.rc" @ONLY)
+    target_sources(zaro-preview PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/zaro-preview.rc")
+endif()
+
+# The bundle icon. The file has to be inside Contents/Resources and the plist
+# key names it without a path, so both halves are set here; naming one without
+# the other is a bundle that shows the generic application icon.
+if(APPLE)
+    target_sources(zaro-preview PRIVATE "${ZARO_BRANDING_DIR}/CutReel.icns")
+    set_source_files_properties("${ZARO_BRANDING_DIR}/CutReel.icns"
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    set_target_properties(zaro-preview PROPERTIES MACOSX_BUNDLE_ICON_FILE "CutReel.icns")
+endif()
 
 
 # --- Installation -------------------------------------------------------------
@@ -203,3 +249,10 @@ if(UNIX AND NOT APPLE)
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT runtime)
 endif()
+
+# TEMPORARY-SHOT-TARGET
+add_executable(zaro_shot ${ZARO_SHOT_SRC})
+target_link_libraries(zaro_shot PRIVATE zaro_app_ui Qt6::Widgets)
+target_include_directories(zaro_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/core/tests)
+target_compile_definitions(zaro_shot PRIVATE ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media")
+set_target_properties(zaro_shot PROPERTIES AUTOMOC ON)

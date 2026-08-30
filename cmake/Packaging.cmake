@@ -96,6 +96,21 @@ if(WIN32)
     # written against the two fragment ids CPack documents as stable.
     set(CPACK_WIX_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/wix-patch.xml")
 
+    # The installer's own face. The product icon is what Add/Remove Programs
+    # lists the entry with, and it is deliberately not the application's icon:
+    # the two mean different things in a list, and the artwork says so.
+    #
+    # The shortcuts are absent from this list on purpose. A non-advertised
+    # shortcut takes its icon from whatever it points at, so both of ours show
+    # the icon compiled into zaro-preview.exe -- see app/CMakeLists.txt -- and
+    # naming one here as well would be a second copy to keep in step.
+    #
+    # The two bitmaps are the WixUI stock sizes, 493x58 and 493x312. Anything
+    # else is scaled to fit by the installer and looks it.
+    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/CutReel-Installer.ico")
+    set(CPACK_WIX_UI_BANNER "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/installer-banner.bmp")
+    set(CPACK_WIX_UI_DIALOG "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/installer-dialog.bmp")
+
     # WiX reads a licence as .txt or .rtf and ours is extensionless, so it is
     # copied to a name the installer's licence page will accept. COPYONLY: the
     # text of a licence is not something to run through a substitution pass.
