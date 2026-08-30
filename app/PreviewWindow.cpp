@@ -2096,10 +2096,11 @@ void PreviewWindow::placeFromSource(edit::PlaceMode mode) {
 }
 
 void PreviewWindow::startWaveforms() {
-    // Frames cached against the old project's media are about to be wrong, or
-    // about to be about files that no longer exist. This runs whenever the
-    // media changes -- a new project, an open, a switch to proxies -- which is
-    // exactly when the filmstrips need re-reading too.
+    // Reclaim, not correctness: the thumbnail cache is addressed by file path,
+    // so frames held for the old project's media are stale rather than wrong,
+    // and a switch to proxies re-reads under a different key on its own. This
+    // runs whenever the media changes, which is the moment those frames stop
+    // being worth the memory.
     if (thumbnails_ != nullptr) {
         thumbnails_->clear();
     }

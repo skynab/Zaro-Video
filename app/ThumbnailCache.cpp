@@ -43,12 +43,11 @@ ThumbnailCache::~ThumbnailCache() {
     }
 }
 
-QImage ThumbnailCache::lookup(model::MediaRefId media, const std::string& path,
-                              const time::RationalTime& at, int height) {
-    if (!media.isValid() || path.empty() || height <= 0) {
+QImage ThumbnailCache::lookup(const std::string& path, const time::RationalTime& at, int height) {
+    if (path.empty() || height <= 0) {
         return {};
     }
-    const Key key{media.value(), at.frames(), at.rate().num(), at.rate().den(), height};
+    const Key key{path, at.frames(), at.rate().num(), at.rate().den(), height};
 
     std::unique_lock lock{mutex_};
     if (const auto found = cache_.find(key); found != cache_.end()) {
@@ -60,7 +59,7 @@ QImage ThumbnailCache::lookup(model::MediaRefId media, const std::string& path,
         return {};
     }
     inFlight_.emplace(key, true);
-    queue_.push_back(Request{key, path, at});
+    queue_.push_back(Request{key, at});
     if (queue_.size() > kQueueLimit) {
         inFlight_.erase(queue_.front().key);
         queue_.pop_front();
@@ -121,8 +120,8 @@ void ThumbnailCache::run() {
             queue_.pop_back();
         }
 
-        if (request.path != openPath || decoder == nullptr) {
-            auto opened = platform::ffmpeg::openVideoDecoder(request.path);
+        if (request.key.path != openPath || decoder == nullptr) {
+            auto opened = platform::ffmpeg::openVideoDecoder(request.key.path);
             if (!opened) {
                 store(request.key, QImage{});
                 decoder.reset();
@@ -131,7 +130,7 @@ void ThumbnailCache::run() {
                 continue;
             }
             decoder = std::move(*opened);
-            openPath = request.path;
+            openPath = request.key.path;
         }
 
         auto frame = decoder->frameAtTime(request.at);

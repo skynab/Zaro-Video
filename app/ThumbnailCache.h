@@ -12,7 +12,6 @@
 #include <string>
 #include <thread>
 
-#include "zaro/core/model/Ids.h"
 #include "zaro/core/time/RationalTime.h"
 
 namespace zaro::app {
@@ -42,13 +41,18 @@ public:
     ThumbnailCache(const ThumbnailCache&) = delete;
     ThumbnailCache& operator=(const ThumbnailCache&) = delete;
 
-    /// The frame at `at` in the media at `path`, `height` logical pixels tall.
+    /// The frame at `at` in the file at `path`, `height` logical pixels tall.
     ///
     /// Null on a miss, with the decode queued. `at` is in the media's own
     /// timebase; the caller is expected to have quantised it, because a
     /// thumbnail per pixel of scroll is a cache that never hits.
-    [[nodiscard]] QImage lookup(model::MediaRefId media, const std::string& path,
-                                const time::RationalTime& at, int height);
+    ///
+    /// Addressed by path rather than by media id, so that the answer is about
+    /// the file actually read. A media reference resolves to different files at
+    /// different times -- its proxy when proxies are on, its own path when they
+    /// are not, a new path after a relink -- and keying on the reference would
+    /// hand back the original's frames the moment somebody switched to proxies.
+    [[nodiscard]] QImage lookup(const std::string& path, const time::RationalTime& at, int height);
 
     /// Give up on everything queued but not yet decoded.
     ///
@@ -68,9 +72,9 @@ signals:
 
 private:
     struct Key {
-        std::uint64_t media{0};
+        std::string path;
         std::int64_t frame{0};
-        /// The timebase the frame number is counted in. Two media at the same
+        /// The timebase the frame number is counted in. Two files at the same
         /// frame number are at different times unless this matches too.
         std::int64_t rateNum{0};
         std::int64_t rateDen{0};
@@ -81,7 +85,6 @@ private:
 
     struct Request {
         Key key;
-        std::string path;
         time::RationalTime at;
     };
 

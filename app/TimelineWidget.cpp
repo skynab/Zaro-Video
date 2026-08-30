@@ -1262,8 +1262,12 @@ bool TimelineWidget::paintFilmstrip(QPainter& painter, const model::Clip& clip,
         if (at < clip.start()) {
             continue;
         }
+        // Through the project rather than off the media reference, so a
+        // filmstrip reads the proxy when proxies are on. Decoding the original
+        // for a picture 50 pixels tall is the exact cost proxies exist to
+        // avoid, and it is paid on every clip in view.
         const QImage frame =
-            thumbnails_->lookup(clip.activeSource(), media->path, clip.baseSourceTimeAt(at),
+            thumbnails_->lookup(project_->resolvedPath(*media), clip.baseSourceTimeAt(at),
                                 static_cast<int>(field.height()));
         if (frame.isNull()) {
             continue;

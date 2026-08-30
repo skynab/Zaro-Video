@@ -131,9 +131,6 @@ public:
     /// the cut, and nothing about a subclip changes what any sequence renders.
     SubclipId addSubclip(Subclip subclip);
     bool removeSubclip(SubclipId id);
-    /// Mutable access, for the few things that change a media reference in
-    /// place -- attaching a proxy, relinking a moved file. Not for editing:
-    /// anything that changes the cut goes through a command.
     /// Whether putting `inner` inside `outer` would make a cycle.
     ///
     /// A sequence containing itself, directly or through any chain of nests, is
@@ -143,6 +140,9 @@ public:
     /// person who made it gets no explanation either way.
     [[nodiscard]] bool nestingWouldCycle(SequenceId outer, SequenceId inner) const;
 
+    /// Mutable access, for the few things that change a media reference in
+    /// place -- attaching a proxy, relinking a moved file. Not for editing:
+    /// anything that changes the cut goes through a command.
     [[nodiscard]] std::vector<MediaRef>& mediaMutable() noexcept { return media_; }
     [[nodiscard]] const std::vector<Sequence>& sequences() const noexcept { return sequences_; }
 
