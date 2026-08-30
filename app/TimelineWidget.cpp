@@ -1850,16 +1850,72 @@ void TimelineWidget::trackHeaderMenu(model::TrackId trackId, const QPoint& at) {
     }
 }
 
+void TimelineWidget::clipMenu(const ui::TimelineLayout::Hit& hit, const QPoint& at) {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(hit.track);
+    const auto row = rowFor(hit.track);
+    if (track == nullptr || !row) {
+        return;
+    }
+    const model::Clip* clip = track->find(hit.clip);
+    if (clip == nullptr) {
+        return;
+    }
+
+    // The pointer decides what the menu is about. Selecting before the menu
+    // opens also means the item can act on the selection, which is what every
+    // other route into this operation already does.
+    selectOnly(hit);
+
+    // Only a piece of decoded picture has scene changes in it. A shape, a
+    // title and a nested sequence are all generated rather than shot, and a
+    // sound has no picture at all -- so the item is absent rather than
+    // disabled, because there is nothing about them it could ever do.
+    const bool analysable =
+        row->kind == model::TrackKind::Video && !clip->nested.isValid() && !clip->graphic.isSet();
+
+    QMenu menu;
+    QAction* detect = nullptr;
+    if (analysable) {
+        detect = menu.addAction(QStringLiteral("Detect Cuts in This Clip"));
+        // Refused by the edit rather than half-done, and an analysis that
+        // decodes every frame before being told no is a long wait for nothing.
+        detect->setEnabled(!track->isLocked());
+    }
+    if (menu.isEmpty()) {
+        return;
+    }
+
+    if (const QAction* picked = menu.exec(at); picked != nullptr && picked == detect) {
+        emit detectScenesRequested();
+    }
+}
+
 void TimelineWidget::contextMenuEvent(QContextMenuEvent* event) {
     const HeaderHit hit = headerHitTest(event->pos().x(), event->pos().y());
-    if (!hit.track.isValid()) {
+    if (hit.track.isValid()) {
+        // Anywhere in the header, including on the buttons: a right-click on a
+        // control is somebody asking what it does, not pressing it.
+        event->accept();
+        trackHeaderMenu(hit.track, event->globalPos());
+        return;
+    }
+
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
         QWidget::contextMenuEvent(event);
         return;
     }
-    // Anywhere in the header, including on the buttons: a right-click on a
-    // control is somebody asking what it does, not pressing it.
+    const auto clip = layout_.hitTest(*seq, event->pos().x(), event->pos().y());
+    if (!clip) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
     event->accept();
-    trackHeaderMenu(hit.track, event->globalPos());
+    clipMenu(*clip, event->globalPos());
 }
 
 void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {

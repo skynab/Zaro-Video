@@ -135,7 +135,8 @@ int main(int argc, char** argv) {
 
     // Empty when nothing was named, and it stays empty: an untitled project
     // has no file until the first Save asks for one.
-    const std::string projectPath = arguments.size() < 2 ? std::string{} : arguments.at(1).toStdString();
+    const std::string projectPath =
+        arguments.size() < 2 ? std::string{} : arguments.at(1).toStdString();
 
     zaro::model::Project project;
     zaro::io::LoadedProject loadedProject{};

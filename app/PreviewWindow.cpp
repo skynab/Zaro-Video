@@ -474,6 +474,10 @@ void PreviewWindow::wireEditingSignals() {
         updateCacheBar();
         updateChrome();
     });
+    // The analysis needs a progress dialog and a way to cancel it, both of
+    // which are the window's, so the timeline asks rather than acts.
+    connect(timeline_, &app::TimelineWidget::detectScenesRequested, this,
+            [this] { static_cast<void>(detectScenes()); });
     connect(timeline_, &app::TimelineWidget::toolChanged, this, [this] { updateChrome(); });
     connect(timeline_, &app::TimelineWidget::snapChanged, this, [this] { updateChrome(); });
     connect(timeline_, &app::TimelineWidget::edited, this, [this] {
@@ -1288,6 +1292,21 @@ bool PreviewWindow::setDelivery(const model::Sequence::Output& output) {
 }
 
 std::int32_t PreviewWindow::detectScenes() {
+    // Checked here as well as in the command, because the command answers zero
+    // to both "nothing to analyse" and "nothing found" and those need
+    // different sentences. Only a piece of decoded picture has scene changes
+    // in it: a shape, a title and a nested sequence are generated rather than
+    // shot, and a sound has no picture at all.
+    const commands::Context context = editContext();
+    const model::Sequence* sequence = context.sequence();
+    const model::Track* on = sequence != nullptr ? sequence->findTrack(context.track) : nullptr;
+    const model::Clip* selected = context.selectedClip();
+    if (selected == nullptr || on == nullptr || on->kind() != model::TrackKind::Video ||
+        selected->nested.isValid() || selected->graphic.isSet()) {
+        app::say(this, "Detect cuts", "Select a video clip to look for cuts in first.");
+        return 0;
+    }
+
     // The dialog is the window's, and the operation's only view of it is a
     // question it asks once a frame: keep going?
     QProgressDialog progress("Looking for scene changes\u2026", "Cancel", 0, 1, this);
@@ -1300,9 +1319,22 @@ std::int32_t PreviewWindow::detectScenes() {
             QCoreApplication::processEvents();
             return !progress.wasCanceled();
         });
+    const bool canceled = progress.wasCanceled();
     progress.reset();
     if (cuts > 0) {
         afterEdit();
+        app::say(this, "Detect cuts",
+                 cuts == 1 ? QStringLiteral("Made 1 cut in this clip.")
+                           : QStringLiteral("Made %1 cuts in this clip.").arg(cuts));
+        return cuts;
+    }
+    // Nothing happened, and from a menu that is indistinguishable from a menu
+    // item that does not work. The two ways of getting here mean different
+    // things, so they are not given the same sentence -- and a cancel is
+    // somebody's own decision, which needs no dialog to confirm it back to
+    // them.
+    if (!canceled) {
+        app::say(this, "Detect cuts", "No scene changes were found in this clip.");
     }
     return cuts;
 }

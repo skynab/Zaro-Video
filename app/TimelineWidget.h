@@ -127,6 +127,13 @@ signals:
     /// Anything that summarises the *view* rather than the model, such as the
     /// cache bar, is recomputed from here rather than on every repaint.
     void viewChanged();
+    /// Cut the selected clip where the picture changes.
+    ///
+    /// A request rather than the edit itself. The analysis decodes every frame
+    /// of the clip, which wants a progress dialog and a way to cancel, and the
+    /// window owns both -- so the timeline says what was asked for and leaves
+    /// the doing to whoever is listening.
+    void detectScenesRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -233,6 +240,12 @@ private:
     /// buttons are quicker once you know which is which; this is where you find
     /// out, and it is the only place Rename is written down.
     void trackHeaderMenu(model::TrackId track, const QPoint& at);
+    /// What a clip can do, on its own right-click.
+    ///
+    /// Selects what was right-clicked first. A menu that acted on the previous
+    /// selection while the pointer sat over a different clip would be acting on
+    /// something other than the thing being pointed at.
+    void clipMenu(const ui::TimelineLayout::Hit& hit, const QPoint& at);
     /// Commit what was typed, or abandon it. Both end the edit.
     void finishRename(bool keep);
 

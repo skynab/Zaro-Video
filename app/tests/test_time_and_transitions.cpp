@@ -4,7 +4,11 @@
 // for what is shared and why.
 
 #include <QCheckBox>
+#include <QContextMenuEvent>
 #include <QDoubleSpinBox>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QTimer>
 #include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
@@ -381,6 +385,126 @@ TEST_CASE("Wipes and slides, through the real compositor", "[gui]") {
     window.renderCache().clear();
     window.monitor()->update();
     QApplication::processEvents();
+}
+
+// The right-click route into scene detection.
+//
+// The detection itself is covered above and headlessly in core/tests; what
+// this covers is the wiring, which is the part the menu adds: that a
+// right-click over a clip offers the item, that picking it asks the window
+// rather than doing nothing, and that the clip under the pointer is the one
+// it ends up aimed at.
+//
+// The menu is modal -- `exec` does not return until it closes -- so the
+// inspection is queued before the event is sent and runs from inside the
+// menu's own event loop. Without that this test would hang rather than fail.
+TEST_CASE("Right-clicking a clip offers to detect its cuts", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto videoClip = videoTrack.clips().front().id;
+    const auto videoRow = timeline->rowFor(videoTrack.id());
+    REQUIRE(videoRow.has_value());
+
+    // Well clear of the track headers, which own the left 150 pixels and have
+    // a right-click menu of their own -- and far enough into the clip that the
+    // hit is its body rather than a trim handle.
+    const auto pointAt = [](const std::optional<zaro::ui::TimelineLayout::Row>& row) {
+        return QPoint(200, row->top + row->height / 2);
+    };
+
+    // What the menu did, filled in from inside its event loop.
+    struct Seen {
+        bool opened{false};
+        bool offered{false};
+        bool enabled{false};
+    };
+
+    // Open the menu, look at it, and pick the item if it is there.
+    const auto rightClick = [&](const QPoint& at, bool choose) {
+        Seen seen;
+        QTimer::singleShot(0, [&] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (menu == nullptr) {
+                return;
+            }
+            seen.opened = true;
+            for (QAction* action : menu->actions()) {
+                if (action->text() != QStringLiteral("Detect Cuts in This Clip")) {
+                    continue;
+                }
+                seen.offered = true;
+                seen.enabled = action->isEnabled();
+                if (choose && action->isEnabled()) {
+                    // Highlighted and then chosen with the keyboard, which is
+                    // the path a person's pick takes. Calling `trigger` instead
+                    // fires the action without going through the menu, so
+                    // `exec` never learns what was picked and returns nothing.
+                    menu->setActiveAction(action);
+                    QKeyEvent pick(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QCoreApplication::sendEvent(menu, &pick);
+                }
+            }
+            if (menu->isVisible()) {
+                menu->close();
+            }
+        });
+        QContextMenuEvent event(QContextMenuEvent::Mouse, at, timeline->mapToGlobal(at));
+        QCoreApplication::sendEvent(timeline, &event);
+        QApplication::processEvents();
+        return seen;
+    };
+
+    // Something else selected first, so that the selection landing on the
+    // right clip is this menu's doing and not what was already true.
+    timeline->selectOnly({}, {});
+    QApplication::processEvents();
+
+    std::int32_t asked = 0;
+    const auto asking = QObject::connect(
+        timeline, &zaro::app::TimelineWidget::detectScenesRequested, [&asked] { ++asked; });
+    // Read from the signal rather than from a getter, because the signal is
+    // what the rest of the window selects on: an accessor could agree with the
+    // widget's own field while nothing downstream had been told.
+    zaro::model::ClipId announced;
+    const auto selecting = QObject::connect(
+        timeline, &zaro::app::TimelineWidget::selectionChanged,
+        [&announced](zaro::model::TrackId, zaro::model::ClipId clip) { announced = clip; });
+
+    const Seen video = rightClick(pointAt(videoRow), true);
+    QObject::disconnect(asking);
+    QObject::disconnect(selecting);
+
+    if (!video.opened) {
+        zaro::app::testing::failf("right-clicking a clip opened no menu\n");
+    }
+    if (!video.offered) {
+        zaro::app::testing::failf("the clip menu did not offer to detect cuts\n");
+    }
+    if (!video.enabled) {
+        zaro::app::testing::failf("detect cuts was offered but greyed out on an unlocked track\n");
+    }
+    if (asked != 1) {
+        zaro::app::testing::failf("picking detect cuts asked for it %d times, wanted 1\n", asked);
+    }
+    if (announced != videoClip) {
+        zaro::app::testing::failf("the right-clicked clip did not become the selected one\n");
+    }
+
+    // Sound has no picture to analyse, so the item is absent rather than
+    // offered and refused.
+    if (!sequence.audioTracks().empty() && !sequence.audioTracks().front().clips().empty()) {
+        const auto audioRow = timeline->rowFor(sequence.audioTracks().front().id());
+        REQUIRE(audioRow.has_value());
+        const Seen audio = rightClick(pointAt(audioRow), false);
+        if (audio.offered) {
+            zaro::app::testing::failf("the audio clip menu offered to detect cuts in it\n");
+        }
+    }
+
+    std::printf("  clip menu: detect cuts offered on picture, absent on sound\n");
 }
 
 // Scene edit detection, over the real footage.
