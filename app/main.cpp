@@ -35,7 +35,30 @@ int main(int argc, char** argv) {
     // read from a redirected file; fully buffered, that file stays empty until
     // the process exits, so a run that hangs looks exactly like a run that has
     // not started -- which cost an hour of looking in the wrong place once.
+    //
+    // Windows will not take that call as written. The UCRT validates setvbuf's
+    // arguments and, on failure, runs the invalid-parameter handler -- which in
+    // a release build terminates the process outright with 0xC0000409 rather
+    // than returning an error. Two things here trip it: a size of 0 is outside
+    // the documented 2..INT_MAX range that _IOLBF and _IOFBF require, and this
+    // target is WIN32_EXECUTABLE, so a normal launch has no console attached
+    // and stdout is not open at all. The process died before QApplication was
+    // built, with nothing on any stream to say why. glibc and Apple's libc both
+    // read a null buffer with size 0 as "line buffer, pick your own size", so
+    // the call is fine everywhere else.
+    //
+    // _IONBF is the honest equivalent here: it ignores the size argument, and
+    // it keeps the property this call is for -- output is visible as it is
+    // written, not held until exit. Windows has no line-buffered mode to ask
+    // for regardless; the UCRT treats _IOLBF as _IOFBF, so the original call
+    // would have given full buffering even had it succeeded.
+#ifdef _WIN32
+    if (stdout != nullptr && _fileno(stdout) >= 0) {
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+    }
+#else
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
     QApplication application(argc, argv);
     // Before any window exists: the palette and the sheet decide what every
     // widget looks like the moment it is constructed, and a window built first
