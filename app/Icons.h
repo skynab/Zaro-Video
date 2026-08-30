@@ -26,6 +26,14 @@ enum class Glyph {
     Split,         ///< Razor at the playhead
     CrossFade,     ///< Add dissolve
     Link,          ///< Picture and sound edited as one
+    Sparkle,       ///< A clip carrying effects: the fourth filled glyph
+    Eye,           ///< A video track that is on
+    EyeSlash,      ///< A video track that is muted
+    SpeakerHigh,   ///< An audio track that is on
+    SpeakerSlash,  ///< An audio track that is muted
+    LockOpen,      ///< A track that can be edited
+    LockClosed,    ///< A track that cannot
+    Close,         ///< Remove the track
     Plus,          ///< Zoom in
     Minus,         ///< Zoom out
     Heart,         ///< Support: the one filled glyph, as the design draws it

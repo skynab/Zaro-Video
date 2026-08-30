@@ -21,6 +21,8 @@
 
 namespace zaro::app {
 
+class ThumbnailCache;
+
 /// The timeline panel.
 ///
 /// All geometry lives in ui::TimelineLayout, which has no toolkit in it and is
@@ -79,6 +81,11 @@ public:
     void addMarkerAtPlayhead();
     void selectAll();
 
+    /// Where video clips get their filmstrip frames. Not owned; may be null,
+    /// in which case clips are drawn as plain blocks. Set by the window, which
+    /// is also what shares one cache between the panels that want frames.
+    void setThumbnailCache(ThumbnailCache* cache);
+
     /// Peaks for a media reference, drawn on its audio clips. Shared because
     /// generation happens on another thread and several clips may cite the
     /// same source.
@@ -136,8 +143,24 @@ private:
     void paintClips(QPainter& painter, const ui::TimelineLayout::Row& row);
     void paintKeyframes(QPainter& painter, const model::Clip& clip, const QRectF& body);
     void dragKeyframeTo(int x);
-    void paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body);
+    /// `colour` is the clip family's own, so an audio clip's envelope is drawn
+    /// in the same teal as the strip above it.
+    void paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body,
+                       const QColor& colour);
+    /// Frames across the body of a video clip.
+    ///
+    /// Returns whether anything was drawn, because the clip's name has to be
+    /// legible over a picture and that costs a scrim it does not otherwise
+    /// need.
+    bool paintFilmstrip(QPainter& painter, const model::Clip& clip, const QRectF& body);
+    /// Throw away filmstrip decodes queued for a zoom level that has changed.
+    void discardQueuedThumbnails();
     void paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row);
+    /// The eye/speaker, the lock and the remove button in a track's header.
+    void paintTrackControls(QPainter& painter, const ui::TimelineLayout::Row& row,
+                            const model::Track& track);
+    /// The box above the headers, alongside the ruler: where tracks are added.
+    void paintHeaderCorner(QPainter& painter);
     void paintMarkers(QPainter& painter);
     void paintPlayhead(QPainter& painter);
     /// The alignment guide: where the current gesture latched, drawn across
@@ -167,6 +190,37 @@ private:
     /// it in makes a scrub of less than the snap radius do nothing at all.
     [[nodiscard]] time::RationalTime maybeSnap(const time::RationalTime& t, model::ClipId ignoring,
                                                bool includePlayhead = true);
+
+    /// The controls a track header carries, and the ones in the corner above
+    /// them. Hit-tested here rather than in TimelineLayout: they are buttons on
+    /// a widget, and their geometry is a fact about how this panel is drawn
+    /// rather than about how time maps to pixels.
+    enum class HeaderControl { None, Mute, Lock, Remove };
+    enum class CornerControl { None, AddVideo, AddAudio };
+
+    struct HeaderHit {
+        model::TrackId track;
+        HeaderControl control{HeaderControl::None};
+    };
+
+    [[nodiscard]] QRect headerControlRect(const ui::TimelineLayout::Row& row,
+                                          HeaderControl control) const;
+    [[nodiscard]] QRect cornerControlRect(CornerControl control) const;
+    [[nodiscard]] HeaderHit headerHitTest(int x, int y) const;
+    [[nodiscard]] CornerControl cornerHitTest(int x, int y) const;
+    /// Whichever header control the pointer is over, so it can light up. A
+    /// button that does not react to being pointed at does not look like one.
+    void updateHeaderHover(int x, int y);
+
+    /// A track's own settings, each one command on the stack.
+    ///
+    /// `muted` is what an eye means on a video track and what a speaker means
+    /// on an audio one -- the model keeps one flag, because "do not include
+    /// this track" is one idea whichever sense it is about.
+    void toggleTrackMute(model::TrackId track);
+    void toggleTrackLock(model::TrackId track);
+    void removeTrack(model::TrackId track);
+    void addTrack(model::TrackKind kind);
 
     /// Cut a named track at a named time, which is what the blade does: the
     /// playhead is not involved, and neither is the selection.
@@ -301,7 +355,10 @@ private:
         time::RationalTime time{};
     };
     BladeMark bladeMark_;
+    HeaderHit hoverHeader_;
+    CornerControl hoverCorner_{CornerControl::None};
     std::map<std::uint64_t, std::shared_ptr<const media::Waveform>> waveforms_;
+    ThumbnailCache* thumbnails_{nullptr};
     /// Fit once the widget knows how wide it really is.
     bool pendingFit_{false};
 };

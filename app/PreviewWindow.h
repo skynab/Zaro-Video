@@ -115,6 +115,7 @@
 #include "StemsPanel.h"
 #include "SupportButton.h"
 #include "Theme.h"
+#include "ThumbnailCache.h"
 #include "TimelineWidget.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
@@ -876,6 +877,10 @@ private:
     app::ProgramMonitor* monitor_{nullptr};
     app::MaskOverlay* maskOverlay_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
+    /// Frames for the timeline's filmstrips. Owned by the window rather than by
+    /// the timeline so that the decoder thread it holds is torn down with the
+    /// window, in a known order, rather than from inside a widget destructor.
+    app::ThumbnailCache* thumbnails_{nullptr};
     app::EffectControls* effects_{nullptr};
     app::ScopesPanel* scopes_{nullptr};
     app::MixerPanel* mixer_{nullptr};

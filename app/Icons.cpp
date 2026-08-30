@@ -158,6 +158,91 @@ QPainterPath pathFor(Glyph glyph) {
             path.addRoundedRect(QRectF(6.6, 5.2, 8.0, 5.6), 2.8, 2.8);
             return path;
 
+        case Glyph::Sparkle:
+            // A four-pointed star with concave sides, as Phosphor draws it.
+            // Each arm is a quadratic pulled in towards the centre, which is
+            // what keeps it reading as a sparkle rather than as a plus sign at
+            // the eleven pixels this is drawn at on a clip.
+            path.moveTo(8.0, 1.4);
+            path.quadTo(9.0, 6.9, 14.6, 8.0);
+            path.quadTo(9.0, 9.1, 8.0, 14.6);
+            path.quadTo(7.0, 9.1, 1.4, 8.0);
+            path.quadTo(7.0, 6.9, 8.0, 1.4);
+            path.closeSubpath();
+            return path;
+
+        case Glyph::Eye:
+        case Glyph::EyeSlash: {
+            // The almond, drawn as two arcs meeting at the corners, with a
+            // pupil inside it. The slashed variant is the same eye with a
+            // stroke across it -- same shape, so the two read as one control
+            // in two states rather than as two different icons.
+            path.moveTo(1.3, 8.0);
+            path.quadTo(4.6, 3.1, 8.0, 3.1);
+            path.quadTo(11.4, 3.1, 14.7, 8.0);
+            path.quadTo(11.4, 12.9, 8.0, 12.9);
+            path.quadTo(4.6, 12.9, 1.3, 8.0);
+            path.closeSubpath();
+            path.addEllipse(QPointF(8.0, 8.0), 2.1, 2.1);
+            if (glyph == Glyph::EyeSlash) {
+                path.moveTo(2.9, 13.1);
+                path.lineTo(13.1, 2.9);
+            }
+            return path;
+        }
+
+        case Glyph::SpeakerHigh:
+        case Glyph::SpeakerSlash: {
+            // The cone: a rectangle at the throat opening out into a trapezium.
+            // On is followed by one arc of sound, off by a cross -- the arc and
+            // the cross occupy the same space, so the label does not shift when
+            // the track is muted.
+            path.moveTo(2.0, 6.2);
+            path.lineTo(4.8, 6.2);
+            path.lineTo(8.3, 3.0);
+            path.lineTo(8.3, 13.0);
+            path.lineTo(4.8, 9.8);
+            path.lineTo(2.0, 9.8);
+            path.closeSubpath();
+            if (glyph == Glyph::SpeakerHigh) {
+                path.moveTo(10.8, 5.9);
+                path.quadTo(12.5, 8.0, 10.8, 10.1);
+            } else {
+                path.moveTo(10.9, 6.2);
+                path.lineTo(14.1, 9.8);
+                path.moveTo(14.1, 6.2);
+                path.lineTo(10.9, 9.8);
+            }
+            return path;
+        }
+
+        case Glyph::LockOpen:
+        case Glyph::LockClosed:
+            // The body, then the shackle above it. Open swings the shackle to
+            // the right rather than lifting it, which is the difference that
+            // survives being drawn at thirteen pixels.
+            path.addRoundedRect(QRectF(3.4, 7.2, 9.2, 6.6), 1.6, 1.6);
+            if (glyph == Glyph::LockClosed) {
+                path.moveTo(5.5, 7.2);
+                path.lineTo(5.5, 5.2);
+                path.quadTo(5.5, 2.6, 8.0, 2.6);
+                path.quadTo(10.5, 2.6, 10.5, 5.2);
+                path.lineTo(10.5, 7.2);
+            } else {
+                path.moveTo(5.5, 7.2);
+                path.lineTo(5.5, 5.2);
+                path.quadTo(5.5, 2.6, 8.0, 2.6);
+                path.quadTo(10.5, 2.6, 10.5, 4.6);
+            }
+            return path;
+
+        case Glyph::Close:
+            path.moveTo(3.8, 3.8);
+            path.lineTo(12.2, 12.2);
+            path.moveTo(12.2, 3.8);
+            path.lineTo(3.8, 12.2);
+            return path;
+
         case Glyph::Plus:
             path.moveTo(8.0, 3.2);
             path.lineTo(8.0, 12.8);
@@ -364,10 +449,12 @@ QPainterPath pathFor(Glyph glyph) {
     return path;
 }
 
-/// The one glyph the design draws filled. Phosphor calls this weight `ph-fill`,
-/// and a heart is the shape that reads as an outline the least.
+/// The glyphs the design draws filled. Phosphor calls this weight `ph-fill`,
+/// and each of these is a shape that reads as an outline the least -- a heart,
+/// three dots, a half-filled disc, a sparkle.
 bool isFilled(Glyph glyph) {
-    return glyph == Glyph::Heart || glyph == Glyph::DotsThree || glyph == Glyph::CircleHalf;
+    return glyph == Glyph::Heart || glyph == Glyph::DotsThree || glyph == Glyph::CircleHalf ||
+           glyph == Glyph::Sparkle;
 }
 
 }  // namespace

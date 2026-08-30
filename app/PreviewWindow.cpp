@@ -124,6 +124,8 @@ void PreviewWindow::createPanels() {
     bars_.scrubber = new QSlider(Qt::Horizontal, this);
 
     timeline_ = adopting(new app::TimelineWidget(this));
+    thumbnails_ = new app::ThumbnailCache(this);
+    timeline_->setThumbnailCache(thumbnails_);
     effects_ = adopting(new app::EffectControls(this));
     connect(effects_, &app::EffectControls::drawMaskRequested, maskOverlay_,
             &app::MaskOverlay::setDrawing);
@@ -2094,6 +2096,14 @@ void PreviewWindow::placeFromSource(edit::PlaceMode mode) {
 }
 
 void PreviewWindow::startWaveforms() {
+    // Frames cached against the old project's media are about to be wrong, or
+    // about to be about files that no longer exist. This runs whenever the
+    // media changes -- a new project, an open, a switch to proxies -- which is
+    // exactly when the filmstrips need re-reading too.
+    if (thumbnails_ != nullptr) {
+        thumbnails_->clear();
+    }
+
     // A scan may already be running -- reopening the media does this, which
     // is what switching to proxies does. Assigning over a joinable thread
     // is an immediate std::terminate, and that is exactly how it presented:

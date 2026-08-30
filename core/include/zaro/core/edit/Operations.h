@@ -664,6 +664,16 @@ struct TrackState {
                                                         const model::AudioEq& eq,
                                                         const model::Compressor& compressor);
 
+/// Lock a track, and choose whether it moves under a ripple.
+///
+/// Separate from `makeSetTrackState`, which is the mixer strip: locking is
+/// about editing rather than about the mix, and the two are pressed by
+/// different people at different times. Undoing a lock should not also undo the
+/// fader move that happened to come before it.
+[[nodiscard]] Result<CommandPtr> makeSetTrackLock(model::Project& project,
+                                                  model::SequenceId sequence, model::TrackId track,
+                                                  bool locked, bool syncLocked);
+
 [[nodiscard]] Result<CommandPtr> makeAddTrack(model::Project& project, model::SequenceId sequence,
                                               model::TrackKind kind, std::string name);
 

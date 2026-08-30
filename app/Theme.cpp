@@ -26,6 +26,11 @@ constexpr std::array<QRgb, 9> kNeutralRamp{0xfff3f5fe, 0xffe4e7f5, 0xffcfd3e5,
 constexpr std::array<QRgb, 9> kAccentRamp{0xfff5f4ff, 0xffe7e5fe, 0xffd2cefd,
                                           0xffb5abfc, 0xff968ae0, 0xff796cbf,
                                           0xff5d5294, 0xff423a6a, 0xff2b2741};
+// Generated at the accent ramp's own lightness steps, on the design's teal
+// chroma curve -- so step 400 here and step 400 there sit at the same value,
+// and the two families differ only in hue.
+constexpr std::array<QRgb, 9> kAudioRamp{0xffeaf9fb, 0xffcbf0f5, 0xff90e4ee, 0xff57cbd7, 0xff40a9b4,
+                                         0xff238995, 0xff0e6a74, 0xff064c54, 0xff003238};
 
 /// Step 100..900 to an index into a ramp, clamped.
 int rampIndex(int step) {
@@ -60,6 +65,9 @@ QColor accent(int step) {
 }
 QColor neutral(int step) {
     return QColor::fromRgba(kNeutralRamp[static_cast<std::size_t>(rampIndex(step))]);
+}
+QColor audio(int step) {
+    return QColor::fromRgba(kAudioRamp[static_cast<std::size_t>(rampIndex(step))]);
 }
 
 QColor mix(const QColor& under, const QColor& over, double amount) {

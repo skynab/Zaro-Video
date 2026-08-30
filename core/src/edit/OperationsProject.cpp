@@ -177,6 +177,28 @@ Result<CommandPtr> makeSetTrackState(Project& project, model::SequenceId sequenc
                        });
 }
 
+Result<CommandPtr> makeSetTrackLock(Project& project, model::SequenceId sequenceId, TrackId trackId,
+                                    bool locked, bool syncLocked) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (sequence->findTrack(trackId) == nullptr) {
+        return Error{ErrorCode::NotFound, "no such track in this sequence"};
+    }
+    // Not merged with anything: a lock is a deliberate press, and coalescing it
+    // with the press before would make one undo give back two decisions.
+    return makeCommand(sequenceId, locked ? "Lock track" : "Unlock track", {},
+                       [trackId, locked, syncLocked](Sequence& seq) {
+                           Track* track = seq.findTrack(trackId);
+                           if (track == nullptr) {
+                               return;
+                           }
+                           track->setLocked(locked);
+                           track->setSyncLocked(syncLocked);
+                       });
+}
+
 Result<CommandPtr> makeSetTrackProcessing(Project& project, model::SequenceId sequenceId,
                                           TrackId trackId, const model::AudioEq& eq,
                                           const model::Compressor& compressor) {

@@ -45,8 +45,12 @@ Project newProject(const std::string& sequenceName) {
     sequence.setSize(1920, 1080);
     // One of each. A timeline with no tracks has nowhere to drop anything, and
     // the first thing anybody does is drop something.
-    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Video, "V1");
-    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Audio, "A1");
+    //
+    // Named for what goes on them rather than for where they sit: the timeline
+    // already draws the position as a badge, so calling the track "V1" as well
+    // spends the header on saying the same thing twice.
+    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Video, "Main");
+    sequence.addTrack(project.ids().next<TrackTag>(), TrackKind::Audio, "Dialogue");
     const SequenceId id = project.addSequence(std::move(sequence));
     project.setActiveSequence(id);
     return project;

@@ -36,6 +36,14 @@ namespace zaro::app::theme {
 [[nodiscard]] QColor accent();
 [[nodiscard]] QColor accent(int step);
 [[nodiscard]] QColor neutral(int step);
+/// The audio family: a teal ramp on the same lightness scale as the other two.
+///
+/// A third hue rather than a shade of the accent, because sound and picture is
+/// the one distinction on the timeline that has to survive being glanced at.
+/// Teal and the accent's blurple differ in hue *and* in value, so they stay
+/// separable under deuteranopia and protanopia -- which a lighter blurple
+/// against a darker one does not.
+[[nodiscard]] QColor audio(int step);
 
 /// Mix `over` into `under` by `amount` (0..1). The stylesheet needs literal
 /// colours, so every blend the design expresses as `color-mix` is resolved

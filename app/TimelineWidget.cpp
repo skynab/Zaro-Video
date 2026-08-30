@@ -1,10 +1,12 @@
 #include "TimelineWidget.h"
 
 #include <QEvent>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -17,6 +19,7 @@
 
 #include "Icons.h"
 #include "Theme.h"
+#include "ThumbnailCache.h"
 
 namespace zaro::app {
 namespace {
@@ -29,9 +32,11 @@ const QColor kBackground = theme::bg();
 const QColor kRulerBackground = theme::mix(theme::surface(), theme::bg(), 0.40);
 const QColor kHeaderBackground = theme::mix(theme::surface(), theme::bg(), 0.55);
 const QColor kVideoLane = theme::mix(theme::surface(), theme::bg(), 0.46);
-const QColor kAudioLane = theme::mix(theme::surface(), theme::bg(), 0.72);
+// The audio lane carries a trace of its own family, so which half of the
+// timeline you are looking at reads before any one clip in it does.
+const QColor kAudioLane =
+    theme::mix(theme::mix(theme::surface(), theme::bg(), 0.72), theme::audio(600), 0.08);
 const QColor kGridLine = theme::textAt(0.14);
-const QColor kSelectedOutline = theme::accent(300);
 const QColor kBand = theme::accent(400);
 // The alignment guide and the blade's own line. Both in the accent, because
 // both are the interface saying "here", and told apart by how they are drawn
@@ -39,19 +44,34 @@ const QColor kBand = theme::accent(400);
 const QColor kSnapGuide = theme::accent(300);
 const QColor kBladeLine = theme::accent(200);
 const QColor kPlayhead = theme::accent(200);
-// Green, and only green: a bar with green, yellow and red in it is three
+// One colour, not three: a bar with green, yellow and red in it is three
 // claims, and only one of them -- "this will play" -- is one we can make. The
-// one colour the system does not supply, because it is the one that is not
-// decoration.
-const QColor kCachedSpan{92, 176, 108};
+// design spends the accent on it, which is also what keeps the ruler to the two
+// hues the rest of the timeline is drawn from.
+const QColor kCachedSpan = theme::accent(500);
 const QColor kKeyframe = theme::neutral(200);
 const QColor kKeyframeHeld = theme::accent(300);
 const QColor kKeyframeOutline = theme::bg();
-const QColor kText = theme::text();
 const QColor kDimText = theme::textAt(0.45);
-const QColor kWaveform = theme::accent(300);
 const QColor kTransition = theme::accent(300);
 const QColor kTrackFlag = theme::accent(400);
+// The V1/A2 badge in a track header, in its own family's colour.
+const QColor kVideoTrackId = theme::accent(400);
+const QColor kAudioTrackId = theme::audio(400);
+
+// A header control's hit box, and the air around the row of them. Bigger than
+// the glyph inside it: thirteen pixels of icon is a target nobody hits, and the
+// box is what the pointer is actually aiming at.
+constexpr int kControlSize = 17;
+constexpr int kControlMargin = 6;
+/// Height of the pills in the corner box, and the gap between them.
+constexpr int kPillHeight = 19;
+constexpr int kPillGap = 5;
+/// What a badge is shadowed with when it sits over a picture.
+const QColor kBadgeShadow{0, 0, 0, 170};
+
+/// The mark a track carries when it will not shift under a ripple.
+const QString kSyncUnlocked = QStringLiteral("\u2226");
 
 /// Marker colours, indexed by the marker's own colour field. The model stores
 /// "the green one" rather than a colour value, so the palette can change
@@ -67,22 +87,27 @@ const QColor kMarkerPalette[] = {
 /// -- are not footage and reading them as footage is the mistake the strip is
 /// there to prevent: a title track that looks like a video track is a track
 /// whose clips you go looking for the media of.
+///
+/// Four things rather than three: the outline a selected clip gets belongs to
+/// the family too, because an accent-coloured ring around a teal clip is the
+/// one moment the two palettes would touch.
 struct ClipPaint {
     QColor body;
     QColor strip;
     QColor label;
+    QColor ring;
 };
 
 ClipPaint clipPaint(model::TrackKind kind, const model::Clip& clip) {
     if (clip.graphic.kind != model::GraphicKind::None) {
-        return {theme::neutral(900), theme::neutral(500), theme::neutral(200)};
+        return {theme::neutral(900), theme::neutral(500), theme::neutral(200), theme::neutral(300)};
     }
     if (kind == model::TrackKind::Audio) {
-        return {theme::mix(theme::bg(), theme::accent(900), 0.85), theme::accent(500),
-                theme::accent(200)};
+        return {theme::mix(theme::bg(), theme::audio(900), 0.85), theme::audio(400),
+                theme::audio(200), theme::audio(300)};
     }
     return {theme::mix(theme::bg(), theme::accent(800), 0.85), theme::accent(400),
-            theme::accent(100)};
+            theme::accent(100), theme::accent(300)};
 }
 
 /// The link badge, cached by colour.
@@ -98,6 +123,17 @@ const QPixmap& linkBadge(const QColor& ink) {
     auto found = cache.find(key);
     if (found == cache.end()) {
         found = cache.emplace(key, icons::pixmap(icons::Glyph::Link, 11, ink)).first;
+    }
+    return found->second;
+}
+
+/// The effects badge, cached the same way and for the same reason.
+const QPixmap& effectsBadge(const QColor& ink) {
+    static std::map<QRgb, QPixmap> cache;
+    const QRgb key = ink.rgba();
+    auto found = cache.find(key);
+    if (found == cache.end()) {
+        found = cache.emplace(key, icons::pixmap(icons::Glyph::Sparkle, 11, ink)).first;
     }
     return found->second;
 }
@@ -187,6 +223,7 @@ void TimelineWidget::zoomToFit() {
     if (duration.frames() > 0) {
         layout_.zoomToFit(duration);
     }
+    discardQueuedThumbnails();
     emit viewChanged();
     update();
 }
@@ -197,6 +234,7 @@ void TimelineWidget::zoomBy(double factor) {
         return;
     }
     layout_.zoomBy(factor, width() / 2.0, seq->frameRate());
+    discardQueuedThumbnails();
     emit viewChanged();
     update();
 }
@@ -232,6 +270,7 @@ void TimelineWidget::setZoomFraction(double fraction) {
     // Through zoomBy rather than by setting the metric, so the frame under the
     // middle of the view stays where it is.
     layout_.zoomBy(wanted / current, width() / 2.0, seq->frameRate());
+    discardQueuedThumbnails();
     emit viewChanged();
     update();
 }
@@ -311,6 +350,8 @@ void TimelineWidget::paintEvent(QPaintEvent* /*event*/) {
 
     paintTracks(painter);
     paintRuler(painter);
+    // After the ruler, which fills the full width and would paint over it.
+    paintHeaderCorner(painter);
     // Under the playhead, over the clips: the guide is about where an edit is
     // going, and the playhead is where the picture is. When they coincide --
     // which is the whole point of snapping to it -- the playhead should be the
@@ -402,6 +443,7 @@ void TimelineWidget::paintRuler(QPainter& painter) {
     // Start on a multiple of the step, so labels do not crawl as you scroll.
     const std::int64_t first = (visible.start().frames() / step.frames()) * step.frames();
     const bool dropFrame = time::supportsDropFrame(rate);
+    const bool withHours = seq.duration().toSecondsDouble() >= 3600.0;
 
     QFont font = painter.font();
     font.setPointSizeF(9.5);
@@ -417,8 +459,19 @@ void TimelineWidget::paintRuler(QPainter& painter) {
         painter.setPen(kGridLine);
         painter.drawLine(QPointF(x, metrics.rulerHeight - 6), QPointF(x, metrics.rulerHeight));
 
+        // Minutes and seconds, not the full timecode. The ruler is for reading
+        // position at a glance; the frame-accurate answer is in the status
+        // line, and four fields at this size is a smear rather than a number.
+        // Hours come back only once the cut is long enough to need them --
+        // without that, a two-hour sequence labels 05:00 twice.
         const time::Timecode code = time::timecodeFromFrames(frame, rate, dropFrame);
-        const QString label = QString::fromStdString(code.toString());
+        const QString label = withHours ? QStringLiteral("%1:%2:%3")
+                                              .arg(code.hours)
+                                              .arg(code.minutes, 2, 10, QLatin1Char('0'))
+                                              .arg(code.seconds, 2, 10, QLatin1Char('0'))
+                                        : QStringLiteral("%1:%2")
+                                              .arg(code.minutes, 2, 10, QLatin1Char('0'))
+                                              .arg(code.seconds, 2, 10, QLatin1Char('0'));
         painter.setPen(kDimText);
         painter.drawText(QPointF(x + 4, fontMetrics.ascent() + 3), label);
     }
@@ -493,6 +546,17 @@ void TimelineWidget::paintTracks(QPainter& painter) {
     const model::Sequence& seq = *sequence();
     const auto& metrics = layout_.metrics();
 
+    // The header's two faces, worked out once rather than per row: the mono one
+    // the V1/A2 badge is set in, and whatever the widget was already using for
+    // the track's name. `A9` sizes the badge column, so the names line up down
+    // the header instead of stepping in and out with the digit.
+    const QFont nameFont = painter.font();
+    QFont badgeFont = nameFont;
+    badgeFont.setStyleHint(QFont::Monospace);
+    badgeFont.setFamily(QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+    badgeFont.setPointSizeF(9.0);
+    const int badgeWidth = QFontMetrics(badgeFont).horizontalAdvance(QStringLiteral("A9")) + 8;
+
     for (const ui::TimelineLayout::Row& row : layout_.rows(seq)) {
         const QRect lane(metrics.headerWidth, row.top, width() - metrics.headerWidth, row.height);
         painter.fillRect(lane, row.kind == model::TrackKind::Audio ? kAudioLane : kVideoLane);
@@ -509,28 +573,326 @@ void TimelineWidget::paintTracks(QPainter& painter) {
         if (track == nullptr) {
             continue;
         }
-        painter.setPen(track->isMuted() ? kDimText : kText);
-        painter.drawText(header.adjusted(10, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                         QString::fromStdString(track->name()));
+        // The badge first: V1, A2 -- what the track is called in every
+        // conversation about a cut, in the family's colour and in the mono face
+        // the rest of the interface uses for anything positional. The name the
+        // editor gave the track follows it, because that is the part that
+        // changes from project to project.
+        const bool isAudio = row.kind == model::TrackKind::Audio;
+        const QString badge =
+            (isAudio ? QStringLiteral("A") : QStringLiteral("V")) + QString::number(row.index + 1);
 
-        QStringList flags;
-        if (track->isMuted()) {
-            flags << "M";
-        }
-        if (track->isLocked()) {
-            flags << "L";
-        }
+        painter.setFont(badgeFont);
+        painter.setPen(track->isMuted() ? kDimText : (isAudio ? kAudioTrackId : kVideoTrackId));
+        painter.drawText(header.adjusted(10, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, badge);
+        // Put the face back before anything else draws. The mono one belongs to
+        // the badge and to nothing else, and everything downstream -- the flags
+        // below, the clip names on the next row -- derives its font from
+        // whatever the painter is currently carrying.
+        painter.setFont(nameFont);
+
+        // What is left after the buttons on the right and the badge on the
+        // left. Sync lock has no button of its own -- the design gives the
+        // header three, and this is the one nobody presses mid-edit -- so it
+        // takes a sliver of that space as a mark, and only when it is off,
+        // which is the state worth knowing about.
+        int nameRight = metrics.headerWidth - (3 * kControlSize + kControlMargin) - 4;
         if (!track->isSyncLocked()) {
-            // Shown only when off, because on is the default and marking every
-            // track would say nothing.
-            flags << "∦";
-        }
-        if (!flags.isEmpty()) {
+            const int markWidth = QFontMetrics(nameFont).horizontalAdvance(kSyncUnlocked) + 4;
             painter.setPen(kTrackFlag);
-            painter.drawText(header.adjusted(0, 0, -10, 0), Qt::AlignVCenter | Qt::AlignRight,
-                             flags.join(' '));
+            painter.drawText(QRect(nameRight - markWidth, row.top, markWidth, row.height),
+                             Qt::AlignVCenter | Qt::AlignRight, kSyncUnlocked);
+            nameRight -= markWidth;
+        }
+
+        // A new sequence names its tracks V1 and A1, and so do most of the
+        // formats we import -- so the name is very often the badge again.
+        // Drawn only when it says something the badge did not, because "V1 V1"
+        // is a header that has used its width to repeat itself.
+        const QString name = QString::fromStdString(track->name());
+        if (name.compare(badge, Qt::CaseInsensitive) != 0) {
+            const int nameLeft = 10 + badgeWidth;
+            const QRect nameBox(nameLeft, row.top, std::max(0, nameRight - nameLeft), row.height);
+            painter.setPen(track->isMuted() ? kDimText : theme::textAt(0.72));
+            // Elided rather than clipped: a name cut mid-letter reads as a
+            // rendering fault, and an ellipsis reads as "there is more".
+            painter.drawText(
+                nameBox, Qt::AlignVCenter | Qt::AlignLeft,
+                QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, nameBox.width()));
+        }
+
+        paintTrackControls(painter, row, *track);
+    }
+}
+
+void TimelineWidget::paintTrackControls(QPainter& painter, const ui::TimelineLayout::Row& row,
+                                        const model::Track& track) {
+    const bool isAudio = row.kind == model::TrackKind::Audio;
+    const bool muted = track.isMuted();
+    const bool locked = track.isLocked();
+
+    // Three states, and they are not the same three for each button. Mute and
+    // lock are settings, so they read bright when on and quiet when off; remove
+    // is an action, so it is quiet until it is pointed at.
+    struct Button {
+        HeaderControl control;
+        icons::Glyph glyph;
+        bool on;
+    };
+    const Button buttons[] = {
+        {HeaderControl::Mute,
+         isAudio ? (muted ? icons::Glyph::SpeakerSlash : icons::Glyph::SpeakerHigh)
+                 : (muted ? icons::Glyph::EyeSlash : icons::Glyph::Eye),
+         muted},
+        {HeaderControl::Lock, locked ? icons::Glyph::LockClosed : icons::Glyph::LockOpen, locked},
+        {HeaderControl::Remove, icons::Glyph::Close, false},
+    };
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    for (const Button& button : buttons) {
+        const QRect box = headerControlRect(row, button.control);
+        const bool hovered =
+            hoverHeader_.track == row.track && hoverHeader_.control == button.control;
+        if (hovered) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(theme::textAt(0.10));
+            painter.drawRoundedRect(box, 4.0, 4.0);
+            painter.setBrush(Qt::NoBrush);
+        }
+        // An engaged mute or lock is the track saying something about itself,
+        // so it takes the accent. Everything else stays out of the way.
+        const QColor ink = button.on ? kTrackFlag : theme::textAt(hovered ? 0.75 : 0.42);
+        const QPixmap glyph = icons::pixmap(button.glyph, 13, ink);
+        const double scale = glyph.devicePixelRatio();
+        painter.drawPixmap(QPointF(box.center().x() - glyph.width() / scale / 2.0 + 0.5,
+                                   box.center().y() - glyph.height() / scale / 2.0 + 0.5),
+                           glyph);
+    }
+    painter.setRenderHint(QPainter::Antialiasing, false);
+}
+
+void TimelineWidget::paintHeaderCorner(QPainter& painter) {
+    const auto& metrics = layout_.metrics();
+    const QRect corner(0, 0, metrics.headerWidth, metrics.rulerHeight);
+    painter.fillRect(corner, kHeaderBackground);
+    painter.setPen(kGridLine);
+    painter.drawLine(corner.bottomLeft(), corner.bottomRight());
+    painter.drawLine(corner.topRight(), corner.bottomRight());
+
+    QFont pill = painter.font();
+    pill.setPointSizeF(8.5);
+    painter.setFont(pill);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    struct Pill {
+        CornerControl control;
+        QString label;
+        QColor ink;
+    };
+    const Pill pills[] = {
+        {CornerControl::AddVideo, QStringLiteral("Video"), theme::accent(300)},
+        {CornerControl::AddAudio, QStringLiteral("Audio"), theme::audio(300)},
+    };
+
+    for (const Pill& entry : pills) {
+        const QRect box = cornerControlRect(entry.control);
+        const bool hovered = hoverCorner_ == entry.control;
+        QColor edge = entry.ink;
+        edge.setAlphaF(hovered ? 0.75F : 0.38F);
+        if (hovered) {
+            QColor wash = entry.ink;
+            wash.setAlphaF(0.14F);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(wash);
+            painter.drawRoundedRect(box, 5.0, 5.0);
+            painter.setBrush(Qt::NoBrush);
+        }
+        painter.setPen(QPen(edge, 1.0));
+        painter.drawRoundedRect(QRectF(box).adjusted(0.5, 0.5, -0.5, -0.5), 5.0, 5.0);
+
+        const QPixmap plus = icons::pixmap(icons::Glyph::Plus, 9, entry.ink);
+        const double scale = plus.devicePixelRatio();
+        painter.drawPixmap(
+            QPointF(box.left() + 6.0, box.center().y() - plus.height() / scale / 2.0), plus);
+        painter.setPen(entry.ink);
+        painter.drawText(box.adjusted(6 + static_cast<int>(plus.width() / scale) + 3, 0, -5, 0),
+                         Qt::AlignVCenter | Qt::AlignLeft, entry.label);
+    }
+    painter.setRenderHint(QPainter::Antialiasing, false);
+}
+
+QRect TimelineWidget::headerControlRect(const ui::TimelineLayout::Row& row,
+                                        HeaderControl control) const {
+    if (control == HeaderControl::None) {
+        return {};
+    }
+    // Laid out from the right edge inwards, in the order they are pressed most:
+    // remove is the one you least want to hit by accident, so it is the one
+    // furthest from the name your eye starts at.
+    const int slot = control == HeaderControl::Remove ? 1 : control == HeaderControl::Lock ? 2 : 3;
+    const int right = layout_.metrics().headerWidth - kControlMargin;
+    const int top = row.top + (row.height - kControlSize) / 2;
+    return {right - slot * kControlSize, top, kControlSize, kControlSize};
+}
+
+QRect TimelineWidget::cornerControlRect(CornerControl control) const {
+    if (control == CornerControl::None) {
+        return {};
+    }
+    QFont pill = font();
+    pill.setPointSizeF(8.5);
+    const QFontMetrics pillMetrics(pill);
+    // The glyph, the gap after it and the padding either side come to 22.
+    const int videoWidth = pillMetrics.horizontalAdvance(QStringLiteral("Video")) + 22;
+    const int audioWidth = pillMetrics.horizontalAdvance(QStringLiteral("Audio")) + 22;
+    const int top = (layout_.metrics().rulerHeight - kPillHeight) / 2;
+    if (control == CornerControl::AddVideo) {
+        return {8, top, videoWidth, kPillHeight};
+    }
+    return {8 + videoWidth + kPillGap, top, audioWidth, kPillHeight};
+}
+
+TimelineWidget::HeaderHit TimelineWidget::headerHitTest(int x, int y) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || !layout_.isInHeaders(x) || y < layout_.metrics().rulerHeight) {
+        return {};
+    }
+    for (const ui::TimelineLayout::Row& row : layout_.rows(*seq)) {
+        if (y < row.top || y >= row.top + row.height) {
+            continue;
+        }
+        for (const HeaderControl control :
+             {HeaderControl::Mute, HeaderControl::Lock, HeaderControl::Remove}) {
+            if (headerControlRect(row, control).contains(x, y)) {
+                return {row.track, control};
+            }
+        }
+        return {row.track, HeaderControl::None};
+    }
+    return {};
+}
+
+TimelineWidget::CornerControl TimelineWidget::cornerHitTest(int x, int y) const {
+    if (!layout_.isInHeaders(x) || y >= layout_.metrics().rulerHeight) {
+        return CornerControl::None;
+    }
+    for (const CornerControl control : {CornerControl::AddVideo, CornerControl::AddAudio}) {
+        if (cornerControlRect(control).contains(x, y)) {
+            return control;
         }
     }
+    return CornerControl::None;
+}
+
+void TimelineWidget::updateHeaderHover(int x, int y) {
+    const HeaderHit header = headerHitTest(x, y);
+    const CornerControl corner = cornerHitTest(x, y);
+    if (header.track == hoverHeader_.track && header.control == hoverHeader_.control &&
+        corner == hoverCorner_) {
+        return;
+    }
+    hoverHeader_ = header;
+    hoverCorner_ = corner;
+    update();
+}
+
+void TimelineWidget::toggleTrackMute(model::TrackId trackId) {
+    const model::Sequence* seq = sequence();
+    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(trackId);
+    if (track == nullptr) {
+        return;
+    }
+    // The whole strip goes through, not just the flag: the operation sets four
+    // values, and passing defaults for the other three would silently reset a
+    // fader somebody placed.
+    edit::TrackState state;
+    state.muted = !track->isMuted();
+    state.soloed = track->isSoloed();
+    state.gainDb = track->gainDb();
+    state.pan = track->pan();
+    auto built = edit::makeSetTrackState(*project_, sequenceId_, trackId, state);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+}
+
+void TimelineWidget::toggleTrackLock(model::TrackId trackId) {
+    const model::Sequence* seq = sequence();
+    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(trackId);
+    if (track == nullptr) {
+        return;
+    }
+    // Sync lock is carried through untouched. It is a separate idea -- whether
+    // the track shifts under a ripple -- and this button is not about it.
+    auto built = edit::makeSetTrackLock(*project_, sequenceId_, trackId, !track->isLocked(),
+                                        track->isSyncLocked());
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    update();
+}
+
+void TimelineWidget::removeTrack(model::TrackId trackId) {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    auto built = edit::makeRemoveTrack(*project_, sequenceId_, trackId);
+    if (!built) {
+        return;
+    }
+    // Anything selected on the track that is going has to go with it: a
+    // selection pointing at a clip the model no longer holds is a dangling
+    // reference the next edit would follow.
+    std::erase_if(selection_, [trackId](const edit::ClipRef& ref) { return ref.track == trackId; });
+    if (selectedTrack_ == trackId) {
+        selectedTrack_ = {};
+        selected_ = {};
+        selectedLink_ = {};
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    announceSelection();
+    emit edited();
+    emit viewChanged();
+    update();
+}
+
+void TimelineWidget::addTrack(model::TrackKind kind) {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    // Unnamed, in effect: the badge already says V4, and a placeholder name
+    // would only be something to clear before typing a real one.
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+    const std::size_t count =
+        kind == model::TrackKind::Video ? seq->videoTracks().size() : seq->audioTracks().size();
+    const std::string name =
+        std::string{kind == model::TrackKind::Video ? "V" : "A"} + std::to_string(count + 1);
+    auto built = edit::makeAddTrack(*project_, sequenceId_, kind, name);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+    emit viewChanged();
+    update();
 }
 
 void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row& row) {
@@ -571,15 +933,22 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
         // A strip of the clip's own colour along its top. At the widths a busy
         // timeline actually paints at, the strip is legible when the name is
         // not: it is what makes a track readable at a glance.
+        //
+        // Clipped to the body's own rounded path rather than to its bounding
+        // rectangle, so three pixels of strip still follow the corner radius
+        // instead of squaring off the top of every clip.
         if (body.height() > 10.0) {
-            painter.setBrush(clip->enabled ? paint.strip : paint.strip.darker(160));
-            painter.setClipRect(body);
-            painter.drawRoundedRect(QRectF(body.left(), body.top(), body.width(), 6.0), 5.0, 5.0);
-            painter.fillRect(QRectF(body.left(), body.top() + 3.0, body.width(), 3.0),
+            QPainterPath rounded;
+            rounded.addRoundedRect(body, 5.0, 5.0);
+            painter.setClipPath(rounded);
+            painter.fillRect(QRectF(body.left(), body.top(), body.width(), 3.0),
                              clip->enabled ? paint.strip : paint.strip.darker(160));
             painter.setClipping(false);
         }
         painter.setBrush(Qt::NoBrush);
+
+        const bool hasFrames =
+            row.kind == model::TrackKind::Video && paintFilmstrip(painter, *clip, body);
 
         // The whole link group is outlined, not just the clip clicked on:
         // an edit is going to move all of them, so all of them should look
@@ -589,7 +958,14 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             !selected && clip->link.isValid() && clip->link == selectedLink_;
 
         if (selected || isLinkedToSelection) {
-            painter.setPen(QPen(kSelectedOutline, selected ? 1.5 : 1));
+            // A dark line outside the bright one, so the ring reads against a
+            // neighbour of the same family butted up against it -- which on a
+            // cut is every clip either side.
+            if (selected) {
+                painter.setPen(QPen(theme::bg(), 1.0));
+                painter.drawRoundedRect(body.adjusted(-0.5, -0.5, 0.5, 0.5), 5.5, 5.5);
+            }
+            painter.setPen(QPen(paint.ring, selected ? 1.5 : 1));
             painter.drawRoundedRect(body.adjusted(0.75, 0.75, -0.75, -0.75), 4.5, 4.5);
         } else {
             painter.setPen(theme::textAt(0.10));
@@ -598,7 +974,7 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
         painter.setRenderHint(QPainter::Antialiasing, false);
 
         if (row.kind == model::TrackKind::Audio) {
-            paintWaveform(painter, *clip, body);
+            paintWaveform(painter, *clip, body, paint.strip);
         }
 
         // Linked to something: said on the clip, because the consequence --
@@ -609,19 +985,55 @@ void TimelineWidget::paintClips(QPainter& painter, const ui::TimelineLayout::Row
             QColor ink = paint.label;
             ink.setAlpha(190);
             const QPixmap& badge = linkBadge(ink);
-            painter.drawPixmap(
-                QPointF(body.right() - badge.width() / badge.devicePixelRatio() - 4.0,
-                        body.top() + 5.0),
-                badge);
+            const QPointF at(body.right() - badge.width() / badge.devicePixelRatio() - 4.0,
+                             body.top() + 5.0);
+            // Over a frame, a light glyph on a light shot is invisible. The
+            // same shadow the design puts under the clip's name, drawn as an
+            // offset copy because Qt has none for a pixmap.
+            if (hasFrames) {
+                painter.drawPixmap(at + QPointF(0.0, 1.0), linkBadge(kBadgeShadow));
+            }
+            painter.drawPixmap(at, badge);
         }
 
         if (body.width() > 28.0) {
+            // Over a picture the label needs its own ground. A short gradient
+            // rather than a bar: the design shades the text itself, and a hard
+            // edge across every clip would read as a second strip.
+            if (hasFrames) {
+                QLinearGradient scrim(body.left(), body.top(), body.left(), body.top() + 22.0);
+                scrim.setColorAt(0.0, QColor(0, 0, 0, 165));
+                scrim.setColorAt(1.0, QColor(0, 0, 0, 0));
+                QPainterPath rounded;
+                rounded.addRoundedRect(body, 5.0, 5.0);
+                painter.save();
+                painter.setClipPath(rounded);
+                painter.fillRect(
+                    QRectF(body.left(), body.top(), body.width(), std::min(22.0, body.height())),
+                    scrim);
+                painter.restore();
+            }
             painter.setPen(paint.label);
             // Along the top, under the strip, rather than through the middle:
             // the middle is where the waveform is, and a name drawn over an
             // envelope is unreadable in both directions.
-            painter.drawText(body.adjusted(6, 7, -6, 0), Qt::AlignTop | Qt::AlignLeft,
+            painter.drawText(body.adjusted(6, 5, -6, 0), Qt::AlignTop | Qt::AlignLeft,
                              QString::fromStdString(clip->name));
+        }
+
+        // A clip carrying effects says so, in the corner the link badge does
+        // not use. Which effects is the Effect Controls panel's job; all a
+        // timeline has room to say is that there are some.
+        if (!clip->effects.empty() && body.width() > 30.0 && body.height() > 18.0) {
+            QColor ink = paint.strip;
+            ink.setAlpha(220);
+            const QPixmap& badge = effectsBadge(ink);
+            const QPointF at(body.right() - badge.width() / badge.devicePixelRatio() - 4.0,
+                             body.bottom() - badge.height() / badge.devicePixelRatio() - 3.0);
+            if (hasFrames) {
+                painter.drawPixmap(at + QPointF(0.0, 1.0), effectsBadge(kBadgeShadow));
+            }
+            painter.drawPixmap(at, badge);
         }
 
         paintKeyframes(painter, *clip, body);
@@ -695,13 +1107,39 @@ void TimelineWidget::paintKeyframes(QPainter& painter, const model::Clip& clip,
     painter.restore();
 }
 
+/// Zoom invalidates every filmstrip cell: the cells are a fixed width in
+/// pixels, so a new zoom means new source times for all of them. Whatever was
+/// queued for the old scale is work nobody will look at.
+void TimelineWidget::discardQueuedThumbnails() {
+    if (thumbnails_ != nullptr) {
+        thumbnails_->dropPending();
+    }
+}
+
+void TimelineWidget::setThumbnailCache(ThumbnailCache* cache) {
+    if (thumbnails_ == cache) {
+        return;
+    }
+    if (thumbnails_ != nullptr) {
+        disconnect(thumbnails_, nullptr, this, nullptr);
+    }
+    thumbnails_ = cache;
+    if (thumbnails_ != nullptr) {
+        // Qt coalesces update() calls, so a burst of frames arriving together
+        // is still one repaint.
+        connect(thumbnails_, &ThumbnailCache::ready, this, qOverload<>(&TimelineWidget::update));
+    }
+    update();
+}
+
 void TimelineWidget::setWaveform(model::MediaRefId media,
                                  std::shared_ptr<const media::Waveform> waveform) {
     waveforms_[media.value()] = std::move(waveform);
     update();
 }
 
-void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body) {
+void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, const QRectF& body,
+                                   const QColor& colour) {
     const auto found = waveforms_.find(clip.source.value());
     if (found == waveforms_.end() || found->second == nullptr) {
         return;
@@ -717,10 +1155,10 @@ void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, c
 
     // Below the strip and the name, so the three things a clip shows do not
     // sit on top of each other.
-    const QRectF field = body.adjusted(0, 9, 0, -2);
+    const QRectF field = body.adjusted(0, 12, 0, -2);
     const double midY = field.center().y();
     const double halfHeight = std::max(2.0, field.height() * 0.45);
-    QColor ink = kWaveform;
+    QColor ink = colour;
     ink.setAlpha(205);
     painter.setPen(ink);
 
@@ -753,6 +1191,95 @@ void TimelineWidget::paintWaveform(QPainter& painter, const model::Clip& clip, c
         painter.drawLine(QPointF(x, midY - static_cast<double>(maximum) * halfHeight),
                          QPointF(x, midY - static_cast<double>(minimum) * halfHeight));
     }
+}
+
+bool TimelineWidget::paintFilmstrip(QPainter& painter, const model::Clip& clip,
+                                    const QRectF& body) {
+    const model::Sequence* seq = sequence();
+    if (thumbnails_ == nullptr || project_ == nullptr || seq == nullptr) {
+        return false;
+    }
+    // Generated pictures have no media to read, and a nested sequence would
+    // have to be composited rather than decoded -- which is the program
+    // monitor's job, not a thumbnail's.
+    if (clip.graphic.kind != model::GraphicKind::None || clip.nested.isValid()) {
+        return false;
+    }
+    const model::MediaRef* media = project_->findMedia(clip.activeSource());
+    if (media == nullptr || media->info.videoStreams.empty()) {
+        return false;
+    }
+
+    // Cells at the source's own aspect, so the frames are not stretched. The
+    // clamp is for the extremes -- a very tall body would otherwise ask for
+    // cells wider than most clips, and every clip would show one squeezed frame
+    // instead of a strip.
+    const media::VideoStreamInfo& video = media->info.videoStreams.front();
+    if (video.width <= 0 || video.height <= 0) {
+        return false;
+    }
+    const QRectF field = body.adjusted(0, 3, 0, 0);
+    if (field.height() < 12.0) {
+        return false;
+    }
+    const double aspect = static_cast<double>(video.width) / static_cast<double>(video.height);
+    const double cellWidth = std::clamp(field.height() * aspect, 24.0, 160.0);
+    if (field.width() < cellWidth * 0.75) {
+        return false;
+    }
+
+    // Anchored to the clip's own left edge rather than to the viewport, so a
+    // cell shows the same frame however the timeline is scrolled. The clip's
+    // true left is used even when it is off screen, which is what keeps the
+    // strip from sliding as a long clip scrolls past.
+    const double clipLeft = layout_.xForTime(clip.start());
+    const int first = static_cast<int>(std::floor((field.left() - clipLeft) / cellWidth));
+    const int last = static_cast<int>(std::ceil((field.right() - clipLeft) / cellWidth));
+
+    QPainterPath rounded;
+    rounded.addRoundedRect(body, 5.0, 5.0);
+    painter.save();
+    painter.setClipPath(rounded);
+
+    bool drewAny = false;
+    for (int cell = std::max(0, first); cell <= last; ++cell) {
+        const QRectF box(clipLeft + cell * cellWidth, field.top(), cellWidth, field.height());
+        if (box.right() < field.left() || box.left() > field.right()) {
+            continue;
+        }
+        // The middle of the cell, not its leading edge: a frame grabbed at the
+        // very start of a cut is often the tail of a dissolve.
+        //
+        // Clamped into the clip rather than skipped when it falls outside. The
+        // last cell of a clip is usually a partial one whose centre is past the
+        // out point, and skipping it leaves a bare sliver of body colour at the
+        // end of every clip -- which reads as a gap in the media rather than as
+        // the arithmetic of a fixed cell width.
+        time::RationalTime at = layout_.timeForX(box.center().x(), seq->frameRate());
+        const time::RationalTime lastFrame =
+            clip.endExclusive() - time::RationalTime{1, seq->frameRate()};
+        at = std::clamp(at, clip.start(), lastFrame);
+        if (at < clip.start()) {
+            continue;
+        }
+        const QImage frame =
+            thumbnails_->lookup(clip.activeSource(), media->path, clip.baseSourceTimeAt(at),
+                                static_cast<int>(field.height()));
+        if (frame.isNull()) {
+            continue;
+        }
+        // Cropped to the cell rather than letterboxed into it: a strip of
+        // frames with black bars between them reads as gaps in the clip.
+        const QRectF source(std::max(0.0, (frame.width() - box.width()) / 2.0), 0.0,
+                            std::min<double>(frame.width(), box.width()), frame.height());
+        painter.drawImage(box, frame, source);
+        painter.setPen(QPen(QColor(0, 0, 0, 90), 1.0));
+        painter.drawLine(QPointF(box.right(), box.top()), QPointF(box.right(), box.bottom()));
+        drewAny = true;
+    }
+
+    painter.restore();
+    return drewAny;
 }
 
 void TimelineWidget::paintTransitions(QPainter& painter, const ui::TimelineLayout::Row& row) {
@@ -789,16 +1316,34 @@ void TimelineWidget::paintPlayhead(QPainter& painter) {
     if (x < metrics.headerWidth) {
         return;
     }
-    painter.setPen(QPen(kPlayhead, 1.5));
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    // A glow either side of the line before the line itself. Qt has no
+    // box-shadow, so the design's is drawn as a pair of widening, fading
+    // strokes -- which is what a one-pixel line needs to stay findable against
+    // a busy cut without being thickened into a bar.
+    QColor glow = kPlayhead;
+    for (const auto& [width, alpha] : {std::pair{5.0, 26}, std::pair{3.0, 52}}) {
+        glow.setAlpha(alpha);
+        painter.setPen(QPen(glow, width));
+        painter.drawLine(QPointF(x, 0), QPointF(x, height()));
+    }
+
+    painter.setPen(QPen(kPlayhead, 1.0));
     painter.drawLine(QPointF(x, 0), QPointF(x, height()));
 
     // A head on the playhead, so it can be found and grabbed in the ruler.
+    // Squared off at the shoulders and pointed at the tip: a plain triangle
+    // narrows to nothing at the top, which is exactly where the pointer has to
+    // land to grab it.
     QPolygonF head;
-    head << QPointF(x - 6, 0) << QPointF(x + 6, 0) << QPointF(x, 9);
+    head << QPointF(x - 6.5, 0.0) << QPointF(x + 6.5, 0.0) << QPointF(x + 6.5, 7.8)
+         << QPointF(x, 13.0) << QPointF(x - 6.5, 7.8);
     painter.setBrush(kPlayhead);
     painter.setPen(Qt::NoPen);
     painter.drawPolygon(head);
     painter.setBrush(Qt::NoBrush);
+    painter.setRenderHint(QPainter::Antialiasing, false);
 }
 
 void TimelineWidget::paintSnapGuide(QPainter& painter) {
@@ -945,12 +1490,33 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
+    // The corner box shares the ruler's band of the widget, so it is asked
+    // first -- otherwise pressing "+ Audio" would scrub.
+    if (const CornerControl corner = cornerHitTest(x, y); corner != CornerControl::None) {
+        addTrack(corner == CornerControl::AddVideo ? model::TrackKind::Video
+                                                   : model::TrackKind::Audio);
+        return;
+    }
     if (layout_.isInRuler(x, y)) {
         drag_ = Drag::Scrub;
         scrubTo(x);
         return;
     }
     if (layout_.isInHeaders(x)) {
+        const HeaderHit hit = headerHitTest(x, y);
+        switch (hit.control) {
+            case HeaderControl::Mute:
+                toggleTrackMute(hit.track);
+                break;
+            case HeaderControl::Lock:
+                toggleTrackLock(hit.track);
+                break;
+            case HeaderControl::Remove:
+                removeTrack(hit.track);
+                break;
+            case HeaderControl::None:
+                break;
+        }
         return;
     }
 
@@ -1104,6 +1670,10 @@ void TimelineWidget::updateTrim(int x) {
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
+
+    if (drag_ == Drag::None) {
+        updateHeaderHover(x, y);
+    }
 
     if (drag_ == Drag::Keyframe) {
         dragKeyframeTo(x);
@@ -1265,7 +1835,10 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void TimelineWidget::leaveEvent(QEvent* event) {
-    // The pointer is somewhere else, so the blade is not about to cut anything.
+    // The pointer is somewhere else, so the blade is not about to cut anything
+    // and no header button is lit.
+    hoverHeader_ = {};
+    hoverCorner_ = CornerControl::None;
     clearGestureMarks();
     QWidget::leaveEvent(event);
 }
@@ -1283,6 +1856,7 @@ void TimelineWidget::wheelEvent(QWheelEvent* event) {
     if (event->modifiers().testFlag(Qt::ControlModifier) ||
         event->modifiers().testFlag(Qt::MetaModifier)) {
         layout_.zoomBy(std::pow(1.2, steps), event->position().x(), seq->frameRate());
+        discardQueuedThumbnails();
     } else {
         // Scroll by a fraction of the visible span, so the feel is the same at
         // every zoom level.
@@ -1319,6 +1893,7 @@ bool TimelineWidget::pressWithTool(const ui::TimelineLayout::Hit* hit, int x, in
             // one direction and needs two.
             layout_.zoomBy(modifiers.testFlag(Qt::AltModifier) ? 1.0 / 1.6 : 1.6, x,
                            seq->frameRate());
+            discardQueuedThumbnails();
             emit viewChanged();
             update();
             return true;
