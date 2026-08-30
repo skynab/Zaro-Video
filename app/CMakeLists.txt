@@ -249,10 +249,3 @@ if(UNIX AND NOT APPLE)
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT runtime)
 endif()
-
-# TEMPORARY-SHOT-TARGET
-add_executable(zaro_shot ${ZARO_SHOT_SRC})
-target_link_libraries(zaro_shot PRIVATE zaro_app_ui Qt6::Widgets)
-target_include_directories(zaro_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/core/tests)
-target_compile_definitions(zaro_shot PRIVATE ZARO_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/testdata/media")
-set_target_properties(zaro_shot PROPERTIES AUTOMOC ON)

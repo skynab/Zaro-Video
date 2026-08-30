@@ -256,9 +256,9 @@ void TimelineWidget::applyTrackHeights() {
     // than rebuilt here, which would be a second copy of its arithmetic to keep
     // in step.
     const auto fit = [&](model::TrackKind kind, int wanted) {
-        const int count = static_cast<int>(kind == model::TrackKind::Audio
-                                               ? seq->audioTracks().size()
-                                               : seq->videoTracks().size());
+        const int count =
+            static_cast<int>(kind == model::TrackKind::Audio ? seq->audioTracks().size()
+                                                             : seq->videoTracks().size());
         if (count == 0) {
             return wanted;
         }

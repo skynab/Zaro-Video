@@ -701,3 +701,49 @@ TEST_CASE("Escape abandons a track rename", "[gui]") {
         zaro::app::testing::failf("escape still renamed the track to %s\n", track->name().c_str());
     }
 }
+
+TEST_CASE("Dragging a track boundary resizes that kind of track", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto trackId = window.sequence()->videoTracks().front().id();
+
+    const auto before = timeline->rowFor(trackId);
+    REQUIRE(before.has_value());
+    const int startHeight = before->height;
+
+    // Grab the row's bottom edge, in the header column.
+    const int edgeY = before->top + before->height;
+    const QPointF from(60, edgeY);
+    const QPointF to(60, edgeY + 20);
+    QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &press);
+    QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &release);
+
+    const int grown = timeline->trackHeight(zaro::model::TrackKind::Video);
+    if (grown <= startHeight) {
+        zaro::app::testing::failf("dragging the boundary down left video tracks at %d (was %d)\n",
+                                  grown, startHeight);
+    }
+    // Audio is a separate setting and should not have moved with it.
+    if (timeline->trackHeight(zaro::model::TrackKind::Audio) !=
+        zaro::app::TimelineWidget::kDefaultAudioTrackHeight) {
+        zaro::app::testing::failf("resizing video also changed the audio track height\n");
+    }
+
+    // Every row has to stay on screen: there is no vertical scrolling, so a
+    // height that pushed one off the bottom would make it unreachable.
+    for (const auto& row : timeline->layout().rows(*window.sequence())) {
+        if (row.top + row.height > timeline->height()) {
+            zaro::app::testing::failf("a track ran past the bottom of the panel\n");
+        }
+    }
+
+    timeline->setTrackHeight(zaro::model::TrackKind::Video,
+                             zaro::app::TimelineWidget::kDefaultVideoTrackHeight);
+}
