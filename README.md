@@ -8,7 +8,7 @@ locked in.
 
 ## Status
 
-**Phase 7v — Premiere interchange.** Media can be imported, marked up in a
+**Phase 7w — Final Cut interchange.** Media can be imported, marked up in a
 source monitor, cut into a timeline three-point with picture and sound linked,
 dissolved, marked, graded, masked, mixed, adjusted, watched and exported. The
 window is dressed as an editor: a menu bar, a timeline tool palette (select,
@@ -23,7 +23,8 @@ that renders them one at a time. On a 1080p59.94 timeline the GPU path holds
 the playhead to zero frames of offset with no audio underruns, presenting about
 47 of the 59.94 frames per second against the CPU path's 7. A cut can leave
 for another program and come back: OpenTimelineIO for anything that reads it,
-and FCP7 XML — the format Premiere Pro imports and exports — for Premiere.
+FCP7 XML — the format Premiere Pro imports and exports — for Premiere, and
+FCPXML for Final Cut Pro, which reads neither of the other two.
 
 | Phase | | |
 |---|---|---|
@@ -116,6 +117,7 @@ and FCP7 XML — the format Premiere Pro imports and exports — for Premiere.
 | 7t | Cutting a linked pair, and a clip that says it is linked | **done** |
 | 7u | The Deliver workspace: presets, settings and a render queue | **done** |
 | 7v | Premiere interchange: FCP7 XML in and out, `zaro-premiere` | **done** |
+| 7w | Final Cut interchange: FCPXML in and out, `zaro-finalcut` | **done** |
 
 ## Building
 
@@ -155,12 +157,18 @@ zaro-render project.zaro out.mov         render it, headless
 zaro-play project.zaro --seconds 10       play it on the GPU, and report sync
 zaro-otio export project.zaro out.otio   hand the cut to any other NLE
 zaro-premiere import cut.xml out.zaro    take one back from Premiere
+zaro-finalcut export p.zaro out.fcpxml   hand it to Final Cut Pro
 ```
 
-The Premiere pair speaks FCP7 XML (`xmeml`), which is what Premiere Pro's
-File ▸ Import and File ▸ Export ▸ Final Cut Pro XML read and write. A `.prproj`
-is Premiere's own memory in an undocumented schema that moves with the
-application version, and is not an interchange format in either direction.
+`zaro-premiere` speaks FCP7 XML (`xmeml`), which is what Premiere Pro's
+File ▸ Import and File ▸ Export ▸ Final Cut Pro XML read and write.
+`zaro-finalcut` speaks FCPXML, which is what Final Cut Pro's File ▸ Import ▸ XML
+and File ▸ Export XML read and write. Despite the names, these are two unrelated
+formats that share a vendor: Final Cut has not read `xmeml` since version 10,
+and Premiere has never read `.fcpxml`, so both tools exist. Neither `.prproj`
+nor a Final Cut library is an interchange format in either direction — both are
+an application's own memory in an undocumented schema that moves with its
+version.
 
 Two verification scripts back the claims the tests cannot make on their own:
 
@@ -180,7 +188,7 @@ core/       no GUI dependency, no FFmpeg, headless-testable
   edit/     commands, undo stack, edit operations, snapping
   render/   colour pipeline, compositor, render graph, mixer, cache
   playback/ scheduler, transport (JKL), audio ring buffer
-  io/       versioned JSON project files, OTIO and Premiere interchange
+  io/       versioned JSON project files, OTIO, FCP7 and FCPXML interchange
 ui-core/    presentation logic with no toolkit: timeline geometry
 app/        the Qt shell: chrome and theme, monitors, timeline, panels
 platform/
@@ -188,7 +196,7 @@ platform/
   qrhi/     GPU compositor and its shaders
   sdl/      audio output device
 tools/      zaro-probe, zaro-frame, zaro-cut, zaro-render, zaro-play,
-            zaro-otio, zaro-premiere
+            zaro-otio, zaro-premiere, zaro-finalcut
 testdata/   fixture generator
 cmake/      warning policy, find modules
 docs/       plan and architecture decision records

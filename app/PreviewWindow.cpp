@@ -571,8 +571,11 @@ void PreviewWindow::exportPremiere() {
     if (liveSequence() == nullptr) {
         return;
     }
+    // Named for the program rather than for the format. "FCP7 XML" is what the
+    // file is; "the one Premiere opens" is what somebody came here for, and the
+    // menu already said Premiere.
     const QString path = QFileDialog::getSaveFileName(this, "Export Premiere XML", "timeline.xml",
-                                                      "Final Cut Pro XML (*.xml)");
+                                                      "FCP7 XML (*.xml)");
     if (path.isEmpty()) {
         return;
     }
@@ -585,7 +588,7 @@ void PreviewWindow::exportPremiere() {
 
 void PreviewWindow::importPremiere() {
     const QString path =
-        QFileDialog::getOpenFileName(this, "Import Premiere XML", {}, "Final Cut Pro XML (*.xml)");
+        QFileDialog::getOpenFileName(this, "Import Premiere XML", {}, "FCP7 XML (*.xml)");
     if (path.isEmpty()) {
         return;
     }
@@ -594,29 +597,71 @@ void PreviewWindow::importPremiere() {
         app::warn(this, "Premiere XML", QString::fromStdString(imported.error().toString()));
         return;
     }
+    adoptImported(std::move(*imported), "Premiere XML",
+                  "Grades, effects, transitions and keyframes");
+}
+
+void PreviewWindow::exportFinalCut() {
+    if (liveSequence() == nullptr) {
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Export Final Cut Pro XML", "timeline.fcpxml", "Final Cut Pro XML (*.fcpxml)");
+    if (path.isEmpty()) {
+        return;
+    }
+    if (Status saved =
+            io::saveFcpXml(document_.project(), liveSequence()->id(), path.toStdString());
+        !saved) {
+        app::warn(this, "Final Cut Pro XML", QString::fromStdString(saved.error().toString()));
+    }
+}
+
+void PreviewWindow::importFinalCut() {
+    // The bundle as well as the file. Final Cut 10.6.6 began writing a
+    // `.fcpxmld` directory whose `Info.fcpxml` is the document, and what
+    // somebody picks in this dialog is the bundle -- so it has to be offered,
+    // and `loadFcpXml` looks inside.
+    const QString path = QFileDialog::getOpenFileName(this, "Import Final Cut Pro XML", {},
+                                                      "Final Cut Pro XML (*.fcpxml *.fcpxmld)");
+    if (path.isEmpty()) {
+        return;
+    }
+    auto imported = io::loadFcpXml(path.toStdString());
+    if (!imported) {
+        app::warn(this, "Final Cut Pro XML", QString::fromStdString(imported.error().toString()));
+        return;
+    }
+    adoptImported(std::move(*imported), "Final Cut Pro XML",
+                  "Grades, effects, transitions, keyframes and track mute and lock");
+}
+
+void PreviewWindow::adoptImported(model::Project imported, const QString& format,
+                                  const QString& lost) {
     // Read out before the move below, not after it.
-    const model::Sequence& sequence = imported->sequences().front();
+    const model::Sequence& sequence = imported.sequences().front();
     const QString name = QString::fromStdString(sequence.name());
     const std::size_t tracks = sequence.videoTracks().size() + sequence.audioTracks().size();
-    const std::size_t media = imported->media().size();
+    const std::size_t media = imported.media().size();
 
     // Adopted with no path, exactly as New does: what came in is a cut, not a
-    // project file, and letting Save write straight over the .xml would replace
-    // an interchange file with something Premiere can no longer read.
-    adopt(std::move(*imported), io::LoadedProject{}, {});
+    // project file, and letting Save write straight over the interchange file
+    // would replace it with something the other program can no longer read.
+    adopt(std::move(imported), io::LoadedProject{}, {});
     updateTitle();
 
-    // Said rather than assumed. Only the cut crosses this format -- what did
+    // Said rather than assumed. Only the cut crosses these formats -- what did
     // not is the sort of thing somebody finds an hour later, in a grade that is
     // not there.
-    app::say(this, "Premiere XML",
+    app::say(this, format,
              QString("Imported \u201c%1\u201d: %2 tracks, %3 media file%4.\n\n"
-                     "Grades, effects, transitions and keyframes do not cross this "
-                     "format and were not read. Save to keep this as a project.")
+                     "%5 do not cross this format and were not read. "
+                     "Save to keep this as a project.")
                  .arg(name)
                  .arg(tracks)
                  .arg(media)
-                 .arg(media == 1 ? "" : "s"));
+                 .arg(media == 1 ? "" : "s")
+                 .arg(lost));
 }
 
 void PreviewWindow::trackMask() {
@@ -1787,6 +1832,8 @@ void PreviewWindow::bindCommands() {
     actions_.bind("export-otio", [this] { exportOtio(); });
     actions_.bind("export-premiere", [this] { exportPremiere(); });
     actions_.bind("import-premiere", [this] { importPremiere(); });
+    actions_.bind("export-finalcut", [this] { exportFinalCut(); });
+    actions_.bind("import-finalcut", [this] { importFinalCut(); });
     actions_.bind("save-template", [this] { saveTemplateDialog(); });
     actions_.bind("place-template", [this] { placeTemplateDialog(); });
     actions_.bind("close-window", [this] { close(); });

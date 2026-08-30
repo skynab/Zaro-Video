@@ -26,7 +26,10 @@ add_library(zaro_core
     src/edit/Snapping.cpp
     src/edit/Sync.cpp
     src/io/CubeLut.cpp
+    src/io/FinalCutXml.cpp
     src/io/OtioIo.cpp
+    src/io/PathUrl.h
+    src/io/PathUrl.cpp
     src/io/PremiereXml.cpp
     src/io/Xml.h
     src/io/Xml.cpp

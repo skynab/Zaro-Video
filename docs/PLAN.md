@@ -4308,6 +4308,113 @@ onto; and `<filter>` elements in either direction, which would mean guessing at
 another program's plugin identifiers — a grade that arrives wrong is harder to
 find than one that arrives absent.
 
+### Phase 7w — Final Cut interchange §7.7 ✅
+
+Read and write FCPXML, a `zaro-finalcut` conversion tool, and both directions
+from the window.
+
+**It is not the file the last phase wrote, and could not be.** FCP7 XML and
+FCPXML share a vendor and nothing else. `xmeml` is what Final Cut Pro 7 wrote
+and Premiere inherited; FCPXML is what Final Cut Pro has written since version
+10, over a different model with different words for everything. Final Cut cannot
+read `xmeml` and Premiere cannot read `.fcpxml`, so both files have to exist and
+neither can be produced by adjusting the other. Hence a second writer, a second
+reader and a second tool rather than a `--flavour` flag, which would have read
+as two spellings of one format.
+
+**A Final Cut library is not the deliverable**, for the reason `.prproj` was not
+one: it is a bundle of undocumented binary databases that moves with the
+application version. FCPXML is the door Apple leaves open — a published DTD,
+plain text, and what File ▸ Export XML and File ▸ Import ▸ XML move a cut
+through. Version 1.9 is written, which is the last revision every Final Cut from
+10.4.9 onward reads and needs no word a later one added.
+
+**Time is seconds, exactly, and never frames.** Every time in the document is a
+rational number of seconds with an `s` after it: `1001/24000s` is one frame of
+23.976 and `3600s` is an hour. That removes the trap the FCP7 writer has to keep
+stepping around — `<start>` counted at the sequence's rate and `<in>` at the
+file's — because a second is a second in both. What it adds is that every value
+must land on a frame boundary, which holds here by construction: a frame count
+over its own rate is exact and `Rational` does not round. The 24fps-on-25fps
+test that exists next door to catch a conflated rate is here too, and here it is
+unremarkable, which is the point.
+
+**A lane is a track.** FCPXML has no tracks. It has a *spine* — the primary
+storyline — and objects anchored to it at numbered lanes, positive above and
+negative below. The spine holds one gap the length of the cut, V1 upward becomes
+lanes 1 upward, and A1 downward becomes lanes -1 downward.
+
+Writing the tracks into the spine instead would have meant one of them, since
+there is only one spine, and hanging the rest off whichever clip happened to be
+underneath — which is what Final Cut itself does, and what makes a connected
+clip move when the shot beneath it is trimmed. Anchoring everything to one gap
+is a state Final Cut produces on its own (it is what a project of nothing but
+connected clips looks like) and it keeps every clip's position a fact rather
+than a consequence. The reader does not assume anything wrote it that way: a
+spine carrying clips at lane 0, connected clips hanging off those, secondary
+storylines, and clips inside a compound or synchronised clip are all flattened,
+and the distinct lanes found become tracks in the order they stack.
+
+**An empty track cannot survive, and does not pretend to.** A lane is where a
+clip is, so a track with nothing on it has no lane and comes back as nothing.
+The alternative — a zero-length placeholder at each empty lane — is not
+expressible (Final Cut refuses a gap of no duration) and would be a clip on the
+timeline if it were. Track mute and lock go the same way for the same reason:
+there is no track to carry them.
+
+**Offsets are counted from the sequence's own start timecode.** A cut that
+begins at 01:00:00:00 has its first clip at `3600s`, not at zero, and writing
+zero-based offsets under a non-zero `tcStart` puts the whole timeline before its
+own start. The reader takes the shift back off — but only when every item is at
+or after it, because not everything that writes this format counts the same way
+and subtracting from a file that already starts at zero would push the cut off
+the front. Two tests, one for each direction of that decision.
+
+**Markers are hoisted rather than dropped.** FCPXML hangs a marker off whatever
+it was dropped on, in that item's own source time; this model's markers belong
+to the sequence. A note on a clip is moved to where it points — the clip's
+position plus how far past the clip's start it sits — instead of being thrown
+away with its container, because the note is about a moment in the cut and that
+moment still exists.
+
+**Only the live take of an audition arrives.** The rejected takes are in the
+file so that Final Cut can offer them again; they are not on the timeline, and
+reading them would stack every alternate take on top of the cut.
+
+**An asset is as long as the file says or as long as the cut reaches, whichever
+is longer.** FCPXML has no way to say "as long as it is", and an asset whose
+stated duration stops short of a clip's out point is one Final Cut refuses to
+place. Where the two disagree the cut is the evidence: something read those
+frames. The same reasoning covers a file nobody has probed, which claims picture
+because an asset claiming neither picture nor sound is one Final Cut will not
+place at all.
+
+**The compound clips are in the resources, and are not the timeline.** A
+compound clip is `<media><sequence>`, stored beside the formats and the assets.
+A pre-order search for the first `<sequence>` would hand back somebody's
+compound clip and call it the cut — the sort of wrong that looks like a right
+answer — so the resources subtree is stepped over. There is a test whose whole
+job is that.
+
+**The path encoder is now shared.** `core/src/io/PathUrl.h`, lifted out of the
+FCP7 writer: both formats carry media as a file URL, neither may mangle one, and
+a path that comes back with its spaces still percent-encoded relinks to nothing.
+The scheme is not shared, because the two do not agree on it — `xmeml` writes
+`file://localhost/...` and FCPXML writes `file:///...`.
+
+**Import is in the window**, as Premiere's is and for the same reason: it opens
+as an untitled project, which is what New already does down to the autosave
+`adopt` takes on the way past. Both imports now share one function for what
+happens after the read, including the sentence about what did not cross — the
+part worth getting right in one place, because grades and effects and
+transitions are the sort of absence somebody finds an hour later.
+
+Not done: transitions, which FCPXML carries and this model would have to map
+onto; `<timeMap>` in either direction, which is where a speed change lives — so
+unlike `xmeml`, where writing both ranges carries a retime for free, a 200% clip
+crosses this format at 100%; and Final Cut's effects, whose identifiers belong
+to Apple's own plugins and would be guesswork.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
@@ -4360,7 +4467,8 @@ object/segment masking · auto tone mapping
 ### 7.7 Interchange and export
 Export presets and queue · H.264/HEVC/ProRes/DNx/AV1 · alpha/RGBA export · image
 sequences · audio-only · social presets · watch folders · EDL, AAF, ✅ XML (FCP7 `xmeml`,
-which is what Premiere imports and exports), ✅ **OpenTimelineIO
+which is what Premiere imports and exports), ✅ FCPXML (which is what Final Cut Pro
+imports and exports, and is a different format entirely), ✅ **OpenTimelineIO
 (highest leverage — get this early, it unlocks round-tripping with every other NLE)**
 
 ---

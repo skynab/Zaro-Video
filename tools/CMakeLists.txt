@@ -32,13 +32,20 @@ target_link_libraries(zaro-otio PRIVATE zaro_tool_cli zaro::core zaro::warnings)
 add_executable(zaro-premiere zaro-premiere/main.cpp)
 target_link_libraries(zaro-premiere PRIVATE zaro_tool_cli zaro::core zaro::warnings)
 
+# A separate tool rather than a flag on that one. FCPXML and FCP7 XML share a
+# vendor and nothing else, and a `--flavour` argument on one command would read
+# as two spellings of one format rather than the two unrelated formats they are.
+add_executable(zaro-finalcut zaro-finalcut/main.cpp)
+target_link_libraries(zaro-finalcut PRIVATE zaro_tool_cli zaro::core zaro::warnings)
+
 add_executable(zaro-play zaro-play/main.cpp)
 target_link_libraries(zaro-play
     PRIVATE zaro_tool_cli zaro::platform_ffmpeg zaro::platform_sdl zaro::platform_qrhi zaro::warnings)
 
 # The command-line tools ship alongside the app: the verification scripts drive
 # them, and they are the only way to use the renderer without a display.
-set(ZARO_TOOLS zaro-probe zaro-frame zaro-cut zaro-render zaro-otio zaro-premiere zaro-play)
+set(ZARO_TOOLS zaro-probe zaro-frame zaro-cut zaro-render zaro-otio zaro-premiere
+    zaro-finalcut zaro-play)
 
 include(GNUInstallDirs)
 install(TARGETS ${ZARO_TOOLS}

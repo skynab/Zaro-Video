@@ -56,6 +56,7 @@
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Sync.h"
 #include "zaro/core/io/CubeLut.h"
+#include "zaro/core/io/FinalCutXml.h"
 #include "zaro/core/io/OtioIo.h"
 #include "zaro/core/io/PremiereXml.h"
 #include "zaro/core/io/ProjectIo.h"
@@ -668,14 +669,32 @@ private:
 
     void exportOtio();
 
-    /// The two directions of the Premiere interchange.
+    /// The two directions of the Premiere interchange, and of Final Cut's.
     ///
-    /// Both are here, unlike OTIO's, because an import that opens as an
-    /// untitled project loses nothing: it is what New already does, down to
-    /// the autosave `adopt` takes on the way past, and the cut somebody wants
-    /// to look at is in front of them rather than behind a command line.
+    /// Both directions are here, unlike OTIO's, because an import that opens
+    /// as an untitled project loses nothing: it is what New already does, down
+    /// to the autosave `adopt` takes on the way past, and the cut somebody
+    /// wants to look at is in front of them rather than behind a command line.
+    ///
+    /// Four entries and not two with a format picker. The formats have no
+    /// version in common -- Final Cut cannot read what Premiere reads -- so
+    /// what somebody is choosing is which program the cut is going to, and
+    /// making them pick that twice would be asking a question they have
+    /// already answered.
     void exportPremiere();
     void importPremiere();
+    void exportFinalCut();
+    void importFinalCut();
+
+    /// What both imports do once the file has been read: adopt it as an
+    /// untitled project and say plainly what did not cross.
+    ///
+    /// Shared because the two differ only in the name of the format and in
+    /// which of them carries a track's mute -- and because the sentence about
+    /// what was left behind is the part of an import worth getting right in
+    /// one place. It is the sort of absence somebody finds an hour later, in a
+    /// grade that is not there.
+    void adoptImported(model::Project imported, const QString& format, const QString& lost);
 
     void trackMask();
 

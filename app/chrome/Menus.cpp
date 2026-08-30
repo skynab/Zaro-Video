@@ -46,10 +46,14 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     QMenu* file = bar->addMenu("File");
     addItem(router, file, "new-project");
     addItem(router, file, "open-project");
-    // A cut from another program opens the same way a project does, so it sits
-    // with Open rather than under Media: what arrives is a timeline, not
-    // footage, and the Media submenu is about files to cut with.
+    // A cut from another program opens the same way a project does, so these
+    // sit with Open rather than under Media: what arrives is a timeline, not
+    // footage, and the Media submenu is about files to cut with. Two items and
+    // not one with a format picker, because the two programs are what somebody
+    // is choosing between and the file formats are an implementation detail of
+    // that choice.
     addItem(router, file, "import-premiere");
+    addItem(router, file, "import-finalcut");
     file->addSeparator();
     addItem(router, file, "save-project");
     addItem(router, file, "save-project-as");
@@ -75,6 +79,7 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, exports, "export-sequence");
     addItem(router, exports, "export-otio");
     addItem(router, exports, "export-premiere");
+    addItem(router, exports, "export-finalcut");
 
     QMenu* templates = file->addMenu("Templates");
     addItem(router, templates, "save-template");

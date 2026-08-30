@@ -29,6 +29,7 @@ add_executable(zaro_core_tests
     io/test_versions.cpp
     io/test_templates.cpp
     io/test_cube_lut.cpp
+    io/test_finalcut.cpp
     io/test_otio.cpp
     io/test_premiere.cpp
     io/test_xml.cpp

@@ -30,6 +30,8 @@ constexpr std::array kActions{
     ActionInfo{"export-otio", "Export OpenTimelineIO…", "File", ""},
     ActionInfo{"export-premiere", "Export Premiere XML…", "File", ""},
     ActionInfo{"import-premiere", "Import Premiere XML…", "File", ""},
+    ActionInfo{"export-finalcut", "Export Final Cut Pro XML…", "File", ""},
+    ActionInfo{"import-finalcut", "Import Final Cut Pro XML…", "File", ""},
     ActionInfo{"save-template", "Save Graphic as Template…", "File", ""},
     ActionInfo{"place-template", "Place Graphic Template…", "File", ""},
     ActionInfo{"close-window", "Close Window", "File", "Ctrl+W"},
