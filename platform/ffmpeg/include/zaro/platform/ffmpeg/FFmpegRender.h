@@ -266,8 +266,12 @@ public:
 
     [[nodiscard]] Status writeVideo(const render::RgbaImage& frame);
     [[nodiscard]] Status writeAudio(const media::AudioBuffer& samples);
-    /// Flushes both encoders and writes the trailer. Must be called; the
-    /// destructor cannot report a failure.
+    /// Flushes both encoders, writes the trailer and closes the file. Must be
+    /// called; the destructor cannot report a failure.
+    ///
+    /// The file is closed here and not left to the destructor, so that the
+    /// output can be renamed or removed the moment this returns -- on Windows
+    /// an open handle forbids both.
     [[nodiscard]] Status finish();
 
     [[nodiscard]] std::int64_t framesWritten() const;

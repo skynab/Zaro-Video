@@ -476,6 +476,20 @@ Status Encoder::finish() {
         return toError(rc, "finalising the file");
     }
     state.finished = true;
+
+    // And close the file, here rather than in ~State. finish() is what says the
+    // export is done, and on Windows a file that is still open is a file that
+    // cannot be renamed, moved or deleted -- so leaving the handle alive until
+    // the encoder happens to go out of scope makes "done" mean nothing to the
+    // caller. Every one of ours reads the file straight afterwards.
+    //
+    // avio_closep nulls the pointer, so ~State's own close is a no-op after
+    // this and a finish() that returned early above still closes there.
+    if ((state.format->oformat->flags & AVFMT_NOFILE) == 0 && state.format->pb != nullptr) {
+        if (const int rc = avio_closep(&state.format->pb); rc < 0) {
+            return toError(rc, "closing the file");
+        }
+    }
     return {};
 }
 
