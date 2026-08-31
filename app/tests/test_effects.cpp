@@ -21,6 +21,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "../CurveEditor.h"
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -1760,4 +1761,97 @@ TEST_CASE("The inspector shows a track when its header is picked", "[gui]") {
         window.commands().undo(window.project());
     }
     QApplication::processEvents();
+}
+
+// The hue curve, drawn the way a person draws one. The table and the two render
+// paths are checked elsewhere; what neither of those can see is whether picking
+// "Hue vs Sat" and dragging in the widget reaches the clip.
+TEST_CASE("The hue curve, driven with the mouse", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto trackId = sequence.videoTracks().front().id();
+    const auto clipId = sequence.videoTracks().front().clips().front().id;
+
+    auto* editor = window.effects()->findChild<app::CurveEditor*>();
+    auto* chooser = window.effects()->findChild<QComboBox*>("curve-channel");
+    if (editor == nullptr || chooser == nullptr) {
+        zaro::app::testing::failf("there is no curve editor\n");
+    }
+    window.effects()->setSelection(trackId, clipId);
+    QApplication::processEvents();
+
+    const auto clipNow = [&]() {
+        return window.project().findSequence(sequenceId)->findTrack(trackId)->find(clipId);
+    };
+    if (!clipNow()->hueCurves.isIdentity()) {
+        zaro::app::testing::failf("the clip starts with a hue curve on it\n");
+    }
+
+    const int hueIndex = chooser->findData(static_cast<int>(app::CurveEditor::Channel::HueVsSat));
+    if (hueIndex < 0) {
+        zaro::app::testing::failf("the curve editor does not offer a hue curve\n");
+    }
+    chooser->setCurrentIndex(hueIndex);
+    QApplication::processEvents();
+    if (editor->channel() != app::CurveEditor::Channel::HueVsSat) {
+        zaro::app::testing::failf("picking the hue channel did not change the editor\n");
+    }
+
+    // A quarter of the way round the circle, pulled down from the neutral line
+    // half way up. The first press on an empty hue curve seeds the anchors: a
+    // curve with one point is still the identity, so without them the first
+    // drag would do nothing and look broken.
+    const QRect plot = editor->plotArea();
+    const QPointF at(plot.left() + (plot.width() / 4), plot.bottom() - (plot.height() / 2));
+    const QPointF pulled(at.x(), at.y() + (plot.height() * 0.3));
+    {
+        QMouseEvent press(QEvent::MouseButtonPress, at, at, Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &press);
+        QMouseEvent move(QEvent::MouseMove, pulled, pulled, Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, pulled, pulled, Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &release);
+    }
+    QApplication::processEvents();
+
+    const zaro::model::HueCurves& drawn = clipNow()->hueCurves;
+    if (drawn.isIdentity()) {
+        zaro::app::testing::failf("dragging in the hue curve did not reach the clip\n");
+    }
+    // Pulled below neutral where it was dragged, and still neutral on the far
+    // side of the circle: an adjustment at one hue is not an adjustment at all
+    // of them.
+    if (drawn.saturation.valueAt(0.25) >= 0.45) {
+        zaro::app::testing::failf("the point did not come down (%.3f)\n",
+                                  drawn.saturation.valueAt(0.25));
+    }
+    if (std::fabs(drawn.saturation.valueAt(0.75) - 0.5) > 0.1) {
+        zaro::app::testing::failf("the far side of the circle moved too (%.3f)\n",
+                                  drawn.saturation.valueAt(0.75));
+    }
+    // The tone curves are untouched: they are a separate gesture and a separate
+    // undo step.
+    if (!clipNow()->curves.isIdentity()) {
+        zaro::app::testing::failf("drawing a hue curve wrote a tone curve\n");
+    }
+
+    window.commands().undo(window.project());
+    window.effects()->refresh();
+    QApplication::processEvents();
+    if (!clipNow()->hueCurves.isIdentity()) {
+        zaro::app::testing::failf("undo did not take the hue curve back\n");
+    }
+
+    std::printf("  hue curve: pulled a quarter turn down, left the far side alone\n");
+
+    chooser->setCurrentIndex(0);
+    QApplication::processEvents();
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
 }

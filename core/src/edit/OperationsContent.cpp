@@ -659,6 +659,19 @@ Result<CommandPtr> makeSetToneCurves(Project& project, const EditTarget& target,
                       [curves](Clip& clip) { clip.curves = curves; });
 }
 
+Result<CommandPtr> makeSetHueCurves(Project& project, const EditTarget& target, ClipId clipId,
+                                    const model::HueCurves& curves) {
+    for (const model::CurvePoint& point : curves.saturation.points()) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+            return Error{ErrorCode::InvalidData, "a curve point has to be real numbers"};
+        }
+    }
+    // Its own merge key, so dragging a hue point coalesces with itself and not
+    // with a tone point dragged just before it.
+    return modifyClip(project, target, clipId, "Adjust hue curve", "hueCurves:" + idText(clipId),
+                      [curves](Clip& clip) { clip.hueCurves = curves; });
+}
+
 Result<CommandPtr> makeSetColorCorrection(Project& project, const EditTarget& target, ClipId clipId,
                                           const model::ColorCorrection& color) {
     for (const double value :

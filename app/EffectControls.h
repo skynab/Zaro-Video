@@ -301,6 +301,7 @@ private:
     void pushAudio();
     void pushColor();
     void pushCurves(const model::ToneCurves& curves, bool committed);
+    void pushHueCurves(const model::HueCurves& curves, bool committed);
     void pushSecondary();
     void pushLut(const model::LutRef& lut);
     void pushGraphic();

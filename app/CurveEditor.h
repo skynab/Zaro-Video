@@ -24,13 +24,27 @@ public:
     void setCurves(const model::ToneCurves& curves);
     [[nodiscard]] const model::ToneCurves& curves() const noexcept { return curves_; }
 
+    /// The hue curve this editor also draws. Held beside the tone curves rather
+    /// than folded into them because they are different things that happen to
+    /// share a shape: one maps brightness to brightness, the other maps hue to
+    /// a saturation multiplier, and a single struct carrying both would have to
+    /// explain which of its members obeyed which rules.
+    void setHueCurves(const model::HueCurves& curves);
+    [[nodiscard]] const model::HueCurves& hueCurves() const noexcept { return hue_; }
+
     /// Where the curve is drawn, inside the widget. Public so a caller aiming
     /// at a point aims at the same square the widget does.
     [[nodiscard]] QRect plotArea() const;
 
     /// Which curve is being edited. Exposed so a self-test can drive the
     /// editor the way a person would rather than by reaching into the model.
-    enum class Channel { Master, Red, Green, Blue };
+    enum class Channel { Master, Red, Green, Blue, HueVsSat };
+    /// Whether the channel on show is a hue curve, which changes what the
+    /// background means, where the neutral line sits, and which signal a change
+    /// comes out of.
+    [[nodiscard]] static bool isHue(Channel channel) noexcept {
+        return channel == Channel::HueVsSat;
+    }
     [[nodiscard]] Channel channel() const noexcept { return channel_; }
 
 signals:
@@ -38,6 +52,11 @@ signals:
     /// and true when the gesture ends, so the caller can coalesce a drag into
     /// one undo step and then break the merge.
     void curvesChanged(const zaro::model::ToneCurves& curves, bool committed);
+
+    /// The same, for the hue curve. A separate signal rather than one carrying
+    /// both, so a tone edit does not push a hue curve the model already has and
+    /// land a no-op command on the undo stack.
+    void hueCurvesChanged(const zaro::model::HueCurves& curves, bool committed);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -56,7 +75,11 @@ private:
     /// Give an untouched curve its endpoints, so there is something to drag.
     void ensureEndpoints();
 
+    /// Emit whichever signal the channel on show belongs to.
+    void announce(bool committed);
+
     model::ToneCurves curves_;
+    model::HueCurves hue_;
     Channel channel_{Channel::Master};
     QComboBox* chooser_{nullptr};
     std::optional<std::size_t> dragging_;

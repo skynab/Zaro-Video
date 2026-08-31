@@ -332,6 +332,16 @@ enum class PlaceMode {
                                                    const EditTarget& target, model::ClipId clip,
                                                    const model::ToneCurves& curves);
 
+/// Saturation against hue, for one clip.
+///
+/// Its own operation rather than a field on the one above, so that shaping the
+/// tones and shaping the hues are separate undo steps -- they are separate
+/// gestures, made minutes apart, and one arrow that took back both would take
+/// back work nobody was looking at.
+[[nodiscard]] Result<CommandPtr> makeSetHueCurves(model::Project& project,
+                                                  const EditTarget& target, model::ClipId clip,
+                                                  const model::HueCurves& curves);
+
 /// Point a clip at different media, keeping the cut.
 ///
 /// The timeline range never moves: the whole reason to replace footage is that

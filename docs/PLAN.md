@@ -5027,6 +5027,38 @@ includes a curve straddling that seam deliberately, so the size of the
 disagreement is measured rather than assumed.
 
 **Not done here.** Hue against hue, and luma against saturation: the same table
-gains a row each, and the same argument covers them. And a way to draw one — the
-curve editor has a channel selector and this is another entry in it, which is
-where this goes next.
+gains a row each, and the same argument covers them.
+
+### Phase 8f — drawing a hue curve §7.3 ✅
+
+Phase 8e left the curve reachable only through the project file and the API,
+which is a feature nobody has. The curve editor already had a channel selector;
+this is another entry in it, and three things in the widget that could not be
+shared.
+
+**The reference line is flat, not diagonal.** A hue curve's identity is half way
+up, because its value is a multiplier and the middle of the range means leave it
+alone. Drawing the usual diagonal there would say the identity slopes, which is
+the opposite of true — and it is the kind of wrong that a colourist corrects
+*towards*, so it would not read as a bug, it would read as the curve behaving
+oddly.
+
+**The x axis is drawn as the thing it is.** A curve over an unlabelled 0 to 1
+leaves somebody counting degrees to find the blues, so the hues run along the
+bottom of the plot. The curve is drawn over the strip, so a point pulled to zero
+is still visible.
+
+**The first click seeds anchors.** An empty curve is the identity, and a curve
+with *one* point is still the identity — two are the fewest that describe a
+mapping. Without seeding, a first drag on an empty hue curve would do nothing
+and look broken. Four anchors a quarter turn apart, which is also what makes an
+adjustment local: dragging one leaves the far side of the circle where it was.
+The tone curves seed their two endpoints for the same reason and cannot share
+the code, because a hue curve's axis wraps and has no endpoints to give it.
+
+**Its own signal and its own operation.** `hueCurvesChanged` beside
+`curvesChanged`, and `makeSetHueCurves` beside `makeSetToneCurves` with its own
+merge key. One signal carrying both would push a hue curve the model already has
+every time a tone point moved, landing a no-op on the undo stack; one operation
+would make shaping the tones and shaping the hues a single undo step, when they
+are separate gestures made minutes apart.
