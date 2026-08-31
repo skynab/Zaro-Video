@@ -1,5 +1,9 @@
 # Branding
 
+Everything here except the masters is derived: `regenerate.sh <asset-directory>`
+rewrites the lot from one 1024px PNG and the two hand-made `.ico` files. Run it
+rather than editing these by hand when the artwork is revised.
+
 Where each file is used. Every one of them is a build input; none is generated
 during the build, so a change here is a change to a committed file.
 

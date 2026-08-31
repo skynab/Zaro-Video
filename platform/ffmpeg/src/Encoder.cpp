@@ -129,8 +129,23 @@ Result<std::unique_ptr<Encoder>> Encoder::open(const EncodeSettings& settings) {
     video.time_base = AVRational{static_cast<int>(settings.frameRate.den()),
                                  static_cast<int>(settings.frameRate.num())};
     video.framerate = toAv(settings.frameRate);
-    video.pix_fmt =
-        videoName.find("prores") != std::string::npos ? AV_PIX_FMT_YUV422P10LE : AV_PIX_FMT_YUV420P;
+    const bool prores = videoName.find("prores") != std::string::npos;
+    if (settings.alpha && !prores) {
+        return Error{ErrorCode::Unsupported,
+                     "only ProRes 4444 carries an alpha channel here; asking for one from '" +
+                         videoName +
+                         "' would composite the picture onto black and look like it worked"};
+    }
+    // 4444 when the coverage is wanted, and its own profile with it: prores_ks
+    // picks a profile from the pixel format, and being explicit is the
+    // difference between a file that carries alpha and one that quietly does
+    // not.
+    video.pix_fmt = settings.alpha ? AV_PIX_FMT_YUVA444P10LE
+                    : prores       ? AV_PIX_FMT_YUV422P10LE
+                                   : AV_PIX_FMT_YUV420P;
+    if (settings.alpha) {
+        video.profile = 4;  // FF_PROFILE_PRORES_4444
+    }
     video.colorspace = AVCOL_SPC_BT709;
     video.color_primaries = AVCOL_PRI_BT709;
     video.color_trc = AVCOL_TRC_BT709;
@@ -207,7 +222,10 @@ Result<std::unique_ptr<Encoder>> Encoder::open(const EncodeSettings& settings) {
         return toError(rc, "allocating an encoder frame");
     }
     state.settings = settings;
-    state.rgb.resize(static_cast<std::size_t>(settings.width) * 3 *
+    // Four components when the coverage is kept, three otherwise. Sized from
+    // the same flag the writer reads, so the buffer cannot be a component
+    // narrower than what is about to be written into it.
+    state.rgb.resize(static_cast<std::size_t>(settings.width) * (settings.alpha ? 4U : 3U) *
                      static_cast<std::size_t>(settings.height));
     return encoder;
 }
@@ -270,16 +288,21 @@ Status Encoder::writeVideo(const render::RgbaImage& frame) {
         toEncode = &state.toneMapped;
     }
 
-    const std::int32_t stride = frame.width() * 3;
-    if (Status status =
-            render::toDisplayRgb24(*toEncode, state.rgb.data(), stride, state.settings.transfer);
+    const bool keepAlpha = state.settings.alpha;
+    const std::int32_t components = keepAlpha ? 4 : 3;
+    const std::int32_t stride = frame.width() * components;
+    if (Status status = keepAlpha ? render::toDisplayRgba32(*toEncode, state.rgb.data(), stride,
+                                                            state.settings.transfer)
+                                  : render::toDisplayRgb24(*toEncode, state.rgb.data(), stride,
+                                                           state.settings.transfer);
         !status) {
         return status;
     }
 
     state.scaler.reset(sws_getCachedContext(
-        state.scaler.release(), frame.width(), frame.height(), AV_PIX_FMT_RGB24, frame.width(),
-        frame.height(), state.videoCodec->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
+        state.scaler.release(), frame.width(), frame.height(),
+        keepAlpha ? AV_PIX_FMT_RGBA : AV_PIX_FMT_RGB24, frame.width(), frame.height(),
+        state.videoCodec->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
     if (!state.scaler) {
         return Error{ErrorCode::Unsupported, "no conversion to the encoder's pixel format"};
     }

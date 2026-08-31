@@ -26,6 +26,20 @@ namespace zaro::render {
 /// Values outside [0,1] are clipped, which is the correct behaviour for an
 /// 8-bit deliverable and the wrong one for a grading pipeline; tone mapping
 /// belongs in a node, not in the encoder.
+/// The same, with the coverage kept: 8-bit RGBA, straight alpha.
+///
+/// For delivering a graphic over nothing -- a title, a lower third, a logo --
+/// which is the one case where compositing it onto black at the encoder throws
+/// away the only thing that made it worth exporting separately.
+///
+/// The alpha is straight rather than premultiplied, and linear rather than
+/// curved: coverage is not a light level, so the transfer function has no
+/// business on it, and every format that carries an alpha channel expects it
+/// straight.
+[[nodiscard]] Status toDisplayRgba32(
+    const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
+    media::TransferFunction transfer = media::TransferFunction::BT709);
+
 [[nodiscard]] Status toDisplayRgb24(
     const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
     media::TransferFunction transfer = media::TransferFunction::BT709);

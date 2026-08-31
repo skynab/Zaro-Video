@@ -8,6 +8,7 @@ add_executable(zaro_media_tests
     test_smart_export.cpp
     test_render_sequence.cpp
     test_video_decoder.cpp
+    test_alpha_export.cpp
     test_audio_decoder.cpp
     test_frame_types.cpp
 )

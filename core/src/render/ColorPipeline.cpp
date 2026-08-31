@@ -455,12 +455,18 @@ Status toLinear(const media::VideoFrame& source, RgbaImage& out) {
     return {};
 }
 
-Status toDisplayRgb24(const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
-                      TransferFunction transfer) {
+namespace {
+
+/// The one encode both public forms use, so the pixels they write cannot drift
+/// apart -- an export with alpha and one without have to agree about colour, or
+/// a graphic delivered both ways comes back two different pictures.
+Status toDisplay(const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
+                 TransferFunction transfer, bool withAlpha) {
+    const std::int32_t components = withAlpha ? 4 : 3;
     if (!source.isValid()) {
         return Error{ErrorCode::InvalidData, "cannot encode an invalid image"};
     }
-    if (destination == nullptr || strideBytes < source.width() * 3) {
+    if (destination == nullptr || strideBytes < source.width() * components) {
         return Error{ErrorCode::InvalidData, "destination buffer is too small"};
     }
 
@@ -482,12 +488,33 @@ Status toDisplayRgb24(const RgbaImage& source, std::uint8_t* destination, std::i
                 return static_cast<std::uint8_t>(
                     std::lround(clamp01(lut(clamp01(value * inverse))) * 255.0F));
             };
-            out[x * 3 + 0] = encode(pixel.r);
-            out[x * 3 + 1] = encode(pixel.g);
-            out[x * 3 + 2] = encode(pixel.b);
+            out[(x * components) + 0] = encode(pixel.r);
+            out[(x * components) + 1] = encode(pixel.g);
+            out[(x * components) + 2] = encode(pixel.b);
+            if (withAlpha) {
+                // Straight alpha, and linear: coverage is not a light level, so
+                // the transfer curve has no business on it. Every format that
+                // carries an alpha channel -- ProRes 4444, PNG, QuickTime RLE
+                // -- expects it straight, which is why the colour above is
+                // divided by it rather than left premultiplied.
+                out[(x * components) + 3] =
+                    static_cast<std::uint8_t>(std::lround(clamp01(alpha) * 255.0F));
+            }
         }
     }
     return {};
+}
+
+}  // namespace
+
+Status toDisplayRgb24(const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
+                      TransferFunction transfer) {
+    return toDisplay(source, destination, strideBytes, transfer, false);
+}
+
+Status toDisplayRgba32(const RgbaImage& source, std::uint8_t* destination, std::int32_t strideBytes,
+                       TransferFunction transfer) {
+    return toDisplay(source, destination, strideBytes, transfer, true);
 }
 
 }  // namespace zaro::render

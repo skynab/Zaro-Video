@@ -233,6 +233,15 @@ struct EncodeSettings {
     std::string audioCodec;
     std::int64_t videoBitRate{0};
 
+    /// Keep the coverage, for delivering a graphic over nothing.
+    ///
+    /// Only ProRes 4444 carries it here, which is what a title or a logo is
+    /// handed over as. Asked for on a codec that cannot hold an alpha channel
+    /// this is refused rather than ignored: an export that silently composites
+    /// a lower third onto black looks like it worked, and is discovered by
+    /// whoever tries to use it.
+    bool alpha{false};
+
     /// What the deliverable is encoded through, and where its highlights start
     /// rolling off. Taken from the sequence's `output()`, so what is exported
     /// is what the scopes and the curve editor were drawn against.

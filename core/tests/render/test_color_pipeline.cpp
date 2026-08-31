@@ -445,3 +445,62 @@ TEST_CASE("A Rec.709 source is not touched by the gamut stage", "[render][color]
 
     CHECK(linear.row(0)[0] == other.row(0)[0]);
 }
+
+TEST_CASE("Encoding with alpha keeps the coverage, straight", "[render][color]") {
+    // For delivering a graphic over nothing -- a title, a lower third, a logo
+    // -- which is the one case where compositing onto black at the encoder
+    // throws away the only thing that made it worth exporting separately.
+    render::RgbaImage image{2, 1};
+    render::Rgba* row = image.row(0);
+    // Premultiplied, as the compositor leaves it: a half-covered pixel whose
+    // straight colour is white.
+    row[0] = render::Rgba{0.5F, 0.5F, 0.5F, 0.5F};
+    row[1] = render::Rgba{0.0F, 0.0F, 0.0F, 0.0F};
+
+    std::vector<std::uint8_t> rgba(2 * 4, 0);
+    REQUIRE(render::toDisplayRgba32(image, rgba.data(), 2 * 4));
+
+    // The colour comes back straight -- white, not the half-grey it was stored
+    // as -- because every format carrying an alpha channel expects it that way.
+    CHECK(rgba[0] == 255);
+    CHECK(rgba[1] == 255);
+    CHECK(rgba[2] == 255);
+    // And the coverage is linear: it is not a light level, so the transfer
+    // curve has no business on it. Half coverage is 128, not the 188 a 2.2
+    // gamma would make of it.
+    CHECK(rgba[3] == 128);
+
+    // Nothing there is transparent black rather than a division by zero.
+    CHECK(rgba[4] == 0);
+    CHECK(rgba[7] == 0);
+}
+
+TEST_CASE("Encoding with and without alpha agree about colour", "[render][color]") {
+    // A graphic delivered both ways has to come back the same picture. The two
+    // forms share one implementation for exactly this reason; the test is what
+    // says they still do.
+    render::RgbaImage image{4, 1};
+    render::Rgba* row = image.row(0);
+    for (std::int32_t x = 0; x < 4; ++x) {
+        const float v = static_cast<float>(x) / 3.0F;
+        row[x] = render::Rgba{v, v * 0.5F, 1.0F - v, 1.0F};
+    }
+
+    std::vector<std::uint8_t> three(4 * 3, 0);
+    std::vector<std::uint8_t> four(4 * 4, 0);
+    REQUIRE(render::toDisplayRgb24(image, three.data(), 4 * 3));
+    REQUIRE(render::toDisplayRgba32(image, four.data(), 4 * 4));
+    for (std::size_t x = 0; x < 4; ++x) {
+        INFO("pixel " << x);
+        CHECK(three[(x * 3) + 0] == four[(x * 4) + 0]);
+        CHECK(three[(x * 3) + 1] == four[(x * 4) + 1]);
+        CHECK(three[(x * 3) + 2] == four[(x * 4) + 2]);
+        CHECK(four[(x * 4) + 3] == 255);
+    }
+}
+
+TEST_CASE("An RGBA encode refuses a buffer sized for three components", "[render][color]") {
+    render::RgbaImage image{4, 1};
+    std::vector<std::uint8_t> tooSmall(4 * 3, 0);
+    CHECK_FALSE(render::toDisplayRgba32(image, tooSmall.data(), 4 * 3));
+}

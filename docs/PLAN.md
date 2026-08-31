@@ -5201,3 +5201,42 @@ left arrived" -- which is the only thing worth asserting here.
 which output, and sequences wider than stereo. That is the feature the old
 comment was waiting for, and it now sits on top of a correct default rather than
 in front of a silent one.
+
+
+### Phase 8j — delivering a graphic over nothing §7.7 ✅
+
+A title, a lower third or a logo is handed over with its coverage intact, and
+the encoder dropped it in two places: every pixel format it chose was opaque,
+and the conversion went through an RGB buffer with no fourth component. An
+export of a lower third came back as a lower third on black — which looks like
+it worked, and is discovered by whoever tries to key it.
+
+**Refused rather than ignored.** Asking for alpha from a codec that cannot hold
+one now fails, naming the codec, instead of writing an opaque file. This is the
+whole reason the bug was worth fixing carefully: the failure mode is not an
+error, it is a plausible-looking file, and the person who finds out is the one
+who was given it. Only ProRes 4444 carries alpha here, which is what a graphic
+is handed over as; `prores_ks` picks a profile from the pixel format and the
+profile is set explicitly anyway, because the difference between a file that
+carries alpha and one that quietly does not is not worth leaving to inference.
+
+**The alpha is straight, and linear.** The working space is premultiplied, and
+every format that carries an alpha channel — ProRes 4444, PNG, QuickTime RLE —
+expects it straight, so the colour is divided by the coverage on the way out.
+The coverage itself does not go through the transfer curve: it is not a light
+level. Half coverage is 128, not the 188 a 2.2 gamma would make of it.
+
+**One implementation, two forms.** `toDisplayRgb24` and `toDisplayRgba32` share
+their body, because a graphic delivered both ways has to come back the same
+picture, and a test compares them component by component to say they still do.
+
+**The test asserts the difference rather than the format.** `media::PixelFormat`
+has no YUVA member — it was written for the decode path — so the file's format
+cannot be named. What can be said is that the same export with and without the
+flag lands on *different* formats, and that the opaque one is the 4:2:2 it
+always was. If alpha were being dropped the two files would be identical, which
+is precisely the failure being guarded.
+
+**Not done.** Image sequences, audio-only stems, and EDL: the remaining holes in
+§7.7 that need no new dependency. AAF needs one and is a decision rather than a
+task.

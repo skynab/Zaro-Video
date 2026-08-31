@@ -145,6 +145,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 8g | Saturation against brightness, and the curves compounded | **done** |
 | 8h | Hue against hue: the curve set complete | **done** |
 | 8i | Folding 5.1 to stereo without losing the dialogue | **done** |
+| 8j | Exporting a graphic with its alpha, or refusing to pretend | **done** |
 
 ## Building
 
