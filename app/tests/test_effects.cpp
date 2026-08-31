@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGroupBox>
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QSlider>
@@ -847,4 +848,136 @@ TEST_CASE("The inspector's parameter sliders", "[gui]") {
                                   clipNow()->transform.opacity, slider->value());
     }
     std::printf("  slider, value box and model agree through an edit and an undo\n");
+}
+
+// The inspector's header: three tabs, and what each one is for.
+//
+// The panel used to be one column somebody scrolled: motion, colour, a mask, a
+// secondary, effects and then audio, with whichever half did not apply hidden.
+// The tabs make that a choice rather than a scroll, so what has to hold is that
+// the choice sticks, that a tab with nothing behind it says so, and that
+// selecting a clip lands on a page with something on it.
+TEST_CASE("The inspector's tabs", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto videoClip = videoTrack.clips().front().id;
+
+    auto* inspectorTab = panel->findChild<QPushButton*>("inspector-tab-inspector");
+    auto* audioTab = panel->findChild<QPushButton*>("inspector-tab-audio");
+    auto* infoTab = panel->findChild<QPushButton*>("inspector-tab-info");
+    if (inspectorTab == nullptr || audioTab == nullptr || infoTab == nullptr) {
+        zaro::app::testing::failf("the inspector has no tab strip\n");
+    }
+
+    panel->setSelection(videoTrack.id(), videoClip);
+    QApplication::processEvents();
+
+    // A picture clip lands on Inspector, and the Audio tab says there is
+    // nothing behind it rather than showing an empty page.
+    if (panel->pane() != zaro::app::EffectControls::Pane::Inspector || !inspectorTab->isChecked()) {
+        zaro::app::testing::failf("a video clip did not land on the Inspector tab\n");
+    }
+    if (audioTab->isEnabled()) {
+        zaro::app::testing::failf("the Audio tab is offered for a clip with no sound\n");
+    }
+    if (!infoTab->isEnabled()) {
+        zaro::app::testing::failf("the Info tab is not offered for a selected clip\n");
+    }
+
+    // Motion is on the Inspector page and nowhere else.
+    auto* motionSlider = panel->findChild<QSlider*>("slider:opacity");
+    if (motionSlider == nullptr || !motionSlider->isVisibleTo(panel)) {
+        zaro::app::testing::failf("the Inspector page is not showing motion\n");
+    }
+
+    infoTab->click();
+    QApplication::processEvents();
+    if (panel->pane() != zaro::app::EffectControls::Pane::Info) {
+        zaro::app::testing::failf("clicking Info did not change the page\n");
+    }
+    if (motionSlider->isVisibleTo(panel)) {
+        zaro::app::testing::failf("motion is still showing on the Info page\n");
+    }
+    // The Info page answers with the clip's own name, which is how a reader
+    // knows the page is about the selection and not about the last one.
+    const QString name =
+        QString::fromStdString(window.sequence()->videoTracks().front().clips().front().name);
+    bool named = false;
+    for (auto* value : panel->findChildren<QLabel*>("inspector-info-value")) {
+        named = named || value->text() == name;
+    }
+    if (!named) {
+        zaro::app::testing::failf("the Info page does not name the clip (%s)\n",
+                                  name.toUtf8().constData());
+    }
+
+    // Selecting a sound clip while Info is up stays on Info. The panel moves
+    // somebody off a page only when that page has nothing on it, and Info
+    // answers for every clip -- switching away would be overriding a choice
+    // that is still valid.
+    const auto& audioTrack = window.sequence()->audioTracks().front();
+    if (audioTrack.clips().empty()) {
+        zaro::app::testing::failf("the fixture has no audio clip to select\n");
+    }
+    panel->setSelection(audioTrack.id(), audioTrack.clips().front().id);
+    QApplication::processEvents();
+    if (panel->pane() != zaro::app::EffectControls::Pane::Info) {
+        zaro::app::testing::failf("changing the selection moved off the Info page\n");
+    }
+    if (inspectorTab->isEnabled()) {
+        zaro::app::testing::failf("the Inspector tab is offered for a clip with no picture\n");
+    }
+    if (!audioTab->isEnabled()) {
+        zaro::app::testing::failf("the Audio tab is not offered for a sound clip\n");
+    }
+
+    audioTab->click();
+    QApplication::processEvents();
+    auto* gain = panel->findChild<QSlider*>("slider:gainDb");
+    if (gain == nullptr || !gain->isVisibleTo(panel)) {
+        zaro::app::testing::failf("the Audio page is not showing the level\n");
+    }
+
+    // And back the other way: the Audio page has nothing on it for a picture
+    // clip, so this one *is* moved, to the page that has.
+    panel->setSelection(videoTrack.id(), videoClip);
+    QApplication::processEvents();
+    if (panel->pane() != zaro::app::EffectControls::Pane::Inspector) {
+        zaro::app::testing::failf("a video clip was left on the empty Audio page\n");
+    }
+
+    // And the reset arrow puts the page it is over back, undoably.
+    auto* opacity = panel->findChild<QDoubleSpinBox*>("spin:opacity");
+    opacity->setValue(0.4);
+    QApplication::processEvents();
+    const auto clipNow = [&]() -> const zaro::model::Clip* {
+        return window.sequence()->videoTracks().front().find(videoClip);
+    };
+    if (std::fabs(clipNow()->transform.opacity - 0.4) > 1e-6) {
+        zaro::app::testing::failf("the panel did not write 0.4\n");
+    }
+    for (auto* button : panel->findChildren<QPushButton*>("bin-glyph-button")) {
+        if (button->parentWidget() == panel->findChild<QWidget*>("inspector-tabbar")) {
+            button->click();
+        }
+    }
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->transform.opacity - 1.0) > 1e-6) {
+        zaro::app::testing::failf("reset left opacity at %.3f\n", clipNow()->transform.opacity);
+    }
+    window.commands().undo(window.project());
+    panel->refresh();
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->transform.opacity - 0.4) > 1e-6) {
+        zaro::app::testing::failf("undo did not take the reset back (%.3f)\n",
+                                  clipNow()->transform.opacity);
+    }
+    std::printf("  tabs: Inspector, Audio and Info, each offered only where it applies\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
 }

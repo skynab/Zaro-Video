@@ -1,10 +1,13 @@
 #include "EffectControls.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -12,6 +15,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QToolButton>
@@ -28,7 +32,9 @@
 #include "zaro/core/render/Ducking.h"
 #include "zaro/core/render/PathRaster.h"
 
+#include "Icons.h"
 #include "Say.h"
+#include "Theme.h"
 
 namespace zaro::app {
 namespace {
@@ -120,6 +126,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     // Kept that way deliberately -- the rows land in the same places, and the
     // widgets are created in the same order, so this is a move and not a
     // rearrangement.
+    buildHeader();
     createParameterWidgets();
     buildMotionGroup();
     QFormLayout* colourForm = buildColourGroup();
@@ -131,13 +138,11 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     buildKeyGroup();
     buildGraphicGroup();
     buildAudioGroup();
+    buildInfoGroup();
     assemblePanel();
 }
 
 void EffectControls::createParameterWidgets() {
-    title_ = new QLabel("No clip selected", this);
-    title_->setStyleSheet("font-weight: 600;");
-
     positionX_ = makeSpin(-100000.0, 100000.0, 1.0, 1, " px");
     positionY_ = makeSpin(-100000.0, 100000.0, 1.0, 1, " px");
     scaleX_ = makeSpin(-100.0, 100.0, 0.01, 3);
@@ -759,7 +764,6 @@ void EffectControls::assemblePanel() {
     auto* inner = new QWidget;
     auto* layout = new QVBoxLayout(inner);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(title_);
     layout->addWidget(enabled_);
     layout->addWidget(videoGroup_);
     layout->addWidget(graphicGroup_);
@@ -769,6 +773,7 @@ void EffectControls::assemblePanel() {
     layout->addWidget(keyGroup_);
     layout->addWidget(effectGroup_);
     layout->addWidget(audioGroup_);
+    layout->addWidget(infoGroup_);
     layout->addStretch(1);
 
     auto* scroll = new QScrollArea(this);
@@ -782,6 +787,11 @@ void EffectControls::assemblePanel() {
 
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    // Above the scroll area rather than inside it, so it stays put. See
+    // `buildHeader`.
+    outer->addWidget(tabBar_);
+    outer->addWidget(identityRow_);
     outer->addWidget(scroll);
 
     // One width for every value field, so the sliders all end in the same place.
@@ -864,6 +874,10 @@ void EffectControls::revealStage(int stage) {
     if (scroll_ == nullptr) {
         return;
     }
+    // Every stage of the grade chain lives on the Inspector page, so a click on
+    // a node in the Color workspace has to bring that page up first. Scrolling
+    // to a hidden widget lands nowhere and reads as a dead node.
+    setPane(Pane::Inspector);
     QWidget* target = nullptr;
     switch (stage) {
         case 0:
@@ -882,6 +896,9 @@ void EffectControls::revealStage(int stage) {
             return;
     }
     if (target != nullptr) {
+        // After the page change, so the scroll area measures the layout it is
+        // about to show rather than the one it was showing.
+        scroll_->widget()->adjustSize();
         scroll_->ensureWidgetVisible(target, 0, 40);
     }
 }
@@ -905,7 +922,6 @@ void EffectControls::refresh() {
 void EffectControls::applyToWidgets() {
     const model::Clip* clip = selectedClip();
     if (clip == nullptr) {
-        title_->setText("No clip selected");
         setEditingEnabled(false);
         // Show the identity transform rather than whatever was last selected,
         // and never leave zeros in Scale or Opacity: those are meaningful
@@ -928,8 +944,10 @@ void EffectControls::applyToWidgets() {
         keyShowMatte_->setChecked(false);
         effectList_->clear();
         showEffects();
-        graphicGroup_->setVisible(false);
-        maskGroup_->setVisible(false);
+        showsVideo_ = false;
+        showsAudio_ = false;
+        showsGraphic_ = false;
+        showsMask_ = false;
         curves_->setCurves(model::ToneCurves{});
         lutName_->setText("No LUT");
         lutAmount_->setValue(1.0);
@@ -956,6 +974,8 @@ void EffectControls::applyToWidgets() {
         pan_->setValue(0.0);
         enabled_->setChecked(false);
         updating_ = false;
+        applyIdentity();
+        applyPaneVisibility();
         applyKeyframeButtons();
         return;
     }
@@ -964,19 +984,14 @@ void EffectControls::applyToWidgets() {
     const model::Track* track = sequence->findTrack(track_);
     const bool isVideo = track != nullptr && track->kind() == model::TrackKind::Video;
 
-    title_->setText(QString::fromStdString(clip->name.empty() ? "Clip" : clip->name));
     setEditingEnabled(true);
-    // Motion applies to picture, gain and pan to sound. Showing both for every
-    // clip would offer controls that do nothing.
-    videoGroup_->setVisible(isVideo);
-    colourGroup_->setVisible(isVideo);
-    secondaryGroup_->setVisible(isVideo);
-    keyGroup_->setVisible(isVideo);
-    effectGroup_->setVisible(isVideo);
-    audioGroup_->setVisible(!isVideo);
+    // Motion applies to picture, gain and pan to sound. A clip has one or the
+    // other, which is also what decides whether each tab has anything behind
+    // it -- `applyPaneVisibility` combines these with the page that is up.
+    showsVideo_ = isVideo;
+    showsAudio_ = !isVideo;
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
-        title_->setText(title_->text() + "  (track locked)");
     }
 
     // Guarded, so writing the model's values into the widgets does not read as
@@ -995,7 +1010,7 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
-    maskGroup_->setVisible(isVideo);
+    showsMask_ = isVideo;
     maskShape_->setCurrentIndex(maskShape_->findData(static_cast<int>(clip->mask.shape)));
     maskWidth_->setValue(clip->mask.width);
     maskHeight_->setValue(clip->mask.height);
@@ -1017,7 +1032,7 @@ void EffectControls::applyToWidgets() {
     unstabilise_->setEnabled(stabilised);
     reframe_->setEnabled(isVideo);
 
-    graphicGroup_->setVisible(isVideo && clip->graphic.isSet());
+    showsGraphic_ = isVideo && clip->graphic.isSet();
     if (clip->graphic.isSet()) {
         shapeKind_->setCurrentIndex(shapeKind_->findData(static_cast<int>(clip->graphic.kind)));
         shapeWidth_->setValue(clip->graphic.width);
@@ -1119,6 +1134,15 @@ void EffectControls::applyToWidgets() {
     pan_->setValue(clip->panAt(position_));
     enabled_->setChecked(clip->enabled);
     updating_ = false;
+    applyIdentity();
+    // The page a clip arrives on is the first one that has anything on it, so
+    // selecting a sound clip while the Inspector tab is up does not show an
+    // empty column with the answer one tab over.
+    if ((pane_ == Pane::Inspector && !showsVideo_) || (pane_ == Pane::Audio && !showsAudio_)) {
+        setPane(showsVideo_ ? Pane::Inspector : Pane::Audio);
+    } else {
+        applyPaneVisibility();
+    }
     applySliders();
     applyKeyframeButtons();
 }
@@ -1345,6 +1369,330 @@ void EffectControls::applySliders() {
         QSignalBlocker block{row.slider};
         row.slider->setValue(stepFor(row.spin->value(), row.sliderLo, row.sliderHi));
     }
+}
+
+// --- The header -------------------------------------------------------------
+
+void EffectControls::buildHeader() {
+    // The same strip the bin has, because the design draws one strip and puts
+    // it on both panels. `#bin-tab` styles the pill; sharing the rule is what
+    // keeps the two from drifting a half pixel apart the next time either is
+    // touched.
+    tabBar_ = new QFrame(this);
+    tabBar_->setObjectName("inspector-tabbar");
+    tabBar_->setFixedHeight(34);
+    auto* tabRow = new QHBoxLayout(tabBar_);
+    tabRow->setContentsMargins(8, 0, 6, 0);
+    tabRow->setSpacing(2);
+
+    tabs_ = new QButtonGroup(this);
+    tabs_->setExclusive(true);
+    struct TabSpec {
+        const char* label;
+        const char* name;
+        const char* tip;
+        Pane pane;
+        QPushButton** slot;
+    };
+    const TabSpec specs[] = {
+        {"Inspector", "inspector-tab-inspector", "How this clip looks", Pane::Inspector,
+         &inspectorTab_},
+        {"Audio", "inspector-tab-audio", "How this clip sounds", Pane::Audio, &audioTab_},
+        {"Info", "inspector-tab-info", "What this clip is", Pane::Info, &infoTab_},
+    };
+    for (const TabSpec& spec : specs) {
+        auto* tab = new QPushButton(QString::fromUtf8(spec.label), tabBar_);
+        tab->setObjectName(spec.name);
+        tab->setProperty("class", "inspector-tab");
+        tab->setCheckable(true);
+        tab->setFocusPolicy(Qt::NoFocus);
+        tab->setCursor(Qt::PointingHandCursor);
+        tab->setToolTip(QString::fromUtf8(spec.tip));
+        const Pane pane = spec.pane;
+        connect(tab, &QPushButton::clicked, this, [this, pane] { setPane(pane); });
+        tabs_->addButton(tab);
+        tabRow->addWidget(tab);
+        *spec.slot = tab;
+    }
+    inspectorTab_->setChecked(true);
+    tabRow->addStretch(1);
+
+    // The arrow the design puts at the end of the strip. It resets the page
+    // that is showing and nothing else -- see `resetPane`, which says why that
+    // is narrower than the tab it sits above.
+    resetButton_ = new QPushButton(tabBar_);
+    resetButton_->setObjectName("bin-glyph-button");
+    resetButton_->setIcon(icons::toolIcon(icons::Glyph::Revert, 13));
+    resetButton_->setFixedSize(26, 24);
+    resetButton_->setFocusPolicy(Qt::NoFocus);
+    connect(resetButton_, &QPushButton::clicked, this, [this] { resetPane(); });
+    tabRow->addWidget(resetButton_);
+
+    // --- the row that says which clip this is -----------------------------
+    identityRow_ = new QFrame(this);
+    identityRow_->setObjectName("inspector-identity");
+    auto* identity = new QHBoxLayout(identityRow_);
+    identity->setContentsMargins(12, 10, 12, 10);
+    identity->setSpacing(10);
+
+    // A glyph and not a thumbnail. A frame of the clip would want a decode, and
+    // the header has to be right the instant the selection changes -- a tile
+    // that fills in half a second later is a tile that is wrong half the time.
+    identityTile_ = new QLabel(identityRow_);
+    identityTile_->setObjectName("inspector-identity-tile");
+    identityTile_->setFixedSize(52, 32);
+    identityTile_->setAlignment(Qt::AlignCenter);
+    identity->addWidget(identityTile_);
+
+    auto* names = new QVBoxLayout;
+    names->setContentsMargins(0, 0, 0, 0);
+    names->setSpacing(1);
+    identityName_ = new QLabel("No clip selected", identityRow_);
+    identityName_->setObjectName("inspector-identity-name");
+    identityMeta_ = new QLabel({}, identityRow_);
+    identityMeta_->setObjectName("inspector-identity-meta");
+    // Both elide rather than wrap: the panel is 300px and a clip name is as
+    // long as somebody's camera made it, and a header that grows to two lines
+    // moves every control under it every time the selection changes.
+    //
+    // `Ignored` horizontally is the half that matters. Without it a label asks
+    // for the width of its whole string, and the longest name in the project
+    // decides how narrow the inspector can be dragged.
+    for (QLabel* label : {identityName_, identityMeta_}) {
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        label->installEventFilter(this);
+    }
+    names->addWidget(identityName_);
+    names->addWidget(identityMeta_);
+    identity->addLayout(names, 1);
+}
+
+void EffectControls::buildInfoGroup() {
+    // "Clip" and not "Info": the tab above it already says Info, and a heading
+    // that repeats the tab is a line of the panel spent saying nothing.
+    infoGroup_ = new QGroupBox("Clip", this);
+    auto* form = new QFormLayout(infoGroup_);
+    // Read-only, and labels rather than disabled fields. This page answers
+    // questions about the clip; a greyed-out spin box answers them worse than a
+    // line of text, and invites a click that does nothing.
+    static constexpr const char* kRows[] = {
+        "Name", "Track", "Source", "Media", "Sound", "Timeline", "Source range", "Speed",
+    };
+    for (const char* name : kRows) {
+        auto* value = new QLabel("\u2014", infoGroup_);
+        value->setObjectName("inspector-info-value");
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        value->setWordWrap(true);
+        form->addRow(QString::fromUtf8(name), value);
+        infoValues_.push_back(value);
+    }
+}
+
+void EffectControls::setPane(Pane pane) {
+    pane_ = pane;
+    QPushButton* wanted = pane == Pane::Inspector ? inspectorTab_
+                          : pane == Pane::Audio   ? audioTab_
+                                                  : infoTab_;
+    if (wanted != nullptr && !wanted->isChecked()) {
+        const QSignalBlocker block{wanted};
+        wanted->setChecked(true);
+    }
+    applyPaneVisibility();
+    // Back to the top. The pages are different heights, and arriving at a new
+    // one scrolled to where the last one happened to be is how a short page
+    // looks empty.
+    if (scroll_ != nullptr) {
+        scroll_->verticalScrollBar()->setValue(0);
+    }
+}
+
+void EffectControls::applyPaneVisibility() {
+    const bool inspector = pane_ == Pane::Inspector;
+    videoGroup_->setVisible(inspector && showsVideo_);
+    colourGroup_->setVisible(inspector && showsVideo_);
+    secondaryGroup_->setVisible(inspector && showsVideo_);
+    keyGroup_->setVisible(inspector && showsVideo_);
+    effectGroup_->setVisible(inspector && showsVideo_);
+    maskGroup_->setVisible(inspector && showsMask_);
+    graphicGroup_->setVisible(inspector && showsGraphic_);
+    audioGroup_->setVisible(pane_ == Pane::Audio && showsAudio_);
+    infoGroup_->setVisible(pane_ == Pane::Info);
+    // Whether the clip plays at all is a fact about the clip rather than about
+    // any one page, but on a page of read-only answers it is the only thing
+    // that would move, which reads as an oversight rather than as a control.
+    enabled_->setVisible(pane_ != Pane::Info);
+
+    // A tab with nothing behind it is disabled rather than hidden: the design
+    // draws three, and a strip that grew and shrank with the selection would
+    // move the one somebody was aiming at.
+    inspectorTab_->setEnabled(showsVideo_);
+    audioTab_->setEnabled(showsAudio_);
+    infoTab_->setEnabled(selectedClip() != nullptr);
+    // Nothing on the Info page to put back.
+    resetButton_->setEnabled(pane_ != Pane::Info && selectedClip() != nullptr &&
+                             (inspector ? showsVideo_ : showsAudio_));
+    resetButton_->setToolTip(inspector ? "Motion back to its defaults"
+                                       : "Level to 0 dB and pan to centre");
+}
+
+void EffectControls::applyIdentity() {
+    const model::Clip* clip = selectedClip();
+    const model::Sequence* sequence =
+        project_ == nullptr ? nullptr : project_->findSequence(sequenceId_);
+    const model::Track* track = sequence == nullptr ? nullptr : sequence->findTrack(track_);
+
+    if (clip == nullptr) {
+        identityNameFull_ = "No clip selected";
+        identityMetaFull_.clear();
+        identityName_->setToolTip({});
+        elideIdentity();
+        identityTile_->setPixmap(icons::pixmap(icons::Glyph::FilmStrip, 14, theme::textAt(0.35)));
+        for (QLabel* value : infoValues_) {
+            value->setText(QString::fromUtf8("\u2014"));
+        }
+        return;
+    }
+
+    const bool isVideo = track != nullptr && track->kind() == model::TrackKind::Video;
+    const model::MediaRef* media = project_->findMedia(clip->activeSource());
+    const icons::Glyph glyph = clip->graphic.isSet() ? icons::Glyph::Image
+                               : isVideo             ? icons::Glyph::FilmStrip
+                                                     : icons::Glyph::Waveform;
+    identityTile_->setPixmap(icons::pixmap(glyph, 14, theme::accent(300)));
+
+    const QString name = QString::fromStdString(clip->name.empty() ? "Clip" : clip->name);
+    identityNameFull_ = name;
+    identityName_->setToolTip(name);
+
+    // What the clip is, in one line: how long it runs, and where it sits. The
+    // lock lives here too -- it used to be appended to the title, and a reason
+    // the controls are dead belongs next to the name of the thing they are dead
+    // for.
+    const time::RationalTime duration = clip->timelineRange.duration();
+    QString meta = QString("%1 \u00b7 %2 frames")
+                       .arg(track == nullptr ? "" : QString::fromStdString(track->name()))
+                       .arg(static_cast<long long>(duration.frames()));
+    if (track != nullptr && track->isLocked()) {
+        meta += "  \u00b7  track locked";
+    }
+    identityMetaFull_ = meta;
+    elideIdentity();
+
+    // --- the Info page ----------------------------------------------------
+    const auto dash = QString::fromUtf8("\u2014");
+    const auto timecode = [&](const time::RationalTime& at, const time::Rational& rate) {
+        return QString::fromStdString(
+            time::timecodeFromFrames(at.rescaledTo(rate).frames(), rate, false).toString());
+    };
+    const time::Rational rate =
+        sequence != nullptr ? sequence->frameRate() : clip->timelineRange.start().rate();
+
+    infoValues_[0]->setText(name);
+    infoValues_[1]->setText(track == nullptr ? dash : QString::fromStdString(track->name()));
+    infoValues_[2]->setText(media == nullptr ? QString{"Generated \u2014 no file"}
+                                             : QString::fromStdString(media->path));
+
+    if (media != nullptr && media->info.primaryVideo() != nullptr) {
+        const media::VideoStreamInfo& video = *media->info.primaryVideo();
+        infoValues_[3]->setText(QString("%1\u00d7%2 at %3 fps")
+                                    .arg(video.width)
+                                    .arg(video.height)
+                                    .arg(QString::fromStdString(video.frameRate.toString())));
+    } else {
+        infoValues_[3]->setText(dash);
+    }
+    if (media != nullptr && media->info.primaryAudio() != nullptr) {
+        const media::AudioStreamInfo& audio = *media->info.primaryAudio();
+        infoValues_[4]->setText(QString("%1 ch at %2 Hz")
+                                    .arg(audio.channelCount)
+                                    .arg(static_cast<long long>(audio.sampleRate.roundToInt())));
+    } else {
+        infoValues_[4]->setText(dash);
+    }
+
+    infoValues_[5]->setText(QString("%1 \u2013 %2")
+                                .arg(timecode(clip->start(), rate))
+                                .arg(timecode(clip->endExclusive(), rate)));
+    const time::Rational sourceRate = clip->sourceRange.start().rate();
+    if (sourceRate.isPositive()) {
+        infoValues_[6]->setText(QString("%1 \u2013 %2")
+                                    .arg(timecode(clip->sourceRange.start(), sourceRate))
+                                    .arg(timecode(clip->sourceRange.endExclusive(), sourceRate)));
+    } else {
+        infoValues_[6]->setText(dash);
+    }
+
+    // Derived rather than stored, because that is what speed is here: the ratio
+    // between what a clip reads and how long it takes to read it. See ADR-014.
+    const double played = clip->timelineRange.duration().toSecondsDouble();
+    const double read = clip->sourceRange.duration().toSecondsDouble();
+    infoValues_[7]->setText(played > 0.0 && read > 0.0
+                                ? QString("%1%").arg(100.0 * read / played, 0, 'f', 1) +
+                                      (clip->reversed ? QString{"  (reversed)"} : QString{})
+                                : dash);
+}
+
+void EffectControls::elideIdentity() {
+    // Middle for the name, because the head and the tail of a clip name are the
+    // parts that tell two takes apart and the middle is the part they share.
+    // End for the line under it, which reads left to right and stops mattering.
+    identityName_->QLabel::setText(identityName_->fontMetrics().elidedText(
+        identityNameFull_, Qt::ElideMiddle, std::max(0, identityName_->width())));
+    identityMeta_->QLabel::setText(identityMeta_->fontMetrics().elidedText(
+        identityMetaFull_, Qt::ElideRight, std::max(0, identityMeta_->width())));
+}
+
+bool EffectControls::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::Resize && (watched == identityName_ || watched == identityMeta_)) {
+        elideIdentity();
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void EffectControls::resetPane() {
+    // Narrower than the tab it sits over, deliberately. On the Inspector page
+    // this puts motion back and leaves the grade, the mask and the effect stack
+    // alone: those are three separate pieces of work with their own controls,
+    // and one arrow that threw all of them away would be the most expensive
+    // click in the panel. The tooltip says which it is, and the command stack
+    // takes it back either way.
+    if (commands_ == nullptr || project_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    // Broken on both sides, so the reset is its own undo step. Parameter edits
+    // carry a merge key -- that is what makes dragging a slider one undo rather
+    // than one per pixel -- and without this the reset merges into whatever was
+    // dragged just before it, so undoing goes back past both and the value the
+    // reset replaced is unreachable.
+    commands_->breakMerge();
+    updating_ = true;
+    if (pane_ == Pane::Inspector) {
+        const model::Transform identity;
+        positionX_->setValue(identity.positionX);
+        positionY_->setValue(identity.positionY);
+        scaleX_->setValue(identity.scaleX);
+        scaleY_->setValue(identity.scaleY);
+        rotation_->setValue(identity.rotationDegrees);
+        anchorX_->setValue(identity.anchorX);
+        anchorY_->setValue(identity.anchorY);
+        opacity_->setValue(identity.opacity);
+        blend_->setCurrentIndex(blend_->findData(static_cast<int>(model::BlendMode::Normal)));
+        updating_ = false;
+        pushTransform();
+    } else if (pane_ == Pane::Audio) {
+        gain_->setValue(0.0);
+        pan_->setValue(0.0);
+        updating_ = false;
+        pushAudio();
+    }
+    updating_ = false;
+    commands_->breakMerge();
+    refresh();
+    emit edited();
 }
 
 void EffectControls::applyKeyframeButtons() {

@@ -253,12 +253,35 @@ QLabel { background: transparent; }
 #bin-tabbar, #bin-footer { background: transparent; }
 #bin-tabbar { border-bottom: 1px solid %DIVIDER%; }
 #bin-footer { border-top: 1px solid %DIVIDER%; color: %FAINT%; font-size: 10px; }
-#bin-tab {
+/* One pill, two panels. The design draws the same tab strip on the bin and on
+   the inspector, so they share a rule rather than each carrying a copy that
+   drifts a half pixel the next time either is touched. */
+#bin-tab, QPushButton[class="inspector-tab"] {
     border: none; background: transparent; color: %MUTED%;
     padding: 3px 9px; border-radius: 5px; min-height: 18px; font-size: 11px;
 }
-#bin-tab:hover { background: %BINHOVER%; color: %TEXT%; }
-#bin-tab:checked { background: %ACCENTWASH%; color: %ACCENT300%; }
+#bin-tab:hover, QPushButton[class="inspector-tab"]:hover {
+    background: %BINHOVER%; color: %TEXT%;
+}
+#bin-tab:checked, QPushButton[class="inspector-tab"]:checked {
+    background: %ACCENTWASH%; color: %ACCENT300%;
+}
+/* A tab with nothing behind it. Dimmer than an unselected one and still
+   legible: it is saying "not for this clip", not "gone". */
+QPushButton[class="inspector-tab"]:disabled { color: %FAINT%; background: transparent; }
+#inspector-tabbar { background: transparent; border-bottom: 1px solid %DIVIDER%; }
+#inspector-identity { background: transparent; border-bottom: 1px solid %DIVIDER%; }
+/* The tile beside the clip's name: the design's accent-into-neutral wash, which
+   Qt spells as a gradient because it has no `color-mix` in a background. */
+#inspector-identity-tile {
+    border-radius: 5px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 %ACCENT800%, stop:1 %NEUTRAL900%);
+}
+#inspector-identity-name { font-size: 13px; }
+#inspector-identity-meta { font-size: 10px; color: %FAINT%; }
+#inspector-info-value { color: %TEXT%; }
+
 #bin-chip {
     border: 1px solid transparent; border-radius: 9px; background: %BINHOVER%;
     color: %MUTED%; padding: 1px 8px; min-height: 15px; font-size: 10px;
@@ -349,6 +372,7 @@ QLabel { background: transparent; }
         .replace("%NEUTRAL600%", hex(neutral(600)))
         .replace("%NEUTRAL700%", hex(neutral(700)))
         .replace("%NEUTRAL800%", hex(neutral(800)))
+        .replace("%NEUTRAL900%", hex(neutral(900)))
         .replace("%ACCENTWASH%", hex(mix(surface(), accent(), 0.16)))
         .replace("%BINHOVER%", hex(mix(surface(), text(), 0.08)))
         .replace("%FAINT%", hex(textAt(0.42)))

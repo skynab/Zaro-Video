@@ -15,9 +15,10 @@ window is dressed as an editor: a menu bar, a timeline tool palette (select,
 blade, trim, slip, hand, zoom), four workspaces that decide which panels are
 up, one viewer with source and program pages, a burn-in over the picture with
 safe-area guides, and a status line, all drawn from one set of design tokens in
-`app/Theme`. Every parameter in the inspector is a slider and a value together,
-so a scale can be found by sweeping it against the picture rather than guessed
-at in decimals. Edits align to the edit points around them and say so — a dashed
+`app/Theme`. The inspector is three tabs — how a clip looks, how it sounds, and
+what it is — and every parameter on them is a slider and a value together, so a
+scale can be found by sweeping it against the picture rather than guessed at in
+decimals. Edits align to the edit points around them and say so — a dashed
 guide down the tracks, and a blade that draws its cut before it makes it, and
 one that cuts picture and sound together where they are linked. Delivery has a
 workspace of its own: presets, settings that all reach the encoder, and a queue
@@ -120,7 +121,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 7u | The Deliver workspace: presets, settings and a render queue | **done** |
 | 7v | Premiere interchange: FCP7 XML in and out, `zaro-premiere` | **done** |
 | 7w | Final Cut interchange: FCPXML in and out, `zaro-finalcut` | **done** |
-| 7x | The design's third pass: sliders on the inspector's properties | **done** |
+| 7x | The design's third pass: the inspector's sliders and tabs | **done** |
 
 ## Building
 

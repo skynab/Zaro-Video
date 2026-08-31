@@ -20,6 +20,8 @@ class QFormLayout;
 class QPushButton;
 class QToolButton;
 class QLabel;
+class QButtonGroup;
+class QFrame;
 class QScrollArea;
 class QSlider;
 
@@ -47,6 +49,17 @@ public:
 
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
+
+    /// Which of the panel's three pages is up.
+    ///
+    /// A page rather than a filter: the design's header is three tabs, and a
+    /// tab that only greys things out is a filter wearing a tab's clothes.
+    /// What each one holds is the answer to a different question -- what does
+    /// this clip look like, what does it sound like, and what *is* it -- and
+    /// those were previously one column somebody scrolled through.
+    enum class Pane { Inspector, Audio, Info };
+    void setPane(Pane pane);
+    [[nodiscard]] Pane pane() const noexcept { return pane_; }
 
     /// Scroll to a stage of the grade chain: 0 primary, 1 curves, 2 secondary,
     /// 3 look. The Color workspace draws that chain as nodes, and clicking one
@@ -162,9 +175,44 @@ private:
     void buildKeyGroup();
     void buildGraphicGroup();
     void buildAudioGroup();
+    /// The sticky header: the three tabs, the reset button beside them, and
+    /// the row underneath that says which clip this is.
+    ///
+    /// Outside the scroll area, unlike everything else. What it says is what
+    /// the rest of the panel is *about*, and a heading that scrolls off leaves
+    /// a column of numbers belonging to a clip you can no longer see the name
+    /// of.
+    void buildHeader();
+    /// The Info page: what this clip is, rather than anything to change.
+    void buildInfoGroup();
     /// The groups into a scrolled column, then the connections that need
     /// every widget to exist first.
     void assemblePanel();
+
+    /// Show the groups this page owns and hide the rest.
+    ///
+    /// One place decides, because two would disagree. Every group has its own
+    /// reason to be hidden -- a mask group means nothing for a sound clip, a
+    /// graphic group nothing for a clip that is not one -- and those reasons
+    /// are recorded as the `shows` flags below while the clip is read, then
+    /// combined with the page here.
+    void applyPaneVisibility();
+    /// Fill the identity row and the Info page from the selected clip.
+    void applyIdentity();
+    /// Cut the two identity lines to the width they have.
+    ///
+    /// A clip name is as long as somebody's camera made it and the panel is
+    /// 300px, so one of the two has to give. Re-cut on the label's own resize
+    /// rather than the panel's: what the text has to fit is the space the
+    /// layout ended up giving it, which is not known until it has.
+    void elideIdentity();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    /// Put the page's parameters back to their defaults, undoably.
+    void resetPane();
 
     [[nodiscard]] const model::Clip* selectedClip() const;
     /// The playhead in the selected clip's source time, or nothing if the
@@ -220,7 +268,36 @@ private:
     /// rounds and clamps a value the way the panel displays it.
     bool syncing_{false};
 
-    QLabel* title_{nullptr};
+    Pane pane_{Pane::Inspector};
+    QFrame* tabBar_{nullptr};
+    QFrame* identityRow_{nullptr};
+    QButtonGroup* tabs_{nullptr};
+    QPushButton* inspectorTab_{nullptr};
+    QPushButton* audioTab_{nullptr};
+    QPushButton* infoTab_{nullptr};
+    QPushButton* resetButton_{nullptr};
+    /// The 52x32 tile the design puts beside the clip's name. A glyph for what
+    /// kind of thing this is, not a thumbnail: a frame of the clip would want a
+    /// decode, and the header has to be right the instant a selection changes.
+    QLabel* identityTile_{nullptr};
+    QLabel* identityName_{nullptr};
+    QLabel* identityMeta_{nullptr};
+    /// What those two say before it is cut to fit.
+    QString identityNameFull_;
+    QString identityMetaFull_;
+    QWidget* infoGroup_{nullptr};
+    /// The Info page's right-hand column, in the order `applyIdentity` fills
+    /// them. Labels rather than fields: this page answers questions, and a
+    /// disabled spin box answers them worse than a line of text.
+    std::vector<QLabel*> infoValues_;
+
+    /// What each group would show if its page were up. See
+    /// `applyPaneVisibility`.
+    bool showsVideo_{false};
+    bool showsAudio_{false};
+    bool showsGraphic_{false};
+    bool showsMask_{false};
+
     QDoubleSpinBox* positionX_{nullptr};
     QDoubleSpinBox* positionY_{nullptr};
     QDoubleSpinBox* scaleX_{nullptr};

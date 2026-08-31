@@ -4478,6 +4478,59 @@ written, and a slider is the more dangerous half: a spin box under the pointer
 at least shows what it changed, while a nudged slider looks like nothing
 happened until the picture is wrong.
 
+**The inspector had no tabs either.** The design's header is a 34px strip of
+three: Inspector, Audio, Info, with the reset arrow at the end and the clip's
+name and thumbnail on the row beneath. The panel had a bold label and then eight
+group boxes in a column somebody scrolled — motion, colour, a mask, a secondary,
+a key, effects, audio — with whichever half did not apply to the selection
+hidden. The strip makes that a choice rather than a scroll.
+
+It is the bin's strip, reused. The design draws one tab strip and puts it on
+both panels, so `#bin-tab` styles the pill for both rather than each carrying a
+copy that drifts a half pixel the next time either is touched.
+
+**A tab with nothing behind it is disabled, not hidden.** A clip has picture or
+sound, never both — motion applies to one and gain to the other, which is what
+already decided which groups showed. So the Audio tab is dead on a picture clip
+and the Inspector tab on a sound one. Hiding them would make the strip grow and
+shrink with the selection and move the tab somebody was aiming at.
+
+**The panel moves you off a page only when that page has nothing on it.**
+Selecting a sound clip while the Inspector page is up lands on Audio, because
+staying would show an empty column with the answer one tab over. Selecting one
+while *Info* is up stays on Info, because Info answers for every clip and
+switching away would override a choice that is still good. The test pins both
+directions; the first version of it asserted the wrong one, and the code was
+right.
+
+**Info is a new page and it is read-only.** Name, track, source path, media
+format, sound, where the clip sits, what it reads, and its speed — derived from
+the two ranges rather than stored, which is what speed is here (ADR-014). Labels
+and not disabled fields: this page answers questions, and a greyed-out spin box
+answers them worse than a line of text while inviting a click that does nothing.
+
+**The reset arrow is narrower than the tab it sits over.** On the Inspector page
+it puts motion back and leaves the grade, the mask and the effect stack alone.
+Those are three separate pieces of work with their own controls, and one arrow
+that threw all of them away would be the most expensive click in the panel. The
+tooltip says which it is, and the command stack takes it back — but only once
+the merge is broken on both sides of it: parameter edits carry a merge key, so
+without that the reset merges into whatever was dragged just before it and one
+undo goes back past both. A test caught that.
+
+**The header does not scroll.** What it says is what the rest of the panel is
+about, and a heading that scrolls off leaves a column of numbers belonging to a
+clip whose name is no longer on screen. The two lines in it elide rather than
+wrap — a clip name is as long as somebody's camera made it and the panel is
+300px — and they elide on their *own* resize rather than the panel's, because
+what the text has to fit is the space the layout ended up giving it. Their size
+policy is `Ignored` horizontally for the same reason: without it the longest
+name in the project decides how narrow the inspector can be dragged.
+
+**The tile is a glyph and not a thumbnail.** A frame of the clip would want a
+decode, and the header has to be right the instant the selection changes; a tile
+that fills in half a second later is a tile that is wrong half the time.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.
