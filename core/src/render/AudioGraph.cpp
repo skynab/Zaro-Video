@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "zaro/core/render/Downmix.h"
 #include "zaro/core/render/Loudness.h"
 
 namespace zaro::render {
@@ -253,29 +254,36 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                 }
             }
 
+            // How much of each source channel reaches each output. A 5.1 clip
+            // in a stereo sequence used to keep L and R and drop the rest,
+            // which loses the centre channel -- the dialogue -- with nothing to
+            // say so. See render::DownmixMatrix.
+            const DownmixMatrix fold{sourceChannels, channelCount};
             for (std::int32_t channel = 0; channel < channelCount; ++channel) {
-                // Mono sources feed both outputs; a stereo source keeps its
-                // sides. Anything wider is folded by taking the first channels,
-                // which is a placeholder until real channel mapping arrives.
-                const std::int32_t from = std::min(channel, sourceChannels - 1);
                 // Clip gain and pan only. The track's fader and balance come
                 // after the processing, below.
                 const float pan = channelCount == 1 ? 1.0F : (channel == 0 ? clipLeft : clipRight);
                 const float gain = clipGain * pan;
-
-                const float* in = scratch.channel(from);
                 float* out = bus.channel(channel);
-                if (!automated) {
-                    for (std::int64_t i = 0; i < available; ++i) {
-                        out[offsetInBlock + i] += in[i] * gain;
-                    }
-                    continue;
-                }
                 const std::vector<float>& side = channel == 0 ? leftPan : rightPan;
-                for (std::int64_t i = 0; i < available; ++i) {
-                    const auto at = static_cast<std::size_t>(i);
-                    const float placed = channelCount == 1 ? 1.0F : side[at];
-                    out[offsetInBlock + i] += in[i] * clipGains[at] * placed;
+
+                for (std::int32_t from = 0; from < sourceChannels; ++from) {
+                    const float share = fold.weight(channel, from);
+                    if (share == 0.0F) {
+                        continue;
+                    }
+                    const float* in = scratch.channel(from);
+                    if (!automated) {
+                        for (std::int64_t i = 0; i < available; ++i) {
+                            out[offsetInBlock + i] += in[i] * gain * share;
+                        }
+                        continue;
+                    }
+                    for (std::int64_t i = 0; i < available; ++i) {
+                        const auto at = static_cast<std::size_t>(i);
+                        const float placed = channelCount == 1 ? 1.0F : side[at];
+                        out[offsetInBlock + i] += in[i] * clipGains[at] * placed * share;
+                    }
                 }
             }
             ++lastClipCount_;

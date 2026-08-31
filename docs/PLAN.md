@@ -5157,3 +5157,47 @@ its wrap is drawn the way it is applied, while the shift curve wraps in its
 
 The Lumetri curve set is complete: master, red, green, blue, hue against
 saturation, brightness against saturation, hue against hue.
+
+
+### Phase 8i — a 5.1 clip keeps its dialogue §7.2 ✅
+
+**The one place the code said it was incomplete, and it was worse than it
+sounded.** `AudioGraph` folded anything wider than the bus by taking the first N
+channels -- "a placeholder until real channel mapping arrives", which reads like
+a missing feature and is actually silent data loss. A 5.1 file cut into a stereo
+sequence kept L and R and dropped C, LFE, Ls and Rs. In a 5.1 mix the centre
+channel is the dialogue. The picture arrived, the music arrived, and the words
+did not, with nothing in the interface to say so.
+
+**The layout is assumed from the channel count**, because a count is all the
+mixer has: the decoded buffer carries no layout, and threading one through every
+audio path is a larger change than this bug deserves and would have delayed the
+fix behind it. The assumption is the conventional order every tool falls back to
+-- 6 channels is L R C LFE Ls Rs -- and a count that is not on the list falls
+back to taking the first channels, which is where this started and is at least
+not a regression. Guessing where a five-channel file's third channel goes would
+be worse than the honest pass-through, because it cannot be heard as wrong.
+
+**ATSC A/52's coefficients**, which is what every other tool does by default:
+fronts at unity, centre to both sides at -3 dB, surrounds to their own side at
+-3 dB. **The LFE is left out** -- band-limited rumble meant for a driver the
+stereo bus does not have, and folding it in adds energy nobody mixed and nothing
+can reproduce.
+
+**Stereo to mono sums at a half rather than -3 dB.** A mono fold sums correlated
+material, and equal-power weights on a centred mix come back louder than the
+stereo they were folded from.
+
+**The paths the old code got right are kept exactly**, and kept on the
+pass-through branch so they do not start paying for a matrix: a matched layout,
+and a mono source feeding every output. Mono in particular is placed by the pan
+law, and changing its level here would move every mono clip in every project.
+
+The shared test source grew a per-channel variant, because a source that puts
+the same constant in every channel cannot tell "the centre arrived" from "the
+left arrived" -- which is the only thing worth asserting here.
+
+**Not done.** Real channel mapping: choosing per clip which source channel feeds
+which output, and sequences wider than stereo. That is the feature the old
+comment was waiting for, and it now sits on top of a correct default rather than
+in front of a silent one.

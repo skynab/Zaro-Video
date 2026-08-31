@@ -7,6 +7,7 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/render/AudioGraph.h"
+#include "zaro/core/render/Downmix.h"
 
 #include "ModelFixtures.h"
 #include "TestSources.h"
@@ -634,4 +635,68 @@ TEST_CASE("A clip's high pass takes the bottom off that clip alone", "[render][a
     auto neighbour = graph.mix(f.sequence(), samples(200 * kSamplesPerFrame), 480);
     REQUIRE(neighbour);
     CHECK(neighbour->channel(0)[479] == Approx(1.0F).margin(1e-5));
+}
+
+TEST_CASE("A 5.1 clip keeps its dialogue in a stereo sequence", "[render][audio]") {
+    // The bug this guards was silent and severe: the mixer took the first N
+    // channels, so a 5.1 file kept L and R and dropped C, LFE, Ls and Rs. In a
+    // 5.1 mix the centre channel is the dialogue -- the picture and the music
+    // arrived and the words did not, with nothing in the interface to say so.
+    Fixture f;
+    ConstantAudioSource source;
+    // L R C LFE Ls Rs. Only the centre carries anything, which is the case the
+    // old code got exactly wrong.
+    source.defineChannels(f.longMedia, {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F});
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+    // Both sides, at -3 dB, which is what ATSC A/52 specifies for the fold.
+    CHECK(mixed->channel(0)[0] == Approx(render::DownmixMatrix::kFold).margin(1e-4));
+    CHECK(mixed->channel(1)[0] == Approx(render::DownmixMatrix::kFold).margin(1e-4));
+}
+
+TEST_CASE("A 5.1 clip's LFE does not reach the stereo bus", "[render][audio]") {
+    // Band-limited rumble for a driver the stereo bus does not have. Folding it
+    // in adds energy nobody mixed and nothing can reproduce.
+    Fixture f;
+    ConstantAudioSource source;
+    source.defineChannels(f.longMedia, {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F});
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+    CHECK(mixed->channel(0)[0] == Approx(0.0F).margin(1e-6));
+    CHECK(mixed->channel(1)[0] == Approx(0.0F).margin(1e-6));
+}
+
+TEST_CASE("A 5.1 clip's surrounds stay on their own side", "[render][audio]") {
+    Fixture f;
+    ConstantAudioSource source;
+    // Left surround only.
+    source.defineChannels(f.longMedia, {0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F});
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+    CHECK(mixed->channel(0)[0] == Approx(render::DownmixMatrix::kFold).margin(1e-4));
+    CHECK(mixed->channel(1)[0] == Approx(0.0F).margin(1e-6));
+}
+
+TEST_CASE("A stereo clip is untouched by the fold", "[render][audio]") {
+    // The common path, and the one that must not move: a matched layout passes
+    // through at unity, exactly as it did before any of this existed.
+    Fixture f;
+    ConstantAudioSource source;
+    source.defineChannels(f.longMedia, {1.0F, 0.25F});
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    auto mixed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(mixed);
+    CHECK(mixed->channel(0)[0] == Approx(1.0F).margin(1e-5));
+    CHECK(mixed->channel(1)[0] == Approx(0.25F).margin(1e-5));
 }

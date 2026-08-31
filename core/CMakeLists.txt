@@ -46,6 +46,7 @@ add_library(zaro_core
     src/render/Loudness.cpp
     src/render/BakeLut.cpp
     src/render/ColorPipeline.cpp
+    src/render/Downmix.cpp
     src/render/Ducking.cpp
     src/render/EffectStack.cpp
     src/render/FrameCache.cpp

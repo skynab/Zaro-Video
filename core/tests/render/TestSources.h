@@ -63,7 +63,14 @@ private:
 class ConstantAudioSource final : public render::AudioSource {
 public:
     void define(model::MediaRefId media, float value, std::int32_t channels = 2) {
-        values_[media.value()] = {value, channels};
+        values_[media.value()] = {value, channels, {}};
+    }
+
+    /// A different constant in each channel, so a test can tell which of them
+    /// arrived. The channel count is the number of values given.
+    void defineChannels(model::MediaRefId media, std::vector<float> perChannel) {
+        const auto channels = static_cast<std::int32_t>(perChannel.size());
+        values_[media.value()] = {0.0F, channels, std::move(perChannel)};
     }
 
     /// Truncate every read to this many samples, to exercise the short-read
@@ -83,8 +90,11 @@ public:
         out = media::AudioBuffer{found->second.channels, produced, sampleRate};
         for (std::int32_t channel = 0; channel < found->second.channels; ++channel) {
             float* samples = out.channel(channel);
+            const std::vector<float>& each = found->second.perChannel;
+            const float value =
+                each.empty() ? found->second.value : each[static_cast<std::size_t>(channel)];
             for (std::int64_t i = 0; i < produced; ++i) {
-                samples[i] = found->second.value;
+                samples[i] = value;
             }
         }
         return {};
@@ -96,6 +106,7 @@ private:
     struct Entry {
         float value;
         std::int32_t channels;
+        std::vector<float> perChannel;
     };
     std::map<std::uint64_t, Entry> values_;
     std::int64_t available_{-1};

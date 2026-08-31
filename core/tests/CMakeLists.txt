@@ -49,6 +49,7 @@ add_executable(zaro_core_tests
     render/test_compositing.cpp
     render/test_bake_lut.cpp
     render/test_compare.cpp
+    render/test_downmix.cpp
     render/test_ducking.cpp
     render/test_effects.cpp
     render/test_keyer.cpp
