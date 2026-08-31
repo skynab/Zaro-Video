@@ -142,6 +142,8 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 8d | Saying what a file's gamut really is, beside its curve | **done** |
 | 8e | Saturation against hue, on both paths | **done** |
 | 8f | Drawing a hue curve: the editor's fourth channel | **done** |
+| 8g | Saturation against brightness, and the curves compounded | **done** |
+| 8h | Hue against hue: the curve set complete | **done** |
 
 ## Building
 

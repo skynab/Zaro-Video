@@ -729,15 +729,19 @@ TEST_CASE("A file's gamut correction survives a save", "[io]") {
     CHECK(untouched.primariesOverride == media::ColorPrimaries::Unknown);
 }
 
-TEST_CASE("A hue curve survives a save", "[io]") {
+TEST_CASE("The saturation curves survive a save", "[io]") {
     Fixture f = populated();
     const auto trackId = f.v1;
     const auto clipId = f.track(trackId).clips().front().id;
 
-    model::HueCurves curves;
-    curves.saturation.set(model::CurvePoint{0.1, 0.8});
-    curves.saturation.set(model::CurvePoint{0.6, 0.2});
-    f.track(trackId).find(clipId)->hueCurves = curves;
+    model::ColorCurves curves;
+    curves.againstHue.set(model::CurvePoint{0.1, 0.8});
+    curves.againstHue.set(model::CurvePoint{0.6, 0.2});
+    curves.againstLuma.set(model::CurvePoint{0.0, 0.0});
+    curves.againstLuma.set(model::CurvePoint{1.0, 0.5});
+    curves.hueShift.set(model::CurvePoint{0.3, 0.8});
+    curves.hueShift.set(model::CurvePoint{0.8, 0.5});
+    f.track(trackId).find(clipId)->colorCurves = curves;
 
     const auto text = io::saveProjectToString(f.project);
     REQUIRE(text);
@@ -747,11 +751,45 @@ TEST_CASE("A hue curve survives a save", "[io]") {
     const model::Clip* back =
         loaded->project.findSequence(f.sequenceId)->findTrack(trackId)->find(clipId);
     REQUIRE(back != nullptr);
-    CHECK(back->hueCurves == curves);
+    CHECK(back->colorCurves == curves);
 
     // And a clip with no hue curve writes nothing, so a project made before
     // this existed reads back exactly as it did.
     const model::Clip& untouched =
         loaded->project.findSequence(f.sequenceId)->findTrack(f.v2)->clips().front();
-    CHECK(untouched.hueCurves.isIdentity());
+    CHECK(untouched.colorCurves.isIdentity());
+}
+
+TEST_CASE("A hue curve keeps the key it shipped with", "[io]") {
+    // The struct that holds it was renamed when a second curve joined it, and
+    // its member with it. The file's keys did not move, because a project
+    // written before that rename has to keep opening -- a rename in the model
+    // is not a licence to rename the format.
+    //
+    // Checked on the text rather than through a hand-written file: what an
+    // older build wrote for a hue-only curve is byte for byte what this one
+    // writes, so asserting the text is asserting the compatibility.
+    Fixture f = populated();
+    const auto clipId = f.track(f.v1).clips().front().id;
+    model::ColorCurves curves;
+    curves.againstHue.set(model::CurvePoint{0.2, 0.9});
+    curves.againstHue.set(model::CurvePoint{0.7, 0.1});
+    f.track(f.v1).find(clipId)->colorCurves = curves;
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    CHECK(text->find("\"hueCurves\"") != std::string::npos);
+    CHECK(text->find("\"saturation\"") != std::string::npos);
+    // The curves that did not exist then are absent rather than written empty.
+    CHECK(text->find("\"luma\"") == std::string::npos);
+    CHECK(text->find("\"hueShift\"") == std::string::npos);
+
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+    const model::Clip* back =
+        loaded->project.findSequence(f.sequenceId)->findTrack(f.v1)->find(clipId);
+    REQUIRE(back != nullptr);
+    CHECK(back->colorCurves == curves);
+    CHECK(back->colorCurves.againstLuma.isIdentity());
+    CHECK(back->colorCurves.hueShift.isIdentity());
 }

@@ -55,7 +55,7 @@ add_library(zaro_core
     src/render/CurveTable.cpp
     src/render/Gamut.cpp
     src/render/Grade.cpp
-    src/render/HueTable.cpp
+    src/render/ColorCurveTable.cpp
     src/render/Keyer.cpp
     src/render/LutTable.cpp
     src/render/PathRaster.cpp

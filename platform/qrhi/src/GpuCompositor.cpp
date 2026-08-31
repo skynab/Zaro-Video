@@ -23,9 +23,9 @@
 #define ZARO_HAS_VULKAN 0
 #endif
 
+#include "zaro/core/render/ColorCurveTable.h"
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Gamut.h"
-#include "zaro/core/render/HueTable.h"
 
 namespace zaro::platform::qrhi {
 namespace {
@@ -102,30 +102,33 @@ std::unique_ptr<QRhiTexture> makeLutTexture(QRhi& rhi, QRhiResourceUpdateBatch& 
 /// format that works on one machine and not the next.
 /// The grade's lookup tables, as one two-row texture.
 ///
-/// Row 0 is the tone curves, indexed by `CurveTable::indexFor`; row 1 is the
-/// saturation-against-hue curve, indexed by hue. Two rows of one texture rather
-/// than two textures, because a second sampler would be a fourth binding to add
-/// at eight call sites and a fourth fallback to get right at each of them --
-/// and a binding missed is undefined behaviour rather than a compile error.
+/// Row 0 is the tone curves, indexed by `CurveTable::indexFor`; row 1 is
+/// saturation against hue, indexed by hue; row 2 is saturation against
+/// brightness, indexed as row 0 is; row 3 is the hue shift, indexed by hue and
+/// holding an offset in turns -- an offset rather than a destination because a
+/// destination wraps and cannot be interpolated across the seam. Rows of one texture rather than a
+/// texture each, because every extra sampler is another binding to add at eight call sites and
+/// another fallback to get right at each of them -- and a binding missed is undefined behaviour
+/// rather than a compile error.
 ///
-/// Sampled at v = 0.25 and v = 0.75, which are the two rows' texel centres, so
-/// the linear filter returns each row exactly rather than a blend of both.
-/// That is why the existing tone lookups moved off v = 0.5: on a two-row
-/// texture that is the seam between them.
+/// Sampled at each row's texel centre -- 1/8, 3/8, 5/8, 7/8 for four rows -- so the
+/// linear filter returns that row exactly rather than a blend of its
+/// neighbours. Those coordinates move whenever a row is added, which is why
+/// they are named here and in the shader rather than written as bare numbers.
 ///
 /// Either table may be absent, and the row it would have filled is left at
 /// values the shader's flags stop it reading.
 std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch& batch,
                                               const render::CurveTable* table,
-                                              const render::HueTable* hue) {
+                                              const render::ColorCurveTable* hue) {
     constexpr int kEntries = render::CurveTable::kEntries;
     auto texture = std::unique_ptr<QRhiTexture>(rhi.newTexture(
-        QRhiTexture::RGBA32F, QSize(kEntries, 2), 1, QRhiTexture::UsedAsTransferSource));
+        QRhiTexture::RGBA32F, QSize(kEntries, 4), 1, QRhiTexture::UsedAsTransferSource));
     if (!texture->create()) {
         return nullptr;
     }
 
-    std::vector<float> padded(static_cast<std::size_t>(kEntries) * 2 * 4, 0.0F);
+    std::vector<float> padded(static_cast<std::size_t>(kEntries) * 4 * 4, 0.0F);
     const float* entries = table != nullptr ? table->data() : nullptr;
     for (int i = 0; i < kEntries; ++i) {
         for (int channel = 0; channel < 3; ++channel) {
@@ -143,6 +146,8 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
     // a fifth of a degree of hue, and the sampler is shared with the tone row,
     // which must clamp.
     const std::size_t second = static_cast<std::size_t>(kEntries) * 4;
+    const std::size_t third = second * 2;
+    const std::size_t fourth = second * 3;
     for (int i = 0; i < kEntries; ++i) {
         const float turn = (static_cast<float>(i) + 0.5F) / static_cast<float>(kEntries);
         const float value = hue != nullptr ? hue->saturationAt(turn) : 1.0F;
@@ -151,9 +156,35 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
         padded[at + 1] = value;
         padded[at + 2] = value;
         padded[at + 3] = 1.0F;
+
+        // Row 2 is indexed the way row 0 is, so the shader can reuse the index
+        // it already computed for the tone curves rather than deriving a second
+        // one that would have to agree with it.
+        const float linear =
+            render::CurveTable::linearFor(static_cast<float>(i) / static_cast<float>(kEntries - 1));
+        const float byLuma = hue != nullptr ? hue->saturationAtLuma(linear) : 1.0F;
+        const std::size_t atLuma = third + (static_cast<std::size_t>(i) * 4);
+        padded[atLuma] = byLuma;
+        padded[atLuma + 1] = byLuma;
+        padded[atLuma + 2] = byLuma;
+        padded[atLuma + 3] = 1.0F;
+
+        // Row 3: how far this hue moves, *before* the wrap. The destination
+        // cannot go in a texture that is sampled with linear filtering: it
+        // wraps, and a blend between 0.98 and 0.03 is 0.5 -- a hue on the far
+        // side of the circle from either, which is a visible wrong pixel
+        // wherever the curve crosses red. The offset is continuous there, so
+        // the shader interpolates it and wraps afterwards, in that order,
+        // exactly as `ColorCurveTable::shiftedHue` does.
+        const float destination = hue != nullptr ? hue->hueOffsetAt(turn) : 0.0F;
+        const std::size_t atShift = fourth + (static_cast<std::size_t>(i) * 4);
+        padded[atShift] = destination;
+        padded[atShift + 1] = destination;
+        padded[atShift + 2] = destination;
+        padded[atShift + 3] = 1.0F;
     }
 
-    QImage staging(reinterpret_cast<const uchar*>(padded.data()), kEntries, 2,
+    QImage staging(reinterpret_cast<const uchar*>(padded.data()), kEntries, 4,
                    kEntries * 4 * static_cast<int>(sizeof(float)), QImage::Format_RGBA32FPx4);
     QRhiTextureSubresourceUploadDescription upload(staging.copy());
     batch.uploadTexture(texture.get(), QRhiTextureUploadDescription({0, 0, upload}));
@@ -742,7 +773,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
                            float lutAmount, const model::Mask* mask,
                            const render::KeyerConstants* keyer, const model::Vignette* vignette,
-                           const model::Mask* wipe, const render::HueTable* hue) {
+                           const model::Mask* wipe, const render::ColorCurveTable* hue) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1051,7 +1082,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::LutTable* lut, float lutAmount,
                                  const model::Mask* mask, const render::KeyerConstants* keyer,
                                  const model::Vignette* vignette, const model::Mask* wipe,
-                                 const render::HueTable* hue) {
+                                 const render::ColorCurveTable* hue) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};

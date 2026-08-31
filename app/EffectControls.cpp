@@ -495,9 +495,9 @@ QFormLayout* EffectControls::buildColourGroup() {
             [this](const model::ToneCurves& changed, bool committed) {
                 pushCurves(changed, committed);
             });
-    connect(curves_, &CurveEditor::hueCurvesChanged, this,
-            [this](const model::HueCurves& changed, bool committed) {
-                pushHueCurves(changed, committed);
+    connect(curves_, &CurveEditor::colorCurvesChanged, this,
+            [this](const model::ColorCurves& changed, bool committed) {
+                pushColorCurves(changed, committed);
             });
 
     // A look LUT. Shown inside the colour group, between the primary and the
@@ -1639,7 +1639,7 @@ void EffectControls::applyToWidgets() {
         nestedName_->setText(QString::fromUtf8("\u2014"));
         kind_.reset();
         curves_->setCurves(model::ToneCurves{});
-        curves_->setHueCurves(model::HueCurves{});
+        curves_->setColorCurves(model::ColorCurves{});
         lutName_->setText("No LUT");
         lutAmount_->setValue(1.0);
         const model::Secondary blank;
@@ -1791,7 +1791,7 @@ void EffectControls::applyToWidgets() {
     }
 
     curves_->setCurves(clip->curves);
-    curves_->setHueCurves(clip->hueCurves);
+    curves_->setColorCurves(clip->colorCurves);
     // The file name, not the path: the path is usually longer than the panel
     // and its useful end is the last part anyway.
     const QString path = QString::fromStdString(clip->lut.path);
@@ -2852,11 +2852,11 @@ void EffectControls::pushTransform() {
     emit edited();
 }
 
-void EffectControls::pushHueCurves(const model::HueCurves& curves, bool committed) {
+void EffectControls::pushColorCurves(const model::ColorCurves& curves, bool committed) {
     if (updating_ || commands_ == nullptr || !clip_.isValid()) {
         return;
     }
-    auto built = edit::makeSetHueCurves(*project_, {sequenceId_, track_}, clip_, curves);
+    auto built = edit::makeSetColorCurves(*project_, {sequenceId_, track_}, clip_, curves);
     if (!built) {
         return;
     }

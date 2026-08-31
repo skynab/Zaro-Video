@@ -111,9 +111,52 @@ float hueTurn(float r, float g, float b) {
     return degrees / 360.0F;
 }
 
+/// Rebuild a pixel at a different hue, keeping how bright and how colourful it
+/// is.
+///
+/// The standard HSV reconstruction, and the exact inverse of `hueTurn` above:
+/// `high` is V, `high - low` is the chroma, and `low` is what is added back to
+/// every channel. Written out rather than routed through a general HSV
+/// conversion so that the shader can hold the same six lines beside it -- the
+/// two are compared pixel for pixel, and a shared abstraction neither of them
+/// can share is worth less than a duplicate they can both be read against.
+///
+/// Values above one survive it: V is whatever the brightest channel was, so a
+/// highlight at 4.0 comes back at 4.0 in its new hue rather than clipped.
+void rebuildAtHue(float turn, float high, float low, float& r, float& g, float& b) {
+    const float chroma = high - low;
+    const float sector = turn * 6.0F;
+    const float rising = chroma * (1.0F - std::fabs(std::fmod(sector, 2.0F) - 1.0F));
+    float rr = 0.0F;
+    float gg = 0.0F;
+    float bb = 0.0F;
+    if (sector < 1.0F) {
+        rr = chroma;
+        gg = rising;
+    } else if (sector < 2.0F) {
+        rr = rising;
+        gg = chroma;
+    } else if (sector < 3.0F) {
+        gg = chroma;
+        bb = rising;
+    } else if (sector < 4.0F) {
+        gg = rising;
+        bb = chroma;
+    } else if (sector < 5.0F) {
+        rr = rising;
+        bb = chroma;
+    } else {
+        rr = chroma;
+        bb = rising;
+    }
+    r = rr + low;
+    g = gg + low;
+    b = bb + low;
+}
+
 void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const CurveTable* curves,
                 const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-                const HueTable* hue) {
+                const ColorCurveTable* hue) {
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
@@ -155,6 +198,19 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
     // separately would mix toward luma twice and cost a second pass over the
     // pixel to reach the same place.
     const bool shapedByHue = hue != nullptr && !hue->isIdentity();
+    // The hue the pixel arrived with, read once and used by every curve that
+    // selects on it. Both the shift and the saturation-against-hue curve pick
+    // their colour by what it *was*: shifting the blues and pulling the blues
+    // down have to act on the same pixels, not on wherever the first one left
+    // them.
+    const float arrivedAt = shapedByHue ? hueTurn(r, g, b) : 0.0F;
+    if (shapedByHue && hue->hasShift()) {
+        const float high = std::max(r, std::max(g, b));
+        const float low = std::min(r, std::min(g, b));
+        if (high - low > 0.0F) {
+            rebuildAtHue(hue->shiftedHue(arrivedAt), high, low, r, g, b);
+        }
+    }
     if (grade.saturation != 1.0F || shapedByHue) {
         // Toward the luma of the pixel, so desaturating never changes its
         // brightness. Mixing toward a fixed grey would darken saturated
@@ -162,7 +218,17 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
         const float grey = luma(r, g, b);
         float amount = grade.saturation;
         if (shapedByHue) {
-            amount *= hue->saturationAt(hueTurn(r, g, b));
+            // Both curves multiply into the one factor, so a pixel that is both
+            // a blue and a shadow gets both adjustments compounded. Two
+            // sequential lerps toward luma would not compound -- the second
+            // would work on what the first left, which is a different picture
+            // and a surprising one.
+            if (hue->hasHue()) {
+                amount *= hue->saturationAt(arrivedAt);
+            }
+            if (hue->hasLuma()) {
+                amount *= hue->saturationAtLuma(grey);
+            }
         }
         r = grey + ((r - grey) * amount);
         g = grey + ((g - grey) * amount);
@@ -206,7 +272,7 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
 
 void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves,
                 const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
-                const HueTable* hue) {
+                const ColorCurveTable* hue) {
     const bool curved = curves != nullptr && !curves->isIdentity();
     const bool keyed = secondary != nullptr && secondary->isActive();
     const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;

@@ -338,9 +338,9 @@ enum class PlaceMode {
 /// tones and shaping the hues are separate undo steps -- they are separate
 /// gestures, made minutes apart, and one arrow that took back both would take
 /// back work nobody was looking at.
-[[nodiscard]] Result<CommandPtr> makeSetHueCurves(model::Project& project, const EditTarget& target,
-                                                  model::ClipId clip,
-                                                  const model::HueCurves& curves);
+[[nodiscard]] Result<CommandPtr> makeSetColorCurves(model::Project& project,
+                                                    const EditTarget& target, model::ClipId clip,
+                                                    const model::ColorCurves& curves);
 
 /// Point a clip at different media, keeping the cut.
 ///

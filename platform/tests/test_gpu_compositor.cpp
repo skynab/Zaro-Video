@@ -1981,7 +1981,7 @@ TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") 
     }
 }
 
-TEST_CASE("The GPU hue curve agrees with the CPU reference", "[gpu][golden][curves]") {
+TEST_CASE("The GPU saturation curves agree with the CPU reference", "[gpu][golden][curves]") {
     // Saturation against hue, on both paths. The curve rides in the second row
     // of the same texture the tone curves use, indexed by hue rather than by
     // brightness -- so this also checks that the tone lookups still land on
@@ -1994,26 +1994,63 @@ TEST_CASE("The GPU hue curve agrees with the CPU reference", "[gpu][golden][curv
 
     struct Case {
         const char* name;
-        model::HueCurves curves;
+        model::ColorCurves curves;
     };
     std::vector<Case> cases;
     {
         // The blues pulled down and the rest left alone: what somebody does to
         // a sky. Hue 0.6 is around blue on the circle.
         Case pulled{"blues down", {}};
-        pulled.curves.saturation.set(model::CurvePoint{0.0, 0.5});
-        pulled.curves.saturation.set(model::CurvePoint{0.45, 0.5});
-        pulled.curves.saturation.set(model::CurvePoint{0.6, 0.1});
-        pulled.curves.saturation.set(model::CurvePoint{0.75, 0.5});
+        pulled.curves.againstHue.set(model::CurvePoint{0.0, 0.5});
+        pulled.curves.againstHue.set(model::CurvePoint{0.45, 0.5});
+        pulled.curves.againstHue.set(model::CurvePoint{0.6, 0.1});
+        pulled.curves.againstHue.set(model::CurvePoint{0.75, 0.5});
         cases.push_back(pulled);
 
         // And a curve that straddles red, which is the seam the table wraps
         // across and the one place the two paths could differ.
         Case red{"reds lifted, across the seam", {}};
-        red.curves.saturation.set(model::CurvePoint{0.9, 0.9});
-        red.curves.saturation.set(model::CurvePoint{0.1, 0.9});
-        red.curves.saturation.set(model::CurvePoint{0.5, 0.2});
+        red.curves.againstHue.set(model::CurvePoint{0.9, 0.9});
+        red.curves.againstHue.set(model::CurvePoint{0.1, 0.9});
+        red.curves.againstHue.set(model::CurvePoint{0.5, 0.2});
         cases.push_back(red);
+
+        // Against brightness, which rides in a third row indexed the way the
+        // tone curves are. Without a case here the row could be wrong and every
+        // test would still pass.
+        Case shadows{"shadows stripped", {}};
+        shadows.curves.againstLuma.set(model::CurvePoint{0.0, 0.0});
+        shadows.curves.againstLuma.set(model::CurvePoint{0.6, 0.5});
+        shadows.curves.againstLuma.set(model::CurvePoint{1.0, 0.5});
+        cases.push_back(shadows);
+
+        // And both at once, which is the case that says they compound rather
+        // than the last one winning.
+        Case both{"blues down and shadows stripped", {}};
+        both.curves.againstHue.set(model::CurvePoint{0.0, 0.5});
+        both.curves.againstHue.set(model::CurvePoint{0.45, 0.5});
+        both.curves.againstHue.set(model::CurvePoint{0.6, 0.15});
+        both.curves.againstHue.set(model::CurvePoint{0.75, 0.5});
+        both.curves.againstLuma.set(model::CurvePoint{0.0, 0.1});
+        both.curves.againstLuma.set(model::CurvePoint{1.0, 0.5});
+        cases.push_back(both);
+
+        // The hue shift, which is the one curve that rebuilds the pixel rather
+        // than scaling it -- the HSV reconstruction is written out twice, once
+        // per path, and this is what says the two copies agree.
+        Case shifted{"hues pushed", {}};
+        for (const double x : {0.0, 0.25, 0.5, 0.75}) {
+            shifted.curves.hueShift.set(model::CurvePoint{x, 0.5});
+        }
+        shifted.curves.hueShift.set(model::CurvePoint{0.55, 0.95});
+        cases.push_back(shifted);
+
+        // And a shift straddling red, where the destination wraps.
+        Case wrapped{"hues pushed across the seam", {}};
+        wrapped.curves.hueShift.set(model::CurvePoint{0.3, 0.5});
+        wrapped.curves.hueShift.set(model::CurvePoint{0.6, 0.5});
+        wrapped.curves.hueShift.set(model::CurvePoint{0.95, 1.0});
+        cases.push_back(wrapped);
     }
 
     // Colour in every direction, so the curve has something to act on at every
@@ -2030,7 +2067,7 @@ TEST_CASE("The GPU hue curve agrees with the CPU reference", "[gpu][golden][curv
     }
 
     for (const Case& testCase : cases) {
-        const render::HueTable table{testCase.curves};
+        const render::ColorCurveTable table{testCase.curves};
         REQUIRE_FALSE(table.isIdentity());
         const render::GradeConstants neutral;
 

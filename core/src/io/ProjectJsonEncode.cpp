@@ -266,16 +266,24 @@ json encode(const model::ToneCurves& curves) {
     return out;
 }
 
-json encode(const model::HueCurves& curves) {
+json encode(const model::ColorCurves& curves) {
     json out = json::object();
-    if (curves.saturation.isIdentity()) {
-        return out;
-    }
-    json points = json::array();
-    for (const model::CurvePoint& point : curves.saturation.points()) {
-        points.push_back(json{{"x", point.x}, {"y", point.y}});
-    }
-    out["saturation"] = std::move(points);
+    // The hue curve keeps the key it shipped with. Renaming it in the model
+    // does not license renaming it in the file: a project written by the build
+    // before this one has to keep opening.
+    const auto put = [&out](const char* name, const model::ToneCurve& curve) {
+        if (curve.isIdentity()) {
+            return;
+        }
+        json points = json::array();
+        for (const model::CurvePoint& point : curve.points()) {
+            points.push_back(json{{"x", point.x}, {"y", point.y}});
+        }
+        out[name] = std::move(points);
+    };
+    put("saturation", curves.againstHue);
+    put("luma", curves.againstLuma);
+    put("hueShift", curves.hueShift);
     return out;
 }
 
@@ -477,7 +485,10 @@ json encode(const model::Clip& clip) {
     if (json curves = encode(clip.curves); !curves.empty()) {
         out["curves"] = std::move(curves);
     }
-    if (json hue = encode(clip.hueCurves); !hue.empty()) {
+    if (json hue = encode(clip.colorCurves); !hue.empty()) {
+        // The key from the build that shipped it. The struct behind it was
+        // renamed when a second curve joined it; the format was not, because a
+        // project written by that build has to keep opening.
         out["hueCurves"] = std::move(hue);
     }
     if (json animation = encode(clip.animation); !animation.empty()) {

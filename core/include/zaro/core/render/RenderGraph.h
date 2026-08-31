@@ -133,7 +133,7 @@ private:
     /// other because the two are rebuilt by different edits: shaping the tones
     /// does not touch the hue curve, and rebuilding both when one moves would
     /// double the work a curve drag costs.
-    HueTableCache hueCurves_;
+    ColorCurveTableCache colorCurves_;
     /// Baked look LUTs, keyed by path, so two clips sharing a look share one
     /// cube and a missing file is not re-opened every frame.
     LutCache luts_;

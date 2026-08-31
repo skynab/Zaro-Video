@@ -44,7 +44,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
                            const model::Mask* wipe) {
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
-    const HueTable& hues = hueCurves_.tableFor(clip.id.value(), clip.hueCurves);
+    const ColorCurveTable& hues = colorCurves_.tableFor(clip.id.value(), clip.colorCurves);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     // Effects first, and on the image rather than on a sampled pixel: they are
@@ -93,7 +93,7 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
                                   const time::RationalTime& at) {
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
-    const HueTable& hues = hueCurves_.tableFor(clip.id.value(), clip.hueCurves);
+    const ColorCurveTable& hues = colorCurves_.tableFor(clip.id.value(), clip.colorCurves);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     if (grade.isIdentity() && table.isIdentity() && !secondary.isActive() && lut == nullptr) {

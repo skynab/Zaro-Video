@@ -1,8 +1,8 @@
 #pragma once
 
 #include "zaro/core/model/ColorCorrection.h"
+#include "zaro/core/render/ColorCurveTable.h"
 #include "zaro/core/render/CurveTable.h"
-#include "zaro/core/render/HueTable.h"
 #include "zaro/core/render/LutTable.h"
 #include "zaro/core/render/Qualifier.h"
 #include "zaro/core/render/RgbaImage.h"
@@ -90,13 +90,13 @@ struct SecondaryConstants {
 void gradePixel(const GradeConstants& grade, float& r, float& g, float& b,
                 const CurveTable* curves = nullptr, const SecondaryConstants* secondary = nullptr,
                 const LutTable* lut = nullptr, float lutAmount = 1.0F,
-                const HueTable* hue = nullptr);
+                const ColorCurveTable* hue = nullptr);
 
 /// Grade a whole image in place. The image is premultiplied, so alpha is
 /// divided out and multiplied back: grading a half-faded clip must not depend
 /// on how faded it is.
 void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves = nullptr,
                 const SecondaryConstants* secondary = nullptr, const LutTable* lut = nullptr,
-                float lutAmount = 1.0F, const HueTable* hue = nullptr);
+                float lutAmount = 1.0F, const ColorCurveTable* hue = nullptr);
 
 }  // namespace zaro::render

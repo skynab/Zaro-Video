@@ -29,8 +29,8 @@ public:
     /// share a shape: one maps brightness to brightness, the other maps hue to
     /// a saturation multiplier, and a single struct carrying both would have to
     /// explain which of its members obeyed which rules.
-    void setHueCurves(const model::HueCurves& curves);
-    [[nodiscard]] const model::HueCurves& hueCurves() const noexcept { return hue_; }
+    void setColorCurves(const model::ColorCurves& curves);
+    [[nodiscard]] const model::ColorCurves& colorCurves() const noexcept { return hue_; }
 
     /// Where the curve is drawn, inside the widget. Public so a caller aiming
     /// at a point aims at the same square the widget does.
@@ -38,12 +38,19 @@ public:
 
     /// Which curve is being edited. Exposed so a self-test can drive the
     /// editor the way a person would rather than by reaching into the model.
-    enum class Channel { Master, Red, Green, Blue, HueVsSat };
+    enum class Channel { Master, Red, Green, Blue, HueVsSat, LumaVsSat, HueVsHue };
     /// Whether the channel on show is a hue curve, which changes what the
     /// background means, where the neutral line sits, and which signal a change
     /// comes out of.
     [[nodiscard]] static bool isHue(Channel channel) noexcept {
-        return channel == Channel::HueVsSat;
+        return channel == Channel::HueVsSat || channel == Channel::HueVsHue;
+    }
+    /// Whether the channel on show scales saturation rather than mapping
+    /// brightness. Both saturation channels share a neutral half way up; only
+    /// the hue one wraps.
+    [[nodiscard]] static bool isSaturation(Channel channel) noexcept {
+        return channel == Channel::HueVsSat || channel == Channel::LumaVsSat ||
+               channel == Channel::HueVsHue;
     }
     [[nodiscard]] Channel channel() const noexcept { return channel_; }
 
@@ -56,7 +63,7 @@ signals:
     /// The same, for the hue curve. A separate signal rather than one carrying
     /// both, so a tone edit does not push a hue curve the model already has and
     /// land a no-op command on the undo stack.
-    void hueCurvesChanged(const zaro::model::HueCurves& curves, bool committed);
+    void colorCurvesChanged(const zaro::model::ColorCurves& curves, bool committed);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -79,7 +86,7 @@ private:
     void announce(bool committed);
 
     model::ToneCurves curves_;
-    model::HueCurves hue_;
+    model::ColorCurves hue_;
     Channel channel_{Channel::Master};
     QComboBox* chooser_{nullptr};
     std::optional<std::size_t> dragging_;

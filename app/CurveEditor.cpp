@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "zaro/core/render/HueTable.h"
+#include "zaro/core/render/ColorCurveTable.h"
 
 namespace zaro::app {
 namespace {
@@ -34,6 +34,8 @@ CurveEditor::CurveEditor(QWidget* parent) : QWidget{parent} {
     chooser_->addItem("Green", static_cast<int>(Channel::Green));
     chooser_->addItem("Blue", static_cast<int>(Channel::Blue));
     chooser_->addItem("Hue vs Sat", static_cast<int>(Channel::HueVsSat));
+    chooser_->addItem("Luma vs Sat", static_cast<int>(Channel::LumaVsSat));
+    chooser_->addItem("Hue vs Hue", static_cast<int>(Channel::HueVsHue));
     chooser_->setObjectName("curve-channel");
 
     auto* layout = new QVBoxLayout(this);
@@ -66,21 +68,25 @@ model::ToneCurve& CurveEditor::active() {
         case Channel::Blue:
             return curves_.blue;
         case Channel::HueVsSat:
-            return hue_.saturation;
+            return hue_.againstHue;
+        case Channel::LumaVsSat:
+            return hue_.againstLuma;
+        case Channel::HueVsHue:
+            return hue_.hueShift;
         case Channel::Master:
             break;
     }
     return curves_.master;
 }
 
-void CurveEditor::setHueCurves(const model::HueCurves& curves) {
+void CurveEditor::setColorCurves(const model::ColorCurves& curves) {
     hue_ = curves;
     update();
 }
 
 void CurveEditor::announce(bool committed) {
-    if (isHue(channel_)) {
-        emit hueCurvesChanged(hue_, committed);
+    if (isSaturation(channel_)) {
+        emit colorCurvesChanged(hue_, committed);
     } else {
         emit curvesChanged(curves_, committed);
     }
@@ -131,18 +137,21 @@ void CurveEditor::ensureEndpoints() {
     if (!curve.points().empty()) {
         return;
     }
-    if (isHue(channel_)) {
-        // A hue curve's identity is a flat line half way up, and its x axis
-        // wraps, so it has no endpoints to give it. What it needs instead is
-        // anchors: a curve with one point is still the identity -- two are the
-        // fewest that describe a mapping -- so a first click on an empty curve
-        // would otherwise do nothing at all and look broken.
+    if (isSaturation(channel_)) {
+        // A saturation curve's identity is a flat line half way up. What it
+        // needs is anchors: a curve with one point is still the identity -- two
+        // are the fewest that describe a mapping -- so a first click on an
+        // empty curve would otherwise do nothing at all and look broken.
         //
-        // Four of them, a quarter turn apart, which is also what makes an
-        // adjustment local: dragging one leaves the far side of the circle
-        // where it was.
+        // Four of them, evenly spaced, which is also what makes an adjustment
+        // local: dragging one leaves the far end where it was. The hue curve
+        // stops at 0.75 because its axis wraps and a point at 1.0 would be the
+        // one at 0.0 twice over; the luma curve has a real far end and gets it.
         for (const double x : {0.0, 0.25, 0.5, 0.75}) {
             curve.set({x, 0.5});
+        }
+        if (!isHue(channel_)) {
+            curve.set({1.0, 0.5});
         }
         return;
     }
@@ -248,14 +257,16 @@ void CurveEditor::paintEvent(QPaintEvent* /*event*/) {
     // middle of the range is "leave it alone" -- drawing a diagonal there would
     // say the identity slopes, which is the opposite of true.
     painter.setPen(kDiagonal);
-    if (isHue(channel_)) {
+    if (isSaturation(channel_)) {
         const int middle = area.bottom() - (area.height() / 2);
         painter.drawLine(area.left(), middle, area.right(), middle);
         // The hues themselves, along the axis they are the axis of. A curve
         // over an unlabelled 0..1 leaves somebody counting degrees to find the
-        // blues; over a spectrum they can see where they are.
-        const int stripHeight = std::max(3, area.height() / 22);
-        for (int x = 0; x < area.width(); ++x) {
+        // blues; over a spectrum they can see where they are. Only for the hue
+        // curve -- the luma one's axis is brightness, which the grid already
+        // reads as left-to-right dark-to-light.
+        const int stripHeight = isHue(channel_) ? std::max(3, area.height() / 22) : 0;
+        for (int x = 0; isHue(channel_) && x < area.width(); ++x) {
             const double turn = static_cast<double>(x) / area.width();
             painter.fillRect(
                 area.left() + x, area.bottom() - stripHeight + 1, 1, stripHeight,
@@ -276,15 +287,21 @@ void CurveEditor::paintEvent(QPaintEvent* /*event*/) {
     // it. A hue curve is drawn through the wrapped evaluation the table bakes,
     // for the same reason: the seam at red is where a curve looks wrong if the
     // picture and the drawing disagree about it.
-    const render::HueTable preview = isHue(channel_) ? render::HueTable{hue_} : render::HueTable{};
+    const render::ColorCurveTable preview =
+        channel_ == Channel::HueVsSat ? render::ColorCurveTable{hue_} : render::ColorCurveTable{};
     QPainterPath path;
     for (int x = 0; x <= area.width(); ++x) {
         const double u = area.width() > 0 ? static_cast<double>(x) / area.width() : 0.0;
         // Back out of the multiplier into the curve's own 0.5-is-neutral range,
         // so the line lands where the points are.
+        // The saturation-against-hue curve is drawn through the baked table, so
+        // the wrap at red is drawn the way it will be applied. The other two
+        // are their own curve: the luma one does not wrap, and the shift one
+        // wraps in its *output* rather than along the axis being drawn.
         const double v =
-            isHue(channel_) ? static_cast<double>(preview.saturationAt(static_cast<float>(u))) / 2.0
-                            : curve.valueAt(u);
+            channel_ == Channel::HueVsSat
+                ? static_cast<double>(preview.saturationAt(static_cast<float>(u))) / 2.0
+                : curve.valueAt(u);
         const QPointF at(area.left() + x,
                          area.bottom() - (std::clamp(v, 0.0, 1.0) * area.height()));
         if (x == 0) {

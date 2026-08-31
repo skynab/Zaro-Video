@@ -5026,8 +5026,8 @@ and the sampler is shared with the tone row, which must clamp. The golden test
 includes a curve straddling that seam deliberately, so the size of the
 disagreement is measured rather than assumed.
 
-**Not done here.** Hue against hue, and luma against saturation: the same table
-gains a row each, and the same argument covers them.
+**Not done here.** Hue against hue, which turns out not to be covered by the
+same argument at all — see 8h.
 
 ### Phase 8f — drawing a hue curve §7.3 ✅
 
@@ -5062,3 +5062,98 @@ merge key. One signal carrying both would push a hue curve the model already has
 every time a tone point moved, landing a no-op on the undo stack; one operation
 would make shaping the tones and shaping the hues a single undo step, when they
 are separate gestures made minutes apart.
+
+
+### Phase 8g — saturation against brightness §7.3 ✅
+
+Desaturating the shadows is the standard move — noise in the blacks is chroma
+noise, and it is cheaper to take the colour out of it than to denoise it. The
+same control as the hue curve on a different axis, which is why the phase is
+mostly a rename.
+
+**`HueCurves` became `SaturationCurves`, because it was about to hold something
+not indexed by hue.** A struct whose name says hue carrying a curve indexed by
+brightness is the kind of thing that reads as a bug three months later. The
+rename is mechanical and the compiler checks all of it, which is why it was
+worth doing now rather than living with the wrong name: naming churn is safe,
+and the alternative on the table — hue against hue — needed an HSV round trip
+matched exactly across two render paths, which is the failure mode that actually
+bites.
+
+**The file's keys did not move.** `"hueCurves"`, and `"saturation"` inside it,
+are what the build that shipped the hue curve wrote, and a project written by
+that build has to keep opening. A rename in the model is not a licence to rename
+the format. The test asserts the written text rather than a hand-written older
+file, because what this build writes for a hue-only curve is byte for byte what
+that one did — so asserting the text is asserting the compatibility.
+
+**The two curves multiply.** Both answer one question — how far from grey should
+this pixel be — so they compound into the single factor the primary saturation
+already uses. Two sequential lerps toward luma would not compound: the second
+would work on what the first left, which is a different picture and a surprising
+one. A pixel that is both a blue and a shadow gets both adjustments, and the
+golden test has a case with both curves set for exactly that reason.
+
+**A third row, and the row coordinates became named constants.** Row 2 is
+indexed the way row 0 is — `CurveTable::indexFor` — so a curve drawn against
+luma lines up with one drawn against the tones, and the shader reuses an index
+it already computed. The texel centres moved from 1/4 and 3/4 to 1/6, 3/6 and
+5/6 when the third row arrived, and a bare 0.5 left behind after such a move is
+a blend of two unrelated curves rather than either of them. They are named in
+the shader now so the next row moves one line and not three.
+
+**The editor's fifth channel.** The neutral line and the anchor seeding are
+shared with the hue curve; the spectrum strip is not, because the luma axis is
+brightness and the grid already reads left-to-right as dark-to-light. The hue
+curve seeds four anchors and the luma curve five: a wrapping axis has no far
+end, and a point at 1.0 would be the one at 0.0 twice over.
+
+
+### Phase 8h — hue against hue §7.3 ✅
+
+The last of the three, and the one that is not another multiplier: it moves a
+colour rather than scaling it, which means rebuilding the pixel rather than
+lerping it toward grey.
+
+**`SaturationCurves` became `ColorCurves`**, one phase after it was named. That
+is a second rename in consecutive phases and it should have been the general
+name the first time — the hue shift was already on the list when the struct was
+christened, and a struct called Saturation holding an angle is exactly the kind
+of thing this codebase writes comments to avoid. Naming churn is compile-checked
+and cheap; the wrong name is permanent. The format keys did not move again.
+
+**A sixth of a turn each way.** Enough to reach the neighbouring primary and no
+further, because this is for correcting a hue that came out wrong -- a sky that
+went cyan, foliage that went yellow -- not for recolouring. A control that could
+swing red to green would make the useful range a sliver at its centre.
+
+**Every curve reads the hue the pixel arrived with.** The shift and the
+saturation-against-hue curve both select a colour by what it *was*: shifting the
+blues and pulling the blues down have to act on the same pixels, not on wherever
+the first one left them. The hue is computed once, before anything moves, and
+handed to both. The first draft did not do this -- the saturation lookup
+re-derived the hue after the shift -- and it was a bug found by reading rather
+than by a test, because no fixture had both curves set at once.
+
+**The reconstruction is written out twice, on purpose.** `render::rebuildAtHue`
+and the shader's copy are the same six lines, and the comment on each says so.
+An abstraction neither side can share is worth less than a duplicate they can
+both be read against, and the golden test is what actually holds them together.
+
+**The golden test earned its keep.** The first version stored the *destination*
+hue in the texture row, and it failed on the case that straddles red: 0.139 of
+error on one pixel against a mean of 0.00016. A destination wraps, and a linear
+blend between 0.98 and 0.03 is 0.5 -- a hue on the far side of the circle from
+either -- so the row could not be filtered. The offset is continuous across the
+seam, so the row holds that instead and the wrap happens after the
+interpolation, in that order, on both paths. Nothing but a test with a curve
+deliberately crossing red would have found it, and the single-pixel worst case
+against a near-zero mean is what said it was a seam rather than a formula.
+
+**The editor's sixth channel**, and the one place it draws differently from its
+neighbours: the hue-against-saturation curve is drawn through the baked table so
+its wrap is drawn the way it is applied, while the shift curve wraps in its
+*output* rather than along the axis being drawn, so it is drawn as itself.
+
+The Lumetri curve set is complete: master, red, green, blue, hue against
+saturation, brightness against saturation, hue against hue.

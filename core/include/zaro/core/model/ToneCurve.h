@@ -55,29 +55,69 @@ private:
     std::vector<CurvePoint> points_;
 };
 
-/// Curves whose x axis is hue rather than brightness.
+/// Curves that reshape colour, differing in what they are indexed by and in
+/// what they do with the answer.
 ///
 /// A different kind of curve from the tone ones below, sharing their machinery
 /// and almost none of their meaning:
 ///
-///   * **x wraps.** Hue is a circle, so 0 and 1 are the same place. A curve
-///     evaluated without wrapping has a seam at red, which is the single most
-///     common hue anybody adjusts. `render::HueTable` is where the wrap
-///     happens, once, at bake time.
-///   * **0.5 is neutral, not 0.** The value is a multiplier on saturation and
-///     the curve has to be able to go both ways, so the middle of the range
-///     means "leave it alone": 0 removes the colour, 0.5 keeps it, 1 doubles
-///     it. A curve with no points is identity, as the tone curves are, which
-///     is not the same as a flat curve at 0.5 -- that is the identity spelled
-///     out, and it still costs a table.
-struct HueCurves {
-    /// Saturation against hue: pull the sky down without touching skin, lift a
-    /// tired green, take the ring out of a magenta practical.
-    ToneCurve saturation;
+///   * **0.5 is neutral, not 0.** The value is a multiplier and the curve has
+///     to be able to go both ways, so the middle of the range means "leave it
+///     alone": 0 removes the colour, 0.5 keeps it, 1 doubles it. A curve with
+///     no points is identity, as the tone curves are, which is not the same as
+///     a flat curve at 0.5 -- that is the identity spelled out, and it still
+///     costs a table.
+///   * **The two saturation curves multiply together**, and with the primary
+///     saturation, because all three answer one question: how far from grey
+///     should this pixel be. Pulling the blues down and the shadows down should
+///     compound where a pixel is both, which is what a product does and what
+///     two sequential lerps toward luma would not. The hue shift is a different
+///     question and is applied on its own.
+///
+/// Held as one struct because they are one control surface -- the curve editor
+/// offers them in the same list -- and because a clip carrying three separate
+/// single-member structs would be three fields to serialise and three
+/// operations to undo separately when they are one gesture apiece.
+struct ColorCurves {
+    /// Against hue. **x wraps**: hue is a circle, so 0 and 1 are the same
+    /// place, and a curve evaluated without wrapping has a seam at red -- the
+    /// single most common hue anybody adjusts. `render::ColorCurveTable` is
+    /// where the wrap happens, once, at bake time.
+    ///
+    /// Pull the sky down without touching skin, lift a tired green, take the
+    /// ring out of a magenta practical.
+    ToneCurve againstHue;
 
-    [[nodiscard]] bool isIdentity() const { return saturation.isIdentity(); }
+    /// Against brightness, on the same axis the tone curves use, so a curve
+    /// drawn here lines up with one drawn there. **x does not wrap**: black and
+    /// white are not the same place, and joining them would be a seam invented
+    /// rather than removed.
+    ///
+    /// Desaturating the shadows is the standard move -- noise in the blacks is
+    /// chroma noise, and it is cheaper to take the colour out of it than to
+    /// denoise it.
+    ToneCurve againstLuma;
 
-    friend bool operator==(const HueCurves&, const HueCurves&) = default;
+    /// Hue against hue: where a hue is moved *to*. Wraps like `againstHue`, and
+    /// neutral in the middle like the others, but the value is an angle rather
+    /// than a multiplier -- 0.5 leaves a hue alone, and the ends move it a
+    /// sixth of a turn each way.
+    ///
+    /// A sixth, because that reaches the neighbouring primary and no further.
+    /// This is for correcting a hue that came out wrong -- a sky that went
+    /// cyan, foliage that went yellow -- not for recolouring, and a control
+    /// that could swing red to green would make the useful range a sliver at
+    /// its centre.
+    ToneCurve hueShift;
+
+    [[nodiscard]] bool isIdentity() const {
+        return againstHue.isIdentity() && againstLuma.isIdentity() && hueShift.isIdentity();
+    }
+
+    /// How far the ends of `hueShift` move a hue, as a fraction of the circle.
+    static constexpr double kHueShiftRange = 1.0 / 6.0;
+
+    friend bool operator==(const ColorCurves&, const ColorCurves&) = default;
 };
 
 /// The four curves a primary grade has: one on luma and one per channel.

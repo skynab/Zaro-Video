@@ -1754,7 +1754,7 @@ TEST_CASE("The inspector shows a track when its header is picked", "[gui]") {
 // The hue curve, drawn the way a person draws one. The table and the two render
 // paths are checked elsewhere; what neither of those can see is whether picking
 // "Hue vs Sat" and dragging in the widget reaches the clip.
-TEST_CASE("The hue curve, driven with the mouse", "[gui]") {
+TEST_CASE("The colour curves, driven with the mouse", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;
     const auto& sequence = *window.sequence();
@@ -1773,7 +1773,7 @@ TEST_CASE("The hue curve, driven with the mouse", "[gui]") {
     const auto clipNow = [&]() {
         return window.project().findSequence(sequenceId)->findTrack(trackId)->find(clipId);
     };
-    if (!clipNow()->hueCurves.isIdentity()) {
+    if (!clipNow()->colorCurves.isIdentity()) {
         zaro::app::testing::failf("the clip starts with a hue curve on it\n");
     }
 
@@ -1807,20 +1807,20 @@ TEST_CASE("The hue curve, driven with the mouse", "[gui]") {
     }
     QApplication::processEvents();
 
-    const zaro::model::HueCurves& drawn = clipNow()->hueCurves;
+    const zaro::model::ColorCurves& drawn = clipNow()->colorCurves;
     if (drawn.isIdentity()) {
         zaro::app::testing::failf("dragging in the hue curve did not reach the clip\n");
     }
     // Pulled below neutral where it was dragged, and still neutral on the far
     // side of the circle: an adjustment at one hue is not an adjustment at all
     // of them.
-    if (drawn.saturation.valueAt(0.25) >= 0.45) {
+    if (drawn.againstHue.valueAt(0.25) >= 0.45) {
         zaro::app::testing::failf("the point did not come down (%.3f)\n",
-                                  drawn.saturation.valueAt(0.25));
+                                  drawn.againstHue.valueAt(0.25));
     }
-    if (std::fabs(drawn.saturation.valueAt(0.75) - 0.5) > 0.1) {
+    if (std::fabs(drawn.againstHue.valueAt(0.75) - 0.5) > 0.1) {
         zaro::app::testing::failf("the far side of the circle moved too (%.3f)\n",
-                                  drawn.saturation.valueAt(0.75));
+                                  drawn.againstHue.valueAt(0.75));
     }
     // The tone curves are untouched: they are a separate gesture and a separate
     // undo step.
@@ -1828,14 +1828,81 @@ TEST_CASE("The hue curve, driven with the mouse", "[gui]") {
         zaro::app::testing::failf("drawing a hue curve wrote a tone curve\n");
     }
 
-    window.commands().undo(window.project());
-    window.effects()->refresh();
+    // And the luma channel, which is the same control on a different axis: no
+    // wrap, and a real far end rather than a circle.
+    const int lumaIndex = chooser->findData(static_cast<int>(app::CurveEditor::Channel::LumaVsSat));
+    if (lumaIndex < 0) {
+        zaro::app::testing::failf("the curve editor does not offer a luma curve\n");
+    }
+    chooser->setCurrentIndex(lumaIndex);
     QApplication::processEvents();
-    if (!clipNow()->hueCurves.isIdentity()) {
-        zaro::app::testing::failf("undo did not take the hue curve back\n");
+    const QRect lumaPlot = editor->plotArea();
+    const QPointF dark(lumaPlot.left() + 1, lumaPlot.bottom() - (lumaPlot.height() / 2));
+    const QPointF stripped(dark.x(), dark.y() + (lumaPlot.height() * 0.4));
+    {
+        QMouseEvent press(QEvent::MouseButtonPress, dark, dark, Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &press);
+        QMouseEvent move(QEvent::MouseMove, stripped, stripped, Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, stripped, stripped, Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &release);
+    }
+    QApplication::processEvents();
+    if (clipNow()->colorCurves.againstLuma.isIdentity()) {
+        zaro::app::testing::failf("dragging in the luma curve did not reach the clip\n");
+    }
+    if (clipNow()->colorCurves.againstLuma.valueAt(0.0) >= 0.45) {
+        zaro::app::testing::failf("the shadows were not stripped (%.3f)\n",
+                                  clipNow()->colorCurves.againstLuma.valueAt(0.0));
+    }
+    // The hue curve drawn a moment ago is still there: two channels of one
+    // control surface, not one that overwrites the other.
+    if (clipNow()->colorCurves.againstHue.isIdentity()) {
+        zaro::app::testing::failf("drawing the luma curve threw the hue curve away\n");
     }
 
-    std::printf("  hue curve: pulled a quarter turn down, left the far side alone\n");
+    // And the hue shift, the one channel that moves a colour rather than
+    // scaling it.
+    const int shiftIndex = chooser->findData(static_cast<int>(app::CurveEditor::Channel::HueVsHue));
+    if (shiftIndex < 0) {
+        zaro::app::testing::failf("the curve editor does not offer a hue shift\n");
+    }
+    chooser->setCurrentIndex(shiftIndex);
+    QApplication::processEvents();
+    const QRect shiftPlot = editor->plotArea();
+    const QPointF neutral(shiftPlot.left() + (shiftPlot.width() / 2),
+                          shiftPlot.bottom() - (shiftPlot.height() / 2));
+    const QPointF pushed(neutral.x(), neutral.y() - (shiftPlot.height() * 0.3));
+    {
+        QMouseEvent press(QEvent::MouseButtonPress, neutral, neutral, Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &press);
+        QMouseEvent move(QEvent::MouseMove, pushed, pushed, Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, pushed, pushed, Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(editor, &release);
+    }
+    QApplication::processEvents();
+    if (clipNow()->colorCurves.hueShift.isIdentity()) {
+        zaro::app::testing::failf("dragging in the hue shift did not reach the clip\n");
+    }
+    if (clipNow()->colorCurves.hueShift.valueAt(0.5) <= 0.55) {
+        zaro::app::testing::failf("the hue was not pushed (%.3f)\n",
+                                  clipNow()->colorCurves.hueShift.valueAt(0.5));
+    }
+    // The two drawn before it are still there: six channels of one control
+    // surface, not one that overwrites the last.
+    if (clipNow()->colorCurves.againstHue.isIdentity() ||
+        clipNow()->colorCurves.againstLuma.isIdentity()) {
+        zaro::app::testing::failf("drawing the hue shift threw an earlier curve away\n");
+    }
+
+    std::printf("  colour curves: a quarter turn down, shadows stripped, a hue pushed\n");
 
     chooser->setCurrentIndex(0);
     QApplication::processEvents();

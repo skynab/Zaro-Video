@@ -87,6 +87,45 @@ layout(std140, binding = 0) uniform Block {
     vec4 gamutB;
 } ubuf;
 
+// The four rows' texel centres. Named because they move whenever a row is
+// added, and a bare coordinate left behind after that is a blend of two curves
+// rather than either of them.
+const float kToneRow = 1.0 / 8.0;
+const float kHueRow = 3.0 / 8.0;
+const float kLumaRow = 5.0 / 8.0;
+const float kShiftRow = 7.0 / 8.0;
+
+// Rebuild a colour at a different hue, keeping how bright and how colourful it
+// is. The exact inverse of the hue formula below, and the same six lines
+// render::rebuildAtHue holds -- the two are compared pixel for pixel, and a
+// shared abstraction neither side can share is worth less than a duplicate they
+// can both be read against.
+//
+// Values above one survive it: the chroma and the floor are taken from the
+// pixel, so a highlight at 4.0 comes back at 4.0 in its new hue.
+vec3 rebuildAtHue(float turn, float high, float low)
+{
+    float chroma = high - low;
+    float sector = turn * 6.0;
+    float rising = chroma * (1.0 - abs(mod(sector, 2.0) - 1.0));
+    vec3 out3 = vec3(0.0);
+    if (sector < 1.0) {
+        out3 = vec3(chroma, rising, 0.0);
+    } else if (sector < 2.0) {
+        out3 = vec3(rising, chroma, 0.0);
+    } else if (sector < 3.0) {
+        out3 = vec3(0.0, chroma, rising);
+    } else if (sector < 4.0) {
+        out3 = vec3(0.0, rising, chroma);
+    } else if (sector < 5.0) {
+        out3 = vec3(rising, 0.0, chroma);
+    } else {
+        out3 = vec3(chroma, 0.0, rising);
+    }
+    return out3 + vec3(low);
+}
+
+
 
 
 const float kMiddleGrey = 0.18;
@@ -184,16 +223,14 @@ vec3 applyGrade(vec3 colour)
     // grey it is. Must match render::gradePixel, which does the same thing in
     // the same place and is compared against this pixel for pixel.
     if (ubuf.grade.y != 1.0 || ubuf.grade.w != 0.0) {
-        float grey = dot(colour, kLumaWeights);
-        float amount = ubuf.grade.y;
+        // The hue the pixel arrived with, read once and used by every curve
+        // that selects on it -- the shift and the saturation-against-hue curve
+        // both pick their colour by what it was. See render::gradePixel.
+        float arrivedAt = 0.0;
         if (ubuf.grade.w != 0.0) {
-            // Row 1 of the table, at its texel centre. Indexed by hue, where
-            // the tone rows are indexed by brightness -- two different axes in
-            // one texture, which is what the second row is for.
             float high = max(colour.r, max(colour.g, colour.b));
             float low = min(colour.r, min(colour.g, colour.b));
             float span = high - low;
-            float turn = 0.0;
             if (span > 0.0) {
                 float degrees;
                 if (high == colour.r) {
@@ -206,9 +243,28 @@ vec3 applyGrade(vec3 colour)
                 if (degrees < 0.0) {
                     degrees += 360.0;
                 }
-                turn = degrees / 360.0;
+                arrivedAt = degrees / 360.0;
+                // Row 3 holds the offset, not the destination: a destination
+                // wraps, and a linear blend between 0.98 and 0.03 is 0.5 --
+                // the far side of the circle from either. Interpolate the
+                // offset, then wrap, in that order, as the CPU does.
+                float moved = arrivedAt + texture(curveTable, vec2(arrivedAt, kShiftRow)).r;
+                colour = rebuildAtHue(fract(moved), high, low);
             }
-            amount *= texture(curveTable, vec2(turn, 0.75)).r;
+        }
+        float grey = dot(colour, kLumaWeights);
+        float amount = ubuf.grade.y;
+        if (ubuf.grade.w != 0.0) {
+            // Row 1, at its texel centre, read at the hue the pixel arrived
+            // with rather than the one it was moved to.
+            amount *= texture(curveTable, vec2(arrivedAt, kHueRow)).r;
+            // And against brightness, on row 0's own index so the two agree
+            // about what "this bright" means. Multiplied rather than applied
+            // after, so a pixel that is both a blue and a shadow gets both --
+            // see render::gradePixel, which compounds them the same way.
+            float lifted = max(grey, 0.0);
+            amount *= texture(curveTable,
+                              vec2(sqrt(lifted / (1.0 + lifted)), kLumaRow)).r;
         }
         colour = vec3(grey) + (colour - vec3(grey)) * amount;
     }
@@ -237,12 +293,12 @@ vec3 applyGrade(vec3 colour)
         // there is nothing here to get subtly different.
         vec3 lifted = max(colour, vec3(0.0));
         vec3 index = sqrt(lifted / (vec3(1.0) + lifted));
-        // v = 0.25 is row 0's texel centre on the two-row table. 0.5 is the
-        // seam between the rows, where a linear filter returns a blend of the
-        // tone curve and the hue curve.
-        colour = vec3(texture(curveTable, vec2(index.r, 0.25)).r,
-                      texture(curveTable, vec2(index.g, 0.25)).g,
-                      texture(curveTable, vec2(index.b, 0.25)).b);
+        // kToneRow is row 0's texel centre on the three-row table. Sampling
+        // between rows returns a blend of two unrelated curves, so these
+        // coordinates move every time a row is added.
+        colour = vec3(texture(curveTable, vec2(index.r, kToneRow)).r,
+                      texture(curveTable, vec2(index.g, kToneRow)).g,
+                      texture(curveTable, vec2(index.b, kToneRow)).b);
     }
 
     if (ubuf.secGrade.w != 0.0) {

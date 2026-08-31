@@ -273,20 +273,31 @@ model::Secondary decodeSecondary(const json& node) {
     return out;
 }
 
-model::HueCurves decodeHueCurves(const json& node) {
-    model::HueCurves out;
-    if (!node.is_object() || !node.contains("saturation") || !node.at("saturation").is_array()) {
+model::ColorCurves decodeColorCurves(const json& node) {
+    model::ColorCurves out;
+    if (!node.is_object()) {
         return out;
     }
-    for (const json& point : node.at("saturation")) {
-        if (!point.is_object()) {
-            continue;
+    const auto load = [&node](const char* name, model::ToneCurve& into) {
+        if (!node.contains(name) || !node.at(name).is_array()) {
+            return;
         }
-        // set() rather than push_back, for the reason the tone curves give: a
-        // hand-edited file can hold points out of order or twice over, and
-        // evaluation depends on neither being possible.
-        out.saturation.set(model::CurvePoint{point.value("x", 0.0), point.value("y", 0.0)});
-    }
+        for (const json& point : node.at(name)) {
+            if (!point.is_object()) {
+                continue;
+            }
+            // set() rather than push_back, for the reason the tone curves give:
+            // a hand-edited file can hold points out of order or twice over,
+            // and evaluation depends on neither being possible.
+            into.set(model::CurvePoint{point.value("x", 0.0), point.value("y", 0.0)});
+        }
+    };
+    // "saturation" is the hue curve's key from the build that shipped it.
+    // Renaming it in the model does not license renaming it in the file: a
+    // project written by that build has to keep opening.
+    load("saturation", out.againstHue);
+    load("luma", out.againstLuma);
+    load("hueShift", out.hueShift);
     return out;
 }
 
@@ -555,7 +566,7 @@ Result<model::Clip> decodeClip(const json& node) {
         clip.effects = decodeEffects(node.at("effects"));
     }
     if (node.contains("hueCurves")) {
-        clip.hueCurves = decodeHueCurves(node.at("hueCurves"));
+        clip.colorCurves = decodeColorCurves(node.at("hueCurves"));
     }
     if (node.contains("curves")) {
         clip.curves = decodeCurves(node.at("curves"));
