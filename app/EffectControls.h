@@ -2,10 +2,12 @@
 
 #include <QWidget>
 #include <array>
+#include <functional>
 #include <optional>
 #include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
+#include "zaro/core/edit/Operations.h"
 #include "zaro/core/model/ClipKind.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/render/FrameSource.h"
@@ -52,6 +54,16 @@ public:
 
     /// Show this clip's parameters. An invalid id clears the panel.
     void setSelection(model::TrackId track, model::ClipId clip);
+
+    /// Show a whole selection, primary first.
+    ///
+    /// With more than one clip the panel keeps only the controls it can write
+    /// to all of them -- the parameters, the blend, the level, the repair --
+    /// and puts the rest away. A mask, a grade chain and an effect stack are
+    /// each a piece of work on one clip, and a panel that showed one clip's
+    /// while claiming to describe five would be writing to the one whose name
+    /// is not on the header.
+    void setSelection(const std::vector<edit::ClipRef>& clips);
 
     /// Which of the panel's three pages is up.
     ///
@@ -139,6 +151,9 @@ private:
         /// somebody forgot to fill.
         QFormLayout* form{nullptr};
         QWidget* line{nullptr};
+        /// This row's name, so it can be marked when the clips in a
+        /// multi-selection do not agree about the value.
+        QLabel* label{nullptr};
         QSlider* slider{nullptr};
         QDoubleSpinBox* spin{nullptr};
         QToolButton* stopwatch{nullptr};
@@ -251,6 +266,10 @@ private:
     void resetPane();
 
     [[nodiscard]] const model::Clip* selectedClip() const;
+    /// Any clip in the sequence this panel is bound to, by track and id. The
+    /// writers need it because a multi-selection edit reads each clip's own
+    /// state, not the primary's.
+    [[nodiscard]] const model::Clip* clipAt(model::TrackId track, model::ClipId clip) const;
     /// The playhead in the selected clip's source time, or nothing if the
     /// playhead is not over the clip. A keyframe outside the clip's own range
     /// is unreachable and undeletable from the panel, so the buttons that would
@@ -288,6 +307,25 @@ private:
     edit::CommandStack* commands_{nullptr};
     model::TrackId track_;
     model::ClipId clip_;
+    /// The rest of the selection, if there is one. The primary is `track_` and
+    /// `clip_` and is not repeated here.
+    std::vector<edit::ClipRef> others_;
+    [[nodiscard]] std::size_t selectionCount() const noexcept { return others_.size() + 1; }
+    /// Run an edit against every selected clip, as one undo step.
+    ///
+    /// `build` is handed each clip in turn -- the primary first -- and returns
+    /// the operation for it, or nothing if there is none to make. It is handed
+    /// the ids rather than the clip because most of these read the clip's
+    /// current state, and that state is different for each of them.
+    void applyToSelection(
+        const std::function<Result<edit::CommandPtr>(model::TrackId, model::ClipId)>& build);
+    /// Whether every selected clip agrees about a parameter's value at the
+    /// playhead. A row whose clips disagree is marked rather than silently
+    /// showing one of them.
+    [[nodiscard]] bool selectionAgreesOn(model::Param param) const;
+    /// Put a `*` on the rows the selection does not agree about, and take it
+    /// off again when it does.
+    void markDisagreements();
     time::RationalTime position_;
     std::vector<Row> rows_;
 
@@ -362,6 +400,12 @@ private:
     /// Held so `revealStage` can scroll to it, and so the panel can grey it
     /// out and hide it for a clip that is not video.
     QWidget* colourGroup_{nullptr};
+    /// The colour group's form and the rows in it that belong to one clip
+    /// rather than to a value: the curve editor, the LUT, the wheels, the
+    /// vignette. Hidden for a multi-selection -- see `applyPaneVisibility`.
+    QFormLayout* colourForm_{nullptr};
+    QWidget* lutRow_{nullptr};
+    QWidget* wheelsBox_{nullptr};
     QScrollArea* scroll_{nullptr};
     QWidget* maskGroup_{nullptr};
     QComboBox* maskShape_{nullptr};

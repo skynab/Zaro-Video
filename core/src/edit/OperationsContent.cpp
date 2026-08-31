@@ -410,6 +410,27 @@ Result<CommandPtr> makeSetSpeed(Project& project, const EditTarget& target, Clip
     retimed.timelineRange = time::TimeRange{existing.timelineRange.start(), duration};
 
     const time::RationalTime shift = duration - existing.timelineRange.duration();
+
+    // Without the ripple, a clip that got longer has to have somewhere to get
+    // longer into. Checked here rather than discovered in `Track::setClips`,
+    // whose non-overlap invariant is an assertion -- so slowing a clip into its
+    // neighbour was a crash rather than a refusal.
+    if (!ripple && shift > time::RationalTime{0, rate}) {
+        auto where = detail::locate(project, target);
+        if (!where) {
+            return where.error();
+        }
+        for (const Clip& other : where->track->clips()) {
+            if (other.id == clipId) {
+                continue;
+            }
+            if (other.start() < retimed.timelineRange.endExclusive() &&
+                retimed.timelineRange.start() < other.endExclusive()) {
+                return Error{ErrorCode::InvalidData,
+                             "there is not room for that speed without moving what follows"};
+            }
+        }
+    }
     return makeCommand(
         target.sequence, "Change speed", "speed:" + idText(clipId),
         [clipId, retimed, shift, ripple, trackId = target.track](Sequence& sequence) {

@@ -4779,11 +4779,68 @@ The encoders and decoders for the two structs were duplicated inline for the
 track; the clip needed the same six fields and they are now written and read
 once, by both.
 
-**Not done here, and deliberately.** A Track page, and a multi-selection page —
-the timeline has supported selecting several clips since 4j and the inspector
-still shows one. `makeAddGraphic` names a title clip "text", which is what the
-identity row shows; naming it after its words is a change to the operation, not
-to the panel. And `makeSetSpeed` with `ripple` off does not guard against a
-slowed clip running over its neighbour, which would hand overlapping clips to
-`Track::setClips` and trip its invariant — the panel always ripples, so it
-cannot reach that, but the hole is in the operation and belongs closed there.
+**Not done here.** A multi-selection page, and `makeSetSpeed`'s missing guard.
+Both are Phase 8a, below. `makeAddGraphic` names a title clip "text", which is
+what the identity row shows; naming it after its words is a change to the
+operation, not to the panel, and is still open.
+
+### Phase 8a — several clips at once §7.1 ✅
+
+**The timeline has let people select more than one clip since 4j.** The
+inspector showed the first and wrote to the first, which is the kind of gap that
+does not look like a bug: the panel was right about the clip it named and silent
+about the other four.
+
+**`CommandStack::Group` is what was missing underneath.** Merge keys cannot do
+this and should not: a key names *what* is being changed, so dragging one clip's
+opacity coalesces and a change to a different clip does not — which is exactly
+right for a drag and exactly wrong for a gesture that means five clips. A group
+folds everything executed while it is alive into one undo step whatever the keys
+say. It nests, because an operation that groups internally may be called from a
+panel that is grouping too and only the outermost may close the step; and a
+group that executes nothing leaves no entry, because an operation refused inside
+one should not become an undo step somebody has to step over.
+
+**What stays on screen is what can be written to all of them.** This is the
+whole design, and the alternative is worse than it looks. A mask, a grade chain,
+an effect stack, a title's words, a multicam clip's cameras: each is a piece of
+work on one clip, and there is no sense in which five clips share one. Showing
+the primary's while the header says "5 clips" means every edit lands on a clip
+whose name is not the one on screen — which is the kind of thing somebody
+discovers an hour later. So those groups go, and what survives is what is a
+*value*: the parameter rows, the blend, the level and pan, the repair. Five
+clips can all be set to 80%.
+
+The same cut runs *inside* the Colour group, which is the case that would have
+been missed: its five parameter rows are values and reach every selected clip,
+and the curve editor, the LUT, the wheels and the vignette under them are one
+clip's own work and are hidden. A group is not the unit here; a row is.
+
+**Each clip is written from its own state.** The writers take the ids rather
+than the clip, because a parameter that is animated has to keep the static value
+it had — and which parameters those are differs from clip to clip, so it cannot
+be worked out once from the primary. A clip that cannot take a value is skipped
+rather than aborting the rest: a selection is not required to be uniform, and
+one clip that refuses is not a reason the other four should not.
+
+**A row the clips disagree about says so.** An asterisk on its name and a
+tooltip, rather than an emptied field: a blank box invites somebody to think the
+value is zero, and the number that is there is at least true of the clip the
+header names. Compared at the playhead, like everything else the panel shows —
+two clips with the same static opacity and different fades on them do not agree
+about opacity *here*, which is the value in the box.
+
+A mixed selection falls back to the plainest kind its clips share, so four
+camera clips and a rectangle are not offered the rectangle's controls.
+
+**And `makeSetSpeed` with the ripple off no longer trips an assertion.**
+`Track::setClips` asserts that clips do not overlap, so slowing a clip into the
+one after it was a crash rather than a refusal. It is checked before the command
+is built, like every other validation here, and rippling — the default — still
+moves what follows out of the way.
+
+**Not done, and deliberately.** A Track page in the inspector. Everything it
+would hold already has a home that is better suited to it: gain, pan, mute,
+solo, EQ and compression are the mixer's channel strip, where they sit beside a
+meter, and name and lock are on the track head in the timeline, where the track
+is. A third place to change them would be a third thing to keep in step.

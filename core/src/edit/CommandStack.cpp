@@ -18,9 +18,14 @@ void CommandStack::execute(model::Project& project, CommandPtr command) {
 
     command->apply(project);
 
+    // Inside a group, everything folds into the step the group opened --
+    // regardless of key, which is the whole point: five clips is five keys and
+    // one gesture. Outside one, only commands that name the same thing merge.
     const std::string key = command->mergeKey();
-    if (!key.empty() && !mergeBroken_ && !commands_.empty() &&
-        commands_.back()->mergeKey() == key && commands_.back()->mergeWith(*command)) {
+    const bool joinsGroup = groupDepth_ > 0 && groupJoined_;
+    const bool joinsByKey = !key.empty() && !mergeBroken_ && !commands_.empty() &&
+                            commands_.back()->mergeKey() == key;
+    if ((joinsGroup || joinsByKey) && !commands_.empty() && commands_.back()->mergeWith(*command)) {
         // Folded into the previous step, so position_ does not move -- but the
         // project did. If the saved state was this position, it no longer is:
         // without this, dragging a value that merges would leave the project
@@ -34,6 +39,9 @@ void CommandStack::execute(model::Project& project, CommandPtr command) {
     commands_.push_back(std::move(command));
     position_ = commands_.size();
     mergeBroken_ = false;
+    if (groupDepth_ > 0) {
+        groupJoined_ = true;
+    }
 
     while (commands_.size() > maxDepth_) {
         commands_.erase(commands_.begin());
@@ -46,6 +54,27 @@ void CommandStack::execute(model::Project& project, CommandPtr command) {
                 --savedPosition_;
             }
         }
+    }
+}
+
+void CommandStack::beginGroup() noexcept {
+    if (groupDepth_ == 0) {
+        // Nothing before the group joins it: a group is one gesture, and the
+        // one that came before it was another.
+        mergeBroken_ = true;
+        groupJoined_ = false;
+    }
+    ++groupDepth_;
+}
+
+void CommandStack::endGroup() noexcept {
+    if (groupDepth_ == 0) {
+        return;
+    }
+    --groupDepth_;
+    if (groupDepth_ == 0) {
+        groupJoined_ = false;
+        mergeBroken_ = true;
     }
 }
 

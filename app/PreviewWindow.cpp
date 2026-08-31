@@ -432,8 +432,10 @@ void PreviewWindow::buildWindowLayout() {
 }
 
 void PreviewWindow::wireEditingSignals() {
-    connect(timeline_, &app::TimelineWidget::selectionChanged, effects_,
-            &app::EffectControls::setSelection);
+    // The whole selection, not just the primary: the parameter panel is the
+    // one thing that has something to say about the rest of it.
+    connect(timeline_, &app::TimelineWidget::selectionSetChanged, effects_,
+            qOverload<const std::vector<edit::ClipRef>&>(&app::EffectControls::setSelection));
     // Kept here too: syncing acts on the clip somebody has picked, and the
     // timeline is where picking happens.
     connect(timeline_, &app::TimelineWidget::selectionChanged, this,

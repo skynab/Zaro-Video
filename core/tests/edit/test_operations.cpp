@@ -1274,3 +1274,34 @@ TEST_CASE("Dragging one value coalesces, but two keyframes are two steps", "[edi
     // A second keyframe is a separate decision, not more of the same gesture.
     CHECK(f.stack.depth() == before + 2);
 }
+
+TEST_CASE("A speed change with no ripple refuses to run over a neighbour",
+          "[edit][retime]") {
+    // `Track::setClips` asserts that clips do not overlap, so a slowed clip
+    // growing into the one after it used to be a crash rather than a refusal.
+    // Rippling is the default and moves what follows out of the way; the point
+    // here is that turning it off is honest about what it cannot do.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50))));
+    const model::ClipId first = f.track(f.v1).clips()[0].id;
+
+    // Half speed is twice as long, and there is a clip butted up against it.
+    auto refused = edit::makeSetSpeed(f.project, f.on(f.v1), first, 0.5, false, false);
+    CHECK_FALSE(refused);
+
+    // Speeding it up needs no room at all, so that still works.
+    REQUIRE(f.run(edit::makeSetSpeed(f.project, f.on(f.v1), first, 2.0, false, false)));
+    CHECK(f.track(f.v1).find(first)->timelineRange.duration().frames() == 25);
+
+    // And with the ripple on, slowing it down moves the neighbour instead.
+    // On a fresh pair, so what the neighbour ends up at is the length of the
+    // clip in front of it rather than the sum of two earlier retimes.
+    Fixture g;
+    REQUIRE(g.run(edit::makeOverwrite(g.project, g.on(g.v1), g.clip(0, 50))));
+    REQUIRE(g.run(edit::makeOverwrite(g.project, g.on(g.v1), g.clip(50, 50))));
+    const model::ClipId head = g.track(g.v1).clips()[0].id;
+    REQUIRE(g.run(edit::makeSetSpeed(g.project, g.on(g.v1), head, 0.5, false, true)));
+    CHECK(g.track(g.v1).find(head)->timelineRange.duration().frames() == 100);
+    CHECK(g.track(g.v1).clips()[1].start().frames() == 100);
+}

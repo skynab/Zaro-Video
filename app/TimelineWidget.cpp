@@ -501,6 +501,7 @@ void TimelineWidget::announceSelection() {
         }
     }
     emit selectionChanged(selectedTrack_, selected_);
+    emit selectionSetChanged(selection_);
     update();
 }
 
@@ -2543,6 +2544,20 @@ bool TimelineWidget::setTransitionKindAtPlayhead(model::TransitionKind kind,
 
 void TimelineWidget::selectOnly(model::TrackId track, model::ClipId clip) {
     selection_.clear();
+    selection_.push_back(edit::ClipRef{track, clip});
+    announceSelection();
+    update();
+}
+
+void TimelineWidget::selectAlso(model::TrackId track, model::ClipId clip) {
+    if (!clip.isValid()) {
+        return;
+    }
+    for (const edit::ClipRef& already : selection_) {
+        if (already.clip == clip && already.track == track) {
+            return;
+        }
+    }
     selection_.push_back(edit::ClipRef{track, clip});
     announceSelection();
     update();

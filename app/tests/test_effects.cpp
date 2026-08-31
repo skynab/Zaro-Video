@@ -1464,3 +1464,175 @@ TEST_CASE("Angles and nested sequences, from the inspector", "[gui]") {
     }
     QApplication::processEvents();
 }
+
+// Several clips at once. The timeline has supported selecting more than one
+// since 4j; the inspector showed the first and wrote to the first.
+//
+// The rule is that what stays on screen is what can be written to all of them.
+// A mask, a grade chain, an effect stack: each is a piece of work on one clip,
+// and showing the primary's while the header says "3 clips" means every edit
+// lands on a clip whose name is not the one on screen.
+TEST_CASE("The inspector edits every selected clip", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto rate = sequence.frameRate();
+    const auto trackId = sequence.videoTracks().front().id();
+
+    // Three clips on one track, so a rubber band would have caught all three.
+    auto place = [&](std::int64_t start) {
+        auto built = zaro::edit::makeOverwrite(
+            window.project(), {sequenceId, trackId},
+            [&] {
+                zaro::model::Clip c;
+                c.id = window.project().ids().next<zaro::model::ClipTag>();
+                c.source = window.project().media().front().id;
+                c.name = "take";
+                c.sourceRange = zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
+                                                      zaro::time::RationalTime{20, rate}};
+                c.timelineRange = zaro::time::TimeRange{zaro::time::RationalTime{start, rate},
+                                                        zaro::time::RationalTime{20, rate}};
+                return c;
+            }());
+        if (!built) {
+            zaro::app::testing::failf("%s\n", built.error().toString().c_str());
+        }
+        window.commands().execute(window.project(), std::move(*built));
+    };
+    place(400);
+    place(430);
+    place(460);
+
+    const auto& clips = window.project().findSequence(sequenceId)->findTrack(trackId)->clips();
+    std::vector<zaro::edit::ClipRef> picked;
+    for (const auto& clip : clips) {
+        if (clip.start().frames() >= 400) {
+            picked.push_back(zaro::edit::ClipRef{trackId, clip.id});
+        }
+    }
+    if (picked.size() != 3) {
+        zaro::app::testing::failf("expected 3 clips to select, found %zu\n", picked.size());
+    }
+
+    // Through the timeline, so the wiring between the two is what is tested and
+    // not just the panel's own entry point.
+    timeline->selectOnly(picked[0].track, picked[0].clip);
+    for (std::size_t i = 1; i < picked.size(); ++i) {
+        timeline->selectAlso(picked[i].track, picked[i].clip);
+    }
+    QApplication::processEvents();
+
+    const auto opacityOf = [&](std::size_t which) {
+        const zaro::model::Clip* clip = window.project()
+                                            .findSequence(sequenceId)
+                                            ->findTrack(trackId)
+                                            ->find(picked[which].clip);
+        return clip == nullptr ? -1.0 : clip->transform.opacity;
+    };
+
+    const std::size_t stepsBefore = window.commands().depth();
+    auto* opacity = panel->findChild<QDoubleSpinBox*>("spin:opacity");
+    if (opacity == nullptr) {
+        zaro::app::testing::failf("no opacity field\n");
+    }
+    opacity->setValue(0.4);
+    QApplication::processEvents();
+
+    for (std::size_t i = 0; i < picked.size(); ++i) {
+        if (std::fabs(opacityOf(i) - 0.4) > 1e-6) {
+            zaro::app::testing::failf("clip %zu is at %.3f, not 0.4\n", i, opacityOf(i));
+        }
+    }
+    // One step, not three: setting three clips to 40% is one gesture, and
+    // undoing it a clip at a time is not what anybody meant by it.
+    if (window.commands().depth() != stepsBefore + 1) {
+        zaro::app::testing::failf("three clips took %zu undo steps\n",
+                                  window.commands().depth() - stepsBefore);
+    }
+    window.commands().undo(window.project());
+    panel->refresh();
+    QApplication::processEvents();
+    for (std::size_t i = 0; i < picked.size(); ++i) {
+        if (std::fabs(opacityOf(i) - 1.0) > 1e-6) {
+            zaro::app::testing::failf("one undo left clip %zu at %.3f\n", i, opacityOf(i));
+        }
+    }
+
+    // What is on screen is what can be written to all of them. A mask is not.
+    auto* mask = panel->findChild<QGroupBox*>("inspector-group-mask");
+    auto* effects = panel->findChild<QGroupBox*>("inspector-group-effects");
+    if (mask == nullptr || effects == nullptr) {
+        zaro::app::testing::failf("the inspector is missing a group\n");
+    }
+    if (mask->isVisibleTo(panel) || effects->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a multi-selection is offered a mask or an effect stack\n");
+    }
+    // The same rule inside the Colour group, where the five parameter rows are
+    // values and everything under them -- a curve somebody drew, a LUT they
+    // loaded, a set of wheels they balanced -- is one clip's own work.
+    auto* lutAmount = panel->findChild<QDoubleSpinBox*>("lut-amount");
+    auto* wheel = panel->findChild<QDoubleSpinBox*>("wheel-0-0");
+    auto* vignette = panel->findChild<QDoubleSpinBox*>("vignette-amount");
+    if (lutAmount == nullptr || wheel == nullptr || vignette == nullptr) {
+        zaro::app::testing::failf("the colour group is missing a control\n");
+    }
+    if (lutAmount->isVisibleTo(panel) || wheel->isVisibleTo(panel) ||
+        vignette->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a multi-selection is offered a LUT, wheels or a vignette\n");
+    }
+    auto* saturation = panel->findChild<QDoubleSpinBox*>("spin:saturation");
+    if (saturation == nullptr || !saturation->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a multi-selection has no saturation\n");
+    }
+    // And the parameters are.
+    if (!opacity->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a multi-selection has no opacity\n");
+    }
+
+    // A row the clips disagree about says so rather than quietly showing one
+    // of them.
+    opacity->setValue(0.5);
+    QApplication::processEvents();
+    auto singleBuilt = zaro::edit::makeSetTransform(window.project(), {sequenceId, trackId},
+                                                    picked[2].clip, [&] {
+                                                        zaro::model::Transform t;
+                                                        t.opacity = 0.9;
+                                                        return t;
+                                                    }());
+    if (!singleBuilt) {
+        zaro::app::testing::failf("could not make one clip differ\n");
+    }
+    window.commands().execute(window.project(), std::move(*singleBuilt));
+    panel->refresh();
+    QApplication::processEvents();
+
+    bool marked = false;
+    for (auto* label : panel->findChildren<QLabel*>()) {
+        if (label->property("rowLabel").toString() == "Opacity") {
+            marked = label->text().contains('*');
+        }
+    }
+    if (!marked) {
+        zaro::app::testing::failf("a row the clips disagree about is not marked\n");
+    }
+
+    // Back to one clip, and everything comes back.
+    timeline->selectOnly(picked[0].track, picked[0].clip);
+    QApplication::processEvents();
+    if (!mask->isVisibleTo(panel)) {
+        zaro::app::testing::failf("selecting one clip did not bring the mask back\n");
+    }
+    if (!wheel->isVisibleTo(panel) || !lutAmount->isVisibleTo(panel)) {
+        zaro::app::testing::failf("selecting one clip did not bring the grade chain back\n");
+    }
+
+    std::printf("  multi-selection: 3 clips set to 40%% in one undo step\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}

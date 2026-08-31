@@ -106,6 +106,105 @@ TEST_CASE("Different clips do not merge with each other", "[edit][undo][merge]")
     CHECK(f.stack.depth() == 4);
 }
 
+TEST_CASE("A group makes several clips one undo step", "[edit][undo][merge]") {
+    // What merge keys cannot do, and should not: they name *what* is being
+    // changed, so two clips never merge. Setting the opacity of five selected
+    // clips is five keys and one gesture, and undoing it a clip at a time is
+    // not what anybody meant by it.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(100, 50))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(200, 50))));
+    const model::ClipId a = f.track(f.v1).clips()[0].id;
+    const model::ClipId b = f.track(f.v1).clips()[1].id;
+    const model::ClipId c = f.track(f.v1).clips()[2].id;
+    const std::size_t before = f.stack.depth();
+
+    {
+        edit::CommandStack::Group group{f.stack};
+        for (const model::ClipId id : {a, b, c}) {
+            REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), id, -6.0, 0.0)));
+        }
+    }
+    CHECK(f.stack.depth() == before + 1);
+    for (const model::ClipId id : {a, b, c}) {
+        CHECK(f.track(f.v1).find(id)->gainDb == -6.0);
+    }
+
+    // And one undo takes all three back, which is the point.
+    REQUIRE(f.stack.undo(f.project));
+    for (const model::ClipId id : {a, b, c}) {
+        CHECK(f.track(f.v1).find(id)->gainDb == 0.0);
+    }
+    CHECK(f.stack.depth() == before + 1);
+
+    // Redo restores all three too: the step describes the whole gesture in
+    // both directions, not a replay of the first command in it.
+    REQUIRE(f.stack.redo(f.project));
+    for (const model::ClipId id : {a, b, c}) {
+        CHECK(f.track(f.v1).find(id)->gainDb == -6.0);
+    }
+}
+
+TEST_CASE("A group does not swallow what came before or after it",
+          "[edit][undo][merge]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const model::ClipId a = f.track(f.v1).clips()[0].id;
+    REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), a, -3.0, 0.0)));
+    const std::size_t before = f.stack.depth();
+
+    {
+        edit::CommandStack::Group group{f.stack};
+        REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), a, -6.0, 0.0)));
+    }
+    // A step of its own, even though its key matches the one before it: a
+    // group is a gesture, and the one before it was another.
+    CHECK(f.stack.depth() == before + 1);
+
+    REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), a, -9.0, 0.0)));
+    CHECK(f.stack.depth() == before + 2);
+
+    REQUIRE(f.stack.undo(f.project));
+    CHECK(f.track(f.v1).find(a)->gainDb == -6.0);
+    REQUIRE(f.stack.undo(f.project));
+    CHECK(f.track(f.v1).find(a)->gainDb == -3.0);
+}
+
+TEST_CASE("Nested groups close once, not twice", "[edit][undo][merge]") {
+    // An operation that groups internally, called from a panel that is
+    // grouping too. Only the outermost may close the step; if the inner one
+    // did, the rest of the gesture would land in a second undo entry.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(100, 50))));
+    const model::ClipId a = f.track(f.v1).clips()[0].id;
+    const model::ClipId b = f.track(f.v1).clips()[1].id;
+    const std::size_t before = f.stack.depth();
+
+    {
+        edit::CommandStack::Group outer{f.stack};
+        {
+            edit::CommandStack::Group inner{f.stack};
+            REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), a, -6.0, 0.0)));
+        }
+        REQUIRE(f.run(edit::makeSetClipAudio(f.project, f.on(f.v1), b, -6.0, 0.0)));
+    }
+    CHECK(f.stack.depth() == before + 1);
+}
+
+TEST_CASE("A group that executes nothing leaves no step", "[edit][undo][merge]") {
+    // An operation refused inside a group contributes no command, and an empty
+    // group is not an undo entry somebody has to step over.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    const std::size_t before = f.stack.depth();
+    {
+        edit::CommandStack::Group group{f.stack};
+    }
+    CHECK(f.stack.depth() == before);
+}
+
 TEST_CASE("History depth is bounded", "[edit][undo]") {
     Fixture f;
     edit::CommandStack shallow{3};

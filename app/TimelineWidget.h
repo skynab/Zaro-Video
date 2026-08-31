@@ -134,6 +134,13 @@ signals:
     void edited();
     /// What is selected now. An invalid clip id means nothing is.
     void selectionChanged(zaro::model::TrackId track, zaro::model::ClipId clip);
+    /// The whole selection, primary first.
+    ///
+    /// Alongside the one above rather than replacing it: most of what listens
+    /// wants the clip somebody picked -- the mask overlay has one target, the
+    /// grade chain describes one clip -- and only the parameter panel has
+    /// anything to say about the rest.
+    void selectionSetChanged(const std::vector<zaro::edit::ClipRef>& clips);
     /// The tool or the snap setting changed, including from the keyboard --
     /// so the toolbar showing them can follow rather than only lead.
     void toolChanged();
@@ -332,6 +339,16 @@ public:
     /// strip, where picking a tile is picking a clip, and a self-test that has
     /// to make a selection before it can reach the keyboard paths.
     void selectOnly(model::TrackId track, model::ClipId clip);
+
+    /// Add a clip to the selection without making it the primary, the way
+    /// shift-clicking one does.
+    ///
+    /// The mouse-free twin of `selectOnly`, and wanted for the same reason: a
+    /// self-test that has to build a selection of several before it can check
+    /// what the parameter panel does with one. Selecting a clip that is already
+    /// in the set leaves it where it is rather than promoting it -- shift-click
+    /// does not reorder, and the primary is what the panel's header names.
+    void selectAlso(model::TrackId track, model::ClipId clip);
 
     /// Change the transition under the playhead to another kind.
     ///

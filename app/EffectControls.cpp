@@ -156,6 +156,64 @@ constexpr model::Param kPlacementParams[] = {
     model::Param::AnchorY,
 };
 
+/// What a clip says a parameter is at a moment, for the rows the panel shows.
+///
+/// The panel has no generic reader -- each group asks the clip its own way,
+/// `transformAt` and `colorAt` and `gainDbAt` -- and comparing two clips row by
+/// row needs one. Anything not on a row answers with its own value from the
+/// primary group it belongs to; the parameters with no row here never reach it.
+[[nodiscard]] double parameterAt(const model::Clip& clip, model::Param param,
+                                 const time::RationalTime& at) {
+    switch (param) {
+        case model::Param::GainDb:
+            return clip.gainDbAt(at);
+        case model::Param::Pan:
+            return clip.panAt(at);
+        case model::Param::Temperature:
+        case model::Param::Tint:
+        case model::Param::Exposure:
+        case model::Param::Contrast:
+        case model::Param::Saturation: {
+            const model::ColorCorrection colour = clip.colorAt(at);
+            switch (param) {
+                case model::Param::Temperature:
+                    return colour.temperature;
+                case model::Param::Tint:
+                    return colour.tint;
+                case model::Param::Exposure:
+                    return colour.exposure;
+                case model::Param::Contrast:
+                    return colour.contrast;
+                default:
+                    return colour.saturation;
+            }
+        }
+        default:
+            break;
+    }
+    const model::Transform transform = clip.transformAt(at);
+    switch (param) {
+        case model::Param::PositionX:
+            return transform.positionX;
+        case model::Param::PositionY:
+            return transform.positionY;
+        case model::Param::ScaleX:
+            return transform.scaleX;
+        case model::Param::ScaleY:
+            return transform.scaleY;
+        case model::Param::RotationDegrees:
+            return transform.rotationDegrees;
+        case model::Param::AnchorX:
+            return transform.anchorX;
+        case model::Param::AnchorY:
+            return transform.anchorY;
+        case model::Param::Opacity:
+            return transform.opacity;
+        default:
+            return 0.0;
+    }
+}
+
 [[nodiscard]] bool isPlacementParam(model::Param param) {
     return std::find(std::begin(kPlacementParams), std::end(kPlacementParams), param) !=
            std::end(kPlacementParams);
@@ -423,6 +481,7 @@ QFormLayout* EffectControls::buildColourGroup() {
     colourGroup_ = colour;
     colour->setObjectName("inspector-group-colour");
     auto* colourForm = new QFormLayout(colour);
+    colourForm_ = colourForm;
     addRow(colourForm, "Temperature", model::Param::Temperature, temperature_);
     addRow(colourForm, "Tint", model::Param::Tint, tint_);
     addRow(colourForm, "Exposure", model::Param::Exposure, exposure_);
@@ -453,6 +512,7 @@ QFormLayout* EffectControls::buildColourGroup() {
     lutLayout->addWidget(lutLoad_);
     lutLayout->addWidget(lutClear_);
     lutLayout->addWidget(lutSave_);
+    lutRow_ = lutRow;
     colourForm->addRow(lutRow);
     colourForm->addRow(lutName_);
     colourForm->addRow("LUT amount", lutAmount_);
@@ -753,6 +813,7 @@ void EffectControls::addWheelsTo(QFormLayout* colourForm) {
         }
         wheelsForm->addRow(QString::fromUtf8(kWheelRows[row]), line);
     }
+    wheelsBox_ = wheelsBox;
     colourForm->addRow(wheelsBox);
 }
 
@@ -1085,12 +1146,9 @@ void EffectControls::pushProcessing() {
     compressor.releaseMs = clipRelease_->value();
     compressor.makeupDb = clipMakeup_->value();
 
-    auto built = edit::makeSetClipProcessing(*project_, {sequenceId_, track_}, clip_, eq,
-                                             compressor);
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
+    applyToSelection([this, eq, compressor](model::TrackId track, model::ClipId id) {
+        return edit::makeSetClipProcessing(*project_, {sequenceId_, track}, id, eq, compressor);
+    });
     emit edited();
 }
 
@@ -1190,22 +1248,20 @@ void EffectControls::assemblePanel() {
             return;
         }
         const auto mode = static_cast<model::BlendMode>(blend_->currentData().toInt());
-        auto built = edit::makeSetBlendMode(*project_, {sequenceId_, track_}, clip_, mode);
-        if (built) {
-            commands_->execute(*project_, std::move(*built));
-            commands_->breakMerge();
-            emit edited();
-        }
+        applyToSelection([this, mode](model::TrackId track, model::ClipId id) {
+            return edit::makeSetBlendMode(*project_, {sequenceId_, track}, id, mode);
+        });
+        commands_->breakMerge();
+        emit edited();
     });
     connect(enabled_, &QCheckBox::toggled, this, [this](bool on) {
         if (updating_ || commands_ == nullptr || !clip_.isValid()) {
             return;
         }
-        auto built = edit::makeSetClipEnabled(*project_, {sequenceId_, track_}, clip_, on);
-        if (built) {
-            commands_->execute(*project_, std::move(*built));
-            emit edited();
-        }
+        applyToSelection([this, on](model::TrackId track, model::ClipId id) {
+            return edit::makeSetClipEnabled(*project_, {sequenceId_, track}, id, on);
+        });
+        emit edited();
     });
 
     setEditingEnabled(false);
@@ -1226,7 +1282,107 @@ void EffectControls::setSelection(model::TrackId track, model::ClipId clip) {
     commitText();
     track_ = track;
     clip_ = clip;
+    others_.clear();
     refresh();
+}
+
+void EffectControls::setSelection(const std::vector<edit::ClipRef>& clips) {
+    commitText();
+    if (clips.empty()) {
+        track_ = {};
+        clip_ = {};
+        others_.clear();
+        refresh();
+        return;
+    }
+    track_ = clips.front().track;
+    clip_ = clips.front().clip;
+    others_.assign(clips.begin() + 1, clips.end());
+    refresh();
+}
+
+void EffectControls::applyToSelection(
+    const std::function<Result<edit::CommandPtr>(model::TrackId, model::ClipId)>& build) {
+    if (commands_ == nullptr || project_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    // One undo step for the whole gesture. Merge keys cannot do this: they name
+    // what is being changed, so five clips is five keys -- and undoing a change
+    // to five clips a clip at a time is not what anybody meant by it.
+    edit::CommandStack::Group group{*commands_};
+    auto run = [&](model::TrackId track, model::ClipId clip) {
+        auto built = build(track, clip);
+        if (built) {
+            commands_->execute(*project_, std::move(*built));
+        }
+        // A clip the edit does not apply to is skipped rather than aborting the
+        // rest: a selection is not required to be uniform, and one clip that
+        // cannot take a value is not a reason the other four should not.
+    };
+    run(track_, clip_);
+    for (const edit::ClipRef& other : others_) {
+        run(other.track, other.clip);
+    }
+}
+
+bool EffectControls::selectionAgreesOn(model::Param param) const {
+    if (others_.empty() || project_ == nullptr) {
+        return true;
+    }
+    const model::Clip* primary = selectedClip();
+    if (primary == nullptr) {
+        return true;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    if (sequence == nullptr) {
+        return true;
+    }
+    const double wanted = parameterAt(*primary, param, position_);
+    for (const edit::ClipRef& other : others_) {
+        const model::Track* track = sequence->findTrack(other.track);
+        const model::Clip* clip = track == nullptr ? nullptr : track->find(other.clip);
+        if (clip == nullptr) {
+            continue;
+        }
+        // Compared at the playhead, like everything else the panel shows: two
+        // clips with the same static opacity and different fades on them do not
+        // agree about opacity *here*, which is the value in the box.
+        if (std::fabs(parameterAt(*clip, param, position_) - wanted) > 1e-9) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void EffectControls::markDisagreements() {
+    for (const Row& row : rows_) {
+        if (row.label == nullptr) {
+            continue;
+        }
+        const bool agrees = selectionAgreesOn(row.param);
+        // An asterisk rather than an emptied field: a blank box invites
+        // somebody to think the value is zero, and the number that is there is
+        // at least true of the clip the header names.
+        const QString base = row.label->property("rowLabel").toString();
+        row.label->setText(agrees ? base : base + " *");
+        row.label->setToolTip(agrees ? QString{}
+                                     : QString{"The selected clips do not agree about this. "
+                                               "The value shown is %1's; changing it sets all of "
+                                               "them."}
+                                           .arg(identityNameFull_));
+    }
+}
+
+const model::Clip* EffectControls::clipAt(model::TrackId track, model::ClipId clip) const {
+    if (project_ == nullptr || !clip.isValid()) {
+        return nullptr;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    if (sequence == nullptr) {
+        return nullptr;
+    }
+    const model::Track* found = sequence->findTrack(track);
+    return found != nullptr ? found->find(clip) : nullptr;
 }
 
 const model::Clip* EffectControls::selectedClip() const {
@@ -1381,6 +1537,30 @@ void EffectControls::applyToWidgets() {
     // What this clip *is*, asked once. Which groups that means, and which tab
     // has anything behind it, is `groupsFor` in `applyPaneVisibility`.
     kind_ = model::clipKindOf(*clip, isVideo ? model::TrackKind::Video : model::TrackKind::Audio);
+    // A selection of mixed kinds shows what they have in common, which is what
+    // any clip has: it is placed, it is graded, it plays or it does not. The
+    // primary's kind would otherwise offer a shape's controls for a selection
+    // of four camera clips and one rectangle.
+    for (const edit::ClipRef& other : others_) {
+        const model::Track* otherTrack = sequence->findTrack(other.track);
+        const model::Clip* otherClip = otherTrack == nullptr ? nullptr : otherTrack->find(other.clip);
+        if (otherClip == nullptr) {
+            continue;
+        }
+        const model::ClipKind otherKind = model::clipKindOf(
+            *otherClip, otherTrack->kind() == model::TrackKind::Video ? model::TrackKind::Video
+                                                                     : model::TrackKind::Audio);
+        if (otherKind != *kind_) {
+            // Sound and picture share nothing the panel can write, so a mixed
+            // selection keeps whichever the primary is and the other tab stays
+            // dark. Two kinds of picture fall back to the plainest of them.
+            if (model::hasPicture(otherKind) != model::hasPicture(*kind_)) {
+                continue;
+            }
+            kind_ = model::hasPicture(*kind_) ? model::ClipKind::VideoMedia
+                                              : model::ClipKind::AudioMedia;
+        }
+    }
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
     }
@@ -1585,6 +1765,7 @@ void EffectControls::applyToWidgets() {
     }
     applySliders();
     applyKeyframeButtons();
+    markDisagreements();
 }
 
 void EffectControls::addRow(QFormLayout* form, const QString& label, model::Param param,
@@ -1660,7 +1841,12 @@ void EffectControls::addRow(QFormLayout* form, const QString& label, model::Para
     // another row reading "Position" is worse than a narrow value field --
     // twice now a control has shipped with its name cut in half.
     auto* text = new QLabel(label, this);
-    text->setMinimumWidth(text->sizeHint().width());
+    // Kept, because `markDisagreements` appends to it and has to be able to
+    // take that back without having to know how to spell the name again.
+    text->setProperty("rowLabel", label);
+    // Room for the mark as well as the name, so putting one on does not move
+    // the value column.
+    text->setMinimumWidth(text->fontMetrics().horizontalAdvance(label + " *"));
     form->addRow(text, line);
 
     connect(stopwatch, &QToolButton::clicked, this,
@@ -1688,7 +1874,7 @@ void EffectControls::addRow(QFormLayout* form, const QString& label, model::Para
         syncing_ = false;
     });
 
-    rows_.push_back(Row{param, form, line, slider, spin, stopwatch, keyframe, lo, hi});
+    rows_.push_back(Row{param, form, line, text, slider, spin, stopwatch, keyframe, lo, hi});
 }
 
 void EffectControls::setPosition(const time::RationalTime& position) {
@@ -1954,7 +2140,31 @@ void EffectControls::applyPaneVisibility() {
     const bool inspector = pane_ == Pane::Inspector;
     // What the selection is, and what a clip of that sort has to say. One
     // table rather than a condition per group: see `groupsFor`.
-    const GroupSet groups = kind_ ? groupsFor(*kind_) : GroupSet{};
+    GroupSet groups = kind_ ? groupsFor(*kind_) : GroupSet{};
+
+    // With more than one clip, only what can be written to all of them stays.
+    //
+    // A mask, a grade chain, an effect stack, a title's words, a multicam
+    // clip's cameras: each of those is a piece of work on one clip, and there
+    // is no sense in which five clips share one. Showing the primary's while
+    // the header says "5 clips" would mean every edit landed on a clip whose
+    // name is not the one on screen -- which is the kind of thing somebody
+    // discovers an hour later.
+    //
+    // What survives is what is a *value*: the parameter rows, the blend, the
+    // level and pan, the repair. Those five clips can all be set to 80%.
+    const bool several = !others_.empty();
+    if (several) {
+        groups.graphic = false;
+        groups.text = false;
+        groups.mask = false;
+        groups.secondary = false;
+        groups.key = false;
+        groups.effects = false;
+        groups.angles = false;
+        groups.nested = false;
+        groups.mediaMotion = false;
+    }
 
     videoGroup_->setVisible(inspector && groups.motion);
     colourGroup_->setVisible(inspector && groups.colour);
@@ -1966,6 +2176,27 @@ void EffectControls::applyPaneVisibility() {
     textGroup_->setVisible(inspector && groups.text);
     anglesGroup_->setVisible(inspector && groups.angles);
     nestedGroup_->setVisible(inspector && groups.nested);
+
+    // Inside Colour: the five parameter rows are a value and go to every
+    // selected clip, and everything under them is one clip's own work. A curve
+    // somebody drew, a LUT they loaded, a set of wheels they balanced -- there
+    // is no sense in which three clips share one, and writing the primary's
+    // while the header says three would be the silent partial edit this whole
+    // rule exists to avoid.
+    if (colourForm_ != nullptr) {
+        const bool one = others_.empty();
+        for (QWidget* widget : {static_cast<QWidget*>(curves_), lutRow_,
+                                static_cast<QWidget*>(lutName_),
+                                static_cast<QWidget*>(lutAmount_), wheelsBox_,
+                                static_cast<QWidget*>(vignetteAmount_),
+                                static_cast<QWidget*>(vignetteMidpoint_),
+                                static_cast<QWidget*>(vignetteFeather_),
+                                static_cast<QWidget*>(vignetteRoundness_)}) {
+            if (widget != nullptr) {
+                colourForm_->setRowVisible(widget, one);
+            }
+        }
+    }
     audioGroup_->setVisible(pane_ == Pane::Audio && groups.audio);
     processingGroup_->setVisible(pane_ == Pane::Audio && groups.audio);
 
@@ -2064,6 +2295,14 @@ void EffectControls::applyIdentity() {
                        .arg(static_cast<long long>(duration.frames()));
     if (track != nullptr && track->isLocked()) {
         meta += "  \u00b7  track locked";
+    }
+    // How many, and that everything shown reaches all of them. Said on the
+    // line under the name rather than in place of it, because the name is
+    // still the clip whose values are in the boxes -- and somebody has to be
+    // able to tell which one that is.
+    if (!others_.empty()) {
+        meta += QString("  \u00b7  %1 clips selected, editing all")
+                    .arg(static_cast<int>(selectionCount()));
     }
     identityMetaFull_ = meta;
     elideIdentity();
@@ -2271,45 +2510,47 @@ void EffectControls::pushTransform() {
     if (clip == nullptr) {
         return;
     }
-    // Start from what the clip already says, so a parameter that is animated
-    // keeps the static value it had. The widget is showing that parameter's
-    // *animated* value, and baking it into the static field would silently
-    // change what the picture reverts to when animation is switched off.
-    model::Transform transform = clip->transform;
-    const auto isAnimated = [clip](model::Param param) {
-        const model::Curve* curve = clip->animation.find(param);
-        return curve != nullptr && !curve->empty();
-    };
-    if (!isAnimated(model::Param::PositionX)) {
-        transform.positionX = positionX_->value();
-    }
-    if (!isAnimated(model::Param::PositionY)) {
-        transform.positionY = positionY_->value();
-    }
-    if (!isAnimated(model::Param::ScaleX)) {
-        transform.scaleX = scaleX_->value();
-    }
-    if (!isAnimated(model::Param::ScaleY)) {
-        transform.scaleY = scaleY_->value();
-    }
-    if (!isAnimated(model::Param::RotationDegrees)) {
-        transform.rotationDegrees = rotation_->value();
-    }
-    if (!isAnimated(model::Param::AnchorX)) {
-        transform.anchorX = anchorX_->value();
-    }
-    if (!isAnimated(model::Param::AnchorY)) {
-        transform.anchorY = anchorY_->value();
-    }
-    if (!isAnimated(model::Param::Opacity)) {
-        transform.opacity = opacity_->value();
-    }
-
-    auto built = edit::makeSetTransform(*project_, {sequenceId_, track_}, clip_, transform);
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
+    // Per selected clip, and from what *that* clip already says: a parameter
+    // that is animated keeps the static value it had, because the widget is
+    // showing the animated one and baking it in would silently change what the
+    // picture reverts to when animation is switched off. Which parameters those
+    // are differs from clip to clip, so this cannot be worked out once.
+    applyToSelection([this](model::TrackId track, model::ClipId id) -> Result<edit::CommandPtr> {
+        const model::Clip* each = clipAt(track, id);
+        if (each == nullptr) {
+            return Error{ErrorCode::NotFound, "no such clip"};
+        }
+        model::Transform transform = each->transform;
+        const auto isAnimated = [each](model::Param param) {
+            const model::Curve* curve = each->animation.find(param);
+            return curve != nullptr && !curve->empty();
+        };
+        if (!isAnimated(model::Param::PositionX)) {
+            transform.positionX = positionX_->value();
+        }
+        if (!isAnimated(model::Param::PositionY)) {
+            transform.positionY = positionY_->value();
+        }
+        if (!isAnimated(model::Param::ScaleX)) {
+            transform.scaleX = scaleX_->value();
+        }
+        if (!isAnimated(model::Param::ScaleY)) {
+            transform.scaleY = scaleY_->value();
+        }
+        if (!isAnimated(model::Param::RotationDegrees)) {
+            transform.rotationDegrees = rotation_->value();
+        }
+        if (!isAnimated(model::Param::AnchorX)) {
+            transform.anchorX = anchorX_->value();
+        }
+        if (!isAnimated(model::Param::AnchorY)) {
+            transform.anchorY = anchorY_->value();
+        }
+        if (!isAnimated(model::Param::Opacity)) {
+            transform.opacity = opacity_->value();
+        }
+        return edit::makeSetTransform(*project_, {sequenceId_, track}, id, transform);
+    });
     emit edited();
 }
 
@@ -2671,11 +2912,9 @@ void EffectControls::pushRole() {
         return;
     }
     const auto role = static_cast<model::AudioRole>(role_->currentData().toInt());
-    auto built = edit::makeSetAudioRole(*project_, {sequenceId_, track_}, clip_, role);
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
+    applyToSelection([this, role](model::TrackId track, model::ClipId id) {
+        return edit::makeSetAudioRole(*project_, {sequenceId_, track}, id, role);
+    });
     commands_->breakMerge();
     applyToWidgets();
     emit edited();
@@ -3049,22 +3288,24 @@ void EffectControls::pushColor() {
     }
     // The same rule as the transform: an animated parameter keeps its static
     // value, because the widget is showing the animated one.
-    const auto staticOr = [clip](model::Param param, QDoubleSpinBox* spin) {
-        const model::Curve* curve = clip->animation.find(param);
-        return curve != nullptr && !curve->empty() ? clip->parameterValue(param) : spin->value();
-    };
-    model::ColorCorrection color;
-    color.temperature = staticOr(model::Param::Temperature, temperature_);
-    color.tint = staticOr(model::Param::Tint, tint_);
-    color.exposure = staticOr(model::Param::Exposure, exposure_);
-    color.contrast = staticOr(model::Param::Contrast, contrast_);
-    color.saturation = staticOr(model::Param::Saturation, saturation_);
-
-    auto built = edit::makeSetColorCorrection(*project_, {sequenceId_, track_}, clip_, color);
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
+    applyToSelection([this](model::TrackId track, model::ClipId id) -> Result<edit::CommandPtr> {
+        const model::Clip* each = clipAt(track, id);
+        if (each == nullptr) {
+            return Error{ErrorCode::NotFound, "no such clip"};
+        }
+        const auto staticOr = [each](model::Param param, QDoubleSpinBox* spin) {
+            const model::Curve* curve = each->animation.find(param);
+            return curve != nullptr && !curve->empty() ? each->parameterValue(param)
+                                                       : spin->value();
+        };
+        model::ColorCorrection color;
+        color.temperature = staticOr(model::Param::Temperature, temperature_);
+        color.tint = staticOr(model::Param::Tint, tint_);
+        color.exposure = staticOr(model::Param::Exposure, exposure_);
+        color.contrast = staticOr(model::Param::Contrast, contrast_);
+        color.saturation = staticOr(model::Param::Saturation, saturation_);
+        return edit::makeSetColorCorrection(*project_, {sequenceId_, track}, id, color);
+    });
     emit edited();
 }
 
@@ -3076,17 +3317,20 @@ void EffectControls::pushAudio() {
     if (clip == nullptr) {
         return;
     }
-    const auto staticOr = [clip](model::Param param, QDoubleSpinBox* spin) {
-        const model::Curve* curve = clip->animation.find(param);
-        return curve != nullptr && !curve->empty() ? clip->parameterValue(param) : spin->value();
-    };
-    auto built = edit::makeSetClipAudio(*project_, {sequenceId_, track_}, clip_,
-                                        staticOr(model::Param::GainDb, gain_),
-                                        staticOr(model::Param::Pan, pan_));
-    if (!built) {
-        return;
-    }
-    commands_->execute(*project_, std::move(*built));
+    applyToSelection([this](model::TrackId track, model::ClipId id) -> Result<edit::CommandPtr> {
+        const model::Clip* each = clipAt(track, id);
+        if (each == nullptr) {
+            return Error{ErrorCode::NotFound, "no such clip"};
+        }
+        const auto staticOr = [each](model::Param param, QDoubleSpinBox* spin) {
+            const model::Curve* curve = each->animation.find(param);
+            return curve != nullptr && !curve->empty() ? each->parameterValue(param)
+                                                       : spin->value();
+        };
+        return edit::makeSetClipAudio(*project_, {sequenceId_, track}, id,
+                                      staticOr(model::Param::GainDb, gain_),
+                                      staticOr(model::Param::Pan, pan_));
+    });
     emit edited();
 }
 
