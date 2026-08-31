@@ -13,8 +13,10 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -31,6 +33,64 @@
 namespace zaro::app {
 namespace {
 
+/// The width a spin box needs to show any value in [minimum, maximum] whole,
+/// with its suffix.
+///
+/// A field that shrinks with the panel eventually cuts the unit off, and
+/// "0.00 E" reads as a different number rather than as a shorter label -- which
+/// has now happened twice, once to " stops" and once to " EV".
+int widthForRange(const QDoubleSpinBox* spin, double minimum, double maximum, int decimals,
+                  const QString& suffix, int pad = 34) {
+    QString widest = QString::number(minimum, 'f', decimals) + suffix;
+    if (QString::number(maximum, 'f', decimals).size() > widest.size()) {
+        widest = QString::number(maximum, 'f', decimals) + suffix;
+    }
+    return spin->fontMetrics().horizontalAdvance(widest) + pad;
+}
+
+/// What a value field needs around its text once the steppers are gone: the
+/// frame, and enough air that a digit does not touch it.
+constexpr int kFieldPad = 16;
+
+/// A slider that does not move when the panel is scrolled past it.
+///
+/// The same hazard `makeSpin` guards against, and the more dangerous half of
+/// it: a spin box under the pointer at least shows what it changed, while a
+/// slider nudged during a scroll looks like nothing happened until the picture
+/// is wrong. Qt gives a slider wheel focus by default, so this says otherwise.
+class ParamSlider : public QSlider {
+public:
+    explicit ParamSlider(QWidget* parent) : QSlider(Qt::Horizontal, parent) {
+        setFocusPolicy(Qt::StrongFocus);
+    }
+
+protected:
+    void wheelEvent(QWheelEvent* event) override {
+        if (!hasFocus()) {
+            event->ignore();
+            return;
+        }
+        QSlider::wheelEvent(event);
+    }
+};
+
+/// How many steps a parameter slider has between its ends.
+///
+/// Finer than the panel is wide at any size it docks at, so a drag never
+/// quantises visibly, and coarse enough that an arrow key moves the value by
+/// something a person can see.
+constexpr int kSliderSteps = 1000;
+
+/// Where on a slider spanning [lo, hi] the value `value` sits.
+///
+/// Pinned to an end rather than left where it was when the value is outside the
+/// span: a knob that stayed put while the number moved would be describing a
+/// different value.
+int stepFor(double value, double lo, double hi) {
+    const double where = hi > lo ? (value - lo) / (hi - lo) : 0.0;
+    return static_cast<int>(std::lround(std::clamp(where, 0.0, 1.0) * kSliderSteps));
+}
+
 QDoubleSpinBox* makeSpin(double minimum, double maximum, double step, int decimals,
                          const QString& suffix = {}) {
     auto* spin = new QDoubleSpinBox;
@@ -44,15 +104,10 @@ QDoubleSpinBox* makeSpin(double minimum, double maximum, double step, int decima
     // change whatever value happens to be under the pointer.
     spin->setFocusPolicy(Qt::StrongFocus);
 
-    // Wide enough for the largest value it can hold, with its suffix. A field
-    // that shrinks with the panel eventually cuts the unit off, and "0.00 E"
-    // reads as a different number rather than as a shorter label -- which has
-    // now happened twice, once to " stops" and once to " EV".
-    QString widest = QString::number(minimum, 'f', decimals) + suffix;
-    if (QString::number(maximum, 'f', decimals).size() > widest.size()) {
-        widest = QString::number(maximum, 'f', decimals) + suffix;
-    }
-    spin->setMinimumWidth(spin->fontMetrics().horizontalAdvance(widest) + 34);
+    // Wide enough for the largest value it can hold. `addRow` narrows this
+    // again for a parameter whose slider covers less than its spin box allows:
+    // the field only has to fit the values it will actually show.
+    spin->setMinimumWidth(widthForRange(spin, minimum, maximum, decimals, suffix));
     return spin;
 }
 
@@ -117,13 +172,26 @@ void EffectControls::createParameterWidgets() {
 void EffectControls::buildMotionGroup() {
     auto* motion = new QGroupBox("Motion", this);
     auto* motionForm = new QFormLayout(motion);
-    addRow(motionForm, "Position X", model::Param::PositionX, positionX_);
-    addRow(motionForm, "Position Y", model::Param::PositionY, positionY_);
-    addRow(motionForm, "Scale X", model::Param::ScaleX, scaleX_);
-    addRow(motionForm, "Scale Y", model::Param::ScaleY, scaleY_);
-    addRow(motionForm, "Rotation", model::Param::RotationDegrees, rotation_);
-    addRow(motionForm, "Anchor X", model::Param::AnchorX, anchorX_);
-    addRow(motionForm, "Anchor Y", model::Param::AnchorY, anchorY_);
+    // The spans the sliders cover, where that is not the whole range the spin
+    // box accepts. See `SliderSpan`: these ranges are what somebody drags
+    // across, and the field beside each one still takes anything.
+    //
+    // Position and anchor reach a frame off either side of a 4K timeline, which
+    // is as far as a clip can go and still be partly on screen. Scale stops at
+    // 4x, and a flip is typed rather than dragged to -- there is no travel
+    // between -1 and 1 worth spending half the control on. Rotation is one turn
+    // each way; the spin box winds on past it for an animation that spins.
+    constexpr SliderSpan kFrameSpan{-4000.0, 4000.0};
+    constexpr SliderSpan kScaleSpan{0.0, 4.0};
+    constexpr SliderSpan kTurnSpan{-360.0, 360.0};
+
+    addRow(motionForm, "Position X", model::Param::PositionX, positionX_, kFrameSpan);
+    addRow(motionForm, "Position Y", model::Param::PositionY, positionY_, kFrameSpan);
+    addRow(motionForm, "Scale X", model::Param::ScaleX, scaleX_, kScaleSpan);
+    addRow(motionForm, "Scale Y", model::Param::ScaleY, scaleY_, kScaleSpan);
+    addRow(motionForm, "Rotation", model::Param::RotationDegrees, rotation_, kTurnSpan);
+    addRow(motionForm, "Anchor X", model::Param::AnchorX, anchorX_, kFrameSpan);
+    addRow(motionForm, "Anchor Y", model::Param::AnchorY, anchorY_, kFrameSpan);
     addRow(motionForm, "Opacity", model::Param::Opacity, opacity_);
     // Blend has no stopwatch: it is a mode rather than a quantity, and there is
     // no meaningful value halfway between Multiply and Screen.
@@ -716,7 +784,22 @@ void EffectControls::assemblePanel() {
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(scroll);
 
+    // One width for every value field, so the sliders all end in the same place.
+    // Sized for its own widest value, each field is a different size and the
+    // column down the panel comes out ragged; widening the rest to match the
+    // widest costs nothing, since the panel is already that wide because of it.
+    //
+    // Fixed rather than a minimum, because a minimum does not win. A spin box
+    // asks for the width of the largest number its *range* can hold, and
+    // position's range is ±100000px -- so the layout hands it 121px however
+    // small a floor it is given, and the field `addRow` narrowed stays wide.
+    int widest = 0;
     for (const Row& row : rows_) {
+        widest = std::max(widest, row.spin->minimumWidth());
+    }
+    for (const Row& row : rows_) {
+        row.spin->setFixedWidth(widest);
+
         const model::Param param = row.param;
         connect(row.spin, &QDoubleSpinBox::valueChanged, this,
                 [this, param](double value) { pushParameter(param, value); });
@@ -1036,11 +1119,12 @@ void EffectControls::applyToWidgets() {
     pan_->setValue(clip->panAt(position_));
     enabled_->setChecked(clip->enabled);
     updating_ = false;
+    applySliders();
     applyKeyframeButtons();
 }
 
 void EffectControls::addRow(QFormLayout* form, const QString& label, model::Param param,
-                            QDoubleSpinBox* spin) {
+                            QDoubleSpinBox* spin, std::optional<SliderSpan> span) {
     // A diamond for the stopwatch and a diamond for the keyframe: the same
     // symbol every editor uses, and the difference between them is that one
     // says "this parameter animates" and the other says "it has a value here".
@@ -1068,13 +1152,44 @@ void EffectControls::addRow(QFormLayout* form, const QString& label, model::Para
         button->setFixedSize(side, side);
     }
 
+    // The span the slider covers. The spin box's own range unless the caller
+    // said otherwise, which it does for the parameters whose range is a guard
+    // rail rather than something anybody drags across. See `SliderSpan`.
+    const double lo = span ? span->lo : spin->minimum();
+    const double hi = span ? span->hi : spin->maximum();
+
+    auto* slider = new ParamSlider(this);
+    slider->setRange(0, kSliderSteps);
+    // Named for what it controls, as the two buttons above are, so a self-test
+    // driving the real panel can find a row by its parameter rather than by
+    // where it happens to sit in the layout.
+    slider->setObjectName(QString{"slider:"} + model::toString(param));
+    spin->setObjectName(QString{"spin:"} + model::toString(param));
+    slider->setToolTip(label);
+    // Enough travel to be worth dragging, and no more: the value beside it is
+    // what the row is for, and a slider that pushed the number out of the panel
+    // would have taken the readable half away to add the coarse one.
+    slider->setMinimumWidth(56);
+
+    // No steppers on a row that has a slider. They were how a value was nudged
+    // without typing it, and that is what the slider and the arrow keys are for
+    // now -- so they are twenty pixels of the panel spent twice on one job, and
+    // the design draws a plain field.
+    spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    // Narrowed to the values the row will actually show. Position is clamped at
+    // ±100000px so a typo cannot corrupt a transform, and a field sized for
+    // "-100000.0 px" is three quarters of the panel spent on a number nobody
+    // will see.
+    spin->setMinimumWidth(widthForRange(spin, lo, hi, spin->decimals(), spin->suffix(), kFieldPad));
+
     auto* line = new QWidget(this);
     auto* row = new QHBoxLayout(line);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(4);
     row->addWidget(stopwatch);
     row->addWidget(keyframe);
-    row->addWidget(spin, 1);
+    row->addWidget(slider, 1);
+    row->addWidget(spin);
 
     // The label keeps the width it needs. A form column is free to shrink to
     // whatever is left over, and "Position X" reading as "Position" next to
@@ -1088,7 +1203,28 @@ void EffectControls::addRow(QFormLayout* form, const QString& label, model::Para
             [this, param](bool on) { toggleAnimated(param, on); });
     connect(keyframe, &QToolButton::clicked, this, [this, param] { toggleKeyframe(param); });
 
-    rows_.push_back(Row{param, spin, stopwatch, keyframe});
+    // The two halves of the row keep each other in step, and the spin box is
+    // the half that talks to the model. A slider drag therefore takes the same
+    // path a typed value does -- rounded and clamped the way the panel displays
+    // it, pushed with the same merge key, so the whole drag is one undo step.
+    connect(slider, &QSlider::valueChanged, this, [this, spin, lo, hi](int step) {
+        if (syncing_) {
+            return;
+        }
+        syncing_ = true;
+        spin->setValue(lo + (hi - lo) * step / kSliderSteps);
+        syncing_ = false;
+    });
+    connect(spin, &QDoubleSpinBox::valueChanged, this, [this, slider, lo, hi](double value) {
+        if (syncing_) {
+            return;
+        }
+        syncing_ = true;
+        slider->setValue(stepFor(value, lo, hi));
+        syncing_ = false;
+    });
+
+    rows_.push_back(Row{param, slider, spin, stopwatch, keyframe, lo, hi});
 }
 
 void EffectControls::setPosition(const time::RationalTime& position) {
@@ -1199,6 +1335,16 @@ void EffectControls::pushParameter(model::Param param, double value) {
     applyKeyframeButtons();
     emit keyframesChanged();
     emit edited();
+}
+
+void EffectControls::applySliders() {
+    for (const Row& row : rows_) {
+        // Blocked rather than guarded by `syncing_`: this runs inside
+        // `applyToWidgets`, and a slider that answered here would write the
+        // model's own value back at it as though somebody had dragged it.
+        QSignalBlocker block{row.slider};
+        row.slider->setValue(stepFor(row.spin->value(), row.sliderLo, row.sliderHi));
+    }
 }
 
 void EffectControls::applyKeyframeButtons() {

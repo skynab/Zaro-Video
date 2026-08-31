@@ -21,6 +21,7 @@ class QPushButton;
 class QToolButton;
 class QLabel;
 class QScrollArea;
+class QSlider;
 
 #include "zaro/ui/SequenceBinding.h"
 
@@ -102,13 +103,37 @@ signals:
     void clearStabilisationRequested();
 
 private:
-    /// One animatable parameter: its spin box, its stopwatch, and the button
-    /// that adds or removes a keyframe at the playhead.
+    /// One animatable parameter: its slider and spin box, its stopwatch, and
+    /// the button that adds or removes a keyframe at the playhead.
     struct Row {
         model::Param param{};
+        QSlider* slider{nullptr};
         QDoubleSpinBox* spin{nullptr};
         QToolButton* stopwatch{nullptr};
         QToolButton* keyframe{nullptr};
+        /// What this row's slider spans, which is not always what its spin box
+        /// allows. See `SliderSpan`.
+        double sliderLo{0.0};
+        double sliderHi{1.0};
+    };
+
+    /// What a row's slider spans, when that is not what its spin box allows.
+    ///
+    /// Most parameters have one range and it is both: opacity is 0 to 1
+    /// wherever you ask. The exceptions are the ones whose spin box range is a
+    /// guard rail rather than a working range -- position is clamped at
+    /// ±100000px so that a number nobody meant cannot corrupt a transform, and
+    /// a slider across two hundred thousand pixels moves by six hundred of them
+    /// per pixel of travel, which is not a control. So the slider covers what
+    /// people actually work in and the spin box still takes the rest.
+    ///
+    /// The cost is that a value outside the span pins the knob to the end
+    /// while the number beside it says something else. That is the honest
+    /// display of "further than this control goes", and it is why the number
+    /// is next to it.
+    struct SliderSpan {
+        double lo{0.0};
+        double hi{1.0};
     };
 
     // Construction. The panel is eight groups of parameters and a scroll
@@ -147,7 +172,8 @@ private:
     /// is unreachable and undeletable from the panel, so the buttons that would
     /// create one are disabled there instead.
     [[nodiscard]] std::optional<time::RationalTime> keyframeTime() const;
-    void addRow(QFormLayout* form, const QString& label, model::Param param, QDoubleSpinBox* spin);
+    void addRow(QFormLayout* form, const QString& label, model::Param param, QDoubleSpinBox* spin,
+                std::optional<SliderSpan> span = {});
     void pushParameter(model::Param param, double value);
     void toggleAnimated(model::Param param, bool on);
     void toggleKeyframe(model::Param param);
@@ -163,6 +189,14 @@ private:
     /// The secondary as the widgets currently describe it.
     [[nodiscard]] model::Secondary secondaryFromWidgets() const;
     void applyToWidgets();
+    /// Put every row's knob where its value is.
+    ///
+    /// Explicit rather than left to the spin box's `valueChanged`, because that
+    /// does not fire when a value is written that the box already held -- which
+    /// is most of them, most of the time. Relying on it leaves every parameter
+    /// still at its default showing a knob parked at the left end, saying
+    /// something the number beside it flatly contradicts.
+    void applySliders();
     void setEditingEnabled(bool enabled);
 
     model::Project* project_{nullptr};
@@ -176,6 +210,15 @@ private:
     /// True while the panel is writing values into its own widgets, so their
     /// change signals do not bounce straight back into the model.
     bool updating_{false};
+
+    /// True while a row's slider and its spin box are copying a value to each
+    /// other, so the second one does not send it back.
+    ///
+    /// Distinct from `updating_`, which stops a value reaching the model at
+    /// all. This one has to let it through: dragging a slider *is* an edit, and
+    /// it reaches the model by way of the spin box, which is the one place that
+    /// rounds and clamps a value the way the panel displays it.
+    bool syncing_{false};
 
     QLabel* title_{nullptr};
     QDoubleSpinBox* positionX_{nullptr};

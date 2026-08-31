@@ -4415,6 +4415,69 @@ unlike `xmeml`, where writing both ranges carries a retime for free, a 200% clip
 crosses this format at 100%; and Final Cut's effects, whose identifiers belong
 to Apple's own plugins and would be guesswork.
 
+### Phase 7x — the design's third pass §7.1 ✅
+
+**The inspector's properties had no sliders.** The design draws every parameter
+as a label, a track filled to the value with a round knob, and the number in a
+plain field beside it. The panel had the label and the number, and between them
+nothing: a value could be typed or nudged with the stepper arrows, and there was
+no way to sweep one and watch the picture. That is most of what an inspector is
+for, and it is the difference between finding a scale by feel and guessing at it
+in decimals.
+
+Every animatable parameter has one now — the eight in Motion, the five in
+Colour, and gain and pan — which is the same set that has a stopwatch, and the
+same rule stated once: a quantity gets a slider, a mode does not. Blend has no
+slider for the reason it has no stopwatch, that there is nothing halfway between
+Multiply and Screen.
+
+**The slider is not always the spin box's range.** Most parameters have one
+range and it is both: opacity is 0 to 1 wherever you ask. But position is
+clamped at ±100000px so that a number nobody meant cannot corrupt a transform,
+and a slider across two hundred thousand pixels moves by six hundred of them per
+pixel of travel, which is not a control. So position and anchor span a frame off
+either side of a 4K timeline, scale stops at 4x, rotation is a turn each way,
+and the field beside each one still takes anything. A value outside the span
+pins the knob to the end while the number says something else — the honest
+display of "further than this control goes", and the reason the number is
+next to it.
+
+**The steppers came off the rows that gained a slider.** They were how a value
+was nudged without typing it, which is now what the slider and the arrow keys
+are for, so they were twenty pixels spent twice on one job. Taking them paid for
+the slider exactly: the panel asks for the same width it did before.
+
+**Two Qt behaviours cost an afternoon between them**, and both are recorded
+where they bite rather than here alone.
+
+The first is that `border-radius` larger than half the box it rounds is
+*dropped* rather than clamped. `app/Theme` asked for a 9px handle with a 5px
+radius — the obvious way to write "fully round" — and got a square, which had
+been in every slider in the program since the stylesheet was written and which
+nobody saw until one was put beside the design. 4px is a circle. The groove had
+the same bug, 2px of radius on a 3px track, and now has 1px.
+
+The second is that a spin box asks for the width of the largest number its
+*range* can hold, so a minimum width is not a width: the layout hands position's
+field 121px however small a floor it is given. The fields are fixed rather than
+floored, all to one width, which also lines the column up — the design has one
+value box and so does this now.
+
+**A knob has to be told where to sit.** Sync through the spin box's
+`valueChanged` looks complete and is not: writing a value the box already holds
+emits nothing, so every parameter still at its default showed a knob parked at
+the left end saying something the number beside it flatly contradicted. It is
+set explicitly, from the model, wherever the panel re-reads the clip. The GUI
+test drives that in both directions and through an undo, because a slider that
+looks right and writes nothing and one that writes correctly and sits wrong are
+both invisible to any headless test of the operations underneath.
+
+**A slider does not move when the panel is scrolled past it.** Qt gives one
+wheel focus by default. The spin boxes have guarded against this since they were
+written, and a slider is the more dangerous half: a spin box under the pointer
+at least shows what it changed, while a nudged slider looks like nothing
+happened until the picture is wrong.
+
 ## 7. Feature inventory (Premiere parity checklist)
 
 Reconstructed from Premiere Pro's feature set — correct anything that's wrong or missing.

@@ -8,6 +8,7 @@
 #include <QDoubleSpinBox>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QSlider>
 #include <QToolButton>
 #include <cstdint>
 
@@ -769,4 +770,81 @@ TEST_CASE("Keyframing through the panel and the timeline", "[gui]") {
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
+}
+
+// The inspector's sliders: that the knob says what the value says, and that
+// moving it is an edit.
+//
+// The panel's own connections are what this is about. A slider that looked
+// right and wrote nothing, or one that wrote correctly and sat at the wrong
+// end, are both bugs that no headless test of the operations can see -- and
+// both were in the first version of this row.
+TEST_CASE("The inspector's parameter sliders", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto clipId = videoTrack.clips().front().id;
+
+    auto* slider = window.effects()->findChild<QSlider*>("slider:opacity");
+    auto* spin = window.effects()->findChild<QDoubleSpinBox*>("spin:opacity");
+    if (slider == nullptr || spin == nullptr) {
+        zaro::app::testing::failf("the opacity row has no slider\n");
+    }
+
+    window.effects()->setSelection(videoTrack.id(), clipId);
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+
+    const auto clipNow = [&]() -> const zaro::model::Clip* {
+        return window.sequence()->videoTracks().front().find(clipId);
+    };
+
+    // Opacity spans 0..1 and starts at 1, so a knob that follows its value is
+    // at the top of its travel. The first version of this row left it at the
+    // bottom, because a spin box set to the value it already holds emits
+    // nothing for the slider to hear.
+    if (slider->value() != slider->maximum()) {
+        zaro::app::testing::failf("opacity is %.3f but its knob is at %d of %d\n",
+                                  clipNow()->transform.opacity, slider->value(), slider->maximum());
+    }
+
+    // Halfway down. Set rather than dragged: what is being checked is the
+    // panel's wiring, and QSlider's own mouse handling is Qt's to test.
+    slider->setValue(slider->maximum() / 2);
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->transform.opacity - 0.5) > 0.01) {
+        zaro::app::testing::failf("moving the slider to the middle left opacity at %.3f\n",
+                                  clipNow()->transform.opacity);
+    }
+    if (std::fabs(spin->value() - clipNow()->transform.opacity) > 1e-6) {
+        zaro::app::testing::failf("the slider and the value box disagree: %.3f and %.3f\n",
+                                  spin->value(), clipNow()->transform.opacity);
+    }
+
+    // And back the other way: a value written to the box moves the knob.
+    spin->setValue(0.25);
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->transform.opacity - 0.25) > 1e-6) {
+        zaro::app::testing::failf("typing 0.25 left opacity at %.3f\n",
+                                  clipNow()->transform.opacity);
+    }
+    const int quarter = slider->maximum() / 4;
+    if (std::abs(slider->value() - quarter) > 2) {
+        zaro::app::testing::failf("the knob is at %d, not near %d\n", slider->value(), quarter);
+    }
+
+    // Undo puts both halves of the row back, because the panel re-reads the
+    // clip rather than trusting its own widgets.
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    window.effects()->refresh();
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->transform.opacity - 1.0) > 1e-6 ||
+        slider->value() != slider->maximum()) {
+        zaro::app::testing::failf("after undo opacity is %.3f with its knob at %d\n",
+                                  clipNow()->transform.opacity, slider->value());
+    }
+    std::printf("  slider, value box and model agree through an edit and an undo\n");
 }

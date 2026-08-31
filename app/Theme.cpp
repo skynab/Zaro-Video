@@ -161,10 +161,23 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     background: %ACCENT600%; border-color: %ACCENT%;
 }
 
-QSlider::groove:horizontal { height: 3px; background: %NEUTRAL800%; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: %ACCENT600%; border-radius: 2px; }
+/* 1px and not 2px for the same reason the handle is 4px and not 5px: a radius
+   over half the box is dropped, and half of a 3px track is 1.5px. */
+QSlider::groove:horizontal { height: 3px; background: %NEUTRAL800%; border-radius: 1px; }
+QSlider::sub-page:horizontal { background: %ACCENT600%; border-radius: 1px; }
+/* A circle, and it takes both numbers to be one.
+
+   The height comes from the margins. Qt reads a horizontal handle's width from
+   the rule and its height from the groove plus the vertical margins, so a
+   `height` here is ignored: -3px against a 3px groove is what makes the handle
+   9 tall as well as 9 wide.
+
+   The radius has to stay under half of that. Qt drops a border-radius larger
+   than the box it is rounding instead of clamping it, so `5px` on a 9px handle
+   -- the obvious way to write "fully round", and what this rule said until
+   somebody put it beside the design -- silently drew a square. 4px is a circle. */
 QSlider::handle:horizontal {
-    width: 9px; height: 9px; margin: -4px 0; border-radius: 5px; background: %ACCENT300%;
+    width: 9px; margin: -3px 0; border-radius: 4px; background: %ACCENT300%;
 }
 QSlider::handle:horizontal:hover { background: %ACCENT200%; }
 
