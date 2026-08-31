@@ -82,6 +82,7 @@ add_library(zaro_core
     src/model/Caption.cpp
     src/model/AudioRole.cpp
     src/model/Clip.cpp
+    src/model/ClipKind.cpp
     src/model/Effect.cpp
     src/model/Graphic.cpp
     src/model/Mask.cpp

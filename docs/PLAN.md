@@ -4661,3 +4661,90 @@ The self-test drives real `QMouseEvent`s through the widget rather than calling 
 operations directly, and it caught a genuine failure while being written: the release
 handler had not been wired up, so bands were drawn but never committed, and the test
 reported zero clips selected out of three.
+
+### Phase 7y — the inspector knows what a clip is §7.1 ✅
+
+**The panel asked the wrong question.** Which controls a selection got was
+decided by one fact — the kind of track it sat on — so a title, a rectangle, an
+adjustment layer, a multicam clip and a nested sequence all got the panel a
+camera clip gets. That meant a keyer on a generated shape, which cannot say
+anything true about a picture whose transparency was authored rather than shot;
+a secondary over a flat fill, where the qualifier selects all of it or none of
+it; and a position on an adjustment layer, which has no picture of its own to
+move and whose only effect would be to take the correction off the thing it was
+made for.
+
+**`model::clipKindOf` is the whole answer, asked once.** The facts were already
+on the clip — a graphic kind, an adjustment flag, a nested sequence id, a list
+of angles — and three places were each deriving their own overlapping subset of
+them. It lives in core rather than in the panel because the render graph, the
+timeline and the exporters have the same question, and three answers is three
+chances to disagree about a clip with two of those things set. The precedence is
+stated: sound first, since nothing else on the list is audible; then the
+generated kinds, which have no media to be anything else about; then nested and
+multicam, which do. It agrees with `RenderGraph`, which checks `adjustment`
+before it looks for a picture to draw.
+
+**What each kind shows is a table.** `groupsFor` is one row per kind, so adding
+a kind is a row rather than another boolean threaded through three functions —
+which is what the four `shows*` flags had become. Two of the distinctions are
+finer than a group: an adjustment layer keeps opacity and blend but loses
+position, scale, rotation and anchor, and a generated picture loses the Motion
+rows that need a file behind them — pinning, auto-reframe, stabilisation,
+retiming. Rows go through `QFormLayout::setRowVisible`, because hiding the two
+widgets leaves the row's spacing behind and that reads as a gap somebody forgot
+to fill.
+
+**A title was unreachable and, once reached, destructible.** `GraphicKind::Text`
+has been in the model and in `render::TextRasterizer` since titles were built,
+and nothing in the panel could set the words, the typeface, the size, the weight
+or the alignment. Worse: the Kind list held Rectangle and Ellipse only, so
+selecting a title left it on index -1 — and `currentData().toInt()` on an
+invalid QVariant is 0, which is `GraphicKind::None`. Editing the width of a
+title therefore unset its graphic and deleted its picture. The list now holds
+Text (the row itself is hidden for a title, which has no kind to pick), and the
+write guards the index regardless, which is the fix that would have held even
+without the entry.
+
+The typography is its own group above the box, because what a title says is what
+somebody came to the panel to change and how wide it is is what they change
+afterwards. The box and the fill are shared with a shape — a title has both, and
+they are the same fields — so one `model::Graphic` is written by two groups and
+each starts from what the clip already says rather than from its own widgets.
+
+**Typed words reach the model when typing stops**, on focus out and on the
+selection changing, not per keystroke: a command per character is a hundred undo
+steps for one line, and re-reading the model between each two takes the cursor
+away from wherever it was. The selection-change path is the one that matters —
+clicking another clip on the timeline is how somebody actually leaves a title,
+and losing what they typed to that would be unforgivable. The GUI test sends the
+focus-out event rather than asking for the focus and giving it up, because the
+latter depends on the window being the active one and a test that only passes
+when it runs alone is worse than no test.
+
+**Speed and reverse had an operation and no control.** `makeSetSpeed` has been
+in `edit::` and tested headlessly since the retiming phase; the panel's only
+mention of speed was a read-only line on the Info page. It is a percentage and a
+switch in Motion, on the clips that read a file. The value is not written back
+into the field after the edit: a retime has to land on a whole number of frames,
+so 33% of a 40-frame clip is 121 frames and reads back as 33.06%, and putting
+that in the box a moment after somebody typed 33 looks like the panel arguing
+with them. The clip is right; the field says what was asked for until the
+selection changes.
+
+**The Info page answers only what the kind has an answer for.** Five of eight
+rows read "—" for a generated clip, which is not answering the questions so much
+as listing the ones it cannot answer. Source, Media, Sound, Source range and
+Speed go for the generated kinds; a nested clip keeps Source and it names the
+sequence rather than reporting no file; a multicam clip gains a row saying how
+many angles it has and which is live.
+
+**Not done here, and deliberately.** Per-clip EQ and compression — `AudioEq` and
+`Compressor` are on `Track` only, so that one needs a model field, a command and
+mixer-graph plumbing before it needs a widget. An Angles group for switching and
+syncing multicam from the panel rather than from the timeline. An "open it"
+button for a nested clip. A Track page, and a multi-selection page — the
+timeline has supported selecting several clips since 4j and the inspector still
+shows one. And `makeAddGraphic` names a title clip "text", which is what the
+identity row shows; naming it after its words is a change to the operation, not
+to the panel.

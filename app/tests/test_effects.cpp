@@ -7,10 +7,15 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QLabel>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QFocusEvent>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSlider>
 #include <QToolButton>
+#include <cmath>
 #include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
@@ -980,4 +985,299 @@ TEST_CASE("The inspector's tabs", "[gui]") {
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
+}
+
+// What the inspector shows depends on what the clip *is*, not on which track
+// it happens to sit on.
+//
+// The panel used to answer this with the track kind alone, so a title, a
+// rectangle and an adjustment layer all got the panel a camera clip gets --
+// including a keyer, which cannot say anything true about a generated picture,
+// and a position, which an adjustment layer does not have. See
+// `model::clipKindOf` and `groupsFor` in EffectControls.cpp.
+TEST_CASE("The inspector shows what the kind of clip has", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto sequenceId = sequence.id();
+    const auto rate = sequence.frameRate();
+
+    const auto group = [&](const char* name) {
+        auto* box = panel->findChild<QGroupBox*>(name);
+        if (box == nullptr) {
+            zaro::app::testing::failf("the inspector has no %s\n", name);
+        }
+        return box;
+    };
+    const auto shown = [&](const char* name) { return group(name)->isVisibleTo(panel); };
+
+    // --- a clip that reads a file -------------------------------------------
+    panel->setSelection(videoTrack.id(), videoTrack.clips().front().id);
+    QApplication::processEvents();
+    if (!shown("inspector-group-key") || !shown("inspector-group-secondary")) {
+        zaro::app::testing::failf("a camera clip is missing its key or its secondary\n");
+    }
+    if (shown("inspector-group-shape") || shown("inspector-group-text")) {
+        zaro::app::testing::failf("a camera clip is offered controls for a generated picture\n");
+    }
+    auto* positionRow = panel->findChild<QSlider*>("slider:positionX");
+    if (positionRow == nullptr || !positionRow->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a camera clip cannot be positioned\n");
+    }
+
+    // --- a generated shape ---------------------------------------------------
+    const auto& videoTracks = window.project().findSequence(sequenceId)->videoTracks();
+    const auto topTrack = videoTracks.size() > 1 ? videoTracks[1].id() : videoTrack.id();
+    const zaro::time::TimeRange span{zaro::time::RationalTime{0, rate},
+                                     zaro::time::RationalTime{40, rate}};
+
+    zaro::model::Graphic rectangle;
+    rectangle.kind = zaro::model::GraphicKind::Rectangle;
+    auto placed = zaro::edit::makeAddGraphic(window.project(), {sequenceId, topTrack}, rectangle,
+                                             span);
+    if (!placed) {
+        zaro::app::testing::failf("%s\n", placed.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*placed));
+    const auto shapeClip =
+        window.project().findSequence(sequenceId)->findTrack(topTrack)->clips().front().id;
+    panel->setSelection(topTrack, shapeClip);
+    QApplication::processEvents();
+
+    if (!shown("inspector-group-shape")) {
+        zaro::app::testing::failf("a shape has no shape controls\n");
+    }
+    // A keyer measures what a camera saw. A rectangle is already exactly as
+    // transparent as it was authored to be, and a qualifier over a flat fill
+    // selects all of it or none of it.
+    if (shown("inspector-group-key") || shown("inspector-group-secondary")) {
+        zaro::app::testing::failf("a shape is offered a keyer or a secondary\n");
+    }
+    if (shown("inspector-group-text")) {
+        zaro::app::testing::failf("a rectangle is offered typography\n");
+    }
+    window.commands().undo(window.project());
+
+    // --- a title -------------------------------------------------------------
+    zaro::model::Graphic title;
+    title.kind = zaro::model::GraphicKind::Text;
+    title.text = "Chapter one";
+    title.width = 800.0;
+    auto placedTitle =
+        zaro::edit::makeAddGraphic(window.project(), {sequenceId, topTrack}, title, span);
+    if (!placedTitle) {
+        zaro::app::testing::failf("%s\n", placedTitle.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*placedTitle));
+    const auto titleClip =
+        window.project().findSequence(sequenceId)->findTrack(topTrack)->clips().front().id;
+    panel->setSelection(topTrack, titleClip);
+    QApplication::processEvents();
+
+    if (!shown("inspector-group-text")) {
+        zaro::app::testing::failf("a title has no text controls\n");
+    }
+    auto* body = panel->findChild<QPlainTextEdit*>("text-body");
+    if (body == nullptr || body->toPlainText() != QString{"Chapter one"}) {
+        zaro::app::testing::failf("the panel is not showing what the title says\n");
+    }
+    // The Kind list is for choosing between a rectangle and an ellipse, which
+    // is not a choice a title has.
+    auto* kindList = panel->findChild<QComboBox*>("shape-kind");
+    if (kindList == nullptr || kindList->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a title is offered a shape kind to pick\n");
+    }
+
+    const auto titleNow = [&]() -> const zaro::model::Clip* {
+        return window.project().findSequence(sequenceId)->findTrack(topTrack)->find(titleClip);
+    };
+
+    // The bug this guards: the Kind list had no entry for Text, so selecting a
+    // title left it on index -1, and the next edit to any other field read that
+    // back as GraphicKind::None -- which unset the graphic and deleted the
+    // title's picture.
+    auto* width = panel->findChild<QDoubleSpinBox*>("spin-shape-width");
+    if (width == nullptr) {
+        // Named through its label rather than an object name; find it by value.
+        for (auto* candidate : panel->findChildren<QDoubleSpinBox*>()) {
+            if (std::fabs(candidate->value() - 800.0) < 1e-6) {
+                width = candidate;
+            }
+        }
+    }
+    if (width == nullptr) {
+        zaro::app::testing::failf("the title's box has no width field\n");
+    }
+    width->setValue(900.0);
+    QApplication::processEvents();
+    if (titleNow() == nullptr || titleNow()->graphic.kind != zaro::model::GraphicKind::Text) {
+        zaro::app::testing::failf("editing the box turned the title into a %s\n",
+                                  titleNow() == nullptr
+                                      ? "deleted clip"
+                                      : zaro::model::toString(titleNow()->graphic.kind));
+    }
+    if (titleNow()->graphic.text != "Chapter one") {
+        zaro::app::testing::failf("editing the box lost the words\n");
+    }
+    if (std::fabs(titleNow()->graphic.width - 900.0) > 1e-6) {
+        zaro::app::testing::failf("the width did not reach the model\n");
+    }
+
+    // Typing reaches the model when the field is done being typed in, not per
+    // keystroke.
+    body->setPlainText("Chapter two");
+    // The focus-out itself, sent rather than provoked. Asking for the focus and
+    // then giving it up depends on the window being the active one, which it is
+    // not when the whole suite shares one and something else ran last -- and a
+    // test that only passes when it runs alone is worse than no test.
+    QFocusEvent away(QEvent::FocusOut);
+    QCoreApplication::sendEvent(body, &away);
+    QApplication::processEvents();
+    if (titleNow()->graphic.text != "Chapter two") {
+        zaro::app::testing::failf("the typed title did not reach the model (%s)\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+
+    // And typing that is never given up: clicking a different clip on the
+    // timeline changes the selection, and the words typed into the one being
+    // left have to survive that.
+    body->setPlainText("Chapter three");
+    panel->setSelection(videoTrack.id(), videoTrack.clips().front().id);
+    QApplication::processEvents();
+    if (titleNow()->graphic.text != "Chapter three") {
+        zaro::app::testing::failf("changing the selection lost the typed title (%s)\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+    window.commands().undo(window.project());
+    window.commands().undo(window.project());
+
+    // --- an adjustment layer --------------------------------------------------
+    auto adjustment =
+        zaro::edit::makeAddAdjustment(window.project(), {sequenceId, topTrack}, span);
+    if (!adjustment) {
+        zaro::app::testing::failf("%s\n", adjustment.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*adjustment));
+    const auto adjustmentClip =
+        window.project().findSequence(sequenceId)->findTrack(topTrack)->clips().front().id;
+    panel->setSelection(topTrack, adjustmentClip);
+    QApplication::processEvents();
+
+    // It grades what is under it, so it keeps the grade and the mask that
+    // limits it -- and loses the position, because it has no picture of its own
+    // to move.
+    if (!shown("inspector-group-colour") || !shown("inspector-group-mask") ||
+        !shown("inspector-group-secondary")) {
+        zaro::app::testing::failf("an adjustment layer lost the controls it grades with\n");
+    }
+    if (positionRow->isVisibleTo(panel)) {
+        zaro::app::testing::failf("an adjustment layer is offered a position\n");
+    }
+    auto* opacityRow = panel->findChild<QSlider*>("slider:opacity");
+    if (opacityRow == nullptr || !opacityRow->isVisibleTo(panel)) {
+        zaro::app::testing::failf("an adjustment layer has no opacity\n");
+    }
+    if (shown("inspector-group-key")) {
+        zaro::app::testing::failf("an adjustment layer is offered a keyer\n");
+    }
+
+    std::printf("  inspector: camera, shape, title and adjustment each shown what they have\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    panel->setSelection(videoTrack.id(), videoTrack.clips().front().id);
+    QApplication::processEvents();
+}
+
+// Speed and direction, which the model has always been able to express and the
+// panel had no way to ask for. The number is derived rather than stored -- it
+// is the ratio between what a clip reads and how long it takes to read it -- so
+// what this checks is that the panel writes through the retiming operation and
+// reads the answer back off the clip.
+TEST_CASE("Speed and reverse, set from the inspector", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto trackId = sequence.videoTracks().front().id();
+    const auto clipId = sequence.videoTracks().front().clips().front().id;
+    const auto framesBefore =
+        sequence.videoTracks().front().clips().front().timelineRange.duration().frames();
+
+    panel->setSelection(trackId, clipId);
+    QApplication::processEvents();
+
+    auto* speed = panel->findChild<QDoubleSpinBox*>("clip-speed");
+    auto* reverse = panel->findChild<QCheckBox*>("clip-reverse");
+    if (speed == nullptr || reverse == nullptr) {
+        zaro::app::testing::failf("the inspector has no speed control\n");
+    }
+    if (std::fabs(speed->value() - 100.0) > 0.5) {
+        zaro::app::testing::failf("an untouched clip reads as %.1f%%\n", speed->value());
+    }
+
+    const auto clipNow = [&]() -> const zaro::model::Clip* {
+        return window.project().findSequence(sequenceId)->findTrack(trackId)->find(clipId);
+    };
+
+    speed->setValue(200.0);
+    QApplication::processEvents();
+    // Twice as fast is half as long. Within a frame: a retime has to land on a
+    // whole number of frames, and an odd-length clip cannot halve exactly.
+    const auto framesAfter = clipNow()->timelineRange.duration().frames();
+    if (std::llabs(framesAfter - framesBefore / 2) > 1) {
+        zaro::app::testing::failf("at 200%% the clip is %lld frames, was %lld\n",
+                                  static_cast<long long>(framesAfter),
+                                  static_cast<long long>(framesBefore));
+    }
+    if (clipNow()->speed() < 1.9 || clipNow()->speed() > 2.1) {
+        zaro::app::testing::failf("the clip reads back at %.3fx\n", clipNow()->speed());
+    }
+
+    reverse->setChecked(true);
+    QApplication::processEvents();
+    if (!clipNow()->reversed) {
+        zaro::app::testing::failf("the reverse switch did not reach the clip\n");
+    }
+
+    window.commands().undo(window.project());
+    panel->refresh();
+    QApplication::processEvents();
+    if (clipNow()->reversed) {
+        zaro::app::testing::failf("undo did not take the reverse back\n");
+    }
+
+    // And a generated picture has no speed to set: there is no source being
+    // read faster or slower, only a shape that lasts as long as it lasts.
+    const auto& videoTracks = window.project().findSequence(sequenceId)->videoTracks();
+    const auto topTrack = videoTracks.size() > 1 ? videoTracks[1].id() : trackId;
+    zaro::model::Graphic rectangle;
+    rectangle.kind = zaro::model::GraphicKind::Rectangle;
+    auto placed = zaro::edit::makeAddGraphic(
+        window.project(), {sequenceId, topTrack}, rectangle,
+        zaro::time::TimeRange{zaro::time::RationalTime{0, sequence.frameRate()},
+                              zaro::time::RationalTime{40, sequence.frameRate()}});
+    if (!placed) {
+        zaro::app::testing::failf("%s\n", placed.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*placed));
+    const auto shapeClip =
+        window.project().findSequence(sequenceId)->findTrack(topTrack)->clips().front().id;
+    panel->setSelection(topTrack, shapeClip);
+    QApplication::processEvents();
+    if (speed->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a generated shape is offered a playback speed\n");
+    }
+
+    std::printf("  speed: 100%% to 200%% halved the clip, and reversed and back\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    panel->setSelection(trackId, clipId);
+    QApplication::processEvents();
 }

@@ -18,7 +18,10 @@ safe-area guides, and a status line, all drawn from one set of design tokens in
 `app/Theme`. The inspector is three tabs — how a clip looks, how it sounds, and
 what it is — and every parameter on them is a slider and a value together, so a
 scale can be found by sweeping it against the picture rather than guessed at in
-decimals. Edits align to the edit points around them and say so — a dashed
+decimals. What it shows depends on what the clip *is*: a title has words, a
+typeface and a box, a shape has neither a keyer nor a secondary to pull a matte
+that was authored rather than shot, an adjustment layer has an opacity and no
+position, and a clip that reads a file has a speed and a direction. Edits align to the edit points around them and say so — a dashed
 guide down the tracks, and a blade that draws its cut before it makes it, and
 one that cuts picture and sound together where they are linked. Delivery has a
 workspace of its own: presets, settings that all reach the encoder, and a queue
@@ -122,6 +125,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 7v | Premiere interchange: FCP7 XML in and out, `zaro-premiere` | **done** |
 | 7w | Final Cut interchange: FCPXML in and out, `zaro-finalcut` | **done** |
 | 7x | The design's third pass: the inspector's sliders and tabs | **done** |
+| 7y | An inspector per kind of clip: titles, shapes, adjustments, speed | **done** |
 
 ## Building
 

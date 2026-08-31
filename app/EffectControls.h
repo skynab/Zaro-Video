@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "zaro/core/edit/CommandStack.h"
+#include "zaro/core/model/ClipKind.h"
 #include "zaro/core/model/Project.h"
 #include "zaro/core/render/FrameSource.h"
 
@@ -13,7 +14,9 @@
 #include "HueBand.h"
 
 class QCheckBox;
+class QFontComboBox;
 class QListWidget;
+class QPlainTextEdit;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
@@ -120,6 +123,17 @@ private:
     /// the button that adds or removes a keyframe at the playhead.
     struct Row {
         model::Param param{};
+        /// The form this row was added to, and the widget holding its controls.
+        /// Kept so a row can be hidden on its own: an adjustment layer has an
+        /// opacity and a blend mode but no position, and greying out four
+        /// fields it can never use says less than not drawing them.
+        ///
+        /// Hidden through `QFormLayout::setRowVisible` rather than by hiding
+        /// the two widgets, because a form leaves the row's spacing behind
+        /// when its contents are merely invisible -- which reads as a gap
+        /// somebody forgot to fill.
+        QFormLayout* form{nullptr};
+        QWidget* line{nullptr};
         QSlider* slider{nullptr};
         QDoubleSpinBox* spin{nullptr};
         QToolButton* stopwatch{nullptr};
@@ -174,6 +188,13 @@ private:
     void addVignetteTo(QFormLayout* colourForm);
     void buildKeyGroup();
     void buildGraphicGroup();
+    /// The typography of a text layer: what it says, and in what.
+    ///
+    /// Its own group beside the graphic one rather than inside it, because the
+    /// box and the fill are shared with a shape and the typeface is not. What
+    /// a title needs is the union of the two, and what a rectangle needs is
+    /// the first of them.
+    void buildTextGroup();
     void buildAudioGroup();
     /// The sticky header: the three tabs, the reset button beside them, and
     /// the row underneath that says which clip this is.
@@ -286,17 +307,23 @@ private:
     QString identityNameFull_;
     QString identityMetaFull_;
     QWidget* infoGroup_{nullptr};
+    /// Held so rows the selected kind has no answer for can be hidden rather
+    /// than filled with a dash. See `applyIdentity`.
+    QFormLayout* infoForm_{nullptr};
     /// The Info page's right-hand column, in the order `applyIdentity` fills
     /// them. Labels rather than fields: this page answers questions, and a
     /// disabled spin box answers them worse than a line of text.
     std::vector<QLabel*> infoValues_;
 
-    /// What each group would show if its page were up. See
-    /// `applyPaneVisibility`.
-    bool showsVideo_{false};
-    bool showsAudio_{false};
-    bool showsGraphic_{false};
-    bool showsMask_{false};
+    /// What the selected clip is, or nothing if there is no selection.
+    ///
+    /// One value where there were four booleans. The booleans were each a
+    /// different half-answer to the same question -- is this picture, is it
+    /// sound, is it generated, can it be masked -- and every new kind of clip
+    /// meant another one, set in one place and read in another. See
+    /// `model::clipKindOf`, which is the whole answer, and `groupsFor` in the
+    /// implementation, which is what each answer shows.
+    std::optional<model::ClipKind> kind_;
 
     QDoubleSpinBox* positionX_{nullptr};
     QDoubleSpinBox* positionY_{nullptr};
@@ -343,6 +370,7 @@ private:
     QPushButton* unstabilise_{nullptr};
     void convertMaskToPath();
     QWidget* graphicGroup_{nullptr};
+    QFormLayout* graphicForm_{nullptr};
     QComboBox* shapeKind_{nullptr};
     QDoubleSpinBox* shapeWidth_{nullptr};
     QDoubleSpinBox* shapeHeight_{nullptr};
@@ -351,6 +379,50 @@ private:
     QDoubleSpinBox* shapeRed_{nullptr};
     QDoubleSpinBox* shapeGreen_{nullptr};
     QDoubleSpinBox* shapeBlue_{nullptr};
+    /// How transparent the fill is. Coverage rather than brightness: a shape at
+    /// 0.5 is a half-transparent shape, not a darker one. Distinct from the
+    /// clip's own opacity, which fades the shape *and* anything the graphic
+    /// draws inside it.
+    QDoubleSpinBox* shapeAlpha_{nullptr};
+    QWidget* textGroup_{nullptr};
+    QPlainTextEdit* textBody_{nullptr};
+    QFontComboBox* textFamily_{nullptr};
+    QDoubleSpinBox* textSize_{nullptr};
+    QCheckBox* textBold_{nullptr};
+    QCheckBox* textItalic_{nullptr};
+    QComboBox* textAlign_{nullptr};
+    /// Send what the text widgets say to the model. The same command as
+    /// `pushGraphic` -- a title's words and its box are one `model::Graphic` --
+    /// so the two share a writer and neither can drop what the other set.
+    void pushText();
+    /// Send the typed words, if any have changed since the last time. Called
+    /// when the field loses focus. See `eventFilter`.
+    void commitText();
+    /// Whether the text field holds something the model has not been told
+    /// about yet.
+    bool textDirty_{false};
+
+    /// The rows of Motion that only mean something for a clip with a file
+    /// behind it: pinning, auto-reframe, stabilisation, and retiming. Held as
+    /// widgets rather than layouts so they can be hidden for a clip that
+    /// generates what it shows.
+    QFormLayout* motionMediaForm_{nullptr};
+    QWidget* pinRow_{nullptr};
+    QWidget* stabiliseRow_{nullptr};
+    QWidget* remapRow_{nullptr};
+    QWidget* speedRow_{nullptr};
+
+    /// How fast the clip plays, as a percentage, and which way.
+    ///
+    /// Not stored on the clip -- speed is the ratio between its two ranges, so
+    /// this reads `Clip::speed` and writes through `edit::makeSetSpeed`, which
+    /// restretches the timeline range and ripples what follows. Which is why
+    /// it is not a `Row`: it has no keyframes, and it changes how long the clip
+    /// is rather than what it looks like.
+    QDoubleSpinBox* speed_{nullptr};
+    QCheckBox* reverse_{nullptr};
+    void pushSpeed();
+
     QWidget* secondaryGroup_{nullptr};
     QPushButton* lutLoad_{nullptr};
     QPushButton* lutClear_{nullptr};

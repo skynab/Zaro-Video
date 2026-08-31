@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
@@ -13,6 +14,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -57,6 +59,98 @@ int widthForRange(const QDoubleSpinBox* spin, double minimum, double maximum, in
 /// What a value field needs around its text once the steppers are gone: the
 /// frame, and enough air that a digit does not touch it.
 constexpr int kFieldPad = 16;
+
+/// Which of the panel's groups a kind of clip has anything to say through.
+///
+/// The panel used to answer this with four booleans set while the clip was
+/// read -- is it picture, is it sound, is it generated, can it be masked --
+/// which meant every new kind of clip was another boolean, set in one place
+/// and read in another, and that the answer for a title was assembled rather
+/// than stated. Here it is stated: one row per kind, and adding a kind is a
+/// row.
+///
+/// The judgements worth defending:
+///
+///   * A shape and a title have no *key*. A keyer measures what a camera saw
+///     and pulls a matte from it; a generated picture is already exactly as
+///     transparent as somebody authored it to be, and a control that can only
+///     make it wrong is not a control.
+///   * They have no *secondary* either. A secondary corrects the part of a
+///     picture a qualifier selects, and the part of a flat fill a qualifier
+///     selects is all of it or none of it -- the colour picker above it is the
+///     same edit, made once.
+///   * An adjustment layer keeps opacity and blend but loses *position, scale,
+///     rotation and anchor*. It has no picture of its own; moving it would
+///     move the correction off the thing it was made for. Its opacity is how
+///     strong the correction is, which is exactly what somebody wants.
+///   * An adjustment layer keeps its *mask*, because limiting a correction to
+///     part of the frame is most of what one is for.
+struct GroupSet {
+    /// The Motion group as a whole.
+    bool motion{false};
+    /// The four rows inside it that place a picture in the frame. Separate
+    /// from `motion` because opacity and blend outlive them.
+    bool placement{false};
+    /// The rows inside Motion that need a file behind the clip: pinning,
+    /// stabilisation, retiming.
+    bool mediaMotion{false};
+    /// The graphic's box and fill. Shown for a title too -- a title has a box
+    /// and a colour, and they are the same fields.
+    bool graphic{false};
+    bool text{false};
+    bool mask{false};
+    bool colour{false};
+    bool secondary{false};
+    bool key{false};
+    bool effects{false};
+    bool audio{false};
+};
+
+[[nodiscard]] GroupSet groupsFor(model::ClipKind kind) {
+    GroupSet set;
+    switch (kind) {
+        case model::ClipKind::AudioMedia:
+            set.audio = true;
+            return set;
+        case model::ClipKind::VideoMedia:
+        case model::ClipKind::Multicam:
+            set.motion = set.placement = set.mediaMotion = true;
+            set.mask = set.colour = set.secondary = set.key = set.effects = true;
+            return set;
+        case model::ClipKind::Nested:
+            // Everything a video clip gets except the parts that need a file:
+            // there are no frames of a nested sequence to analyse, and the
+            // operations that would say so already refuse it.
+            set.motion = set.placement = true;
+            set.mask = set.colour = set.secondary = set.key = set.effects = true;
+            return set;
+        case model::ClipKind::Shape:
+            set.motion = set.placement = true;
+            set.graphic = set.mask = set.colour = set.effects = true;
+            return set;
+        case model::ClipKind::Text:
+            set.motion = set.placement = true;
+            set.graphic = set.text = set.mask = set.colour = set.effects = true;
+            return set;
+        case model::ClipKind::Adjustment:
+            set.motion = true;
+            set.mask = set.colour = set.secondary = set.effects = true;
+            return set;
+    }
+    return set;
+}
+
+/// The four rows an adjustment layer does not have. See `GroupSet::placement`.
+constexpr model::Param kPlacementParams[] = {
+    model::Param::PositionX, model::Param::PositionY, model::Param::ScaleX,
+    model::Param::ScaleY,    model::Param::RotationDegrees, model::Param::AnchorX,
+    model::Param::AnchorY,
+};
+
+[[nodiscard]] bool isPlacementParam(model::Param param) {
+    return std::find(std::begin(kPlacementParams), std::end(kPlacementParams), param) !=
+           std::end(kPlacementParams);
+}
 
 /// A slider that does not move when the panel is scrolled past it.
 ///
@@ -137,6 +231,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     addVignetteTo(colourForm);
     buildKeyGroup();
     buildGraphicGroup();
+    buildTextGroup();
     buildAudioGroup();
     buildInfoGroup();
     assemblePanel();
@@ -209,11 +304,12 @@ void EffectControls::buildMotionGroup() {
     pin_->setToolTip("Follow the position and scale of whatever is under this at the playhead");
     unpin_ = new QPushButton("Unpin", this);
     unpin_->setObjectName("unpin");
-    auto* pinRow = new QHBoxLayout;
+    pinRow_ = new QWidget(this);
+    auto* pinRow = new QHBoxLayout(pinRow_);
     pinRow->setContentsMargins(0, 0, 0, 0);
     pinRow->addWidget(pin_);
     pinRow->addWidget(unpin_);
-    motionForm->addRow(pinRow);
+    motionForm->addRow(pinRow_);
     connect(pin_, &QPushButton::clicked, this, [this] { emit pinRequested(); });
     connect(unpin_, &QPushButton::clicked, this, [this] { emit unpinRequested(); });
 
@@ -225,6 +321,10 @@ void EffectControls::buildMotionGroup() {
     reframe_->setToolTip("Fill the sequence's frame with this shot, following what is in it");
     motionForm->addRow(reframe_);
     connect(reframe_, &QPushButton::clicked, this, [this] { emit reframeRequested(); });
+    // Remembered so `applyPaneVisibility` can hide the whole run of media-only
+    // rows together. Auto-reframe follows what is *in* a shot; there is nothing
+    // in a rectangle to follow.
+    motionMediaForm_ = motionForm;
 
     stabilise_ = new QPushButton("Stabilise", this);
     stabilise_->setObjectName("stabilise");
@@ -232,11 +332,12 @@ void EffectControls::buildMotionGroup() {
     unstabilise_ = new QPushButton("Clear", this);
     unstabilise_->setObjectName("stabilise-clear");
     unstabilise_->setToolTip("Throw the stabilisation away and put the framing back");
-    auto* stabiliseRow = new QHBoxLayout;
+    stabiliseRow_ = new QWidget(this);
+    auto* stabiliseRow = new QHBoxLayout(stabiliseRow_);
     stabiliseRow->setContentsMargins(0, 0, 0, 0);
     stabiliseRow->addWidget(stabilise_);
     stabiliseRow->addWidget(unstabilise_);
-    motionForm->addRow(stabiliseRow);
+    motionForm->addRow(stabiliseRow_);
     connect(stabilise_, &QPushButton::clicked, this, [this] { emit stabiliseRequested(); });
     connect(unstabilise_, &QPushButton::clicked, this,
             [this] { emit clearStabilisationRequested(); });
@@ -251,11 +352,30 @@ void EffectControls::buildMotionGroup() {
     freeze_ = new QPushButton("Freeze here", this);
     freeze_->setObjectName("freeze-frame");
     freeze_->setToolTip("Hold the frame under the playhead for the whole clip");
-    auto* remapRow = new QHBoxLayout;
+    // Constant speed, above the varying kind. A clip plays at one rate or it
+    // plays at a curve, and the two controls sit together because that is one
+    // decision made two ways.
+    speed_ = makeSpin(1.0, 10000.0, 5.0, 1, " %");
+    speed_->setObjectName("clip-speed");
+    speed_->setToolTip("How fast this clip plays. Whatever follows it on the track moves to suit");
+    reverse_ = new QCheckBox("Reverse", this);
+    reverse_->setObjectName("clip-reverse");
+    reverse_->setToolTip("Play the clip backwards");
+    speedRow_ = new QWidget(this);
+    auto* speedRow = new QHBoxLayout(speedRow_);
+    speedRow->setContentsMargins(0, 0, 0, 0);
+    speedRow->addWidget(speed_, 1);
+    speedRow->addWidget(reverse_);
+    motionForm->addRow("Speed", speedRow_);
+    connect(speed_, &QDoubleSpinBox::valueChanged, this, [this] { pushSpeed(); });
+    connect(reverse_, &QCheckBox::toggled, this, [this] { pushSpeed(); });
+
+    remapRow_ = new QWidget(this);
+    auto* remapRow = new QHBoxLayout(remapRow_);
     remapRow->setContentsMargins(0, 0, 0, 0);
     remapRow->addWidget(timeRemap_);
     remapRow->addWidget(freeze_);
-    motionForm->addRow(remapRow);
+    motionForm->addRow(remapRow_);
     connect(timeRemap_, &QCheckBox::toggled, this, [this](bool on) {
         if (updating_ || commands_ == nullptr || !clip_.isValid()) {
             return;
@@ -283,11 +403,13 @@ void EffectControls::buildMotionGroup() {
         emit edited();
     });
     videoGroup_ = motion;
+    motion->setObjectName("inspector-group-motion");
 }
 
 QFormLayout* EffectControls::buildColourGroup() {
     auto* colour = new QGroupBox("Colour", this);
     colourGroup_ = colour;
+    colour->setObjectName("inspector-group-colour");
     auto* colourForm = new QFormLayout(colour);
     addRow(colourForm, "Temperature", model::Param::Temperature, temperature_);
     addRow(colourForm, "Tint", model::Param::Tint, tint_);
@@ -386,6 +508,7 @@ void EffectControls::buildSecondaryGroup() {
     secondaryForm->addRow("Exposure", keyExposure_);
     secondaryForm->addRow("Saturation", keySaturation_);
     secondaryGroup_ = secondary;
+    secondary->setObjectName("inspector-group-secondary");
 
     for (QDoubleSpinBox* spin : {hueCentre_, hueWidth_, hueSoftness_, satLow_, satHigh_, lumaLow_,
                                  lumaHigh_, keyTemperature_, keyExposure_, keySaturation_}) {
@@ -447,6 +570,7 @@ void EffectControls::buildMaskGroup() {
     maskForm->addRow(maskTrack_);
     connect(maskTrack_, &QPushButton::clicked, this, [this] { emit trackMaskRequested(); });
     maskGroup_ = maskBox;
+    maskBox->setObjectName("inspector-group-mask");
 
     for (QDoubleSpinBox* spin :
          {maskWidth_, maskHeight_, maskX_, maskY_, maskCorner_, maskFeather_}) {
@@ -536,6 +660,7 @@ void EffectControls::buildEffectsGroup() {
         connect(keyframe, &QToolButton::clicked, this, [this, i] { toggleEffectKeyframe(i); });
     }
     effectGroup_ = effectBox;
+    effectBox->setObjectName("inspector-group-effects");
 
     connect(effectAdd_, &QPushButton::clicked, this, [this] {
         const model::Clip* clip = selectedClip();
@@ -672,6 +797,7 @@ void EffectControls::buildKeyGroup() {
     keyForm->addRow("Dark to", keyLumaHigh_);
     keyForm->addRow(keyShowMatte_);
     keyGroup_ = keyBox;
+    keyBox->setObjectName("inspector-group-key");
 
     for (QDoubleSpinBox* spin : {keyRed_, keyGreen_, keyBlue_, keyTolerance_, keySoftness_,
                                  keySpill_, keyLumaLow_, keyLumaHigh_}) {
@@ -682,13 +808,18 @@ void EffectControls::buildKeyGroup() {
 }
 
 void EffectControls::buildGraphicGroup() {
-    // A generated shape. Shown only for a clip that is one: the controls are
-    // meaningless on a clip with media, and a panel full of inert fields is
-    // worse than one that says nothing.
+    // A generated picture's box and fill. Shown for a clip that is one --
+    // shape or title, since a title has a box and a colour and they are the
+    // same fields. The controls are meaningless on a clip with media, and a
+    // panel full of inert fields is worse than one that says nothing.
     shapeKind_ = new QComboBox(this);
     shapeKind_->setObjectName("shape-kind");
-    for (const model::GraphicKind kind :
-         {model::GraphicKind::Rectangle, model::GraphicKind::Ellipse}) {
+    // Text is in the list even though the Kind row is hidden for a title, so
+    // that `findData` finds it. Without it the combo went to index -1 on a
+    // title and the next edit to any field read that back as GraphicKind::None
+    // -- which unset the graphic and deleted the title.
+    for (const model::GraphicKind kind : {model::GraphicKind::Rectangle,
+                                          model::GraphicKind::Ellipse, model::GraphicKind::Text}) {
         shapeKind_->addItem(QString::fromUtf8(model::toString(kind)), static_cast<int>(kind));
     }
     shapeWidth_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
@@ -698,9 +829,13 @@ void EffectControls::buildGraphicGroup() {
     shapeRed_ = makeSpin(0.0, 1.0, 0.05, 3);
     shapeGreen_ = makeSpin(0.0, 1.0, 0.05, 3);
     shapeBlue_ = makeSpin(0.0, 1.0, 0.05, 3);
+    shapeAlpha_ = makeSpin(0.0, 1.0, 0.05, 3);
+    shapeAlpha_->setObjectName("shape-alpha");
+    shapeAlpha_->setToolTip("How much of the shape is there, rather than how bright it is");
 
     auto* graphic = new QGroupBox("Shape", this);
     auto* graphicForm = new QFormLayout(graphic);
+    graphicForm_ = graphicForm;
     graphicForm->addRow("Kind", shapeKind_);
     graphicForm->addRow("Width", shapeWidth_);
     graphicForm->addRow("Height", shapeHeight_);
@@ -709,6 +844,7 @@ void EffectControls::buildGraphicGroup() {
     graphicForm->addRow("Red", shapeRed_);
     graphicForm->addRow("Green", shapeGreen_);
     graphicForm->addRow("Blue", shapeBlue_);
+    graphicForm->addRow("Alpha", shapeAlpha_);
 
     // Responsive timing lives with the shape because it is a title's problem:
     // a graphic is the thing whose animation has a beginning and an end that
@@ -725,12 +861,74 @@ void EffectControls::buildGraphicGroup() {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushResponsive(); });
     }
     graphicGroup_ = graphic;
+    graphic->setObjectName("inspector-group-shape");
 
     for (QDoubleSpinBox* spin : {shapeWidth_, shapeHeight_, shapeCorner_, shapeFeather_, shapeRed_,
-                                 shapeGreen_, shapeBlue_}) {
+                                 shapeGreen_, shapeBlue_, shapeAlpha_}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushGraphic(); });
     }
     connect(shapeKind_, &QComboBox::currentIndexChanged, this, [this] { pushGraphic(); });
+}
+
+void EffectControls::buildTextGroup() {
+    // What a title says, and in what. The box it says it in is the graphic
+    // group above, which a title shares with a shape.
+    auto* text = new QGroupBox("Text", this);
+    auto* form = new QFormLayout(text);
+
+    textBody_ = new QPlainTextEdit(this);
+    textBody_->setObjectName("text-body");
+    textBody_->setTabChangesFocus(true);
+    textBody_->setPlaceholderText("Title");
+    // Four lines: enough for a lower third without taking the panel over, and
+    // it scrolls past that. A field that grew with the text would move every
+    // control under it while somebody was typing.
+    textBody_->setFixedHeight(textBody_->fontMetrics().lineSpacing() * 4 + 12);
+
+    textFamily_ = new QFontComboBox(this);
+    textFamily_->setObjectName("text-family");
+    textSize_ = makeSpin(1.0, 2000.0, 1.0, 1, " pt");
+    textSize_->setObjectName("text-size");
+    textBold_ = new QCheckBox("Bold", this);
+    textBold_->setObjectName("text-bold");
+    textItalic_ = new QCheckBox("Italic", this);
+    textItalic_->setObjectName("text-italic");
+    textAlign_ = new QComboBox(this);
+    textAlign_->setObjectName("text-align");
+    textAlign_->addItem("Left", -1);
+    textAlign_->addItem("Centre", 0);
+    textAlign_->addItem("Right", 1);
+
+    form->addRow(textBody_);
+    form->addRow("Font", textFamily_);
+    form->addRow("Size", textSize_);
+    auto* styleRow = new QWidget(this);
+    auto* style = new QHBoxLayout(styleRow);
+    style->setContentsMargins(0, 0, 0, 0);
+    style->addWidget(textBold_);
+    style->addWidget(textItalic_);
+    style->addStretch(1);
+    form->addRow(styleRow);
+    form->addRow("Align", textAlign_);
+    textGroup_ = text;
+    text->setObjectName("inspector-group-text");
+
+    // On focus out and not on every keystroke. A command per character would
+    // be a hundred undo steps for one line of a title, and re-reading the
+    // model after each one would fight the cursor for where it is.
+    connect(textBody_, &QPlainTextEdit::textChanged, this, [this] {
+        if (updating_) {
+            return;
+        }
+        textDirty_ = true;
+    });
+    textBody_->installEventFilter(this);
+
+    connect(textFamily_, &QFontComboBox::currentFontChanged, this, [this] { pushText(); });
+    connect(textSize_, &QDoubleSpinBox::valueChanged, this, [this] { pushText(); });
+    connect(textBold_, &QCheckBox::toggled, this, [this] { pushText(); });
+    connect(textItalic_, &QCheckBox::toggled, this, [this] { pushText(); });
+    connect(textAlign_, &QComboBox::currentIndexChanged, this, [this] { pushText(); });
 }
 
 void EffectControls::buildAudioGroup() {
@@ -755,6 +953,7 @@ void EffectControls::buildAudioGroup() {
     connect(role_, &QComboBox::currentIndexChanged, this, [this] { pushRole(); });
     connect(duck_, &QPushButton::clicked, this, [this] { duckUnderDialogue(); });
     audioGroup_ = audio;
+    audio->setObjectName("inspector-group-audio");
 }
 
 void EffectControls::assemblePanel() {
@@ -766,6 +965,10 @@ void EffectControls::assemblePanel() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(enabled_);
     layout->addWidget(videoGroup_);
+    // Text above the box it sits in: what a title says is the thing somebody
+    // came to the panel to change, and how wide it is is the thing they change
+    // afterwards. A shape has no text group, so the order costs it nothing.
+    layout->addWidget(textGroup_);
     layout->addWidget(graphicGroup_);
     layout->addWidget(maskGroup_);
     layout->addWidget(colourGroup_);
@@ -848,6 +1051,11 @@ void EffectControls::bind(const ui::SequenceBinding& binding) {
 }
 
 void EffectControls::setSelection(model::TrackId track, model::ClipId clip) {
+    // Before the selection moves, not after: the words in the field belong to
+    // the clip being left, and a title typed and then clicked away from should
+    // not depend on the field having been given up focus first. Focus-out is
+    // the usual path; this is the one that catches everything else.
+    commitText();
     track_ = track;
     clip_ = clip;
     refresh();
@@ -907,6 +1115,7 @@ void EffectControls::setEditingEnabled(bool enabled) {
     enabled_->setEnabled(enabled);
     videoGroup_->setEnabled(enabled);
     graphicGroup_->setEnabled(enabled);
+    textGroup_->setEnabled(enabled);
     maskGroup_->setEnabled(enabled);
     colourGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
@@ -944,10 +1153,7 @@ void EffectControls::applyToWidgets() {
         keyShowMatte_->setChecked(false);
         effectList_->clear();
         showEffects();
-        showsVideo_ = false;
-        showsAudio_ = false;
-        showsGraphic_ = false;
-        showsMask_ = false;
+        kind_.reset();
         curves_->setCurves(model::ToneCurves{});
         lutName_->setText("No LUT");
         lutAmount_->setValue(1.0);
@@ -985,11 +1191,9 @@ void EffectControls::applyToWidgets() {
     const bool isVideo = track != nullptr && track->kind() == model::TrackKind::Video;
 
     setEditingEnabled(true);
-    // Motion applies to picture, gain and pan to sound. A clip has one or the
-    // other, which is also what decides whether each tab has anything behind
-    // it -- `applyPaneVisibility` combines these with the page that is up.
-    showsVideo_ = isVideo;
-    showsAudio_ = !isVideo;
+    // What this clip *is*, asked once. Which groups that means, and which tab
+    // has anything behind it, is `groupsFor` in `applyPaneVisibility`.
+    kind_ = model::clipKindOf(*clip, isVideo ? model::TrackKind::Video : model::TrackKind::Audio);
     if (track != nullptr && track->isLocked()) {
         setEditingEnabled(false);
     }
@@ -1010,7 +1214,7 @@ void EffectControls::applyToWidgets() {
     anchorY_->setValue(transform.anchorY);
     opacity_->setValue(transform.opacity);
     blend_->setCurrentIndex(blend_->findData(static_cast<int>(clip->blend)));
-    showsMask_ = isVideo;
+
     maskShape_->setCurrentIndex(maskShape_->findData(static_cast<int>(clip->mask.shape)));
     maskWidth_->setValue(clip->mask.width);
     maskHeight_->setValue(clip->mask.height);
@@ -1032,7 +1236,6 @@ void EffectControls::applyToWidgets() {
     unstabilise_->setEnabled(stabilised);
     reframe_->setEnabled(isVideo);
 
-    showsGraphic_ = isVideo && clip->graphic.isSet();
     if (clip->graphic.isSet()) {
         shapeKind_->setCurrentIndex(shapeKind_->findData(static_cast<int>(clip->graphic.kind)));
         shapeWidth_->setValue(clip->graphic.width);
@@ -1042,8 +1245,26 @@ void EffectControls::applyToWidgets() {
         shapeRed_->setValue(clip->graphic.red);
         shapeGreen_->setValue(clip->graphic.green);
         shapeBlue_->setValue(clip->graphic.blue);
+        shapeAlpha_->setValue(clip->graphic.alpha);
         introSeconds_->setValue(clip->responsive.intro.toSecondsDouble());
         outroSeconds_->setValue(clip->responsive.outro.toSecondsDouble());
+
+        // Only if it differs. Writing the same words back would move the
+        // cursor to the start of the field, which is what a re-read triggered
+        // by a keystroke elsewhere in the panel would do to somebody midway
+        // through typing a title.
+        const QString said = QString::fromStdString(clip->graphic.text);
+        if (textBody_->toPlainText() != said) {
+            textBody_->setPlainText(said);
+        }
+        textDirty_ = false;
+        textFamily_->setCurrentFont(QFont{QString::fromStdString(clip->graphic.family)});
+        textSize_->setValue(clip->graphic.pointSize);
+        textBold_->setChecked(clip->graphic.bold);
+        textItalic_->setChecked(clip->graphic.italic);
+        const int alignIndex = textAlign_->findData(clip->graphic.alignment);
+        textAlign_->setCurrentIndex(alignIndex >= 0 ? alignIndex
+                                                    : textAlign_->findData(0));
     }
 
     curves_->setCurves(clip->curves);
@@ -1104,6 +1325,15 @@ void EffectControls::applyToWidgets() {
     duck_->setEnabled(audio_ != nullptr && clip->role != model::AudioRole::Unassigned &&
                       clip->role != model::AudioRole::Dialogue);
 
+    // Read rather than stored: a clip's speed is the ratio between its two
+    // ranges, and asking the clip is the only way to be sure the number here
+    // agrees with the picture. A remapped clip has no single speed, so the
+    // control says so by standing down rather than by showing one of them.
+    speed_->setValue(clip->speed() * 100.0);
+    reverse_->setChecked(clip->reversed);
+    speed_->setEnabled(!clip->isTimeRemapped());
+    reverse_->setEnabled(!clip->isTimeRemapped());
+
     timeRemap_->setChecked(clip->isTimeRemapped());
     // Freezing a clip that is already frozen is a no-op the operation refuses,
     // so the button says so rather than letting somebody find out.
@@ -1138,8 +1368,9 @@ void EffectControls::applyToWidgets() {
     // The page a clip arrives on is the first one that has anything on it, so
     // selecting a sound clip while the Inspector tab is up does not show an
     // empty column with the answer one tab over.
-    if ((pane_ == Pane::Inspector && !showsVideo_) || (pane_ == Pane::Audio && !showsAudio_)) {
-        setPane(showsVideo_ ? Pane::Inspector : Pane::Audio);
+    const GroupSet groups = kind_ ? groupsFor(*kind_) : GroupSet{};
+    if ((pane_ == Pane::Inspector && !groups.motion) || (pane_ == Pane::Audio && !groups.audio)) {
+        setPane(groups.audio ? Pane::Audio : Pane::Inspector);
     } else {
         applyPaneVisibility();
     }
@@ -1248,7 +1479,7 @@ void EffectControls::addRow(QFormLayout* form, const QString& label, model::Para
         syncing_ = false;
     });
 
-    rows_.push_back(Row{param, slider, spin, stopwatch, keyframe, lo, hi});
+    rows_.push_back(Row{param, form, line, slider, spin, stopwatch, keyframe, lo, hi});
 }
 
 void EffectControls::setPosition(const time::RationalTime& position) {
@@ -1471,12 +1702,16 @@ void EffectControls::buildInfoGroup() {
     // "Clip" and not "Info": the tab above it already says Info, and a heading
     // that repeats the tab is a line of the panel spent saying nothing.
     infoGroup_ = new QGroupBox("Clip", this);
+    infoGroup_->setObjectName("inspector-group-info");
     auto* form = new QFormLayout(infoGroup_);
+    infoForm_ = form;
     // Read-only, and labels rather than disabled fields. This page answers
     // questions about the clip; a greyed-out spin box answers them worse than a
     // line of text, and invites a click that does nothing.
     static constexpr const char* kRows[] = {
-        "Name", "Track", "Source", "Media", "Sound", "Timeline", "Source range", "Speed",
+        "Name",     "Track",        "Source", "Media",
+        "Sound",    "Timeline",     "Source range", "Speed",
+        "Angles",
     };
     for (const char* name : kRows) {
         auto* value = new QLabel("\u2014", infoGroup_);
@@ -1508,14 +1743,53 @@ void EffectControls::setPane(Pane pane) {
 
 void EffectControls::applyPaneVisibility() {
     const bool inspector = pane_ == Pane::Inspector;
-    videoGroup_->setVisible(inspector && showsVideo_);
-    colourGroup_->setVisible(inspector && showsVideo_);
-    secondaryGroup_->setVisible(inspector && showsVideo_);
-    keyGroup_->setVisible(inspector && showsVideo_);
-    effectGroup_->setVisible(inspector && showsVideo_);
-    maskGroup_->setVisible(inspector && showsMask_);
-    graphicGroup_->setVisible(inspector && showsGraphic_);
-    audioGroup_->setVisible(pane_ == Pane::Audio && showsAudio_);
+    // What the selection is, and what a clip of that sort has to say. One
+    // table rather than a condition per group: see `groupsFor`.
+    const GroupSet groups = kind_ ? groupsFor(*kind_) : GroupSet{};
+
+    videoGroup_->setVisible(inspector && groups.motion);
+    colourGroup_->setVisible(inspector && groups.colour);
+    secondaryGroup_->setVisible(inspector && groups.secondary);
+    keyGroup_->setVisible(inspector && groups.key);
+    effectGroup_->setVisible(inspector && groups.effects);
+    maskGroup_->setVisible(inspector && groups.mask);
+    graphicGroup_->setVisible(inspector && groups.graphic);
+    textGroup_->setVisible(inspector && groups.text);
+    audioGroup_->setVisible(pane_ == Pane::Audio && groups.audio);
+
+    // Inside Motion: the four rows that place a picture in the frame, and the
+    // ones that need a file behind the clip. An adjustment layer has neither
+    // and still has an opacity, which is why this is a row-level decision and
+    // not another group.
+    for (const Row& row : rows_) {
+        if (row.form == nullptr || row.line == nullptr || !isPlacementParam(row.param)) {
+            continue;
+        }
+        row.form->setRowVisible(row.line, groups.placement);
+    }
+    if (motionMediaForm_ != nullptr) {
+        for (QWidget* widget : {pinRow_, reframe_ ? static_cast<QWidget*>(reframe_) : nullptr,
+                                stabiliseRow_, speedRow_, remapRow_}) {
+            if (widget != nullptr) {
+                motionMediaForm_->setRowVisible(widget, groups.mediaMotion);
+            }
+        }
+    }
+
+    // A title shares the box and the fill with a shape and has neither a kind
+    // to pick nor corners to round, so those rows go and the heading says
+    // which of the two this is.
+    if (graphicForm_ != nullptr) {
+        const bool shape = kind_ == model::ClipKind::Shape;
+        for (QWidget* widget : {static_cast<QWidget*>(shapeKind_),
+                                static_cast<QWidget*>(shapeCorner_),
+                                static_cast<QWidget*>(shapeFeather_)}) {
+            graphicForm_->setRowVisible(widget, shape);
+        }
+        if (auto* box = qobject_cast<QGroupBox*>(graphicGroup_)) {
+            box->setTitle(shape ? "Shape" : "Box");
+        }
+    }
     infoGroup_->setVisible(pane_ == Pane::Info);
     // Whether the clip plays at all is a fact about the clip rather than about
     // any one page, but on a page of read-only answers it is the only thing
@@ -1525,14 +1799,18 @@ void EffectControls::applyPaneVisibility() {
     // A tab with nothing behind it is disabled rather than hidden: the design
     // draws three, and a strip that grew and shrank with the selection would
     // move the one somebody was aiming at.
-    inspectorTab_->setEnabled(showsVideo_);
-    audioTab_->setEnabled(showsAudio_);
+    inspectorTab_->setEnabled(groups.motion);
+    audioTab_->setEnabled(groups.audio);
     infoTab_->setEnabled(selectedClip() != nullptr);
     // Nothing on the Info page to put back.
     resetButton_->setEnabled(pane_ != Pane::Info && selectedClip() != nullptr &&
-                             (inspector ? showsVideo_ : showsAudio_));
-    resetButton_->setToolTip(inspector ? "Motion back to its defaults"
-                                       : "Level to 0 dB and pan to centre");
+                             (inspector ? groups.motion : groups.audio));
+    // What it puts back depends on what the clip has: an adjustment layer's
+    // Motion is an opacity and a blend mode, and promising to restore a
+    // position it does not have would be a tooltip describing another panel.
+    resetButton_->setToolTip(!inspector          ? "Level to 0 dB and pan to centre"
+                             : groups.placement ? "Motion back to its defaults"
+                                                : "Opacity and blend back to their defaults");
 }
 
 void EffectControls::applyIdentity() {
@@ -1589,8 +1867,17 @@ void EffectControls::applyIdentity() {
 
     infoValues_[0]->setText(name);
     infoValues_[1]->setText(track == nullptr ? dash : QString::fromStdString(track->name()));
-    infoValues_[2]->setText(media == nullptr ? QString{"Generated \u2014 no file"}
-                                             : QString::fromStdString(media->path));
+    if (media != nullptr) {
+        infoValues_[2]->setText(QString::fromStdString(media->path));
+    } else if (const model::Sequence* inner =
+                   clip->nested.isValid() ? project_->findSequence(clip->nested) : nullptr) {
+        // A nested clip has no file, but it does have a source, and naming it
+        // is the difference between "there is nothing here" and "it is that
+        // sequence".
+        infoValues_[2]->setText(QString::fromStdString(inner->name()));
+    } else {
+        infoValues_[2]->setText(QString{"Generated \u2014 no file"});
+    }
 
     if (media != nullptr && media->info.primaryVideo() != nullptr) {
         const media::VideoStreamInfo& video = *media->info.primaryVideo();
@@ -1630,6 +1917,38 @@ void EffectControls::applyIdentity() {
                                 ? QString("%1%").arg(100.0 * read / played, 0, 'f', 1) +
                                       (clip->reversed ? QString{"  (reversed)"} : QString{})
                                 : dash);
+
+    if (clip->isMulticam()) {
+        const auto active = static_cast<std::size_t>(
+            clip->activeAngle >= 0 && static_cast<std::size_t>(clip->activeAngle) <
+                                          clip->angles.size()
+                ? clip->activeAngle
+                : 0);
+        const std::string& live = clip->angles[active].name;
+        infoValues_[8]->setText(QString("%1, showing %2")
+                                    .arg(clip->angles.size())
+                                    .arg(live.empty() ? QString("angle %1").arg(active + 1)
+                                                      : QString::fromStdString(live)));
+    } else {
+        infoValues_[8]->setText(dash);
+    }
+
+    // The rows this kind of clip has an answer for. A page of questions where
+    // five of eight read "--" is not answering them; it is listing the ones it
+    // cannot answer.
+    if (infoForm_ != nullptr) {
+        const model::ClipKind kind =
+            model::clipKindOf(*clip, isVideo ? model::TrackKind::Video : model::TrackKind::Audio);
+        const bool file = model::readsMedia(kind);
+        // Source stays for a nested clip, where it names the sequence rather
+        // than a file, and goes for the generated kinds, which have neither.
+        infoForm_->setRowVisible(infoValues_[2], file || kind == model::ClipKind::Nested);
+        infoForm_->setRowVisible(infoValues_[3], file);
+        infoForm_->setRowVisible(infoValues_[4], file);
+        infoForm_->setRowVisible(infoValues_[6], file || kind == model::ClipKind::Nested);
+        infoForm_->setRowVisible(infoValues_[7], file || kind == model::ClipKind::Nested);
+        infoForm_->setRowVisible(infoValues_[8], kind == model::ClipKind::Multicam);
+    }
 }
 
 void EffectControls::elideIdentity() {
@@ -1646,7 +1965,27 @@ bool EffectControls::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::Resize && (watched == identityName_ || watched == identityMeta_)) {
         elideIdentity();
     }
+    // A title's words reach the model when somebody stops typing them, not
+    // while they are. Per-keystroke would be one undo step per character and a
+    // re-read of the model between each two, which takes the cursor away from
+    // wherever it was.
+    if (watched == textBody_ && event->type() == QEvent::FocusOut) {
+        commitText();
+    }
     return QWidget::eventFilter(watched, event);
+}
+
+void EffectControls::commitText() {
+    if (!textDirty_) {
+        return;
+    }
+    textDirty_ = false;
+    pushText();
+    // Its own undo step: the next thing typed is a separate edit, and merging
+    // them would make one undo take back a paragraph.
+    if (commands_ != nullptr) {
+        commands_->breakMerge();
+    }
 }
 
 void EffectControls::resetPane() {
@@ -2273,7 +2612,14 @@ void EffectControls::pushGraphic() {
         return;
     }
     model::Graphic graphic = clip->graphic;
-    graphic.kind = static_cast<model::GraphicKind>(shapeKind_->currentData().toInt());
+    // Only if the list is actually on something. An index of -1 hands back an
+    // invalid QVariant, whose toInt() is 0 -- GraphicKind::None -- so a combo
+    // that had nothing selected would unset the graphic and delete the clip's
+    // picture on the next edit to any other field.
+    const QVariant chosen = shapeKind_->currentData();
+    if (chosen.isValid()) {
+        graphic.kind = static_cast<model::GraphicKind>(chosen.toInt());
+    }
     graphic.width = shapeWidth_->value();
     graphic.height = shapeHeight_->value();
     graphic.cornerRadius = shapeCorner_->value();
@@ -2281,6 +2627,56 @@ void EffectControls::pushGraphic() {
     graphic.red = shapeRed_->value();
     graphic.green = shapeGreen_->value();
     graphic.blue = shapeBlue_->value();
+    graphic.alpha = shapeAlpha_->value();
+
+    auto built = edit::makeSetGraphic(*project_, {sequenceId_, track_}, clip_, graphic);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::pushSpeed() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr) {
+        return;
+    }
+    auto built = edit::makeSetSpeed(*project_, {sequenceId_, track_}, clip_, speed_->value() / 100.0,
+                                    reverse_->isChecked());
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    // Not re-read into the field. A speed has to land on a whole number of
+    // frames, so 33% of a 40 frame clip is 121 frames and reads back as
+    // 33.06% -- and writing that into the box a moment after somebody typed
+    // 33 would look like the panel arguing with them. The clip is right; the
+    // field says what was asked for until the selection changes.
+    emit edited();
+}
+
+void EffectControls::pushText() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr || clip->graphic.kind != model::GraphicKind::Text) {
+        return;
+    }
+    // From what the clip already says, so nothing the graphic group owns --
+    // the box, the fill -- is dropped by an edit made here. One `Graphic` is
+    // written by two groups, and each has to leave the other's fields alone.
+    model::Graphic graphic = clip->graphic;
+    graphic.text = textBody_->toPlainText().toStdString();
+    graphic.family = textFamily_->currentFont().family().toStdString();
+    graphic.pointSize = textSize_->value();
+    graphic.bold = textBold_->isChecked();
+    graphic.italic = textItalic_->isChecked();
+    graphic.alignment = textAlign_->currentData().toInt();
 
     auto built = edit::makeSetGraphic(*project_, {sequenceId_, track_}, clip_, graphic);
     if (!built) {
