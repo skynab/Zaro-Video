@@ -8,6 +8,7 @@
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QFocusEvent>
@@ -1630,6 +1631,130 @@ TEST_CASE("The inspector edits every selected clip", "[gui]") {
     }
 
     std::printf("  multi-selection: 3 clips set to 40%% in one undo step\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}
+
+// A track is not a clip, and its page is not a cut-down clip page. Pressing a
+// track's header away from the buttons on it picks the track; what the panel
+// then shows is what the track *is*.
+TEST_CASE("The inspector shows a track when its header is picked", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto videoTrackId = sequence.videoTracks().front().id();
+    const auto audioTrackId = sequence.audioTracks().front().id();
+
+    // Start from a clip, so the switch away from one is what is tested.
+    timeline->selectOnly(videoTrackId, sequence.videoTracks().front().clips().front().id);
+    QApplication::processEvents();
+
+    const auto row = timeline->rowFor(videoTrackId);
+    if (!row) {
+        zaro::app::testing::failf("no row for the video track\n");
+    }
+    // The left edge of the header, above the buttons, which sit to the right
+    // and low in the row.
+    const int headerX = 12;
+    const int headerY = row->top + 6;
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(headerX, headerY),
+                      QPointF(headerX, headerY), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &press);
+    QApplication::processEvents();
+
+    auto* trackGroup = panel->findChild<QGroupBox*>("inspector-group-track");
+    auto* motion = panel->findChild<QGroupBox*>("inspector-group-motion");
+    if (trackGroup == nullptr || motion == nullptr) {
+        zaro::app::testing::failf("the inspector is missing a group\n");
+    }
+    if (!trackGroup->isVisibleTo(panel)) {
+        zaro::app::testing::failf("picking a track header did not show the track\n");
+    }
+    if (motion->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a track is offered a clip's motion\n");
+    }
+
+    const auto trackNow = [&](zaro::model::TrackId id) {
+        return window.project().findSequence(sequenceId)->findTrack(id);
+    };
+
+    // Renaming, locking and hiding, all through the real operations.
+    auto* name = panel->findChild<QLineEdit*>("track-name");
+    auto* muted = panel->findChild<QCheckBox*>("track-muted");
+    auto* locked = panel->findChild<QCheckBox*>("track-locked");
+    if (name == nullptr || muted == nullptr || locked == nullptr) {
+        zaro::app::testing::failf("the track group is missing its controls\n");
+    }
+    // A picture track's mute is not a word anybody can hear.
+    if (muted->text() != QString{"Hidden"}) {
+        zaro::app::testing::failf("a picture track's mute reads as \"%s\"\n",
+                                  muted->text().toUtf8().constData());
+    }
+    name->setText("B-roll");
+    emit name->editingFinished();
+    QApplication::processEvents();
+    if (trackNow(videoTrackId)->name() != "B-roll") {
+        zaro::app::testing::failf("the rename did not reach the track (%s)\n",
+                                  trackNow(videoTrackId)->name().c_str());
+    }
+    muted->setChecked(true);
+    locked->setChecked(true);
+    QApplication::processEvents();
+    if (!trackNow(videoTrackId)->isMuted() || !trackNow(videoTrackId)->isLocked()) {
+        zaro::app::testing::failf("hiding and locking did not reach the track\n");
+    }
+
+    // A picture track contributes nothing to the mix, so its Audio tab is dark.
+    auto* audioTab = panel->findChild<QPushButton*>("inspector-tab-audio");
+    if (audioTab == nullptr || audioTab->isEnabled()) {
+        zaro::app::testing::failf("a picture track is offered an Audio page\n");
+    }
+
+    // A sound track's is not, and holds its level.
+    const auto audioRow = timeline->rowFor(audioTrackId);
+    if (!audioRow) {
+        zaro::app::testing::failf("no row for the audio track\n");
+    }
+    const int audioY = audioRow->top + 6;
+    QMouseEvent pressAudio(QEvent::MouseButtonPress, QPointF(headerX, audioY),
+                           QPointF(headerX, audioY), Qt::LeftButton, Qt::LeftButton,
+                           Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &pressAudio);
+    QApplication::processEvents();
+    if (!audioTab->isEnabled()) {
+        zaro::app::testing::failf("a sound track has no Audio page\n");
+    }
+    audioTab->click();
+    QApplication::processEvents();
+    auto* gain = panel->findChild<QDoubleSpinBox*>("track-gain");
+    if (gain == nullptr || !gain->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a sound track's level is not shown\n");
+    }
+    gain->setValue(-6.0);
+    QApplication::processEvents();
+    if (std::fabs(trackNow(audioTrackId)->gainDb() + 6.0) > 1e-6) {
+        zaro::app::testing::failf("the track fader did not reach the track\n");
+    }
+
+    // And picking a clip puts the clip back: the two are exclusive.
+    timeline->selectOnly(videoTrackId, window.project()
+                                           .findSequence(sequenceId)
+                                           ->findTrack(videoTrackId)
+                                           ->clips()
+                                           .front()
+                                           .id);
+    QApplication::processEvents();
+    if (trackGroup->isVisibleTo(panel)) {
+        zaro::app::testing::failf("picking a clip left the track page up\n");
+    }
+
+    std::printf("  track page: renamed, hidden, locked, and a fader at -6 dB\n");
 
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());

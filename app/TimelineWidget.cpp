@@ -500,6 +500,13 @@ void TimelineWidget::announceSelection() {
             }
         }
     }
+    // Picking clips turns a track selection off. Announced even when nothing
+    // is selected, because "no clips and no track" is the state a panel has to
+    // be able to reach.
+    if (!selection_.empty() && headSelected_.isValid()) {
+        headSelected_ = {};
+        emit trackSelected(headSelected_);
+    }
     emit selectionChanged(selectedTrack_, selected_);
     emit selectionSetChanged(selection_);
     update();
@@ -1749,6 +1756,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
                 removeTrack(hit.track);
                 break;
             case HeaderControl::None:
+                // The header, but not a button on it: that is picking the
+                // track. Clips first, so the panel is told the clip selection
+                // is empty before it is told what replaced it.
+                if (hit.track.isValid()) {
+                    selection_.clear();
+                    announceSelection();
+                    headSelected_ = hit.track;
+                    emit trackSelected(headSelected_);
+                    update();
+                }
                 break;
         }
         return;

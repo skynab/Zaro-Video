@@ -242,7 +242,7 @@ Result<CommandPtr> makeAddGraphic(Project& project, const EditTarget& target,
     Clip clip;
     clip.id = project.ids().next<model::ClipTag>();
     clip.graphic = graphic;
-    clip.name = model::toString(graphic.kind);
+    clip.name = model::autoNameFor(graphic);
     clip.timelineRange = range;
     // Its own length, so a trim has something to trim against.
     clip.sourceRange =
@@ -473,7 +473,17 @@ Result<CommandPtr> makeSetGraphic(Project& project, const EditTarget& target, Cl
         }
     }
     return modifyClip(project, target, clipId, "Adjust graphic", "graphic:" + idText(clipId),
-                      [graphic](Clip& clip) { clip.graphic = graphic; });
+                      [graphic](Clip& clip) {
+                          // Keep the name in step, but only while it is still
+                          // the one that was generated for it. Somebody who
+                          // renamed a title "lower third" meant it, and having
+                          // that replaced by the words the next time they were
+                          // edited would be the panel undoing their work.
+                          if (clip.name == model::autoNameFor(clip.graphic)) {
+                              clip.name = model::autoNameFor(graphic);
+                          }
+                          clip.graphic = graphic;
+                      });
 }
 
 Result<CommandPtr> makeSetLut(Project& project, const EditTarget& target, ClipId clipId,

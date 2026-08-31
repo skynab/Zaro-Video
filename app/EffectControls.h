@@ -25,6 +25,7 @@ class QFormLayout;
 class QPushButton;
 class QToolButton;
 class QLabel;
+class QLineEdit;
 class QButtonGroup;
 class QFrame;
 class QScrollArea;
@@ -64,6 +65,21 @@ public:
     /// while claiming to describe five would be writing to the one whose name
     /// is not on the header.
     void setSelection(const std::vector<edit::ClipRef>& clips);
+
+    /// Show a track's own properties instead of a clip's.
+    ///
+    /// A track is not a clip and its page is not a cut-down clip page: what it
+    /// holds is what the track *is* -- its name, whether it plays, whether it
+    /// can be edited -- and, for a sound track, what it contributes to the mix.
+    /// An invalid id turns the track page off, which is what picking a clip
+    /// does.
+    ///
+    /// The heavier processing controls are deliberately not here. A track's EQ
+    /// and compressor have a purpose-built editor in the mixer's channel strip,
+    /// with a curve to drag and a meter beside it; a second set of numbered
+    /// fields for the same six values would be a second thing to keep in step
+    /// and a worse way to use them.
+    void setTrackSelection(model::TrackId track);
 
     /// Which of the panel's three pages is up.
     ///
@@ -553,6 +569,28 @@ private:
     QDoubleSpinBox* clipMakeup_{nullptr};
     void buildProcessingGroup();
     void pushProcessing();
+
+    /// The track page: what a track is, rather than what is on it.
+    QWidget* trackGroup_{nullptr};
+    QLineEdit* trackName_{nullptr};
+    QLabel* trackKind_{nullptr};
+    QCheckBox* trackMuted_{nullptr};
+    QCheckBox* trackLocked_{nullptr};
+    QCheckBox* trackSyncLocked_{nullptr};
+    QWidget* trackLevelGroup_{nullptr};
+    QDoubleSpinBox* trackGain_{nullptr};
+    QDoubleSpinBox* trackPan_{nullptr};
+    QCheckBox* trackSoloed_{nullptr};
+    void buildTrackGroup();
+    void pushTrackState();
+    void pushTrackLock();
+    void pushTrackName();
+    /// The track this panel is showing, if it is showing one. Never valid at
+    /// the same time as `clip_`.
+    model::TrackId trackSelection_;
+    [[nodiscard]] const model::Track* selectedTrack() const;
+    /// Fill the track page, and the identity row above it, from the model.
+    void applyTrack();
 
     QComboBox* role_{nullptr};
     QPushButton* duck_{nullptr};

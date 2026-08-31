@@ -27,7 +27,10 @@ sequence it is made of; and a sound clip carries its own filtering and
 compression, so one noisy take is repaired where it lies instead of on the track
 that holds the rest of the scene. Select several clips and the panel keeps what
 it can write to all of them — the parameters, the blend, the level, the repair —
-marks the rows they disagree about, and makes the whole change one undo step. Edits align to the edit points around them and say so — a dashed
+marks the rows they disagree about, and makes the whole change one undo step.
+Pressing a track's header picks the track instead, and the panel says what the
+track is — its name, whether it plays, whether it can be edited, and what it
+contributes to the mix. Edits align to the edit points around them and say so — a dashed
 guide down the tracks, and a blade that draws its cut before it makes it, and
 one that cuts picture and sound together where they are linked. Delivery has a
 workspace of its own: presets, settings that all reach the encoder, and a queue
@@ -134,6 +137,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 7y | An inspector per kind of clip: titles, shapes, adjustments, speed | **done** |
 | 7z | Angles, nested sequences, and per-clip filtering and compression | **done** |
 | 8a | Several clips at once: grouped undo, and only what applies to all | **done** |
+| 8b | A track page, and titles named by what they say | **done** |
 
 ## Building
 

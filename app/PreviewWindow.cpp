@@ -436,6 +436,10 @@ void PreviewWindow::wireEditingSignals() {
     // one thing that has something to say about the rest of it.
     connect(timeline_, &app::TimelineWidget::selectionSetChanged, effects_,
             qOverload<const std::vector<edit::ClipRef>&>(&app::EffectControls::setSelection));
+    // Picking a track's header shows the track instead. The panel treats the
+    // two as exclusive, as the timeline does.
+    connect(timeline_, &app::TimelineWidget::trackSelected, effects_,
+            &app::EffectControls::setTrackSelection);
     // Kept here too: syncing acts on the clip somebody has picked, and the
     // timeline is where picking happens.
     connect(timeline_, &app::TimelineWidget::selectionChanged, this,

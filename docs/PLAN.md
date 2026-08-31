@@ -4839,8 +4839,41 @@ one after it was a crash rather than a refusal. It is checked before the command
 is built, like every other validation here, and rippling — the default — still
 moves what follows out of the way.
 
-**Not done, and deliberately.** A Track page in the inspector. Everything it
-would hold already has a home that is better suited to it: gain, pan, mute,
-solo, EQ and compression are the mixer's channel strip, where they sit beside a
-meter, and name and lock are on the track head in the timeline, where the track
-is. A third place to change them would be a third thing to keep in step.
+### Phase 8b — a track is a thing you can select §7.1 ✅
+
+**Argued against and then built, and the argument changed the shape of it.**
+The case against a Track page was that everything it would hold has a home:
+gain, pan, mute, solo, EQ and compression are the mixer's channel strip, and
+name and lock are buttons on the track head. That is true of the *audio* track
+and false of the picture track, which has no strip in the mixer at all — its
+name, its lock and its sync lock exist only as small controls on the head, with
+no page anywhere that says what the track is.
+
+So what got built is the part that is not already somewhere else, and the part
+that is stayed where it was. The page holds the name, the kind, hidden, locked
+and sync lock; the Audio page adds level, balance and solo for a sound track.
+The EQ and the compressor are deliberately absent: they have a purpose-built
+editor in the channel strip with a curve to drag and a meter beside it, and a
+second set of six numbered fields would be a second thing to keep in step and a
+worse way to use them.
+
+**Picking a track is pressing its header away from the buttons on it** — which
+was previously the one place in the header that did nothing. A track selection
+and a clip selection are exclusive, in the timeline and in the panel: two things
+called "the selection" is one too many, and the identity row can only name one
+of them.
+
+**The Info page answers about the track**, and relabels the two rows that mean
+something else about one. A row named "Track" reading "Sound" is worse than no
+row, and a heading that says "Clip" over a track's name is the panel describing
+something that is not there.
+
+**And a title's clip name follows its words.** `makeAddGraphic` named every
+title "text", which is true of all of them and tells nobody which one they are
+looking at — and the name is what the timeline draws on the clip and what the
+inspector's header shows. `model::autoNameFor` is the rule, in one place because
+two callers must agree: creation uses it to name the clip, and `makeSetGraphic`
+uses it to decide whether the name it finds is still the generated one. If it
+is, it follows the new words; if somebody called a title "lower third", it stays
+"lower third", because having that replaced the next time the words were edited
+would be the editor undoing their work.

@@ -95,3 +95,35 @@ TEST_CASE("Every kind names itself", "[model][clipkind]") {
         CHECK(std::string_view{model::toString(kind)}.size() > 0);
     }
 }
+
+TEST_CASE("A title is named by what it says", "[model][graphic]") {
+    // "text" is true of every title in a project and tells nobody which one
+    // they are looking at. The name is what the timeline draws on the clip and
+    // what the inspector's header shows.
+    model::Graphic title;
+    title.kind = GraphicKind::Text;
+    title.text = "Kestrel Bay";
+    CHECK(model::autoNameFor(title) == "Kestrel Bay");
+
+    // The first line only: a title can be a paragraph and a clip name is read
+    // in a strip a few centimetres wide.
+    title.text = "Kestrel Bay\nEast Harbour, 1974";
+    CHECK(model::autoNameFor(title) == "Kestrel Bay");
+
+    // And cut, so a long first line does not become the name either.
+    title.text = std::string(80, 'a');
+    CHECK(model::autoNameFor(title).size() < 80);
+
+    // Empty text falls back to the kind: a clip with no name at all is worse
+    // than a vague one. So does a first line that is only blanks.
+    title.text = "";
+    CHECK(model::autoNameFor(title) == "text");
+    title.text = "   \n words";
+    CHECK(model::autoNameFor(title) == "text");
+
+    // Everything else is named by what it is.
+    model::Graphic shape;
+    shape.kind = GraphicKind::Rectangle;
+    shape.text = "ignored";
+    CHECK(model::autoNameFor(shape) == "rectangle");
+}

@@ -12,6 +12,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -301,6 +302,7 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     buildTextGroup();
     buildAnglesGroup();
     buildNestedGroup();
+    buildTrackGroup();
     buildProcessingGroup();
     buildAudioGroup();
     buildInfoGroup();
@@ -1058,6 +1060,146 @@ void EffectControls::buildNestedGroup() {
     });
 }
 
+void EffectControls::buildTrackGroup() {
+    auto* track = new QGroupBox("Track", this);
+    track->setObjectName("inspector-group-track");
+    auto* form = new QFormLayout(track);
+
+    trackName_ = new QLineEdit(this);
+    trackName_->setObjectName("track-name");
+    trackName_->setPlaceholderText("Unnamed");
+    // What the track is *for* -- "Dialogue", "B-roll" -- as distinct from V1
+    // or A2, which say where it sits and are not stored at all.
+    trackName_->setToolTip("What this track is for. V1 and A2 say where it sits, and are fixed");
+    form->addRow("Name", trackName_);
+
+    trackKind_ = new QLabel(QString::fromUtf8("\u2014"), this);
+    trackKind_->setObjectName("track-kind");
+    form->addRow("Kind", trackKind_);
+
+    trackMuted_ = new QCheckBox("Muted", this);
+    trackMuted_->setObjectName("track-muted");
+    form->addRow(trackMuted_);
+
+    trackLocked_ = new QCheckBox("Locked", this);
+    trackLocked_->setObjectName("track-locked");
+    trackLocked_->setToolTip("Nothing on this track can be moved, trimmed or changed");
+    form->addRow(trackLocked_);
+
+    trackSyncLocked_ = new QCheckBox("Sync lock", this);
+    trackSyncLocked_->setObjectName("track-sync-locked");
+    trackSyncLocked_->setToolTip("Ripple edits elsewhere move this track too, keeping it in sync");
+    form->addRow(trackSyncLocked_);
+    trackGroup_ = track;
+
+    // On editing finished rather than per keystroke, for the reason a title's
+    // words are: a command per character is one undo step per character, and
+    // re-reading the model between each two fights the cursor.
+    connect(trackName_, &QLineEdit::editingFinished, this, [this] { pushTrackName(); });
+    connect(trackMuted_, &QCheckBox::toggled, this, [this] { pushTrackState(); });
+    for (QCheckBox* box : {trackLocked_, trackSyncLocked_}) {
+        connect(box, &QCheckBox::toggled, this, [this] { pushTrackLock(); });
+    }
+
+    // The mix side, on the Audio page. Level, balance and solo only: a track's
+    // EQ and compressor have a purpose-built editor in the mixer, with a curve
+    // to drag and a meter beside it, and a second set of numbered fields for
+    // the same six values would be a second thing to keep in step.
+    auto* level = new QGroupBox("Track level", this);
+    level->setObjectName("inspector-group-track-level");
+    auto* levelForm = new QFormLayout(level);
+    trackGain_ = makeSpin(-96.0, 24.0, 0.5, 2, " dB");
+    trackGain_->setObjectName("track-gain");
+    trackPan_ = makeSpin(-1.0, 1.0, 0.05, 3);
+    trackPan_->setObjectName("track-pan");
+    trackSoloed_ = new QCheckBox("Solo", this);
+    trackSoloed_->setObjectName("track-soloed");
+    levelForm->addRow("Gain", trackGain_);
+    levelForm->addRow("Pan", trackPan_);
+    levelForm->addRow(trackSoloed_);
+    trackLevelGroup_ = level;
+
+    for (QDoubleSpinBox* spin : {trackGain_, trackPan_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushTrackState(); });
+    }
+    connect(trackSoloed_, &QCheckBox::toggled, this, [this] { pushTrackState(); });
+}
+
+const model::Track* EffectControls::selectedTrack() const {
+    if (project_ == nullptr || !trackSelection_.isValid()) {
+        return nullptr;
+    }
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    return sequence == nullptr ? nullptr : sequence->findTrack(trackSelection_);
+}
+
+void EffectControls::setTrackSelection(model::TrackId track) {
+    commitText();
+    trackSelection_ = track;
+    if (track.isValid()) {
+        // Exclusive with a clip selection: two things called "the selection"
+        // is one too many, and the header can only name one of them.
+        track_ = {};
+        clip_ = {};
+        others_.clear();
+    }
+    refresh();
+}
+
+void EffectControls::pushTrackState() {
+    if (updating_ || commands_ == nullptr || !trackSelection_.isValid()) {
+        return;
+    }
+    const model::Track* track = selectedTrack();
+    if (track == nullptr) {
+        return;
+    }
+    edit::TrackState state;
+    state.muted = trackMuted_->isChecked();
+    state.soloed = trackSoloed_->isChecked();
+    state.gainDb = trackGain_->value();
+    state.pan = trackPan_->value();
+    auto built = edit::makeSetTrackState(*project_, sequenceId_, trackSelection_, state);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::pushTrackLock() {
+    if (updating_ || commands_ == nullptr || !trackSelection_.isValid()) {
+        return;
+    }
+    auto built = edit::makeSetTrackLock(*project_, sequenceId_, trackSelection_,
+                                        trackLocked_->isChecked(),
+                                        trackSyncLocked_->isChecked());
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+}
+
+void EffectControls::pushTrackName() {
+    if (updating_ || commands_ == nullptr || !trackSelection_.isValid()) {
+        return;
+    }
+    const model::Track* track = selectedTrack();
+    if (track == nullptr || track->name() == trackName_->text().toStdString()) {
+        return;
+    }
+    auto built = edit::makeRenameTrack(*project_, sequenceId_, trackSelection_,
+                                       trackName_->text().toStdString());
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    emit edited();
+}
+
 void EffectControls::buildProcessingGroup() {
     auto* processing = new QGroupBox("Repair", this);
     processing->setObjectName("inspector-group-processing");
@@ -1185,6 +1327,8 @@ void EffectControls::assemblePanel() {
     auto* layout = new QVBoxLayout(inner);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(enabled_);
+    layout->addWidget(trackGroup_);
+    layout->addWidget(trackLevelGroup_);
     layout->addWidget(videoGroup_);
     // Under Motion, because what a clip is made of comes before what has been
     // done to it, and above everything a grade touches.
@@ -1283,6 +1427,7 @@ void EffectControls::setSelection(model::TrackId track, model::ClipId clip) {
     track_ = track;
     clip_ = clip;
     others_.clear();
+    trackSelection_ = {};
     refresh();
 }
 
@@ -1298,6 +1443,9 @@ void EffectControls::setSelection(const std::vector<edit::ClipRef>& clips) {
     track_ = clips.front().track;
     clip_ = clips.front().clip;
     others_.assign(clips.begin() + 1, clips.end());
+    // Picking clips turns a track selection off, the same way the timeline
+    // treats the two as exclusive.
+    trackSelection_ = {};
     refresh();
 }
 
@@ -1456,6 +1604,10 @@ void EffectControls::refresh() {
 }
 
 void EffectControls::applyToWidgets() {
+    if (trackSelection_.isValid()) {
+        applyTrack();
+        return;
+    }
     const model::Clip* clip = selectedClip();
     if (clip == nullptr) {
         setEditingEnabled(false);
@@ -1766,6 +1918,52 @@ void EffectControls::applyToWidgets() {
     applySliders();
     applyKeyframeButtons();
     markDisagreements();
+}
+
+void EffectControls::applyTrack() {
+    const model::Track* track = selectedTrack();
+    if (track == nullptr) {
+        // The track went away -- removed, or the panel was rebound to another
+        // sequence. Fall back to having nothing selected rather than showing a
+        // page about it.
+        trackSelection_ = {};
+        setEditingEnabled(false);
+        applyIdentity();
+        applyPaneVisibility();
+        return;
+    }
+    setEditingEnabled(true);
+    trackGroup_->setEnabled(true);
+    trackLevelGroup_->setEnabled(true);
+
+    updating_ = true;
+    // Only when it differs, so a re-read does not take the cursor back to the
+    // start of a name somebody is partway through typing.
+    const QString named = QString::fromStdString(track->name());
+    if (trackName_->text() != named) {
+        trackName_->setText(named);
+    }
+    const bool sound = track->kind() == model::TrackKind::Audio;
+    trackKind_->setText(sound ? "Sound" : "Picture");
+    // What muting a track means depends on what is on it, and "muted" for a
+    // picture track is a word for something nobody can hear.
+    trackMuted_->setText(sound ? "Muted" : "Hidden");
+    trackMuted_->setChecked(track->isMuted());
+    trackLocked_->setChecked(track->isLocked());
+    trackSyncLocked_->setChecked(track->isSyncLocked());
+    trackSoloed_->setChecked(track->isSoloed());
+    trackGain_->setValue(track->gainDb());
+    trackPan_->setValue(track->pan());
+    updating_ = false;
+
+    applyIdentity();
+    // A picture track's Audio page has nothing on it, so a selection that
+    // arrives while that page is up is moved to the one that has.
+    if (pane_ == Pane::Audio && !sound) {
+        setPane(Pane::Inspector);
+    } else {
+        applyPaneVisibility();
+    }
 }
 
 void EffectControls::addRow(QFormLayout* form, const QString& label, model::Param param,
@@ -2138,6 +2336,37 @@ void EffectControls::setPane(Pane pane) {
 
 void EffectControls::applyPaneVisibility() {
     const bool inspector = pane_ == Pane::Inspector;
+
+    // A track selection is its own page. Everything below describes a clip,
+    // and a track has none of it: no transform, no grade, no mask. Handled
+    // first and returned from, so none of the clip rules run against a
+    // selection that has no clip in it.
+    const model::Track* track = selectedTrack();
+    trackGroup_->setVisible(track != nullptr && inspector);
+    const bool trackSound = track != nullptr && track->kind() == model::TrackKind::Audio;
+    trackLevelGroup_->setVisible(trackSound && pane_ == Pane::Audio);
+    if (track != nullptr) {
+        for (QWidget* widget : {enabled_ ? static_cast<QWidget*>(enabled_) : nullptr, videoGroup_,
+                                anglesGroup_, nestedGroup_, colourGroup_, secondaryGroup_,
+                                keyGroup_, effectGroup_, maskGroup_, graphicGroup_, textGroup_,
+                                audioGroup_, processingGroup_}) {
+            if (widget != nullptr) {
+                widget->setVisible(false);
+            }
+        }
+        infoGroup_->setVisible(pane_ == Pane::Info);
+        inspectorTab_->setEnabled(true);
+        // A picture track contributes nothing to the mix, so its Audio tab has
+        // nothing behind it -- the same rule a picture clip gets.
+        audioTab_->setEnabled(trackSound);
+        infoTab_->setEnabled(true);
+        // Nothing on this page is a value with a default worth restoring: a
+        // name is not "wrong", and un-muting a track is one click away.
+        resetButton_->setEnabled(false);
+        resetButton_->setToolTip("Nothing to put back on a track");
+        return;
+    }
+
     // What the selection is, and what a clip of that sort has to say. One
     // table rather than a condition per group: see `groupsFor`.
     GroupSet groups = kind_ ? groupsFor(*kind_) : GroupSet{};
@@ -2257,6 +2486,75 @@ void EffectControls::applyPaneVisibility() {
 }
 
 void EffectControls::applyIdentity() {
+    if (const model::Track* picked = selectedTrack(); picked != nullptr) {
+        const bool sound = picked->kind() == model::TrackKind::Audio;
+        identityTile_->setPixmap(icons::pixmap(
+            sound ? icons::Glyph::Waveform : icons::Glyph::FilmStrip, 14, theme::accent(300)));
+        identityNameFull_ = picked->name().empty()
+                                ? QString{sound ? "Sound track" : "Picture track"}
+                                : QString::fromStdString(picked->name());
+        identityName_->setToolTip(identityNameFull_);
+
+        const std::size_t count = picked->clips().size();
+        QString meta = QString("%1 \u00b7 %2 %3")
+                           .arg(sound ? "Sound" : "Picture")
+                           .arg(count)
+                           .arg(count == 1 ? "clip" : "clips");
+        if (picked->isLocked()) {
+            meta += "  \u00b7  locked";
+        }
+        identityMetaFull_ = meta;
+        elideIdentity();
+
+        // The Info page answers about the track instead. The rows are named
+        // for a clip, so the ones that have no track answer are put away
+        // rather than filled with a dash.
+        const auto dash = QString::fromUtf8("\u2014");
+        for (QLabel* value : infoValues_) {
+            value->setText(dash);
+        }
+        if (auto* box = qobject_cast<QGroupBox*>(infoGroup_)) {
+            box->setTitle("Track");
+        }
+        infoValues_[0]->setText(identityNameFull_);
+        infoValues_[1]->setText(sound ? "Sound" : "Picture");
+        if (infoForm_ != nullptr) {
+            // The rows are named for a clip. Two of them mean something else
+            // about a track, and a label that lies is worse than a row that is
+            // not there.
+            if (auto* kindRow = qobject_cast<QLabel*>(infoForm_->labelForField(infoValues_[1]))) {
+                kindRow->setText("Kind");
+            }
+        }
+        infoValues_[5]->setText(QString("%1 %2").arg(count).arg(count == 1 ? "clip" : "clips"));
+        if (auto* holds = qobject_cast<QLabel*>(infoForm_ == nullptr
+                                                    ? nullptr
+                                                    : infoForm_->labelForField(infoValues_[5]))) {
+            holds->setText("Holds");
+        }
+        if (infoForm_ != nullptr) {
+            for (std::size_t row = 0; row < infoValues_.size(); ++row) {
+                infoForm_->setRowVisible(infoValues_[row], row == 0 || row == 1 || row == 5);
+            }
+        }
+        return;
+    }
+    if (infoForm_ != nullptr) {
+        // Back from a track selection: the rows a clip answers are put back,
+        // and `applyIdentity` below hides the ones this clip has no answer for.
+        for (QLabel* value : infoValues_) {
+            infoForm_->setRowVisible(value, true);
+        }
+        if (auto* holds = qobject_cast<QLabel*>(infoForm_->labelForField(infoValues_[5]))) {
+            holds->setText("Timeline");
+        }
+        if (auto* kindRow = qobject_cast<QLabel*>(infoForm_->labelForField(infoValues_[1]))) {
+            kindRow->setText("Track");
+        }
+        if (auto* box = qobject_cast<QGroupBox*>(infoGroup_)) {
+            box->setTitle("Clip");
+        }
+    }
     const model::Clip* clip = selectedClip();
     const model::Sequence* sequence =
         project_ == nullptr ? nullptr : project_->findSequence(sequenceId_);

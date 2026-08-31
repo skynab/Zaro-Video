@@ -1305,3 +1305,39 @@ TEST_CASE("A speed change with no ripple refuses to run over a neighbour",
     CHECK(g.track(g.v1).find(head)->timelineRange.duration().frames() == 100);
     CHECK(g.track(g.v1).clips()[1].start().frames() == 100);
 }
+
+TEST_CASE("A title's clip name follows its words until somebody renames it",
+          "[edit][graphic]") {
+    Fixture f;
+    model::Graphic title;
+    title.kind = model::GraphicKind::Text;
+    title.text = "Kestrel Bay";
+    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v1), title,
+                                       time::TimeRange{f.at(0), f.at(50)})));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+    CHECK(f.track(f.v1).find(id)->name == "Kestrel Bay");
+
+    // Retyped, and the name follows -- it was still the generated one.
+    title.text = "East Harbour";
+    REQUIRE(f.run(edit::makeSetGraphic(f.project, f.on(f.v1), id, title)));
+    CHECK(f.track(f.v1).find(id)->name == "East Harbour");
+
+    // Renamed by hand, and now it does not: somebody who called a title
+    // "lower third" meant it, and having that replaced the next time the words
+    // were edited would be the editor undoing their work.
+    f.track(f.v1).find(id)->name = "lower third";
+    title.text = "Something else";
+    REQUIRE(f.run(edit::makeSetGraphic(f.project, f.on(f.v1), id, title)));
+    CHECK(f.track(f.v1).find(id)->name == "lower third");
+
+    // A shape's name is what it is, and editing its box leaves it alone.
+    model::Graphic shape;
+    shape.kind = model::GraphicKind::Rectangle;
+    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v2), shape,
+                                       time::TimeRange{f.at(0), f.at(50)})));
+    const model::ClipId shapeId = f.track(f.v2).clips().front().id;
+    CHECK(f.track(f.v2).find(shapeId)->name == "rectangle");
+    shape.width = 900.0;
+    REQUIRE(f.run(edit::makeSetGraphic(f.project, f.on(f.v2), shapeId, shape)));
+    CHECK(f.track(f.v2).find(shapeId)->name == "rectangle");
+}

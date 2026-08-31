@@ -23,6 +23,26 @@ enum class GraphicKind : std::uint8_t {
 [[nodiscard]] const char* toString(GraphicKind kind) noexcept;
 [[nodiscard]] GraphicKind graphicKindFromString(const char* name) noexcept;
 
+struct Graphic;
+
+/// What to call a clip that draws this, when nobody has named it themselves.
+///
+/// A title is named by what it says and everything else by what it is: "text"
+/// is true of every title in a project and tells nobody which one they are
+/// looking at, and the name is what the timeline draws on the clip and what the
+/// inspector's header shows.
+///
+/// The first line only, and cut to something a clip strip can show. Empty text
+/// falls back to the kind, because a clip with no name at all is worse than a
+/// vague one.
+///
+/// In one place because two callers need to agree: the operation that creates a
+/// graphic uses it to name the clip, and the one that changes a graphic uses it
+/// to decide whether the name it finds is still the generated one -- and so
+/// whether keeping it in step would be helpful or would overwrite something
+/// somebody typed.
+[[nodiscard]] std::string autoNameFor(const Graphic& graphic);
+
 /// A generated shape.
 ///
 /// Sized and positioned in output pixels from the centre of the frame, the same

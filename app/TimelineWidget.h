@@ -141,6 +141,11 @@ signals:
     /// grade chain describes one clip -- and only the parameter panel has
     /// anything to say about the rest.
     void selectionSetChanged(const std::vector<zaro::edit::ClipRef>& clips);
+    /// A track was picked, by pressing its header away from the buttons on it.
+    /// An invalid id means a clip was picked instead, and the track selection
+    /// is off. The two are exclusive: a panel showing a track's properties and
+    /// a clip's at once would have two things called "the selection".
+    void trackSelected(zaro::model::TrackId track);
     /// The tool or the snap setting changed, including from the keyboard --
     /// so the toolbar showing them can follow rather than only lead.
     void toolChanged();
@@ -368,6 +373,9 @@ private:
     /// what the Effect Controls panel shows: a panel of parameters has to be
     /// about one clip, even when several are selected for moving.
     std::vector<edit::ClipRef> selection_;
+    /// The track whose header was pressed, if the selection is a track rather
+    /// than a set of clips.
+    model::TrackId headSelected_;
     model::ClipId selected_;
     model::TrackId selectedTrack_;
     /// The selected clip's link group, so its partners can be outlined too.
