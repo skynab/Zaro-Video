@@ -82,6 +82,18 @@ struct MediaRef {
     /// believe the container.
     media::TransferFunction transferOverride{media::TransferFunction::Unknown};
 
+    /// What this footage's gamut really is, when the file is wrong about it.
+    ///
+    /// The same problem as the curve and the same only-honest answer, one step
+    /// less common: a container that carries no tag at all is read as BT.709,
+    /// and phone footage that is really Display P3 is then composited as though
+    /// its red were Rec.709's -- undersaturated, and disagreeing with anything
+    /// beside it that *was* tagged.
+    ///
+    /// Unlike the curve, this one is sometimes detectable from the container
+    /// and often simply absent rather than wrong. `Unknown` means believe it.
+    media::ColorPrimaries primariesOverride{media::ColorPrimaries::Unknown};
+
     /// The curve to decode this file through: the override if there is one,
     /// otherwise whatever the container said.
     [[nodiscard]] media::TransferFunction transfer() const {
@@ -92,13 +104,24 @@ struct MediaRef {
         return video != nullptr ? video->color.transfer : media::TransferFunction::Unknown;
     }
 
+    /// The gamut to read this file as: the override if there is one, otherwise
+    /// whatever the container said.
+    [[nodiscard]] media::ColorPrimaries primaries() const {
+        if (primariesOverride != media::ColorPrimaries::Unknown) {
+            return primariesOverride;
+        }
+        const media::VideoStreamInfo* video = info.primaryVideo();
+        return video != nullptr ? video->color.primaries : media::ColorPrimaries::Unknown;
+    }
+
     friend bool operator==(const MediaRef& a, const MediaRef& b) {
         // MediaInfo is a cache of what the file said, not part of identity: two
         // refs to the same file are the same ref even if one has not been
         // probed yet.
         return a.id == b.id && a.path == b.path && a.contentHash == b.contentHash &&
                a.notes == b.notes && a.contentDigest == b.contentDigest && a.name == b.name &&
-               a.transferOverride == b.transferOverride;
+               a.transferOverride == b.transferOverride &&
+               a.primariesOverride == b.primariesOverride;
     }
 };
 

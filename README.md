@@ -138,6 +138,8 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 7z | Angles, nested sequences, and per-clip filtering and compression | **done** |
 | 8a | Several clips at once: grouped undo, and only what applies to all | **done** |
 | 8b | A track page, and titles named by what they say | **done** |
+| 8c | Wider gamuts converted into the working space, on both paths | **done** |
+| 8d | Saying what a file's gamut really is, beside its curve | **done** |
 
 ## Building
 

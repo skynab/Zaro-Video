@@ -699,3 +699,32 @@ TEST_CASE("Ids issued after loading never collide with ids already in the file",
         CHECK(used.find(next) == used.end());
     }
 }
+
+TEST_CASE("A file's gamut correction survives a save", "[io]") {
+    // The counterpart to the curve override, and the same reasoning: a
+    // container that carries no primaries tag is read as BT.709, so footage
+    // that is really Display P3 composites undersaturated. Somebody saying so
+    // has to still be true when the project is opened again.
+    Fixture f = populated();
+    const auto mediaId = f.project.media().front().id;
+    for (model::MediaRef& ref : f.project.mediaMutable()) {
+        if (ref.id == mediaId) {
+            ref.primariesOverride = media::ColorPrimaries::DisplayP3;
+        }
+    }
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+
+    const model::MediaRef* back = loaded->project.findMedia(mediaId);
+    REQUIRE(back != nullptr);
+    CHECK(back->primariesOverride == media::ColorPrimaries::DisplayP3);
+    CHECK(back->primaries() == media::ColorPrimaries::DisplayP3);
+
+    // And a file nobody has corrected writes nothing, so a project made before
+    // this existed reads back exactly as it did.
+    const model::MediaRef& untouched = loaded->project.media().back();
+    CHECK(untouched.primariesOverride == media::ColorPrimaries::Unknown);
+}

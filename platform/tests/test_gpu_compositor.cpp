@@ -531,10 +531,10 @@ namespace {
 /// the range scaling or the chroma indexing shows up as a colour shift rather
 /// than as the same flat value.
 media::VideoFrame yuvPattern(std::int32_t width, std::int32_t height, media::PixelFormat format,
-                             media::ColorRange range, media::ColorMatrix matrix) {
+                             media::ColorRange range, media::ColorMatrix matrix,
+                             media::ColorPrimaries primaries = media::ColorPrimaries::BT709) {
     media::VideoFrame frame = media::VideoFrame::allocate(width, height, format);
-    frame.setColor(media::ColorInfo{media::ColorPrimaries::BT709, media::TransferFunction::BT709,
-                                    matrix, range});
+    frame.setColor(media::ColorInfo{primaries, media::TransferFunction::BT709, matrix, range});
     const media::PixelFormatInfo& info = media::info(format);
     const bool deep = info.bitsPerComponent > 8;
     const int shift = format == media::PixelFormat::P010 ? 6 : 0;
@@ -584,6 +584,7 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
         media::PixelFormat format;
         media::ColorRange range;
         media::ColorMatrix matrix;
+        media::ColorPrimaries primaries{media::ColorPrimaries::BT709};
     };
     const Case cases[] = {
         {"8-bit 4:2:0 limited 709", media::PixelFormat::YUV420P, media::ColorRange::Limited,
@@ -600,11 +601,20 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
          media::ColorMatrix::BT709},
         {"NV12 limited 709", media::PixelFormat::NV12, media::ColorRange::Limited,
          media::ColorMatrix::BT709},
+        // Wide gamut, which is what makes the gamut stage do anything at all.
+        // Without a case here the two paths could disagree about every BT.2020
+        // and Display P3 clip and this test would still pass, because both
+        // sides would be taking the identity path.
+        {"10-bit 4:2:0 limited 2020", media::PixelFormat::YUV420P10, media::ColorRange::Limited,
+         media::ColorMatrix::BT2020NCL, media::ColorPrimaries::BT2020},
+        {"8-bit 4:2:0 limited P3", media::PixelFormat::YUV420P, media::ColorRange::Limited,
+         media::ColorMatrix::BT709, media::ColorPrimaries::DisplayP3},
     };
 
     for (const Case& testCase : cases) {
         const media::VideoFrame frame =
-            yuvPattern(64, 64, testCase.format, testCase.range, testCase.matrix);
+            yuvPattern(64, 64, testCase.format, testCase.range, testCase.matrix,
+                       testCase.primaries);
 
         // Reference: convert on the CPU, then composite.
         RgbaImage converted;

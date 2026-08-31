@@ -66,6 +66,7 @@ add_executable(zaro_core_tests
     render/test_wheels.cpp
     render/test_render_graph.cpp
     render/test_curves.cpp
+    render/test_gamut.cpp
     render/test_grade.cpp
     render/test_qualifier.cpp
     render/test_scopes.cpp

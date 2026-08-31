@@ -704,6 +704,13 @@ Result<model::MediaRef> decodeMedia(const json& node) {
     }
     ref.path = node.value("path", std::string{});
     ref.proxyPath = node.value("proxyPath", std::string{});
+    if (node.contains("primariesOverride")) {
+        media::ColorPrimaries primaries{};
+        if (media::colorPrimariesFromString(
+                node.at("primariesOverride").get<std::string>().c_str(), primaries)) {
+            ref.primariesOverride = primaries;
+        }
+    }
     if (node.contains("transferOverride")) {
         media::TransferFunction transfer{};
         if (media::transferFunctionFromString(

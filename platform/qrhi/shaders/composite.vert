@@ -53,6 +53,14 @@ layout(std140, binding = 0) uniform Block {
     vec4 wipeEdge;
     vec4 chroma;
     vec4 coefficients;
+    // The source's primaries brought into the working space's, as three rows
+    // of a 3x3 in .xyz. Three vec4s rather than a mat3, because std140 pads a
+    // mat3's columns to vec4 anyway and this way what is uploaded is what is
+    // declared. Only composite_yuv.frag reads them; all three declare them,
+    // for the reason in the note above.
+    vec4 gamutR;
+    vec4 gamutG;
+    vec4 gamutB;
 } ubuf;
 
 void main()

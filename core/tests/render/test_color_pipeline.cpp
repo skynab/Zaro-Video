@@ -390,3 +390,60 @@ TEST_CASE("Tone mapping is what stops the encoder clipping", "[render][tonemap]"
     // property the whole design rests on.
     CHECK(mapped[0] == clipped[0]);
 }
+
+TEST_CASE("A wide-gamut source is brought into the working space",
+          "[render][color][gamut]") {
+    // ADR-005 fixes the working space at Rec.709 primaries and says wider-gamut
+    // sources are converted in. Until they were, a BT.2020 clip was composited
+    // as though its numbers already meant Rec.709 -- oversaturated, and
+    // disagreeing with a Rec.709 clip beside it in exactly the way that makes
+    // shot matching fight the footage.
+    //
+    // A saturated red: Y low, Cr high. What it decodes to depends entirely on
+    // what its primaries are said to be.
+    ColorInfo wide = rec709Limited();
+    wide.primaries = media::ColorPrimaries::BT2020;
+    const media::VideoFrame wideFrame = flatFrame(81, 90, 240, wide);
+    const media::VideoFrame narrowFrame = flatFrame(81, 90, 240, rec709Limited());
+
+    render::RgbaImage wideLinear;
+    render::RgbaImage narrowLinear;
+    REQUIRE(render::toLinear(wideFrame, wideLinear));
+    REQUIRE(render::toLinear(narrowFrame, narrowLinear));
+
+    const render::Rgba wideRed = wideLinear.row(0)[0];
+    const render::Rgba narrowRed = narrowLinear.row(0)[0];
+
+    // The same numbers, read as two different gamuts, are two different
+    // colours. If these matched, nothing would be converting.
+    CHECK(std::fabs(wideRed.r - narrowRed.r) > 1e-3F);
+
+    // BT.2020's red is outside Rec.709, so bringing it in puts green and blue
+    // negative -- out of gamut, and honestly so, rather than silently clamped
+    // to a less saturated red that was never in the footage.
+    CHECK(wideRed.r > narrowRed.r);
+    CHECK(wideRed.g < narrowRed.g);
+}
+
+TEST_CASE("A Rec.709 source is not touched by the gamut stage",
+          "[render][color][gamut]") {
+    // The identity path, which is most footage. This is also what keeps the
+    // ADR's bit-identical round trip true: a clip that passes through untouched
+    // must come out exactly as it went in, and a matrix multiply by an identity
+    // that was computed in floats would not guarantee that.
+    const media::VideoFrame frame = flatFrame(128, 100, 150, rec709Limited());
+    render::RgbaImage linear;
+    REQUIRE(render::toLinear(frame, linear));
+
+    // Untagged primaries take the same path: an untagged source is composited
+    // as if it were already in the working space, which is what happens today
+    // and is the only answer that cannot make an existing project look
+    // different.
+    ColorInfo untagged = rec709Limited();
+    untagged.primaries = media::ColorPrimaries::Unknown;
+    const media::VideoFrame same = flatFrame(128, 100, 150, untagged);
+    render::RgbaImage other;
+    REQUIRE(render::toLinear(same, other));
+
+    CHECK(linear.row(0)[0] == other.row(0)[0]);
+}

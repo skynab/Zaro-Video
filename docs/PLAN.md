@@ -4877,3 +4877,105 @@ uses it to decide whether the name it finds is still the generated one. If it
 is, it follows the new words; if somebody called a title "lower third", it stays
 "lower third", because having that replaced the next time the words were edited
 would be the editor undoing their work.
+
+
+### Phase 8c — wider gamuts are converted in §7.3 ✅
+
+**ADR-005 said this would happen and it never did.** The working space is
+scene-linear with Rec.709 primaries, and the ADR's own words are "wider-gamut
+sources are converted in". `ColorPrimaries` has been probed, stored, serialised
+and displayed since Phase 1, and nothing anywhere read it: a BT.2020 or Display
+P3 clip was composited as though its numbers already meant Rec.709. That is
+oversaturated, and — worse — it is a disagreement between two clips from
+different cameras in exactly the way that makes shot matching fight the footage
+rather than fix it.
+
+**The matrices are derived, not transcribed.** A table of published matrices is
+nine digits per pair, which is O(n^2) numbers to get right and silently wrong if
+one is mistyped. From the chromaticities it is O(n), each a number quoted in the
+standard that defines it, and adding a gamut is four coordinates rather than a
+matrix against every existing one. The published values are what this produces,
+and the tests check that — to better than a thousandth, which is the honest
+claim: those values are quoted to four decimals and derived with whatever
+precision their author used for D65, so the last digit is not a fact about the
+gamut.
+
+**Every gamut here shares D65**, so no chromatic adaptation is involved. That is
+asserted rather than assumed: "white stays white" runs over every ordered pair,
+and it is the test that will fail the day somebody adds DCI-P3 with its own
+white point — which is why DCI-P3 is deliberately not in the list. Adding it
+means adding Bradford adaptation with it, not quietly ignoring a white point
+difference that puts a green cast on everything.
+
+**Where it goes was the one real design question.** Not in the sequence: the
+frame cache is per project and shared across sequences, so a per-sequence
+working gamut would make two sequences collide in one cache. Not after the
+cache either, which would mean tagging `RgbaImage` and converting per clip per
+frame. The ADR settles it — the working space is a fixed Rec.709, so the
+destination is a constant, the conversion belongs in `toLinear` beside the
+transfer curve, and the cache stays valid because everything in it is in the
+same space. A per-sequence working gamut is a later phase and a bigger one; it
+is what ADR-005 means by "when HDR work arrives".
+
+**After the curve, never before.** A gamut conversion is a change of basis
+between three real lights, which is linear; applying it to encoded values would
+mix a matrix with a curve and produce something that is neither.
+
+**The identity is the common path and stays free.** Most timelines are one
+gamut throughout, and an untagged source is left alone — the only answer that
+cannot make an existing project look different. The matrix is computed once per
+frame and skipped entirely when it is the identity, which is also what keeps the
+ADR's bit-identical round trip true.
+
+**The shader had to learn the same matrix, from the same function.** The GPU
+converts Y'CbCr in `composite_yuv.frag` and the comment above it says it must
+agree with `render::toLinear` and is checked against it — but the check only
+ever used Rec.709 sources, so both sides took the identity path and the test
+would have passed on two paths that disagreed about every wide-gamut clip. It
+has two new cases now, BT.2020 and Display P3, and the compositor calls
+`render::gamutMatrix` rather than carrying a second copy of the arithmetic.
+
+The uniform block grew three vec4s, one matrix row each. It is index-addressed
+by hand-counted float offsets, and the Y'CbCr parameters were located relative
+to the *end* of it — so appending anything moved them silently, and the shader
+would have read a grade where it expected a coefficient. They are now derived
+from the gamut rows instead, so appending a field moves one constant and not
+two.
+
+**Not done here.** A per-sequence working gamut, and an output gamut for
+delivery: both are the HDR phase, and a setting that nothing reads is worse than
+no setting — one was written for this phase and taken back out again.
+
+### Phase 8d — saying what a file's gamut really is §7.3 ✅
+
+The counterpart to the curve override, which has existed since Phase 6h, and the
+same problem one step less common. A container has a number for BT.709 and
+frequently no number at all, so a file that is really Display P3 — which is what
+a phone records — is read as Rec.709 and composited undersaturated, disagreeing
+with anything beside it that *was* tagged. There is no detecting it from the
+pixels, so the only honest mechanism is somebody saying so.
+
+`MediaRef::primariesOverride` alongside `transferOverride`, resolved by a
+`primaries()` accessor that mirrors `transfer()`, written to the file only when
+set, and applied in `ProjectMediaSource::applyOverride` — which both read paths
+already go through, because the CPU converts inside that class and the GPU
+converts in a shader from the frame's own tag, so a correction applied to one
+and not the other would show up as a preview that disagreed with an export.
+
+**Two submenus under one entry** rather than two entries. They are one question
+asked twice — the container is wrong about this file, here is what it really is
+— and somebody correcting a log curve is usually correcting the gamut in the
+same breath. Both corrections show on the bin row, for the reason the curve
+already did: a file being read as something other than what it claims is exactly
+the kind of setting somebody forgets they made.
+
+**A test that had to be taken back out, and why.** The obvious app-level check
+is that saying "this is BT.2020" changes the picture. It does not, on this
+fixture: the clip is black frames and white flashes, and a conversion between
+two D65 gamuts leaves neutrals exactly alone — which is the property the matrix
+is scaled to have and which Phase 8c asserts deliberately. The check was
+measuring the fixture's colour content rather than the code, and would have
+passed or failed on which clip somebody generated. What the app layer can prove
+is that the tag reaches the decoder and that clearing it takes the correction
+back; that the tag then changes a coloured picture is checked in core, where the
+source is built to have colour in it.

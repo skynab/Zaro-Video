@@ -52,6 +52,27 @@ const char* toString(ColorPrimaries v) noexcept {
     return "unknown";
 }
 
+std::span<const ColorPrimaries> allColorPrimaries() noexcept {
+    static constexpr ColorPrimaries kAll[] = {
+        ColorPrimaries::Unknown,  ColorPrimaries::BT709,   ColorPrimaries::BT601_525,
+        ColorPrimaries::BT601_625, ColorPrimaries::BT2020, ColorPrimaries::DisplayP3,
+    };
+    return kAll;
+}
+
+bool colorPrimariesFromString(const char* name, ColorPrimaries& out) noexcept {
+    if (name == nullptr) {
+        return false;
+    }
+    for (const ColorPrimaries candidate : allColorPrimaries()) {
+        if (std::strcmp(name, toString(candidate)) == 0) {
+            out = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
 const char* toString(TransferFunction v) noexcept {
     switch (v) {
         case TransferFunction::Unknown:

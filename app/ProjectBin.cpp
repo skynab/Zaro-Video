@@ -125,6 +125,9 @@ QString metaFor(const model::MediaRef& ref) {
     if (ref.transferOverride != media::TransferFunction::Unknown) {
         parts << QString("[%1]").arg(QString::fromUtf8(media::toString(ref.transferOverride)));
     }
+    if (ref.primariesOverride != media::ColorPrimaries::Unknown) {
+        parts << QString("[%1]").arg(QString::fromUtf8(media::toString(ref.primariesOverride)));
+    }
     return parts.join(" · ");
 }
 
@@ -995,12 +998,17 @@ ProjectBin::Selection ProjectBin::selection() const {
                      model::SubclipId{item->data(kRoleSubclip).toULongLong()}};
 }
 
-/// Say what a file's curve really is.
+/// Say what a file's curve and gamut really are.
 ///
-/// In the bin because it is a fact about the file, and the bin is the list of
+/// In the bin because they are facts about the file, and the bin is the list of
 /// files. Not a guess this program could make for somebody: a flat shot and a
 /// log shot are the same picture, and the only thing that can tell them apart
 /// is a person who knows what the camera was set to.
+///
+/// Two submenus under one entry, because they are one question asked twice --
+/// "the container is wrong about this file, here is what it really is" -- and
+/// somebody correcting a log curve is often correcting the gamut in the same
+/// breath. Separate top-level items would be two places to look for one job.
 void ProjectBin::interpretMenu() {
     const Selection chosen = selection();
     const model::MediaRef* ref = project_ != nullptr ? project_->findMedia(chosen.media) : nullptr;
@@ -1009,26 +1017,49 @@ void ProjectBin::interpretMenu() {
     }
 
     QMenu menu;
-    std::map<QAction*, media::TransferFunction> entries;
+    std::map<QAction*, media::TransferFunction> curves;
+    QMenu* curveMenu = menu.addMenu("Curve");
     for (const media::TransferFunction transfer : media::allTransferFunctions()) {
         QAction* action =
-            menu.addAction(transfer == media::TransferFunction::Unknown
-                               ? QString("As the file says (%1)")
-                                     .arg(QString::fromUtf8(media::toString(ref->transfer())))
-                               : QString::fromUtf8(media::toString(transfer)));
+            curveMenu->addAction(transfer == media::TransferFunction::Unknown
+                                     ? QString("As the file says (%1)")
+                                           .arg(QString::fromUtf8(media::toString(ref->transfer())))
+                                     : QString::fromUtf8(media::toString(transfer)));
         action->setCheckable(true);
         action->setChecked(ref->transferOverride == transfer);
-        entries.emplace(action, transfer);
+        curves.emplace(action, transfer);
+    }
+
+    std::map<QAction*, media::ColorPrimaries> gamuts;
+    QMenu* gamutMenu = menu.addMenu("Gamut");
+    for (const media::ColorPrimaries primaries : media::allColorPrimaries()) {
+        QAction* action = gamutMenu->addAction(
+            primaries == media::ColorPrimaries::Unknown
+                ? QString("As the file says (%1)")
+                      .arg(QString::fromUtf8(media::toString(ref->primaries())))
+                : QString::fromUtf8(media::toString(primaries)));
+        action->setCheckable(true);
+        action->setChecked(ref->primariesOverride == primaries);
+        gamuts.emplace(action, primaries);
     }
 
     QAction* picked = menu.exec(QCursor::pos());
-    const auto found = entries.find(picked);
-    if (found == entries.end()) {
+    if (picked == nullptr) {
+        return;
+    }
+    const auto curve = curves.find(picked);
+    const auto gamut = gamuts.find(picked);
+    if (curve == curves.end() && gamut == gamuts.end()) {
         return;
     }
     for (model::MediaRef& media : project_->mediaMutable()) {
-        if (media.id == chosen.media) {
-            media.transferOverride = found->second;
+        if (media.id != chosen.media) {
+            continue;
+        }
+        if (curve != curves.end()) {
+            media.transferOverride = curve->second;
+        } else {
+            media.primariesOverride = gamut->second;
         }
     }
     refresh();

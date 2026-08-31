@@ -665,6 +665,9 @@ json encode(const model::MediaRef& ref) {
     if (!ref.proxyPath.empty()) {
         out["proxyPath"] = ref.proxyPath;
     }
+    if (ref.primariesOverride != media::ColorPrimaries::Unknown) {
+        out["primariesOverride"] = media::toString(ref.primariesOverride);
+    }
     if (ref.transferOverride != media::TransferFunction::Unknown) {
         // Only when somebody has said so: a file the container described
         // correctly should not carry a line asserting what it already says.

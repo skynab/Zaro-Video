@@ -57,6 +57,14 @@ layout(std140, binding = 0) uniform Block {
     vec4 wipeEdge;
     vec4 chroma;  // chromaScale, midpoint, transferId, semiPlanar
     vec4 coefficients;  // crToR, crToG, cbToG, cbToB
+    // The source's primaries brought into the working space's, as three rows
+    // of a 3x3 in .xyz. Three vec4s rather than a mat3, because std140 pads a
+    // mat3's columns to vec4 anyway and this way what is uploaded is what is
+    // declared. Only composite_yuv.frag reads them; all three declare them,
+    // for the reason in the note above.
+    vec4 gamutR;
+    vec4 gamutG;
+    vec4 gamutB;
 } ubuf;
 
 // Transfer curves, matching ColorPipeline.cpp. The CPU samples these into a
@@ -149,6 +157,15 @@ void main()
     vec3 linear = vec3(curveToLinear(encoded.r, transferId),
                        curveToLinear(encoded.g, transferId),
                        curveToLinear(encoded.b, transferId));
+
+    // Into the working space's primaries, after the curve and never before: a
+    // gamut conversion is linear, and applying it to encoded values would mix
+    // a matrix with a curve. The identity is uploaded when nothing needs
+    // converting, so this is three dot products that change nothing on most
+    // timelines rather than a branch. Must match render::gamutMatrix.
+    linear = vec3(dot(ubuf.gamutR.xyz, linear),
+                  dot(ubuf.gamutG.xyz, linear),
+                  dot(ubuf.gamutB.xyz, linear));
 
     // Source video has no alpha, so coverage is 1 and premultiplying is the
     // opacity multiply alone.

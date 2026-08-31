@@ -53,6 +53,7 @@ add_library(zaro_core
     src/render/Compare.cpp
     src/render/Compositing.cpp
     src/render/CurveTable.cpp
+    src/render/Gamut.cpp
     src/render/Grade.cpp
     src/render/Keyer.cpp
     src/render/LutTable.cpp

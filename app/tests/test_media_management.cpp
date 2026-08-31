@@ -5,11 +5,15 @@
 
 #include <QLineEdit>
 #include <QListWidget>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "../FrameGrab.h"
+#include "zaro/core/render/ColorPipeline.h"
+
 #include "GuiFixture.h"
 
 // The suite was written inside main(), which had this at file scope; the
@@ -95,13 +99,62 @@ TEST_CASE("Interpreting a file's colour curve", "[gui]") {
                                   window.monitor()->lastError().toUtf8().constData());
     }
 
+    // The gamut, the same way. A container that carries no primaries tag is
+    // read as BT.709, so phone footage that is really Display P3 composites as
+    // though its red were Rec.709's -- and, since Phase 8c, saying so actually
+    // changes the picture rather than being a label nothing reads.
     for (zaro::model::MediaRef& media : window.project().mediaMutable()) {
-        media.transferOverride = zaro::media::TransferFunction::Unknown;
+        if (media.id == interpretMediaId) {
+            media.transferOverride = zaro::media::TransferFunction::Unknown;
+            media.primariesOverride = zaro::media::ColorPrimaries::BT2020;
+        }
     }
     window.renderCache().clear();
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    auto regamuted = window.frames()->sourceFrameFor(interpretMediaId, probeAt);
+    if (!regamuted) {
+        zaro::app::testing::failf("%s\n", regamuted.error().toString().c_str());
+    }
+    if ((*regamuted)->color().primaries != zaro::media::ColorPrimaries::BT2020) {
+        zaro::app::testing::failf("the gamut override did not reach the decoder (%s)\n",
+                                  zaro::media::toString((*regamuted)->color().primaries));
+    }
+    // That the tag then changes the picture is checked in core, against a
+    // coloured source -- "A wide-gamut source is brought into the working
+    // space" in test_color_pipeline.cpp. It cannot be checked here: the
+    // fixture clip is black frames and white flashes, and a conversion between
+    // two D65 gamuts leaves neutrals exactly alone by construction. Asserting
+    // a colour change on this footage would be testing the fixture rather than
+    // the code, and it would pass or fail on which clip somebody generated.
+    zaro::render::RgbaImage wideLinear;
+    if (Status ok = zaro::render::toLinear(**regamuted, wideLinear); !ok) {
+        zaro::app::testing::failf("reading the footage as BT.2020 stopped it decoding: %s\n",
+                                  ok.error().toString().c_str());
+    }
+    std::printf("  interpret gamut: decoded as %s\n",
+                zaro::media::toString((*regamuted)->color().primaries));
+
+    for (zaro::model::MediaRef& media : window.project().mediaMutable()) {
+        media.transferOverride = zaro::media::TransferFunction::Unknown;
+        media.primariesOverride = zaro::media::ColorPrimaries::Unknown;
+    }
+    window.renderCache().clear();
+    if (Status reopened = window.reopenMedia(); !reopened) {
+        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
+    }
+    auto restored = window.frames()->sourceFrameFor(interpretMediaId, probeAt);
+    if (!restored) {
+        zaro::app::testing::failf("%s\n", restored.error().toString().c_str());
+    }
+    // Clearing an override puts the file back to what its container says, which
+    // is what makes it a correction rather than a one-way door.
+    if ((*restored)->color().primaries == zaro::media::ColorPrimaries::BT2020 &&
+        (*regamuted)->color().primaries != (*restored)->color().primaries) {
+        zaro::app::testing::failf("clearing the gamut override did not take it back\n");
+    }
+
     window.monitor()->update();
     QApplication::processEvents();
 }

@@ -80,6 +80,13 @@ struct ColorInfo {
 };
 
 [[nodiscard]] const char* toString(ColorPrimaries v) noexcept;
+/// The gamut of that name, or nothing. Names come from project files, which
+/// outlive the build that wrote them: a gamut a later version added is dropped
+/// rather than refusing to open the project -- the same rule the transfer
+/// functions follow below.
+[[nodiscard]] bool colorPrimariesFromString(const char* name, ColorPrimaries& out) noexcept;
+/// Every gamut, once, so anything that has to offer them all has one list.
+[[nodiscard]] std::span<const ColorPrimaries> allColorPrimaries() noexcept;
 [[nodiscard]] const char* toString(TransferFunction v) noexcept;
 /// The curve of that name, or nothing. Names come from project files, which
 /// outlive the build that wrote them: a curve a later version added is dropped

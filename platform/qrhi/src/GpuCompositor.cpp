@@ -24,6 +24,7 @@
 #endif
 
 #include "zaro/core/render/ColorPipeline.h"
+#include "zaro/core/render/Gamut.h"
 
 namespace zaro::platform::qrhi {
 namespace {
@@ -42,7 +43,7 @@ constexpr std::array<float, 12> kQuad{
 // every shader declares, because OpenGL links the stages into one program and
 // will not have two `ubuf`s that disagree. See the note in composite.frag.
 constexpr int kUniformBytes =
-    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16 + 32 + 32;
+    64 + 16 + 16 + 16 + (5 * 16) + 16 + 32 + (4 * 16) + 16 + (3 * 16) + 16 + 32 + 32 + 48;
 constexpr std::size_t kUniformFloats = static_cast<std::size_t>(kUniformBytes) / sizeof(float);
 
 /// Write a grade into the composite shader's uniform block.
@@ -275,8 +276,16 @@ void writeMask(std::array<float, kUniformFloats>& uniformData, const model::Mask
     uniformData[58] = mask->shape == model::MaskShape::Ellipse ? 2.0F : 1.0F;
     uniformData[59] = mask->inverted ? 1.0F : 0.0F;
 }
-/// Where the Y'CbCr parameters sit in that block: the last two vec4s.
-constexpr std::size_t kChromaFloat = kUniformFloats - 8;
+/// Where the source's gamut conversion sits: the last three vec4s, one row of
+/// the matrix each, in .xyz.
+constexpr std::size_t kGamutFloat = kUniformFloats - 12;
+/// And the Y'CbCr parameters, the two vec4s before those.
+///
+/// Derived from the gamut rows rather than from the end of the block, so that
+/// appending another field moves one constant and not two -- which is the bug
+/// this layout invites, and it is silent: the shader would read a grade where
+/// it expected a coefficient.
+constexpr std::size_t kChromaFloat = kGamutFloat - 8;
 
 QShader loadShader(const char* path) {
     QFile file(QString::fromUtf8(path));
@@ -902,6 +911,10 @@ struct YuvParameters {
     float crToG{0.0F};
     float cbToG{0.0F};
     float cbToB{0.0F};
+    /// The source's primaries brought into the working space's, row-major.
+    /// ADR-005 fixes the working space at Rec.709; this is the identity for a
+    /// source already in it, which is most of them.
+    render::GamutMatrix gamut;
 };
 
 int transferIdFor(media::TransferFunction transfer) {
@@ -956,6 +969,11 @@ YuvParameters parametersFor(const media::VideoFrame& source) {
     out.midpoint = static_cast<float>(1 << (depth - 1));
     out.transferId = static_cast<float>(transferIdFor(source.color().transfer));
     out.semiPlanar = format.planeCount == 2 ? 1.0F : 0.0F;
+    // Must be the same matrix the CPU uses, from the same function -- not a
+    // second copy of the arithmetic. The golden test compares the two paths
+    // pixel for pixel, and a divergence here would show as a wide-gamut clip
+    // that plays one colour and exports another.
+    out.gamut = render::gamutMatrix(source.color().primaries, media::ColorPrimaries::BT709);
 
     float kr = 0.2126F;
     float kb = 0.0722F;
@@ -1176,6 +1194,15 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
     convertData[kChromaFloat + 5] = parameters.crToG;
     convertData[kChromaFloat + 6] = parameters.cbToG;
     convertData[kChromaFloat + 7] = parameters.cbToB;
+    // The gamut rows, one vec4 each with the fourth component unused. Written
+    // unconditionally, identity included: a row left as zeros would make every
+    // picture black, which is a worse failure than a redundant upload of 1s.
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t column = 0; column < 3; ++column) {
+            convertData[kGamutFloat + (row * 4) + column] = parameters.gamut.m[row][column];
+        }
+        convertData[kGamutFloat + (row * 4) + 3] = 0.0F;
+    }
     batch->updateDynamicBuffer(convertUniforms.get(), 0, kUniformBytes, convertData.data());
 
     QRhiCommandBuffer* cb = state.commandBuffer;

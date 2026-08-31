@@ -1,5 +1,7 @@
 #include "zaro/core/render/ColorPipeline.h"
 
+#include "zaro/core/render/Gamut.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -366,6 +368,25 @@ Status toLinear(const media::VideoFrame& source, RgbaImage& out) {
     const float midpoint = static_cast<float>(1 << (format.bitsPerComponent - 1));
     const TransferLut& lut = lutFor(transfer, true);
 
+    // Into the working space's primaries. ADR-005 fixes those at Rec.709 and
+    // says wider-gamut sources are converted in; this is that conversion, and
+    // until it existed a BT.2020 or Display P3 clip was composited as though
+    // its numbers already meant Rec.709 -- which is oversaturated, and which
+    // two clips from different cameras disagree about in exactly the way that
+    // makes shot matching fight the footage.
+    //
+    // After the curve, never before: a gamut conversion is a change of basis
+    // between three real lights, which is linear, and applying it to encoded
+    // values would mix a matrix with a curve and produce something that is
+    // neither.
+    //
+    // Asked once per frame, and skipped entirely when it is the identity --
+    // which is most timelines, and which keeps the common path exactly as fast
+    // as it was.
+    const GamutMatrix gamut =
+        gamutMatrix(source.color().primaries, media::ColorPrimaries::BT709);
+    const bool convertGamut = !gamut.isIdentity();
+
     const auto readSample = [deep](const std::uint8_t* row, std::int32_t index) -> float {
         if (!deep) {
             return static_cast<float>(row[index]);
@@ -421,7 +442,15 @@ Status toLinear(const media::VideoFrame& source, RgbaImage& out) {
             const float gPrime = yy - crToG * crCentred - cbToG * cbCentred;
             const float bPrime = yy + cbToB * cbCentred;
 
-            destination[x] = Rgba{lut(rPrime), lut(gPrime), lut(bPrime), 1.0F};
+            const float r = lut(rPrime);
+            const float g = lut(gPrime);
+            const float b = lut(bPrime);
+            if (convertGamut) {
+                const auto converted = gamut.apply(r, g, b);
+                destination[x] = Rgba{converted[0], converted[1], converted[2], 1.0F};
+            } else {
+                destination[x] = Rgba{r, g, b, 1.0F};
+            }
         }
     }
     return {};

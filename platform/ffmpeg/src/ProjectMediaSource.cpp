@@ -29,6 +29,7 @@ struct ProjectMediaSource::State {
     std::map<std::uint64_t, std::string> paths;
     /// Set only where somebody has told us the container is wrong.
     std::map<std::uint64_t, media::TransferFunction> overrides;
+    std::map<std::uint64_t, media::ColorPrimaries> gamutOverrides;
     std::map<std::uint64_t, VideoEntry> video;
     std::map<std::uint64_t, AudioEntry> audio;
     render::FrameCache cache;
@@ -51,6 +52,9 @@ Result<std::unique_ptr<ProjectMediaSource>> ProjectMediaSource::open(const model
         if (ref.transferOverride != media::TransferFunction::Unknown) {
             source->state_->overrides[ref.id.value()] = ref.transferOverride;
         }
+        if (ref.primariesOverride != media::ColorPrimaries::Unknown) {
+            source->state_->gamutOverrides[ref.id.value()] = ref.primariesOverride;
+        }
     }
     return source;
 }
@@ -67,11 +71,17 @@ const render::FrameCache& ProjectMediaSource::cache() const {
 /// only in the export.
 void ProjectMediaSource::applyOverride(model::MediaRefId media, media::VideoFrame& frame) const {
     const auto found = state_->overrides.find(media.value());
-    if (found == state_->overrides.end()) {
+    const auto gamut = state_->gamutOverrides.find(media.value());
+    if (found == state_->overrides.end() && gamut == state_->gamutOverrides.end()) {
         return;
     }
     media::ColorInfo color = frame.color();
-    color.transfer = found->second;
+    if (found != state_->overrides.end()) {
+        color.transfer = found->second;
+    }
+    if (gamut != state_->gamutOverrides.end()) {
+        color.primaries = gamut->second;
+    }
     frame.setColor(color);
 }
 
