@@ -11,9 +11,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "../FrameGrab.h"
 #include "zaro/core/render/ColorPipeline.h"
 
+#include "../FrameGrab.h"
 #include "GuiFixture.h"
 
 // The suite was written inside main(), which had this at file scope; the

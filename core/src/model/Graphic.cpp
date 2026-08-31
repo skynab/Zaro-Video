@@ -28,8 +28,8 @@ std::string autoNameFor(const Graphic& graphic) {
     // Trailing blanks would make two names that read identically compare
     // differently, which matters because the comparison is what decides
     // whether a name was typed by hand.
-    while (!first.empty() && (first.back() == ' ' || first.back() == '\r' ||
-                              first.back() == '\t')) {
+    while (!first.empty() &&
+           (first.back() == ' ' || first.back() == '\r' || first.back() == '\t')) {
         first.pop_back();
     }
     if (first.empty()) {

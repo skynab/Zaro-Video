@@ -429,8 +429,7 @@ TEST_CASE("A clip's own repair, set from the inspector", "[gui]") {
 
     if (!clipNow()->eq.enabled || std::fabs(clipNow()->eq.highPassHz - 120.0) > 1e-6) {
         zaro::app::testing::failf("the filter did not reach the clip (%.1f Hz, %s)\n",
-                                  clipNow()->eq.highPassHz,
-                                  clipNow()->eq.enabled ? "on" : "off");
+                                  clipNow()->eq.highPassHz, clipNow()->eq.enabled ? "on" : "off");
     }
     if (!clipNow()->compressor.enabled || std::fabs(clipNow()->compressor.ratio - 6.0) > 1e-6) {
         zaro::app::testing::failf("the compressor did not reach the clip\n");
@@ -454,8 +453,7 @@ TEST_CASE("A clip's own repair, set from the inspector", "[gui]") {
     }
     const zaro::model::Clip* saved =
         reloaded->project.findSequence(sequenceId)->findTrack(trackId)->find(clipId);
-    if (saved == nullptr || !saved->eq.enabled ||
-        std::fabs(saved->eq.highPassHz - 120.0) > 1e-6) {
+    if (saved == nullptr || !saved->eq.enabled || std::fabs(saved->eq.highPassHz - 120.0) > 1e-6) {
         zaro::app::testing::failf("the repair did not survive a save\n");
     }
 

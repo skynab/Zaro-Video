@@ -23,8 +23,8 @@ void CommandStack::execute(model::Project& project, CommandPtr command) {
     // one gesture. Outside one, only commands that name the same thing merge.
     const std::string key = command->mergeKey();
     const bool joinsGroup = groupDepth_ > 0 && groupJoined_;
-    const bool joinsByKey = !key.empty() && !mergeBroken_ && !commands_.empty() &&
-                            commands_.back()->mergeKey() == key;
+    const bool joinsByKey =
+        !key.empty() && !mergeBroken_ && !commands_.empty() && commands_.back()->mergeKey() == key;
     if ((joinsGroup || joinsByKey) && !commands_.empty() && commands_.back()->mergeWith(*command)) {
         // Folded into the previous step, so position_ does not move -- but the
         // project did. If the saved state was this position, it no longer is:

@@ -275,8 +275,7 @@ model::Secondary decodeSecondary(const json& node) {
 
 model::HueCurves decodeHueCurves(const json& node) {
     model::HueCurves out;
-    if (!node.is_object() || !node.contains("saturation") ||
-        !node.at("saturation").is_array()) {
+    if (!node.is_object() || !node.contains("saturation") || !node.at("saturation").is_array()) {
         return out;
     }
     for (const json& point : node.at("saturation")) {
@@ -727,8 +726,8 @@ Result<model::MediaRef> decodeMedia(const json& node) {
     ref.proxyPath = node.value("proxyPath", std::string{});
     if (node.contains("primariesOverride")) {
         media::ColorPrimaries primaries{};
-        if (media::colorPrimariesFromString(
-                node.at("primariesOverride").get<std::string>().c_str(), primaries)) {
+        if (media::colorPrimariesFromString(node.at("primariesOverride").get<std::string>().c_str(),
+                                            primaries)) {
             ref.primariesOverride = primaries;
         }
     }

@@ -6,12 +6,12 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFocusEvent>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMouseEvent>
-#include <QFocusEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSlider>
@@ -1037,8 +1037,8 @@ TEST_CASE("The inspector shows what the kind of clip has", "[gui]") {
 
     zaro::model::Graphic rectangle;
     rectangle.kind = zaro::model::GraphicKind::Rectangle;
-    auto placed = zaro::edit::makeAddGraphic(window.project(), {sequenceId, topTrack}, rectangle,
-                                             span);
+    auto placed =
+        zaro::edit::makeAddGraphic(window.project(), {sequenceId, topTrack}, rectangle, span);
     if (!placed) {
         zaro::app::testing::failf("%s\n", placed.error().toString().c_str());
     }
@@ -1156,8 +1156,7 @@ TEST_CASE("The inspector shows what the kind of clip has", "[gui]") {
     window.commands().undo(window.project());
 
     // --- an adjustment layer --------------------------------------------------
-    auto adjustment =
-        zaro::edit::makeAddAdjustment(window.project(), {sequenceId, topTrack}, span);
+    auto adjustment = zaro::edit::makeAddAdjustment(window.project(), {sequenceId, topTrack}, span);
     if (!adjustment) {
         zaro::app::testing::failf("%s\n", adjustment.error().toString().c_str());
     }
@@ -1317,10 +1316,10 @@ TEST_CASE("Angles and nested sequences, from the inspector", "[gui]") {
     b.offset = zaro::time::RationalTime{0, rate};
     b.name = "Camera B";
 
-    auto built = zaro::edit::makeMulticam(
-        window.project(), {sequenceId, trackId}, {a, b},
-        zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
-                              zaro::time::RationalTime{60, rate}});
+    auto built =
+        zaro::edit::makeMulticam(window.project(), {sequenceId, trackId}, {a, b},
+                                 zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
+                                                       zaro::time::RationalTime{60, rate}});
     if (!built) {
         zaro::app::testing::failf("%s\n", built.error().toString().c_str());
     }
@@ -1394,12 +1393,8 @@ TEST_CASE("Angles and nested sequences, from the inspector", "[gui]") {
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
-    panel->setSelection(trackId, window.project()
-                                     .findSequence(sequenceId)
-                                     ->findTrack(trackId)
-                                     ->clips()
-                                     .front()
-                                     .id);
+    panel->setSelection(
+        trackId, window.project().findSequence(sequenceId)->findTrack(trackId)->clips().front().id);
     QApplication::processEvents();
 
     // --- a nested sequence ----------------------------------------------------
@@ -1486,19 +1481,17 @@ TEST_CASE("The inspector edits every selected clip", "[gui]") {
 
     // Three clips on one track, so a rubber band would have caught all three.
     auto place = [&](std::int64_t start) {
-        auto built = zaro::edit::makeOverwrite(
-            window.project(), {sequenceId, trackId},
-            [&] {
-                zaro::model::Clip c;
-                c.id = window.project().ids().next<zaro::model::ClipTag>();
-                c.source = window.project().media().front().id;
-                c.name = "take";
-                c.sourceRange = zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
-                                                      zaro::time::RationalTime{20, rate}};
-                c.timelineRange = zaro::time::TimeRange{zaro::time::RationalTime{start, rate},
-                                                        zaro::time::RationalTime{20, rate}};
-                return c;
-            }());
+        auto built = zaro::edit::makeOverwrite(window.project(), {sequenceId, trackId}, [&] {
+            zaro::model::Clip c;
+            c.id = window.project().ids().next<zaro::model::ClipTag>();
+            c.source = window.project().media().front().id;
+            c.name = "take";
+            c.sourceRange = zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
+                                                  zaro::time::RationalTime{20, rate}};
+            c.timelineRange = zaro::time::TimeRange{zaro::time::RationalTime{start, rate},
+                                                    zaro::time::RationalTime{20, rate}};
+            return c;
+        }());
         if (!built) {
             zaro::app::testing::failf("%s\n", built.error().toString().c_str());
         }
@@ -1528,10 +1521,8 @@ TEST_CASE("The inspector edits every selected clip", "[gui]") {
     QApplication::processEvents();
 
     const auto opacityOf = [&](std::size_t which) {
-        const zaro::model::Clip* clip = window.project()
-                                            .findSequence(sequenceId)
-                                            ->findTrack(trackId)
-                                            ->find(picked[which].clip);
+        const zaro::model::Clip* clip =
+            window.project().findSequence(sequenceId)->findTrack(trackId)->find(picked[which].clip);
         return clip == nullptr ? -1.0 : clip->transform.opacity;
     };
 
@@ -1598,12 +1589,12 @@ TEST_CASE("The inspector edits every selected clip", "[gui]") {
     // of them.
     opacity->setValue(0.5);
     QApplication::processEvents();
-    auto singleBuilt = zaro::edit::makeSetTransform(window.project(), {sequenceId, trackId},
-                                                    picked[2].clip, [&] {
-                                                        zaro::model::Transform t;
-                                                        t.opacity = 0.9;
-                                                        return t;
-                                                    }());
+    auto singleBuilt =
+        zaro::edit::makeSetTransform(window.project(), {sequenceId, trackId}, picked[2].clip, [&] {
+            zaro::model::Transform t;
+            t.opacity = 0.9;
+            return t;
+        }());
     if (!singleBuilt) {
         zaro::app::testing::failf("could not make one clip differ\n");
     }
@@ -1744,12 +1735,9 @@ TEST_CASE("The inspector shows a track when its header is picked", "[gui]") {
     }
 
     // And picking a clip puts the clip back: the two are exclusive.
-    timeline->selectOnly(videoTrackId, window.project()
-                                           .findSequence(sequenceId)
-                                           ->findTrack(videoTrackId)
-                                           ->clips()
-                                           .front()
-                                           .id);
+    timeline->selectOnly(
+        videoTrackId,
+        window.project().findSequence(sequenceId)->findTrack(videoTrackId)->clips().front().id);
     QApplication::processEvents();
     if (trackGroup->isVisibleTo(panel)) {
         zaro::app::testing::failf("picking a clip left the track page up\n");

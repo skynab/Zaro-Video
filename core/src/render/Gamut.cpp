@@ -76,8 +76,8 @@ Matrix3 toXyz(const Chromaticities& c) {
     std::array<double, 3> scale{};
     for (int row = 0; row < 3; ++row) {
         const auto i = static_cast<std::size_t>(row);
-        scale[i] = (inverted[i][0] * white[0]) + (inverted[i][1] * white[1]) +
-                   (inverted[i][2] * white[2]);
+        scale[i] =
+            (inverted[i][0] * white[0]) + (inverted[i][1] * white[1]) + (inverted[i][2] * white[2]);
     }
     Matrix3 out = primaries;
     for (int row = 0; row < 3; ++row) {

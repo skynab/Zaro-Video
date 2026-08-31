@@ -612,9 +612,8 @@ TEST_CASE("The GPU converts Y'CbCr exactly as the CPU does", "[gpu][golden][yuv]
     };
 
     for (const Case& testCase : cases) {
-        const media::VideoFrame frame =
-            yuvPattern(64, 64, testCase.format, testCase.range, testCase.matrix,
-                       testCase.primaries);
+        const media::VideoFrame frame = yuvPattern(64, 64, testCase.format, testCase.range,
+                                                   testCase.matrix, testCase.primaries);
 
         // Reference: convert on the CPU, then composite.
         RgbaImage converted;
@@ -2025,8 +2024,8 @@ TEST_CASE("The GPU hue curve agrees with the CPU reference", "[gpu][golden][curv
         for (std::int32_t x = 0; x < 32; ++x) {
             const float u = static_cast<float>(x) / 31.0F;
             const float v = static_cast<float>(y) / 31.0F;
-            row[x] = Rgba{0.2F + (0.8F * u), 0.2F + (0.8F * v),
-                          0.2F + (0.8F * (1.0F - (u * v))), 1.0F};
+            row[x] =
+                Rgba{0.2F + (0.8F * u), 0.2F + (0.8F * v), 0.2F + (0.8F * (1.0F - (u * v))), 1.0F};
         }
     }
 

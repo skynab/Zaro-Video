@@ -560,8 +560,7 @@ TEST_CASE("An empty range is refused rather than measured as silence",
     CHECK_FALSE(graph.measureLoudness(f.sequence(), time::TimeRange{f.at(10), f.at(0)}));
 }
 
-TEST_CASE("A clip's own compressor pulls it down before the track sees it",
-          "[render][audio]") {
+TEST_CASE("A clip's own compressor pulls it down before the track sees it", "[render][audio]") {
     // Per-clip processing is the repair a track's channel strip cannot do: one
     // take louder than the rest of the scene, on the same track as the rest of
     // the scene. What this checks is that it is applied at all, and that it is
@@ -587,8 +586,8 @@ TEST_CASE("A clip's own compressor pulls it down before the track sees it",
     squash.attackMs = 1.0;
     squash.releaseMs = 50.0;
     squash.makeupDb = 0.0;
-    REQUIRE(f.run(edit::makeSetClipProcessing(f.project, f.on(f.a1), clipId, model::AudioEq{},
-                                              squash)));
+    REQUIRE(f.run(
+        edit::makeSetClipProcessing(f.project, f.on(f.a1), clipId, model::AudioEq{}, squash)));
 
     graph.resetProcessing();
     auto squashed = graph.mix(f.sequence(), samples(0), 480);
@@ -622,8 +621,8 @@ TEST_CASE("A clip's high pass takes the bottom off that clip alone", "[render][a
     model::AudioEq eq;
     eq.enabled = true;
     eq.highPassHz = 2000.0;
-    REQUIRE(f.run(edit::makeSetClipProcessing(f.project, f.on(f.a1), firstClip, eq,
-                                              model::Compressor{})));
+    REQUIRE(f.run(
+        edit::makeSetClipProcessing(f.project, f.on(f.a1), firstClip, eq, model::Compressor{})));
 
     graph.resetProcessing();
     auto filtered = graph.mix(f.sequence(), samples(0), 480);

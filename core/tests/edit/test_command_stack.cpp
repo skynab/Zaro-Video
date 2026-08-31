@@ -146,8 +146,7 @@ TEST_CASE("A group makes several clips one undo step", "[edit][undo][merge]") {
     }
 }
 
-TEST_CASE("A group does not swallow what came before or after it",
-          "[edit][undo][merge]") {
+TEST_CASE("A group does not swallow what came before or after it", "[edit][undo][merge]") {
     Fixture f;
     REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
     const model::ClipId a = f.track(f.v1).clips()[0].id;

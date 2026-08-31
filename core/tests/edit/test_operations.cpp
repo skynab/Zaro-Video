@@ -1275,8 +1275,7 @@ TEST_CASE("Dragging one value coalesces, but two keyframes are two steps", "[edi
     CHECK(f.stack.depth() == before + 2);
 }
 
-TEST_CASE("A speed change with no ripple refuses to run over a neighbour",
-          "[edit][retime]") {
+TEST_CASE("A speed change with no ripple refuses to run over a neighbour", "[edit][retime]") {
     // `Track::setClips` asserts that clips do not overlap, so a slowed clip
     // growing into the one after it used to be a crash rather than a refusal.
     // Rippling is the default and moves what follows out of the way; the point
@@ -1306,14 +1305,13 @@ TEST_CASE("A speed change with no ripple refuses to run over a neighbour",
     CHECK(g.track(g.v1).clips()[1].start().frames() == 100);
 }
 
-TEST_CASE("A title's clip name follows its words until somebody renames it",
-          "[edit][graphic]") {
+TEST_CASE("A title's clip name follows its words until somebody renames it", "[edit][graphic]") {
     Fixture f;
     model::Graphic title;
     title.kind = model::GraphicKind::Text;
     title.text = "Kestrel Bay";
-    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v1), title,
-                                       time::TimeRange{f.at(0), f.at(50)})));
+    REQUIRE(f.run(
+        edit::makeAddGraphic(f.project, f.on(f.v1), title, time::TimeRange{f.at(0), f.at(50)})));
     const model::ClipId id = f.track(f.v1).clips().front().id;
     CHECK(f.track(f.v1).find(id)->name == "Kestrel Bay");
 
@@ -1333,8 +1331,8 @@ TEST_CASE("A title's clip name follows its words until somebody renames it",
     // A shape's name is what it is, and editing its box leaves it alone.
     model::Graphic shape;
     shape.kind = model::GraphicKind::Rectangle;
-    REQUIRE(f.run(edit::makeAddGraphic(f.project, f.on(f.v2), shape,
-                                       time::TimeRange{f.at(0), f.at(50)})));
+    REQUIRE(f.run(
+        edit::makeAddGraphic(f.project, f.on(f.v2), shape, time::TimeRange{f.at(0), f.at(50)})));
     const model::ClipId shapeId = f.track(f.v2).clips().front().id;
     CHECK(f.track(f.v2).find(shapeId)->name == "rectangle");
     shape.width = 900.0;

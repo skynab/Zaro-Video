@@ -26,13 +26,12 @@ bool GpuRenderGraph::drawClipImage(const model::Clip& clip, const render::RgbaIm
     // it was tracked to is the worst of both.
     const model::Mask mask = clip.maskAt(at);
     return compositor_
-        ->draw(image, transform, clip.blend,
-               render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
-               &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
-               static_cast<float>(clip.lut.amount), mask.isSet() ? &mask : nullptr,
-               keyer.isActive() ? &keyer : nullptr,
-               clip.vignette.isSet() ? &clip.vignette : nullptr, wipe,
-               &hueCurves_.tableFor(clip.id.value(), clip.hueCurves))
+        ->draw(
+            image, transform, clip.blend, render::gradeConstantsFor(clip.colorAt(at), clip.wheels),
+            &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
+            static_cast<float>(clip.lut.amount), mask.isSet() ? &mask : nullptr,
+            keyer.isActive() ? &keyer : nullptr, clip.vignette.isSet() ? &clip.vignette : nullptr,
+            wipe, &hueCurves_.tableFor(clip.id.value(), clip.hueCurves))
         .ok();
 }
 

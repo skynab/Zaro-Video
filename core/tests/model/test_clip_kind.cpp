@@ -1,4 +1,5 @@
 #include <string_view>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/core/model/ClipKind.h"
@@ -46,8 +47,7 @@ TEST_CASE("Adjustment, nested and multicam clips are recognised", "[model][clipk
     CHECK(model::clipKindOf(multicam, TrackKind::Video) == ClipKind::Multicam);
 }
 
-TEST_CASE("A clip on an audio track is sound whatever else is set on it",
-          "[model][clipkind]") {
+TEST_CASE("A clip on an audio track is sound whatever else is set on it", "[model][clipkind]") {
     // Nothing else on the list is audible, so the track wins. Without this a
     // graphic dragged onto an audio track would offer a colour picker for
     // something nobody can see.
@@ -67,8 +67,7 @@ TEST_CASE("An adjustment layer outranks a graphic on the same clip", "[model][cl
     CHECK(model::clipKindOf(clip, TrackKind::Video) == ClipKind::Adjustment);
 }
 
-TEST_CASE("Only the kinds that draw something of their own have a picture",
-          "[model][clipkind]") {
+TEST_CASE("Only the kinds that draw something of their own have a picture", "[model][clipkind]") {
     CHECK(model::hasPicture(ClipKind::VideoMedia));
     CHECK(model::hasPicture(ClipKind::Shape));
     CHECK(model::hasPicture(ClipKind::Text));

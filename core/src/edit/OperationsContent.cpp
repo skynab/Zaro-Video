@@ -700,9 +700,9 @@ Result<CommandPtr> makeSetClipAudio(Project& project, const EditTarget& target, 
 Result<CommandPtr> makeSetClipProcessing(Project& project, const EditTarget& target, ClipId clipId,
                                          const model::AudioEq& eq,
                                          const model::Compressor& compressor) {
-    for (const double value : {eq.highPassHz, eq.lowPassHz, eq.peakHz, eq.peakGainDb, eq.peakQ,
-                               compressor.thresholdDb, compressor.ratio, compressor.attackMs,
-                               compressor.releaseMs, compressor.makeupDb}) {
+    for (const double value :
+         {eq.highPassHz, eq.lowPassHz, eq.peakHz, eq.peakGainDb, eq.peakQ, compressor.thresholdDb,
+          compressor.ratio, compressor.attackMs, compressor.releaseMs, compressor.makeupDb}) {
         if (!std::isfinite(value)) {
             return Error{ErrorCode::InvalidData, "processing settings have to be real numbers"};
         }

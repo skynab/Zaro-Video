@@ -54,7 +54,7 @@ const char* toString(ColorPrimaries v) noexcept {
 
 std::span<const ColorPrimaries> allColorPrimaries() noexcept {
     static constexpr ColorPrimaries kAll[] = {
-        ColorPrimaries::Unknown,  ColorPrimaries::BT709,   ColorPrimaries::BT601_525,
+        ColorPrimaries::Unknown,   ColorPrimaries::BT709,  ColorPrimaries::BT601_525,
         ColorPrimaries::BT601_625, ColorPrimaries::BT2020, ColorPrimaries::DisplayP3,
     };
     return kAll;

@@ -106,17 +106,15 @@ TEST_CASE("Every conversion is reversible", "[render][gamut]") {
     // A change of basis between three real lights, so there and back is the
     // identity to within float. A matrix that failed this would be losing
     // colour on every round trip through a nested sequence.
-    for (const ColorPrimaries from :
-         {ColorPrimaries::BT709, ColorPrimaries::BT601_525, ColorPrimaries::BT2020,
-          ColorPrimaries::DisplayP3}) {
-        for (const ColorPrimaries to :
-             {ColorPrimaries::BT709, ColorPrimaries::BT601_625, ColorPrimaries::BT2020,
-              ColorPrimaries::DisplayP3}) {
+    for (const ColorPrimaries from : {ColorPrimaries::BT709, ColorPrimaries::BT601_525,
+                                      ColorPrimaries::BT2020, ColorPrimaries::DisplayP3}) {
+        for (const ColorPrimaries to : {ColorPrimaries::BT709, ColorPrimaries::BT601_625,
+                                        ColorPrimaries::BT2020, ColorPrimaries::DisplayP3}) {
             const render::GamutMatrix there = render::gamutMatrix(from, to);
             const render::GamutMatrix back = render::gamutMatrix(to, from);
-            for (const std::array<float, 3>& colour : {std::array<float, 3>{0.2F, 0.7F, 0.4F},
-                                                       std::array<float, 3>{1.0F, 0.0F, 0.0F},
-                                                       std::array<float, 3>{0.05F, 0.05F, 0.9F}}) {
+            for (const std::array<float, 3>& colour :
+                 {std::array<float, 3>{0.2F, 0.7F, 0.4F}, std::array<float, 3>{1.0F, 0.0F, 0.0F},
+                  std::array<float, 3>{0.05F, 0.05F, 0.9F}}) {
                 const auto once = there.apply(colour[0], colour[1], colour[2]);
                 const auto twice = back.apply(once[0], once[1], once[2]);
                 INFO("from " << media::toString(from) << " to " << media::toString(to));
@@ -128,23 +126,22 @@ TEST_CASE("Every conversion is reversible", "[render][gamut]") {
     }
 }
 
-TEST_CASE("A wide gamut narrows when it is brought to a small one",
-          "[render][gamut]") {
+TEST_CASE("A wide gamut narrows when it is brought to a small one", "[render][gamut]") {
     // The reason any of this exists. BT.2020's red is far outside BT.709, so
     // saturated BT.2020 red has no BT.709 equivalent and comes back with a
     // negative green and blue -- out of gamut, and honestly so. Composited
     // without the conversion it would simply have been BT.709's red: a
     // different, less saturated colour, silently.
-    const auto red = render::gamutMatrix(ColorPrimaries::BT2020, ColorPrimaries::BT709)
-                         .apply(1.0F, 0.0F, 0.0F);
+    const auto red =
+        render::gamutMatrix(ColorPrimaries::BT2020, ColorPrimaries::BT709).apply(1.0F, 0.0F, 0.0F);
     CHECK(red[0] > 1.0F);
     CHECK(red[1] < 0.0F);
     CHECK(red[2] < 0.0F);
 
     // And the other way: every BT.709 colour fits inside BT.2020, so nothing
     // goes negative.
-    const auto inside = render::gamutMatrix(ColorPrimaries::BT709, ColorPrimaries::BT2020)
-                            .apply(1.0F, 0.0F, 0.0F);
+    const auto inside =
+        render::gamutMatrix(ColorPrimaries::BT709, ColorPrimaries::BT2020).apply(1.0F, 0.0F, 0.0F);
     CHECK(inside[0] > 0.0F);
     CHECK(inside[1] >= 0.0F);
     CHECK(inside[2] >= 0.0F);

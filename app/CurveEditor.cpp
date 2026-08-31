@@ -1,7 +1,5 @@
 #include "CurveEditor.h"
 
-#include "zaro/core/render/HueTable.h"
-
 #include <QComboBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -9,6 +7,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+
+#include "zaro/core/render/HueTable.h"
 
 namespace zaro::app {
 namespace {
@@ -257,9 +257,9 @@ void CurveEditor::paintEvent(QPaintEvent* /*event*/) {
         const int stripHeight = std::max(3, area.height() / 22);
         for (int x = 0; x < area.width(); ++x) {
             const double turn = static_cast<double>(x) / area.width();
-            painter.fillRect(area.left() + x, area.bottom() - stripHeight + 1, 1, stripHeight,
-                             QColor::fromHsvF(static_cast<float>(std::clamp(turn, 0.0, 0.9999)),
-                                              0.75F, 0.85F));
+            painter.fillRect(
+                area.left() + x, area.bottom() - stripHeight + 1, 1, stripHeight,
+                QColor::fromHsvF(static_cast<float>(std::clamp(turn, 0.0, 0.9999)), 0.75F, 0.85F));
         }
     } else {
         painter.drawLine(area.bottomLeft(), area.topRight());
@@ -282,9 +282,9 @@ void CurveEditor::paintEvent(QPaintEvent* /*event*/) {
         const double u = area.width() > 0 ? static_cast<double>(x) / area.width() : 0.0;
         // Back out of the multiplier into the curve's own 0.5-is-neutral range,
         // so the line lands where the points are.
-        const double v = isHue(channel_)
-                             ? static_cast<double>(preview.saturationAt(static_cast<float>(u))) / 2.0
-                             : curve.valueAt(u);
+        const double v =
+            isHue(channel_) ? static_cast<double>(preview.saturationAt(static_cast<float>(u))) / 2.0
+                            : curve.valueAt(u);
         const QPointF at(area.left() + x,
                          area.bottom() - (std::clamp(v, 0.0, 1.0) * area.height()));
         if (x == 0) {

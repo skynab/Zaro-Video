@@ -806,8 +806,8 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     std::unique_ptr<QRhiTexture> lutTexture;
     std::unique_ptr<QRhiTexture> curveTexture;
     if (curved || shaped) {
-        curveTexture = makeCurveTexture(*state.rhi, *batch, curved ? curves : nullptr,
-                                        shaped ? hue : nullptr);
+        curveTexture =
+            makeCurveTexture(*state.rhi, *batch, curved ? curves : nullptr, shaped ? hue : nullptr);
         if (curveTexture == nullptr) {
             return Error{ErrorCode::Internal, "cannot allocate a curve texture"};
         }
@@ -827,10 +827,9 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
             uniforms.get(), 0, static_cast<quint32>(kUniformBytes)),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
                                                   texture.get(), state.sampler.get()),
-        QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
-                                                  curveTexture ? curveTexture.get()
-                                                               : state.noCurve.get(),
-                                                  state.sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(
+            2, QRhiShaderResourceBinding::FragmentStage,
+            curveTexture ? curveTexture.get() : state.noCurve.get(), state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
                                                   looked ? lutTexture.get() : state.noLut.get(),
                                                   state.sampler.get()),
@@ -1317,10 +1316,9 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
             uniforms.get(), 0, static_cast<quint32>(kUniformBytes)),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
                                                   staging.texture.get(), state.sampler.get()),
-        QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
-                                                  curveTexture ? curveTexture.get()
-                                                               : state.noCurve.get(),
-                                                  state.sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(
+            2, QRhiShaderResourceBinding::FragmentStage,
+            curveTexture ? curveTexture.get() : state.noCurve.get(), state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
                                                   looked ? lutTexture.get() : state.noLut.get(),
                                                   state.sampler.get()),

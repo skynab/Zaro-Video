@@ -10,8 +10,8 @@
 #include "zaro/core/model/Mask.h"
 #include "zaro/core/model/Vignette.h"
 #include "zaro/core/render/CurveTable.h"
-#include "zaro/core/render/HueTable.h"
 #include "zaro/core/render/Grade.h"
+#include "zaro/core/render/HueTable.h"
 #include "zaro/core/render/Keyer.h"
 #include "zaro/core/render/RgbaImage.h"
 

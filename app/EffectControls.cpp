@@ -152,7 +152,7 @@ struct GroupSet {
 
 /// The four rows an adjustment layer does not have. See `GroupSet::placement`.
 constexpr model::Param kPlacementParams[] = {
-    model::Param::PositionX, model::Param::PositionY, model::Param::ScaleX,
+    model::Param::PositionX, model::Param::PositionY,       model::Param::ScaleX,
     model::Param::ScaleY,    model::Param::RotationDegrees, model::Param::AnchorX,
     model::Param::AnchorY,
 };
@@ -897,8 +897,8 @@ void EffectControls::buildGraphicGroup() {
     // that `findData` finds it. Without it the combo went to index -1 on a
     // title and the next edit to any field read that back as GraphicKind::None
     // -- which unset the graphic and deleted the title.
-    for (const model::GraphicKind kind : {model::GraphicKind::Rectangle,
-                                          model::GraphicKind::Ellipse, model::GraphicKind::Text}) {
+    for (const model::GraphicKind kind :
+         {model::GraphicKind::Rectangle, model::GraphicKind::Ellipse, model::GraphicKind::Text}) {
         shapeKind_->addItem(QString::fromUtf8(model::toString(kind)), static_cast<int>(kind));
     }
     shapeWidth_ = makeSpin(0.0, 20000.0, 10.0, 1, " px");
@@ -1176,8 +1176,7 @@ void EffectControls::pushTrackLock() {
         return;
     }
     auto built = edit::makeSetTrackLock(*project_, sequenceId_, trackSelection_,
-                                        trackLocked_->isChecked(),
-                                        trackSyncLocked_->isChecked());
+                                        trackLocked_->isChecked(), trackSyncLocked_->isChecked());
     if (!built) {
         return;
     }
@@ -1262,9 +1261,9 @@ void EffectControls::buildProcessingGroup() {
 
     processingGroup_ = processing;
 
-    for (QDoubleSpinBox* spin : {clipHighPass_, clipLowPass_, clipPeakHz_, clipPeakGain_,
-                                 clipPeakQ_, clipThreshold_, clipRatio_, clipAttack_, clipRelease_,
-                                 clipMakeup_}) {
+    for (QDoubleSpinBox* spin :
+         {clipHighPass_, clipLowPass_, clipPeakHz_, clipPeakGain_, clipPeakQ_, clipThreshold_,
+          clipRatio_, clipAttack_, clipRelease_, clipMakeup_}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushProcessing(); });
     }
     for (QCheckBox* box : {clipEqOn_, clipCompressorOn_}) {
@@ -1700,13 +1699,14 @@ void EffectControls::applyToWidgets() {
     // of four camera clips and one rectangle.
     for (const edit::ClipRef& other : others_) {
         const model::Track* otherTrack = sequence->findTrack(other.track);
-        const model::Clip* otherClip = otherTrack == nullptr ? nullptr : otherTrack->find(other.clip);
+        const model::Clip* otherClip =
+            otherTrack == nullptr ? nullptr : otherTrack->find(other.clip);
         if (otherClip == nullptr) {
             continue;
         }
         const model::ClipKind otherKind = model::clipKindOf(
             *otherClip, otherTrack->kind() == model::TrackKind::Video ? model::TrackKind::Video
-                                                                     : model::TrackKind::Audio);
+                                                                      : model::TrackKind::Audio);
         if (otherKind != *kind_) {
             // Sound and picture share nothing the panel can write, so a mixed
             // selection keeps whichever the primary is and the other tab stays
@@ -1787,8 +1787,7 @@ void EffectControls::applyToWidgets() {
         textBold_->setChecked(clip->graphic.bold);
         textItalic_->setChecked(clip->graphic.italic);
         const int alignIndex = textAlign_->findData(clip->graphic.alignment);
-        textAlign_->setCurrentIndex(alignIndex >= 0 ? alignIndex
-                                                    : textAlign_->findData(0));
+        textAlign_->setCurrentIndex(alignIndex >= 0 ? alignIndex : textAlign_->findData(0));
     }
 
     curves_->setCurves(clip->curves);
@@ -2308,9 +2307,7 @@ void EffectControls::buildInfoGroup() {
     // questions about the clip; a greyed-out spin box answers them worse than a
     // line of text, and invites a click that does nothing.
     static constexpr const char* kRows[] = {
-        "Name",     "Track",        "Source", "Media",
-        "Sound",    "Timeline",     "Source range", "Speed",
-        "Angles",
+        "Name", "Track", "Source", "Media", "Sound", "Timeline", "Source range", "Speed", "Angles",
     };
     for (const char* name : kRows) {
         auto* value = new QLabel("\u2014", infoGroup_);
@@ -2352,10 +2349,10 @@ void EffectControls::applyPaneVisibility() {
     const bool trackSound = track != nullptr && track->kind() == model::TrackKind::Audio;
     trackLevelGroup_->setVisible(trackSound && pane_ == Pane::Audio);
     if (track != nullptr) {
-        for (QWidget* widget : {enabled_ ? static_cast<QWidget*>(enabled_) : nullptr, videoGroup_,
-                                anglesGroup_, nestedGroup_, colourGroup_, secondaryGroup_,
-                                keyGroup_, effectGroup_, maskGroup_, graphicGroup_, textGroup_,
-                                audioGroup_, processingGroup_}) {
+        for (QWidget* widget :
+             {enabled_ ? static_cast<QWidget*>(enabled_) : nullptr, videoGroup_, anglesGroup_,
+              nestedGroup_, colourGroup_, secondaryGroup_, keyGroup_, effectGroup_, maskGroup_,
+              graphicGroup_, textGroup_, audioGroup_, processingGroup_}) {
             if (widget != nullptr) {
                 widget->setVisible(false);
             }
@@ -2420,13 +2417,11 @@ void EffectControls::applyPaneVisibility() {
     // rule exists to avoid.
     if (colourForm_ != nullptr) {
         const bool one = others_.empty();
-        for (QWidget* widget : {static_cast<QWidget*>(curves_), lutRow_,
-                                static_cast<QWidget*>(lutName_),
-                                static_cast<QWidget*>(lutAmount_), wheelsBox_,
-                                static_cast<QWidget*>(vignetteAmount_),
-                                static_cast<QWidget*>(vignetteMidpoint_),
-                                static_cast<QWidget*>(vignetteFeather_),
-                                static_cast<QWidget*>(vignetteRoundness_)}) {
+        for (QWidget* widget :
+             {static_cast<QWidget*>(curves_), lutRow_, static_cast<QWidget*>(lutName_),
+              static_cast<QWidget*>(lutAmount_), wheelsBox_, static_cast<QWidget*>(vignetteAmount_),
+              static_cast<QWidget*>(vignetteMidpoint_), static_cast<QWidget*>(vignetteFeather_),
+              static_cast<QWidget*>(vignetteRoundness_)}) {
             if (widget != nullptr) {
                 colourForm_->setRowVisible(widget, one);
             }
@@ -2459,9 +2454,9 @@ void EffectControls::applyPaneVisibility() {
     // which of the two this is.
     if (graphicForm_ != nullptr) {
         const bool shape = kind_ == model::ClipKind::Shape;
-        for (QWidget* widget : {static_cast<QWidget*>(shapeKind_),
-                                static_cast<QWidget*>(shapeCorner_),
-                                static_cast<QWidget*>(shapeFeather_)}) {
+        for (QWidget* widget :
+             {static_cast<QWidget*>(shapeKind_), static_cast<QWidget*>(shapeCorner_),
+              static_cast<QWidget*>(shapeFeather_)}) {
             graphicForm_->setRowVisible(widget, shape);
         }
         if (auto* box = qobject_cast<QGroupBox*>(graphicGroup_)) {
@@ -2486,7 +2481,7 @@ void EffectControls::applyPaneVisibility() {
     // What it puts back depends on what the clip has: an adjustment layer's
     // Motion is an opacity and a blend mode, and promising to restore a
     // position it does not have would be a tooltip describing another panel.
-    resetButton_->setToolTip(!inspector          ? "Level to 0 dB and pan to centre"
+    resetButton_->setToolTip(!inspector         ? "Level to 0 dB and pan to centre"
                              : groups.placement ? "Motion back to its defaults"
                                                 : "Opacity and blend back to their defaults");
 }
@@ -2533,9 +2528,8 @@ void EffectControls::applyIdentity() {
             }
         }
         infoValues_[5]->setText(QString("%1 %2").arg(count).arg(count == 1 ? "clip" : "clips"));
-        if (auto* holds = qobject_cast<QLabel*>(infoForm_ == nullptr
-                                                    ? nullptr
-                                                    : infoForm_->labelForField(infoValues_[5]))) {
+        if (auto* holds = qobject_cast<QLabel*>(
+                infoForm_ == nullptr ? nullptr : infoForm_->labelForField(infoValues_[5]))) {
             holds->setText("Holds");
         }
         if (infoForm_ != nullptr) {
@@ -2675,8 +2669,8 @@ void EffectControls::applyIdentity() {
 
     if (clip->isMulticam()) {
         const auto active = static_cast<std::size_t>(
-            clip->activeAngle >= 0 && static_cast<std::size_t>(clip->activeAngle) <
-                                          clip->angles.size()
+            clip->activeAngle >= 0 &&
+                    static_cast<std::size_t>(clip->activeAngle) < clip->angles.size()
                 ? clip->activeAngle
                 : 0);
         const std::string& live = clip->angles[active].name;
@@ -3440,9 +3434,8 @@ void EffectControls::showAngles() {
         // is what the clip is already doing. Using one for both would mean
         // looking at a row could not tell you which.
         angleList_->item(static_cast<int>(i))
-            ->setText(QString("%1  %2").arg(i == live ? QString::fromUtf8("\u25CF")
-                                                      : QString::fromUtf8("\u25CB"),
-                                            name));
+            ->setText(QString("%1  %2").arg(
+                i == live ? QString::fromUtf8("\u25CF") : QString::fromUtf8("\u25CB"), name));
     }
     if (angleList_->currentRow() != wanted) {
         angleList_->setCurrentRow(wanted);
@@ -3467,7 +3460,8 @@ void EffectControls::showAngles() {
                              clip->timelineRange.contains(position_));
     if (picked) {
         const QSignalBlocker blockOffset{angleOffset_};
-        angleOffset_->setValue(clip->angles[static_cast<std::size_t>(row)].offset.toSecondsDouble());
+        angleOffset_->setValue(
+            clip->angles[static_cast<std::size_t>(row)].offset.toSecondsDouble());
     }
 }
 
@@ -3485,8 +3479,8 @@ void EffectControls::pushAngleOffset() {
     const model::Sequence* sequence = project_->findSequence(sequenceId_);
     const time::Rational rate =
         sequence != nullptr ? sequence->frameRate() : clip->timelineRange.start().rate();
-    const time::RationalTime offset = time::RationalTime::fromSeconds(
-        time::Rational::approximate(angleOffset_->value()), rate);
+    const time::RationalTime offset =
+        time::RationalTime::fromSeconds(time::Rational::approximate(angleOffset_->value()), rate);
 
     auto built = edit::makeSetAngleOffsets(*project_, {sequenceId_, track_}, clip_,
                                            {{static_cast<std::int32_t>(row), offset}});
@@ -3528,8 +3522,8 @@ void EffectControls::pushSpeed() {
     if (clip == nullptr) {
         return;
     }
-    auto built = edit::makeSetSpeed(*project_, {sequenceId_, track_}, clip_, speed_->value() / 100.0,
-                                    reverse_->isChecked());
+    auto built = edit::makeSetSpeed(*project_, {sequenceId_, track_}, clip_,
+                                    speed_->value() / 100.0, reverse_->isChecked());
     if (!built) {
         return;
     }

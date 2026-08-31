@@ -134,8 +134,8 @@ TEST_CASE("A clip's own filtering and compression survive a save", "[io]") {
     compressor.makeupDb = 2.5;
 
     edit::CommandStack stack;
-    auto built = edit::makeSetClipProcessing(f.project, {f.sequenceId, trackId}, clipId, eq,
-                                             compressor);
+    auto built =
+        edit::makeSetClipProcessing(f.project, {f.sequenceId, trackId}, clipId, eq, compressor);
     REQUIRE(built);
     stack.execute(f.project, std::move(*built));
 
@@ -751,9 +751,7 @@ TEST_CASE("A hue curve survives a save", "[io]") {
 
     // And a clip with no hue curve writes nothing, so a project made before
     // this existed reads back exactly as it did.
-    const model::Clip& untouched = loaded->project.findSequence(f.sequenceId)
-                                       ->findTrack(f.v2)
-                                       ->clips()
-                                       .front();
+    const model::Clip& untouched =
+        loaded->project.findSequence(f.sequenceId)->findTrack(f.v2)->clips().front();
     CHECK(untouched.hueCurves.isIdentity());
 }

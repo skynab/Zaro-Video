@@ -1,7 +1,5 @@
 #include "zaro/core/render/ColorPipeline.h"
 
-#include "zaro/core/render/Gamut.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,6 +7,8 @@
 #include <cstring>
 #include <map>
 #include <utility>
+
+#include "zaro/core/render/Gamut.h"
 
 namespace zaro::render {
 namespace {
@@ -383,8 +383,7 @@ Status toLinear(const media::VideoFrame& source, RgbaImage& out) {
     // Asked once per frame, and skipped entirely when it is the identity --
     // which is most timelines, and which keeps the common path exactly as fast
     // as it was.
-    const GamutMatrix gamut =
-        gamutMatrix(source.color().primaries, media::ColorPrimaries::BT709);
+    const GamutMatrix gamut = gamutMatrix(source.color().primaries, media::ColorPrimaries::BT709);
     const bool convertGamut = !gamut.isIdentity();
 
     const auto readSample = [deep](const std::uint8_t* row, std::int32_t index) -> float {

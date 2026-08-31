@@ -132,8 +132,8 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
             const float wasR = r;
             const float wasG = g;
             const float wasB = b;
-            gradePixel(grade, r, g, b, &table, &secondary, lut,
-                       static_cast<float>(clip.lut.amount), &hues);
+            gradePixel(grade, r, g, b, &table, &secondary, lut, static_cast<float>(clip.lut.amount),
+                       &hues);
             // Blended by opacity and mask rather than switched, so a partly
             // opaque adjustment is a partial correction -- which is how the
             // control reads.

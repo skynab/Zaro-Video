@@ -14,9 +14,8 @@ namespace zaro::render {
 /// is neither.
 struct GamutMatrix {
     /// Row-major: `m[row][column]`, so `out.r = m[0][0]*r + m[0][1]*g + ...`.
-    std::array<std::array<float, 3>, 3> m{{{1.0F, 0.0F, 0.0F},
-                                           {0.0F, 1.0F, 0.0F},
-                                           {0.0F, 0.0F, 1.0F}}};
+    std::array<std::array<float, 3>, 3> m{
+        {{1.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F}, {0.0F, 0.0F, 1.0F}}};
 
     /// Whether this is the identity, to within what a float can tell.
     ///

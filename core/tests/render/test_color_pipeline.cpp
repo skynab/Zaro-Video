@@ -391,8 +391,7 @@ TEST_CASE("Tone mapping is what stops the encoder clipping", "[render][tonemap]"
     CHECK(mapped[0] == clipped[0]);
 }
 
-TEST_CASE("A wide-gamut source is brought into the working space",
-          "[render][color][gamut]") {
+TEST_CASE("A wide-gamut source is brought into the working space", "[render][color][gamut]") {
     // ADR-005 fixes the working space at Rec.709 primaries and says wider-gamut
     // sources are converted in. Until they were, a BT.2020 clip was composited
     // as though its numbers already meant Rec.709 -- oversaturated, and
@@ -425,8 +424,7 @@ TEST_CASE("A wide-gamut source is brought into the working space",
     CHECK(wideRed.g < narrowRed.g);
 }
 
-TEST_CASE("A Rec.709 source is not touched by the gamut stage",
-          "[render][color][gamut]") {
+TEST_CASE("A Rec.709 source is not touched by the gamut stage", "[render][color][gamut]") {
     // The identity path, which is most footage. This is also what keeps the
     // ADR's bit-identical round trip true: a clip that passes through untouched
     // must come out exactly as it went in, and a matrix multiply by an identity
