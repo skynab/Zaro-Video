@@ -653,6 +653,33 @@ Result<CommandPtr> makeSetClipAudio(Project& project, const EditTarget& target, 
                       });
 }
 
+Result<CommandPtr> makeSetClipProcessing(Project& project, const EditTarget& target, ClipId clipId,
+                                         const model::AudioEq& eq,
+                                         const model::Compressor& compressor) {
+    for (const double value : {eq.highPassHz, eq.lowPassHz, eq.peakHz, eq.peakGainDb, eq.peakQ,
+                               compressor.thresholdDb, compressor.ratio, compressor.attackMs,
+                               compressor.releaseMs, compressor.makeupDb}) {
+        if (!std::isfinite(value)) {
+            return Error{ErrorCode::InvalidData, "processing settings have to be real numbers"};
+        }
+    }
+    // A ratio below 1 is expansion, which this compressor does not do, and a
+    // ratio of 0 divides by nothing. Q and the frequencies have the same
+    // problem one step further down, in the filter design.
+    if (eq.peakQ <= 0.0 || eq.highPassHz < 0.0 || eq.lowPassHz < 0.0 || eq.peakHz <= 0.0) {
+        return Error{ErrorCode::InvalidData, "a filter needs a positive frequency and Q"};
+    }
+    if (compressor.ratio < 1.0 || compressor.attackMs <= 0.0 || compressor.releaseMs <= 0.0) {
+        return Error{ErrorCode::InvalidData,
+                     "a compressor needs a ratio of at least 1 and times above zero"};
+    }
+    return modifyClip(project, target, clipId, "Adjust clip processing",
+                      "processing:" + idText(clipId), [eq, compressor](Clip& clip) {
+                          clip.eq = eq;
+                          clip.compressor = compressor;
+                      });
+}
+
 Result<CommandPtr> makeSetClipEnabled(Project& project, const EditTarget& target, ClipId clipId,
                                       bool enabled) {
     return modifyClip(project, target, clipId, enabled ? "Enable clip" : "Disable clip",

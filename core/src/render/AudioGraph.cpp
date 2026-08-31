@@ -192,6 +192,25 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             const std::int64_t available = std::min<std::int64_t>(wanted, scratch.sampleCount());
             const std::int32_t sourceChannels = scratch.channelCount();
 
+            // The clip's own filtering and compression, before its gain and
+            // before it reaches the track. Before the gain because that is what
+            // makes the two useful together: pulling a hum out and then setting
+            // the level is one job, and doing it the other way round means the
+            // level has to be reset every time the filter moves.
+            //
+            // Kept between blocks, like the track's, because a filter's delay
+            // line is the last two samples it saw and a block boundary is a
+            // property of the audio device rather than of the edit.
+            if (clip.eq.enabled || clip.compressor.enabled) {
+                TrackProcessor& repair = clipProcessors_[clip.id.value()];
+                repair.configure(clip.eq, clip.compressor, rate.toDouble(), sourceChannels);
+                std::vector<float*> clipChannels(static_cast<std::size_t>(sourceChannels));
+                for (std::int32_t channel = 0; channel < sourceChannels; ++channel) {
+                    clipChannels[static_cast<std::size_t>(channel)] = scratch.channel(channel);
+                }
+                repair.process(clipChannels.data(), sourceChannels, available);
+            }
+
             const float clipGain = gainFromDb(clip.gainDb);
             // A mono clip is being *placed* in the stereo field, so it gets the
             // constant-power law. A stereo clip is already placed, so its
@@ -346,6 +365,11 @@ Result<AudioGraph::LoudnessResult> AudioGraph::measureLoudness(const model::Sequ
 
 void AudioGraph::resetProcessing() {
     for (auto& [id, processor] : processors_) {
+        processor.reset();
+    }
+    // After a seek too: a clip's chain has the same delay line, and the samples
+    // in it came from somewhere else entirely.
+    for (auto& [id, processor] : clipProcessors_) {
         processor.reset();
     }
 }

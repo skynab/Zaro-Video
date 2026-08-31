@@ -21,7 +21,11 @@ scale can be found by sweeping it against the picture rather than guessed at in
 decimals. What it shows depends on what the clip *is*: a title has words, a
 typeface and a box, a shape has neither a keyer nor a secondary to pull a matte
 that was authored rather than shot, an adjustment layer has an opacity and no
-position, and a clip that reads a file has a speed and a direction. Edits align to the edit points around them and say so — a dashed
+position, and a clip that reads a file has a speed and a direction. A multicam
+clip's cameras can be listed, synced and cut between; a nested clip opens the
+sequence it is made of; and a sound clip carries its own filtering and
+compression, so one noisy take is repaired where it lies instead of on the track
+that holds the rest of the scene. Edits align to the edit points around them and say so — a dashed
 guide down the tracks, and a blade that draws its cut before it makes it, and
 one that cuts picture and sound together where they are linked. Delivery has a
 workspace of its own: presets, settings that all reach the encoder, and a queue
@@ -126,6 +130,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 7w | Final Cut interchange: FCPXML in and out, `zaro-finalcut` | **done** |
 | 7x | The design's third pass: the inspector's sliders and tabs | **done** |
 | 7y | An inspector per kind of clip: titles, shapes, adjustments, speed | **done** |
+| 7z | Angles, nested sequences, and per-clip filtering and compression | **done** |
 
 ## Building
 

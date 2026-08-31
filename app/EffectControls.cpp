@@ -104,6 +104,10 @@ struct GroupSet {
     bool key{false};
     bool effects{false};
     bool audio{false};
+    /// The cameras of a multicam clip.
+    bool angles{false};
+    /// The way into the sequence a nested clip is made of.
+    bool nested{false};
 };
 
 [[nodiscard]] GroupSet groupsFor(model::ClipKind kind) {
@@ -113,9 +117,13 @@ struct GroupSet {
             set.audio = true;
             return set;
         case model::ClipKind::VideoMedia:
+            set.motion = set.placement = set.mediaMotion = true;
+            set.mask = set.colour = set.secondary = set.key = set.effects = true;
+            return set;
         case model::ClipKind::Multicam:
             set.motion = set.placement = set.mediaMotion = true;
             set.mask = set.colour = set.secondary = set.key = set.effects = true;
+            set.angles = true;
             return set;
         case model::ClipKind::Nested:
             // Everything a video clip gets except the parts that need a file:
@@ -123,6 +131,7 @@ struct GroupSet {
             // operations that would say so already refuse it.
             set.motion = set.placement = true;
             set.mask = set.colour = set.secondary = set.key = set.effects = true;
+            set.nested = true;
             return set;
         case model::ClipKind::Shape:
             set.motion = set.placement = true;
@@ -232,6 +241,9 @@ EffectControls::EffectControls(QWidget* parent) : QWidget{parent} {
     buildKeyGroup();
     buildGraphicGroup();
     buildTextGroup();
+    buildAnglesGroup();
+    buildNestedGroup();
+    buildProcessingGroup();
     buildAudioGroup();
     buildInfoGroup();
     assemblePanel();
@@ -931,6 +943,157 @@ void EffectControls::buildTextGroup() {
     connect(textAlign_, &QComboBox::currentIndexChanged, this, [this] { pushText(); });
 }
 
+void EffectControls::buildAnglesGroup() {
+    auto* angles = new QGroupBox("Angles", this);
+    angles->setObjectName("inspector-group-angles");
+    auto* form = new QFormLayout(angles);
+
+    angleList_ = new QListWidget(this);
+    angleList_->setObjectName("angle-list");
+    form->addRow(angleList_);
+
+    angleSwitch_ = new QPushButton("Cut to this angle", this);
+    angleSwitch_->setObjectName("angle-switch");
+    angleSwitch_->setToolTip(
+        "Cut the clip at the playhead; the part after it plays the chosen angle");
+    form->addRow(angleSwitch_);
+
+    // Seconds rather than frames. An angle's offset is how far into its own
+    // material the group's zero point is, and that is worked out from timecode
+    // or by ear -- neither of which is counted in the sequence's frames.
+    angleOffset_ = makeSpin(-86400.0, 86400.0, 0.1, 3, " s");
+    angleOffset_->setObjectName("angle-offset");
+    angleOffset_->setToolTip("How far into this camera's own material the group's zero point is");
+    form->addRow("Offset", angleOffset_);
+
+    anglesGroup_ = angles;
+
+    connect(angleList_, &QListWidget::currentRowChanged, this, [this] { showAngles(); });
+    connect(angleSwitch_, &QPushButton::clicked, this, [this] { switchToAngle(); });
+    connect(angleOffset_, &QDoubleSpinBox::valueChanged, this, [this] { pushAngleOffset(); });
+}
+
+void EffectControls::buildNestedGroup() {
+    auto* nested = new QGroupBox("Sequence", this);
+    nested->setObjectName("inspector-group-nested");
+    auto* form = new QFormLayout(nested);
+
+    nestedName_ = new QLabel(QString::fromUtf8("\u2014"), this);
+    nestedName_->setObjectName("nested-name");
+    nestedName_->setWordWrap(true);
+    form->addRow("Made of", nestedName_);
+
+    nestedOpen_ = new QPushButton("Open it", this);
+    nestedOpen_->setObjectName("nested-open");
+    nestedOpen_->setToolTip("Show the sequence this clip is made of, so it can be edited");
+    form->addRow(nestedOpen_);
+    nestedGroup_ = nested;
+
+    connect(nestedOpen_, &QPushButton::clicked, this, [this] {
+        const model::Clip* clip = selectedClip();
+        if (clip != nullptr && clip->nested.isValid()) {
+            emit openSequenceRequested(clip->nested);
+        }
+    });
+}
+
+void EffectControls::buildProcessingGroup() {
+    auto* processing = new QGroupBox("Repair", this);
+    processing->setObjectName("inspector-group-processing");
+    auto* form = new QFormLayout(processing);
+
+    // "Repair" rather than "EQ and compression", because that is what these
+    // are for on a clip. The mix decision -- everything on this track gets the
+    // same high pass -- belongs to the track, and has a channel strip of its
+    // own in the mixer.
+    clipEqOn_ = new QCheckBox("Filter", this);
+    clipEqOn_->setObjectName("clip-eq-on");
+    clipEqOn_->setToolTip("Take the bottom, the top, or one frequency out of this clip alone");
+    form->addRow(clipEqOn_);
+
+    // Hertz, wide open at both ends, and zero means "not filtering" rather
+    // than "filtering at DC" -- which is what `AudioEq` already says a zero is.
+    clipHighPass_ = makeSpin(0.0, 20000.0, 10.0, 0, " Hz");
+    clipHighPass_->setObjectName("clip-highpass");
+    clipHighPass_->setToolTip("Everything below this is removed. 0 leaves the bottom alone");
+    clipLowPass_ = makeSpin(0.0, 20000.0, 10.0, 0, " Hz");
+    clipLowPass_->setObjectName("clip-lowpass");
+    clipLowPass_->setToolTip("Everything above this is removed. 0 leaves the top alone");
+    clipPeakHz_ = makeSpin(20.0, 20000.0, 10.0, 0, " Hz");
+    clipPeakHz_->setObjectName("clip-peak-hz");
+    clipPeakGain_ = makeSpin(-24.0, 24.0, 0.5, 1, " dB");
+    clipPeakGain_->setObjectName("clip-peak-gain");
+    clipPeakQ_ = makeSpin(0.1, 12.0, 0.1, 2);
+    clipPeakQ_->setObjectName("clip-peak-q");
+    clipPeakQ_->setToolTip("How narrow the bell is. Higher is narrower");
+    form->addRow("High pass", clipHighPass_);
+    form->addRow("Low pass", clipLowPass_);
+    form->addRow("Bell at", clipPeakHz_);
+    form->addRow("Bell gain", clipPeakGain_);
+    form->addRow("Bell Q", clipPeakQ_);
+
+    clipCompressorOn_ = new QCheckBox("Compress", this);
+    clipCompressorOn_->setObjectName("clip-compressor-on");
+    clipCompressorOn_->setToolTip("Hold this clip down when it gets loud");
+    form->addRow(clipCompressorOn_);
+
+    clipThreshold_ = makeSpin(-60.0, 0.0, 0.5, 1, " dB");
+    clipThreshold_->setObjectName("clip-threshold");
+    clipRatio_ = makeSpin(1.0, 20.0, 0.5, 2, ":1");
+    clipRatio_->setObjectName("clip-ratio");
+    clipAttack_ = makeSpin(0.1, 200.0, 1.0, 1, " ms");
+    clipAttack_->setObjectName("clip-attack");
+    clipRelease_ = makeSpin(1.0, 2000.0, 10.0, 0, " ms");
+    clipRelease_->setObjectName("clip-release");
+    clipMakeup_ = makeSpin(-12.0, 24.0, 0.5, 1, " dB");
+    clipMakeup_->setObjectName("clip-makeup");
+    form->addRow("Threshold", clipThreshold_);
+    form->addRow("Ratio", clipRatio_);
+    form->addRow("Attack", clipAttack_);
+    form->addRow("Release", clipRelease_);
+    form->addRow("Makeup", clipMakeup_);
+
+    processingGroup_ = processing;
+
+    for (QDoubleSpinBox* spin : {clipHighPass_, clipLowPass_, clipPeakHz_, clipPeakGain_,
+                                 clipPeakQ_, clipThreshold_, clipRatio_, clipAttack_, clipRelease_,
+                                 clipMakeup_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { pushProcessing(); });
+    }
+    for (QCheckBox* box : {clipEqOn_, clipCompressorOn_}) {
+        connect(box, &QCheckBox::toggled, this, [this] { pushProcessing(); });
+    }
+}
+
+void EffectControls::pushProcessing() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    model::AudioEq eq;
+    eq.enabled = clipEqOn_->isChecked();
+    eq.highPassHz = clipHighPass_->value();
+    eq.lowPassHz = clipLowPass_->value();
+    eq.peakHz = clipPeakHz_->value();
+    eq.peakGainDb = clipPeakGain_->value();
+    eq.peakQ = clipPeakQ_->value();
+
+    model::Compressor compressor;
+    compressor.enabled = clipCompressorOn_->isChecked();
+    compressor.thresholdDb = clipThreshold_->value();
+    compressor.ratio = clipRatio_->value();
+    compressor.attackMs = clipAttack_->value();
+    compressor.releaseMs = clipRelease_->value();
+    compressor.makeupDb = clipMakeup_->value();
+
+    auto built = edit::makeSetClipProcessing(*project_, {sequenceId_, track_}, clip_, eq,
+                                             compressor);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
 void EffectControls::buildAudioGroup() {
     auto* audio = new QGroupBox("Audio", this);
     auto* audioForm = new QFormLayout(audio);
@@ -965,6 +1128,10 @@ void EffectControls::assemblePanel() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(enabled_);
     layout->addWidget(videoGroup_);
+    // Under Motion, because what a clip is made of comes before what has been
+    // done to it, and above everything a grade touches.
+    layout->addWidget(anglesGroup_);
+    layout->addWidget(nestedGroup_);
     // Text above the box it sits in: what a title says is the thing somebody
     // came to the panel to change, and how wide it is is the thing they change
     // afterwards. A shape has no text group, so the order costs it nothing.
@@ -976,6 +1143,7 @@ void EffectControls::assemblePanel() {
     layout->addWidget(keyGroup_);
     layout->addWidget(effectGroup_);
     layout->addWidget(audioGroup_);
+    layout->addWidget(processingGroup_);
     layout->addWidget(infoGroup_);
     layout->addStretch(1);
 
@@ -1116,12 +1284,15 @@ void EffectControls::setEditingEnabled(bool enabled) {
     videoGroup_->setEnabled(enabled);
     graphicGroup_->setEnabled(enabled);
     textGroup_->setEnabled(enabled);
+    anglesGroup_->setEnabled(enabled);
+    nestedGroup_->setEnabled(enabled);
     maskGroup_->setEnabled(enabled);
     colourGroup_->setEnabled(enabled);
     secondaryGroup_->setEnabled(enabled);
     keyGroup_->setEnabled(enabled);
     effectGroup_->setEnabled(enabled);
     audioGroup_->setEnabled(enabled);
+    processingGroup_->setEnabled(enabled);
 }
 
 void EffectControls::refresh() {
@@ -1153,6 +1324,8 @@ void EffectControls::applyToWidgets() {
         keyShowMatte_->setChecked(false);
         effectList_->clear();
         showEffects();
+        angleList_->clear();
+        nestedName_->setText(QString::fromUtf8("\u2014"));
         kind_.reset();
         curves_->setCurves(model::ToneCurves{});
         lutName_->setText("No LUT");
@@ -1178,6 +1351,20 @@ void EffectControls::applyToWidgets() {
         saturation_->setValue(neutral.saturation);
         gain_->setValue(0.0);
         pan_->setValue(0.0);
+        const model::AudioEq noEq;
+        const model::Compressor noCompressor;
+        clipEqOn_->setChecked(false);
+        clipHighPass_->setValue(noEq.highPassHz);
+        clipLowPass_->setValue(noEq.lowPassHz);
+        clipPeakHz_->setValue(noEq.peakHz);
+        clipPeakGain_->setValue(noEq.peakGainDb);
+        clipPeakQ_->setValue(noEq.peakQ);
+        clipCompressorOn_->setChecked(false);
+        clipThreshold_->setValue(noCompressor.thresholdDb);
+        clipRatio_->setValue(noCompressor.ratio);
+        clipAttack_->setValue(noCompressor.attackMs);
+        clipRelease_->setValue(noCompressor.releaseMs);
+        clipMakeup_->setValue(noCompressor.makeupDb);
         enabled_->setChecked(false);
         updating_ = false;
         applyIdentity();
@@ -1334,6 +1521,16 @@ void EffectControls::applyToWidgets() {
     speed_->setEnabled(!clip->isTimeRemapped());
     reverse_->setEnabled(!clip->isTimeRemapped());
 
+    if (clip->isMulticam()) {
+        showAngles();
+    }
+    if (clip->nested.isValid()) {
+        const model::Sequence* inner = project_->findSequence(clip->nested);
+        nestedName_->setText(inner == nullptr ? QString::fromUtf8("\u2014")
+                                              : QString::fromStdString(inner->name()));
+        nestedOpen_->setEnabled(inner != nullptr);
+    }
+
     timeRemap_->setChecked(clip->isTimeRemapped());
     // Freezing a clip that is already frozen is a no-op the operation refuses,
     // so the button says so rather than letting somebody find out.
@@ -1362,6 +1559,18 @@ void EffectControls::applyToWidgets() {
     saturation_->setValue(color.saturation);
     gain_->setValue(clip->gainDbAt(position_));
     pan_->setValue(clip->panAt(position_));
+    clipEqOn_->setChecked(clip->eq.enabled);
+    clipHighPass_->setValue(clip->eq.highPassHz);
+    clipLowPass_->setValue(clip->eq.lowPassHz);
+    clipPeakHz_->setValue(clip->eq.peakHz);
+    clipPeakGain_->setValue(clip->eq.peakGainDb);
+    clipPeakQ_->setValue(clip->eq.peakQ);
+    clipCompressorOn_->setChecked(clip->compressor.enabled);
+    clipThreshold_->setValue(clip->compressor.thresholdDb);
+    clipRatio_->setValue(clip->compressor.ratio);
+    clipAttack_->setValue(clip->compressor.attackMs);
+    clipRelease_->setValue(clip->compressor.releaseMs);
+    clipMakeup_->setValue(clip->compressor.makeupDb);
     enabled_->setChecked(clip->enabled);
     updating_ = false;
     applyIdentity();
@@ -1755,7 +1964,10 @@ void EffectControls::applyPaneVisibility() {
     maskGroup_->setVisible(inspector && groups.mask);
     graphicGroup_->setVisible(inspector && groups.graphic);
     textGroup_->setVisible(inspector && groups.text);
+    anglesGroup_->setVisible(inspector && groups.angles);
+    nestedGroup_->setVisible(inspector && groups.nested);
     audioGroup_->setVisible(pane_ == Pane::Audio && groups.audio);
+    processingGroup_->setVisible(pane_ == Pane::Audio && groups.audio);
 
     // Inside Motion: the four rows that place a picture in the frame, and the
     // ones that need a file behind the clip. An adjustment layer has neither
@@ -2634,6 +2846,118 @@ void EffectControls::pushGraphic() {
         return;
     }
     commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::showAngles() {
+    const model::Clip* clip = selectedClip();
+    if (clip == nullptr || !clip->isMulticam()) {
+        return;
+    }
+    const auto live = static_cast<std::size_t>(
+        clip->activeAngle >= 0 && static_cast<std::size_t>(clip->activeAngle) < clip->angles.size()
+            ? clip->activeAngle
+            : 0);
+
+    // Rebuilt only when the list is describing a different clip. Refilling it
+    // on every read would take the row somebody had picked away from them --
+    // the panel re-reads the model whenever the playhead moves.
+    const bool rebuild = static_cast<std::size_t>(angleList_->count()) != clip->angles.size();
+    const int wanted = rebuild ? static_cast<int>(live) : angleList_->currentRow();
+
+    const QSignalBlocker blockList{angleList_};
+    if (rebuild) {
+        angleList_->clear();
+        for (std::size_t i = 0; i < clip->angles.size(); ++i) {
+            angleList_->addItem(QString{});
+        }
+    }
+    for (std::size_t i = 0; i < clip->angles.size(); ++i) {
+        const model::Clip::Angle& angle = clip->angles[i];
+        const QString name = angle.name.empty() ? QString("Angle %1").arg(i + 1)
+                                                : QString::fromStdString(angle.name);
+        // The live one is marked in the text rather than by the selection,
+        // because the selection is what somebody is *about* to do and the mark
+        // is what the clip is already doing. Using one for both would mean
+        // looking at a row could not tell you which.
+        angleList_->item(static_cast<int>(i))
+            ->setText(QString("%1  %2").arg(i == live ? QString::fromUtf8("\u25CF")
+                                                      : QString::fromUtf8("\u25CB"),
+                                            name));
+    }
+    if (angleList_->currentRow() != wanted) {
+        angleList_->setCurrentRow(wanted);
+    }
+    if (rebuild && angleList_->count() > 0) {
+        // Tall enough for the cameras there are, up to six -- measured from a
+        // row the list has actually laid out rather than from the font, which
+        // is smaller than a row by however much the style puts around it. Six
+        // because the panel is a column and the rest of it has to stay
+        // reachable; past that the list scrolls.
+        const int row = angleList_->sizeHintForRow(0);
+        const int rows = std::min(angleList_->count(), 6);
+        angleList_->setFixedHeight((row * rows) + (2 * angleList_->frameWidth()) + 4);
+    }
+
+    const int row = angleList_->currentRow();
+    const bool picked = row >= 0 && static_cast<std::size_t>(row) < clip->angles.size();
+    angleOffset_->setEnabled(picked);
+    // Switching to the angle that is already live is refused by the operation,
+    // so the button says so rather than letting somebody find out.
+    angleSwitch_->setEnabled(picked && static_cast<std::size_t>(row) != live &&
+                             clip->timelineRange.contains(position_));
+    if (picked) {
+        const QSignalBlocker blockOffset{angleOffset_};
+        angleOffset_->setValue(clip->angles[static_cast<std::size_t>(row)].offset.toSecondsDouble());
+    }
+}
+
+void EffectControls::pushAngleOffset() {
+    if (updating_ || commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const model::Clip* clip = selectedClip();
+    const int row = angleList_->currentRow();
+    if (clip == nullptr || row < 0 || static_cast<std::size_t>(row) >= clip->angles.size()) {
+        return;
+    }
+    // At the sequence's rate, because that is the timebase the offset is used
+    // against when the angle is read.
+    const model::Sequence* sequence = project_->findSequence(sequenceId_);
+    const time::Rational rate =
+        sequence != nullptr ? sequence->frameRate() : clip->timelineRange.start().rate();
+    const time::RationalTime offset = time::RationalTime::fromSeconds(
+        time::Rational::approximate(angleOffset_->value()), rate);
+
+    auto built = edit::makeSetAngleOffsets(*project_, {sequenceId_, track_}, clip_,
+                                           {{static_cast<std::int32_t>(row), offset}});
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+}
+
+void EffectControls::switchToAngle() {
+    if (commands_ == nullptr || !clip_.isValid()) {
+        return;
+    }
+    const int row = angleList_->currentRow();
+    if (row < 0) {
+        return;
+    }
+    auto built = edit::makeSwitchAngle(*project_, {sequenceId_, track_}, clip_,
+                                       static_cast<std::int32_t>(row), position_);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    // The selection keeps the part *before* the cut, which still plays the
+    // angle it did -- so the list is right to go on showing that one as live.
+    // Switching at the very first frame is not a cut at all and changes the
+    // whole clip, which the re-read below picks up either way.
+    applyToWidgets();
     emit edited();
 }
 

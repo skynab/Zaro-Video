@@ -1281,3 +1281,186 @@ TEST_CASE("Speed and reverse, set from the inspector", "[gui]") {
     panel->setSelection(trackId, clipId);
     QApplication::processEvents();
 }
+
+// The two kinds of clip whose defining property the panel could not reach: a
+// multicam clip's cameras, and the sequence a nested clip is made of.
+//
+// `makeSetAngleOffsets` in particular had no caller anywhere in the program --
+// angles could be synced by the command that placed them and never afterwards.
+TEST_CASE("Angles and nested sequences, from the inspector", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto rate = sequence.frameRate();
+    const auto trackId = sequence.videoTracks().front().id();
+    const auto mediaId = window.project().media().front().id;
+
+    const auto group = [&](const char* name) {
+        auto* box = panel->findChild<QGroupBox*>(name);
+        if (box == nullptr) {
+            zaro::app::testing::failf("the inspector has no %s\n", name);
+        }
+        return box;
+    };
+
+    // --- a multicam clip ------------------------------------------------------
+    zaro::model::Clip::Angle a;
+    a.media = mediaId;
+    a.offset = zaro::time::RationalTime{0, rate};
+    a.name = "Camera A";
+    zaro::model::Clip::Angle b;
+    b.media = mediaId;
+    b.offset = zaro::time::RationalTime{0, rate};
+    b.name = "Camera B";
+
+    auto built = zaro::edit::makeMulticam(
+        window.project(), {sequenceId, trackId}, {a, b},
+        zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
+                              zaro::time::RationalTime{60, rate}});
+    if (!built) {
+        zaro::app::testing::failf("%s\n", built.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*built));
+    const auto multicamClip =
+        window.project().findSequence(sequenceId)->findTrack(trackId)->clips().front().id;
+
+    window.setPosition(zaro::time::RationalTime{25, rate});
+    panel->setSelection(trackId, multicamClip);
+    QApplication::processEvents();
+
+    if (!group("inspector-group-angles")->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a multicam clip is not shown its cameras\n");
+    }
+    auto* list = panel->findChild<QListWidget*>("angle-list");
+    auto* offset = panel->findChild<QDoubleSpinBox*>("angle-offset");
+    auto* cut = panel->findChild<QPushButton*>("angle-switch");
+    if (list == nullptr || offset == nullptr || cut == nullptr) {
+        zaro::app::testing::failf("the angles group is missing its controls\n");
+    }
+    if (list->count() != 2) {
+        zaro::app::testing::failf("the panel lists %d cameras, not 2\n", list->count());
+    }
+    // The live one is marked in the text, so a row can say what the clip is
+    // doing and what the selection is about to do at the same time.
+    if (!list->item(0)->text().contains("Camera A") ||
+        !list->item(0)->text().contains(QString::fromUtf8("●"))) {
+        zaro::app::testing::failf("the live camera is not marked (%s)\n",
+                                  list->item(0)->text().toUtf8().constData());
+    }
+
+    const auto clipNow = [&]() -> const zaro::model::Clip* {
+        return window.project().findSequence(sequenceId)->findTrack(trackId)->find(multicamClip);
+    };
+
+    // Syncing an angle. Nothing else in the program can do this.
+    list->setCurrentRow(1);
+    QApplication::processEvents();
+    offset->setValue(-2.0);
+    QApplication::processEvents();
+    const double synced = clipNow()->angles[1].offset.toSecondsDouble();
+    if (std::fabs(synced + 2.0) > 0.05) {
+        zaro::app::testing::failf("camera B synced to %+.3fs, not -2s\n", synced);
+    }
+    if (std::fabs(clipNow()->angles[0].offset.toSecondsDouble()) > 1e-9) {
+        zaro::app::testing::failf("syncing one camera moved the other\n");
+    }
+
+    // Cutting to the other angle. A switch is a cut: the clip is split and the
+    // part after it takes the new camera.
+    const auto clipsOn = [&]() {
+        return window.project().findSequence(sequenceId)->findTrack(trackId)->clips().size();
+    };
+    const std::size_t before = clipsOn();
+    if (!cut->isEnabled()) {
+        zaro::app::testing::failf("the panel will not cut to the camera that is not live\n");
+    }
+    cut->click();
+    QApplication::processEvents();
+    if (clipsOn() != before + 1) {
+        zaro::app::testing::failf("cutting to an angle did not split the clip (%zu then %zu)\n",
+                                  before, clipsOn());
+    }
+    const auto& clips = window.project().findSequence(sequenceId)->findTrack(trackId)->clips();
+    if (clips[1].activeAngle != 1 || clips[1].start().frames() != 25) {
+        zaro::app::testing::failf("the cut landed at %lld on angle %d\n",
+                                  static_cast<long long>(clips[1].start().frames()),
+                                  clips[1].activeAngle);
+    }
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    panel->setSelection(trackId, window.project()
+                                     .findSequence(sequenceId)
+                                     ->findTrack(trackId)
+                                     ->clips()
+                                     .front()
+                                     .id);
+    QApplication::processEvents();
+
+    // --- a nested sequence ----------------------------------------------------
+    // A second sequence to nest. Made here rather than looked for, because the
+    // fixture project has one and nesting a sequence inside itself is refused
+    // -- rightly, since it is a render that never finishes.
+    zaro::model::SequenceId inner;
+    {
+        zaro::model::Sequence made{window.project().ids().next<zaro::model::SequenceTag>(),
+                                   "Insert", rate};
+        made.setSize(1920, 1080);
+        inner = made.id();
+        const auto innerTrack = window.project().ids().next<zaro::model::TrackTag>();
+        made.addTrack(innerTrack, zaro::model::TrackKind::Video, "V1");
+        // With something in it: nesting an empty sequence is refused, and
+        // rightly -- it would composite to nothing.
+        zaro::model::Clip content;
+        content.id = window.project().ids().next<zaro::model::ClipTag>();
+        content.source = mediaId;
+        content.name = "inside";
+        content.sourceRange = zaro::time::TimeRange{zaro::time::RationalTime{0, rate},
+                                                    zaro::time::RationalTime{40, rate}};
+        content.timelineRange = content.sourceRange;
+        made.findTrack(innerTrack)->insert(std::move(content));
+        window.project().addSequence(std::move(made));
+    }
+    const auto& videoTracks = window.project().findSequence(sequenceId)->videoTracks();
+    const auto topTrack = videoTracks.size() > 1 ? videoTracks[1].id() : trackId;
+    auto nested = zaro::edit::makeNestSequence(window.project(), {sequenceId, topTrack}, inner,
+                                               zaro::time::RationalTime{0, rate});
+    if (!nested) {
+        zaro::app::testing::failf("%s\n", nested.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*nested));
+    const auto nestedClip =
+        window.project().findSequence(sequenceId)->findTrack(topTrack)->clips().front().id;
+    panel->setSelection(topTrack, nestedClip);
+    QApplication::processEvents();
+
+    if (!group("inspector-group-nested")->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a nested clip has no way into its sequence\n");
+    }
+    // It has no file, so there is nothing to stabilise and nothing to key --
+    // but it is composited pixels, so the grade stays.
+    if (group("inspector-group-angles")->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a nested clip is offered cameras\n");
+    }
+    auto* open = panel->findChild<QPushButton*>("nested-open");
+    if (open == nullptr || !open->isEnabled()) {
+        zaro::app::testing::failf("the way into the nested sequence is not offered\n");
+    }
+    open->click();
+    QApplication::processEvents();
+    if (window.sequence()->id() != inner) {
+        zaro::app::testing::failf("opening the nested sequence did not change the window\n");
+    }
+
+    std::printf("  angles: 2 cameras listed, one synced to -2s, one cut to; nested opened\n");
+
+    window.setActiveSequence(sequenceId);
+    QApplication::processEvents();
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}

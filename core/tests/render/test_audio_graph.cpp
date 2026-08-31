@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -557,4 +558,81 @@ TEST_CASE("An empty range is refused rather than measured as silence",
     source.define(f.longMedia, 0.5F, 2);
     render::AudioGraph graph{source};
     CHECK_FALSE(graph.measureLoudness(f.sequence(), time::TimeRange{f.at(10), f.at(0)}));
+}
+
+TEST_CASE("A clip's own compressor pulls it down before the track sees it",
+          "[render][audio]") {
+    // Per-clip processing is the repair a track's channel strip cannot do: one
+    // take louder than the rest of the scene, on the same track as the rest of
+    // the scene. What this checks is that it is applied at all, and that it is
+    // applied to the clip rather than to everything on the track.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    const auto clipId = f.sequence().findTrack(f.a1)->clips().front().id;
+    auto plain = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(plain);
+    const float before = plain->channel(0)[479];
+    CHECK(before == Approx(1.0F).margin(1e-5));
+
+    model::Compressor squash;
+    squash.enabled = true;
+    // Well under the signal, hard, and fast enough to have taken hold by the
+    // end of a 10ms block.
+    squash.thresholdDb = -24.0;
+    squash.ratio = 20.0;
+    squash.attackMs = 1.0;
+    squash.releaseMs = 50.0;
+    squash.makeupDb = 0.0;
+    REQUIRE(f.run(edit::makeSetClipProcessing(f.project, f.on(f.a1), clipId, model::AudioEq{},
+                                              squash)));
+
+    graph.resetProcessing();
+    auto squashed = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(squashed);
+    const float after = squashed->channel(0)[479];
+    CHECK(after < before * 0.5F);
+
+    // And undoing it puts the level back, which is what says the graph is
+    // reading the clip rather than holding its own copy.
+    f.stack.undo(f.project);
+    graph.resetProcessing();
+    auto restored = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(restored);
+    CHECK(restored->channel(0)[479] == Approx(before).margin(1e-5));
+}
+
+TEST_CASE("A clip's high pass takes the bottom off that clip alone", "[render][audio]") {
+    // Two clips on one track, one filtered. A steady signal through a high pass
+    // decays towards zero -- that is what "no energy below the corner" means
+    // for a constant -- so the filtered clip drops away and its neighbour does
+    // not move at all.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 100))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(200, 100, 100))));
+
+    const auto firstClip = f.sequence().findTrack(f.a1)->clips().front().id;
+
+    model::AudioEq eq;
+    eq.enabled = true;
+    eq.highPassHz = 2000.0;
+    REQUIRE(f.run(edit::makeSetClipProcessing(f.project, f.on(f.a1), firstClip, eq,
+                                              model::Compressor{})));
+
+    graph.resetProcessing();
+    auto filtered = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(filtered);
+    CHECK(std::fabs(filtered->channel(0)[479]) < 0.2F);
+
+    // The second clip starts at frame 200.
+    graph.resetProcessing();
+    auto neighbour = graph.mix(f.sequence(), samples(200 * kSamplesPerFrame), 480);
+    REQUIRE(neighbour);
+    CHECK(neighbour->channel(0)[479] == Approx(1.0F).margin(1e-5));
 }

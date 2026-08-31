@@ -456,6 +456,10 @@ void PreviewWindow::wireEditingSignals() {
     });
     connect(effects_, &app::EffectControls::keyframesChanged, this,
             [this] { timeline_->update(); });
+    // A nested clip's way in. Which sequence the window is showing is a
+    // decision about the whole window, so the panel asks rather than does.
+    connect(effects_, &app::EffectControls::openSequenceRequested, this,
+            [this](model::SequenceId id) { setActiveSequence(id); });
     connect(effects_, &app::EffectControls::edited, this, [this] {
         // A parameter change alters the picture at the current playhead.
         monitor_->update();

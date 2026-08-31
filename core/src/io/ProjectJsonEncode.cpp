@@ -280,6 +280,30 @@ json encode(const model::ClipAnimation& animation) {
     return out;
 }
 
+/// The two audio processors, written once and read by both the track that has
+/// a pair and the clip that has a pair. Written only when switched on: a
+/// disabled compressor's threshold is a number nobody set, and six of them on
+/// every clip is noise in a file people read.
+json encode(const model::AudioEq& eq) {
+    if (!eq.enabled) {
+        return json::object();
+    }
+    return json{{"enabled", true},     {"highPassHz", eq.highPassHz}, {"lowPassHz", eq.lowPassHz},
+                {"peakHz", eq.peakHz}, {"peakGainDb", eq.peakGainDb}, {"peakQ", eq.peakQ}};
+}
+
+json encode(const model::Compressor& compressor) {
+    if (!compressor.enabled) {
+        return json::object();
+    }
+    return json{{"enabled", true},
+                {"thresholdDb", compressor.thresholdDb},
+                {"ratio", compressor.ratio},
+                {"attackMs", compressor.attackMs},
+                {"releaseMs", compressor.releaseMs},
+                {"makeupDb", compressor.makeupDb}};
+}
+
 json encode(const model::Clip& clip) {
     json out{{"id", clip.id.value()},
              {"source", clip.source.value()},
@@ -419,6 +443,12 @@ json encode(const model::Clip& clip) {
     if (clip.role != model::AudioRole::Unassigned) {
         out["role"] = model::toString(clip.role);
     }
+    if (json eq = encode(clip.eq); !eq.empty()) {
+        out["eq"] = std::move(eq);
+    }
+    if (json compressor = encode(clip.compressor); !compressor.empty()) {
+        out["compressor"] = std::move(compressor);
+    }
     if (json vignette = encode(clip.vignette); !vignette.empty()) {
         out["vignette"] = std::move(vignette);
     }
@@ -473,20 +503,11 @@ json encode(const model::Track& track) {
     if (!transitions.empty()) {
         out["transitions"] = std::move(transitions);
     }
-    if (track.eq().enabled) {
-        const model::AudioEq& eq = track.eq();
-        out["eq"] =
-            json{{"enabled", true},     {"highPassHz", eq.highPassHz}, {"lowPassHz", eq.lowPassHz},
-                 {"peakHz", eq.peakHz}, {"peakGainDb", eq.peakGainDb}, {"peakQ", eq.peakQ}};
+    if (json eq = encode(track.eq()); !eq.empty()) {
+        out["eq"] = std::move(eq);
     }
-    if (track.compressor().enabled) {
-        const model::Compressor& compressor = track.compressor();
-        out["compressor"] = json{{"enabled", true},
-                                 {"thresholdDb", compressor.thresholdDb},
-                                 {"ratio", compressor.ratio},
-                                 {"attackMs", compressor.attackMs},
-                                 {"releaseMs", compressor.releaseMs},
-                                 {"makeupDb", compressor.makeupDb}};
+    if (json compressor = encode(track.compressor()); !compressor.empty()) {
+        out["compressor"] = std::move(compressor);
     }
     if (track.isSoloed()) {
         // Only when set: solo is a transient state on most projects, and a

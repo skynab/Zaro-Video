@@ -4739,12 +4739,51 @@ Speed go for the generated kinds; a nested clip keeps Source and it names the
 sequence rather than reporting no file; a multicam clip gains a row saying how
 many angles it has and which is live.
 
-**Not done here, and deliberately.** Per-clip EQ and compression — `AudioEq` and
-`Compressor` are on `Track` only, so that one needs a model field, a command and
-mixer-graph plumbing before it needs a widget. An Angles group for switching and
-syncing multicam from the panel rather than from the timeline. An "open it"
-button for a nested clip. A Track page, and a multi-selection page — the
-timeline has supported selecting several clips since 4j and the inspector still
-shows one. And `makeAddGraphic` names a title clip "text", which is what the
+**A multicam clip's cameras, and a nested clip's way in.** `makeSetAngleOffsets`
+had no caller anywhere in the program: angles could be synced by the command
+that placed them and never afterwards, which meant a group that came back a
+frame out was a group nobody could fix. The Angles group lists the cameras with
+the live one marked, sets each one's offset, and cuts to another at the
+playhead. The mark is in the row's text rather than in the selection, because
+the selection is what somebody is *about* to do and the mark is what the clip is
+already doing — using one control for both means looking at a row cannot tell
+you which. After a cut the selection keeps the part *before* it, which still
+plays the angle it did, so the list goes on showing that one as live and is
+right to.
+
+A nested clip gets the one control no other kind has: a way into the sequence it
+is made of. The panel knows which sequence that is but not which one the window
+is showing, so it asks — `openSequenceRequested`, which the window answers with
+`setActiveSequence`.
+
+**Per-clip filtering and compression.** `AudioEq` and `Compressor` were on
+`Track` alone, and the two are not the same job. A track's are the mix decision
+— everything on the dialogue track gets the same high pass — and a clip's are
+the repair: one take with a fridge humming behind it, one line shouted louder
+than the rest. Doing the second on the track means doing it to every clip on the
+track, and doing it by splitting the take onto a track of its own is how a
+three-track mix becomes an eleven-track one.
+
+They are a pair of fields on `Clip`, one command for both (the reason a clip is
+filtered is usually the reason it is compressed, and undoing half of a repair
+leaves a take nobody meant to make), and a chain per clip in `AudioGraph` —
+keyed by clip rather than by track, because two clips on one track are two
+different takes and sharing an envelope between them would let the loud one duck
+the quiet one across the cut, which is a thing no compressor on a channel strip
+does. Applied before the clip's gain, so setting a level and pulling a hum out
+stay one job rather than two that undo each other. Disabled by default and
+written to the file only when switched on, so a project made before any of this
+existed sounds and reads exactly as it did.
+
+The encoders and decoders for the two structs were duplicated inline for the
+track; the clip needed the same six fields and they are now written and read
+once, by both.
+
+**Not done here, and deliberately.** A Track page, and a multi-selection page —
+the timeline has supported selecting several clips since 4j and the inspector
+still shows one. `makeAddGraphic` names a title clip "text", which is what the
 identity row shows; naming it after its words is a change to the operation, not
-to the panel.
+to the panel. And `makeSetSpeed` with `ripple` off does not guard against a
+slowed clip running over its neighbour, which would hand overlapping clips to
+`Track::setClips` and trip its invariant — the panel always ripples, so it
+cannot reach that, but the hole is in the operation and belongs closed there.

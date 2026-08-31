@@ -4,6 +4,7 @@
 #include <string>
 
 #include "zaro/core/model/Animation.h"
+#include "zaro/core/model/AudioProcessing.h"
 #include "zaro/core/model/AudioRole.h"
 #include "zaro/core/model/ClipEffects.h"
 #include "zaro/core/model/ColorCorrection.h"
@@ -66,6 +67,22 @@ struct Clip {
     /// automatic decisions read, and what a mix is organised by.
     AudioRole role{AudioRole::Unassigned};
     double pan{0.0};
+
+    /// Filtering and compression for this clip alone, applied before it is
+    /// summed into its track.
+    ///
+    /// The track has a pair of these too, and they are not the same job. A
+    /// track's are the mix decision -- everything on the dialogue track gets
+    /// the same high-pass -- and a clip's are the repair: one take with a
+    /// fridge humming behind it, one line shouted louder than the rest. Doing
+    /// the second on the track means doing it to every clip on the track, and
+    /// doing it by splitting the take onto a track of its own is how a
+    /// three-track mix becomes an eleven-track one.
+    ///
+    /// Disabled by default, so a project made before these existed sounds
+    /// exactly as it did.
+    AudioEq eq;
+    Compressor compressor;
 
     /// Primary colour correction, applied in the linear working space before
     /// the clip is placed in the frame.

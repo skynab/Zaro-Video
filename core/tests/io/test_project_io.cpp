@@ -108,6 +108,56 @@ TEST_CASE("Track flags and sequence settings round trip", "[io]") {
     CHECK(sequence->audioSampleRate() == time::rates::hz48000);
 }
 
+TEST_CASE("A clip's own filtering and compression survive a save", "[io]") {
+    // The track has a pair of these too, and they are written by the same
+    // encoder -- so this also guards the track's, which had its own copy of
+    // the same six fields until the clip needed them.
+    Fixture f = populated();
+    const auto trackId = f.a1;
+    // `populated` locks A1, and a locked track refuses edits -- rightly, and
+    // it is what the lock is for.
+    f.track(trackId).setLocked(false);
+    const auto clipId = f.track(trackId).clips().front().id;
+
+    model::AudioEq eq;
+    eq.enabled = true;
+    eq.highPassHz = 80.0;
+    eq.peakHz = 2500.0;
+    eq.peakGainDb = -4.5;
+    eq.peakQ = 2.25;
+    model::Compressor compressor;
+    compressor.enabled = true;
+    compressor.thresholdDb = -21.5;
+    compressor.ratio = 4.0;
+    compressor.attackMs = 3.0;
+    compressor.releaseMs = 180.0;
+    compressor.makeupDb = 2.5;
+
+    edit::CommandStack stack;
+    auto built = edit::makeSetClipProcessing(f.project, {f.sequenceId, trackId}, clipId, eq,
+                                             compressor);
+    REQUIRE(built);
+    stack.execute(f.project, std::move(*built));
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+
+    const model::Clip* back =
+        loaded->project.findSequence(f.sequenceId)->findTrack(trackId)->find(clipId);
+    REQUIRE(back != nullptr);
+    CHECK(back->eq == eq);
+    CHECK(back->compressor == compressor);
+
+    // And a clip that was never processed carries nothing, so a project made
+    // before any of this existed reads back exactly as it did.
+    const model::Clip& untouched =
+        loaded->project.findSequence(f.sequenceId)->findTrack(f.v1)->clips().front();
+    CHECK_FALSE(untouched.eq.enabled);
+    CHECK_FALSE(untouched.compressor.enabled);
+}
+
 TEST_CASE("Fields written by a newer build are not destroyed", "[io]") {
     // The scenario: someone opens a project in an older build and saves it.
     // Everything the newer build added has to still be there afterwards.

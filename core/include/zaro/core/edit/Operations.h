@@ -555,6 +555,16 @@ enum class PlaceMode {
 [[nodiscard]] Result<CommandPtr> makeSetClipAudio(model::Project& project, const EditTarget& target,
                                                   model::ClipId clip, double gainDb, double pan);
 
+/// Filtering and compression for one clip, applied before it reaches its track.
+///
+/// One command for both, because they are one decision: the reason a clip is
+/// filtered is usually the reason it is compressed, and undoing half of a
+/// repair leaves a take nobody meant to make.
+[[nodiscard]] Result<CommandPtr> makeSetClipProcessing(model::Project& project,
+                                                       const EditTarget& target, model::ClipId clip,
+                                                       const model::AudioEq& eq,
+                                                       const model::Compressor& compressor);
+
 /// Whether the clip contributes at all. Disabled clips stay on the timeline and
 /// keep their place; they simply stop being composited or mixed.
 [[nodiscard]] Result<CommandPtr> makeSetClipEnabled(model::Project& project,

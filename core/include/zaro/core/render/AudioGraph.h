@@ -107,6 +107,12 @@ private:
     /// delay line and a compressor's envelope are exactly the state that makes
     /// them work.
     std::map<std::uint64_t, TrackProcessor> processors_;
+    /// The same, per clip, for the repair applied before a clip reaches its
+    /// track. Keyed by clip rather than by track because two clips on one track
+    /// are two different takes: sharing an envelope between them would let the
+    /// loud one duck the quiet one across the cut between them, which is a
+    /// thing no compressor on a channel strip does.
+    std::map<std::uint64_t, TrackProcessor> clipProcessors_;
 };
 
 /// Decibels to a linear factor. -inf and anything below the floor become

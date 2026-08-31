@@ -113,6 +113,11 @@ signals:
     /// Recompose this clip for the sequence's shape.
     void reframeRequested();
 
+    /// Show the sequence a nested clip is made of. The panel knows which
+    /// sequence it is but not which one the window is currently showing, and
+    /// changing that is a decision about the whole window.
+    void openSequenceRequested(model::SequenceId sequence);
+
     /// Hold this clip still, or throw the analysis away. The panel has neither
     /// the frames nor the decoder, so it asks.
     void stabiliseRequested();
@@ -195,6 +200,16 @@ private:
     /// a title needs is the union of the two, and what a rectangle needs is
     /// the first of them.
     void buildTextGroup();
+    /// The cameras of a multicam clip: which one is live, when to cut to
+    /// another, and how far into each the group's zero point is.
+    ///
+    /// Switching an angle is a cut, which is why this cannot simply set a
+    /// field: the clip is split and the part after takes the new angle. The
+    /// sync offsets are not a cut and are the thing nothing else in the
+    /// program can currently set at all.
+    void buildAnglesGroup();
+    /// The one control a nested clip has that no other kind does: a way in.
+    void buildNestedGroup();
     void buildAudioGroup();
     /// The sticky header: the three tabs, the reset button beside them, and
     /// the row underneath that says which clip this is.
@@ -423,6 +438,20 @@ private:
     QCheckBox* reverse_{nullptr};
     void pushSpeed();
 
+    QWidget* anglesGroup_{nullptr};
+    QListWidget* angleList_{nullptr};
+    QDoubleSpinBox* angleOffset_{nullptr};
+    QPushButton* angleSwitch_{nullptr};
+    /// Fill the angle list from the clip, and put the offset field on whichever
+    /// row is picked.
+    void showAngles();
+    void pushAngleOffset();
+    void switchToAngle();
+
+    QWidget* nestedGroup_{nullptr};
+    QLabel* nestedName_{nullptr};
+    QPushButton* nestedOpen_{nullptr};
+
     QWidget* secondaryGroup_{nullptr};
     QPushButton* lutLoad_{nullptr};
     QPushButton* lutClear_{nullptr};
@@ -460,6 +489,26 @@ private:
     void pushEffects();
     void showEffects();
     bool applyEffectStack(const std::vector<model::Effect>& stack);
+
+    /// Filtering and compression for the selected clip: the repair a track's
+    /// channel strip cannot do, because a track's applies to everything on it.
+    /// Two switches and their settings, written as one command -- see
+    /// `edit::makeSetClipProcessing`.
+    QWidget* processingGroup_{nullptr};
+    QCheckBox* clipEqOn_{nullptr};
+    QDoubleSpinBox* clipHighPass_{nullptr};
+    QDoubleSpinBox* clipLowPass_{nullptr};
+    QDoubleSpinBox* clipPeakHz_{nullptr};
+    QDoubleSpinBox* clipPeakGain_{nullptr};
+    QDoubleSpinBox* clipPeakQ_{nullptr};
+    QCheckBox* clipCompressorOn_{nullptr};
+    QDoubleSpinBox* clipThreshold_{nullptr};
+    QDoubleSpinBox* clipRatio_{nullptr};
+    QDoubleSpinBox* clipAttack_{nullptr};
+    QDoubleSpinBox* clipRelease_{nullptr};
+    QDoubleSpinBox* clipMakeup_{nullptr};
+    void buildProcessingGroup();
+    void pushProcessing();
 
     QComboBox* role_{nullptr};
     QPushButton* duck_{nullptr};

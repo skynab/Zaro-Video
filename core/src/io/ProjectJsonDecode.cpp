@@ -170,6 +170,32 @@ std::vector<model::Effect> decodeEffects(const json& node) {
     return out;
 }
 
+/// The two audio processors, read once and used by both the track that has a
+/// pair and the clip that has a pair. Every field falls back to the struct's
+/// own default, so a file written before a field existed reads as the value
+/// that field was introduced with rather than as zero.
+model::AudioEq decodeEq(const json& node) {
+    model::AudioEq eq;
+    eq.enabled = node.value("enabled", false);
+    eq.highPassHz = node.value("highPassHz", eq.highPassHz);
+    eq.lowPassHz = node.value("lowPassHz", eq.lowPassHz);
+    eq.peakHz = node.value("peakHz", eq.peakHz);
+    eq.peakGainDb = node.value("peakGainDb", eq.peakGainDb);
+    eq.peakQ = node.value("peakQ", eq.peakQ);
+    return eq;
+}
+
+model::Compressor decodeCompressor(const json& node) {
+    model::Compressor compressor;
+    compressor.enabled = node.value("enabled", false);
+    compressor.thresholdDb = node.value("thresholdDb", compressor.thresholdDb);
+    compressor.ratio = node.value("ratio", compressor.ratio);
+    compressor.attackMs = node.value("attackMs", compressor.attackMs);
+    compressor.releaseMs = node.value("releaseMs", compressor.releaseMs);
+    compressor.makeupDb = node.value("makeupDb", compressor.makeupDb);
+    return compressor;
+}
+
 model::Vignette decodeVignette(const json& node) {
     model::Vignette out;
     if (!node.is_object()) {
@@ -493,6 +519,12 @@ Result<model::Clip> decodeClip(const json& node) {
             clip.role = role;
         }
     }
+    if (node.contains("eq") && node.at("eq").is_object()) {
+        clip.eq = decodeEq(node.at("eq"));
+    }
+    if (node.contains("compressor") && node.at("compressor").is_object()) {
+        clip.compressor = decodeCompressor(node.at("compressor"));
+    }
     if (node.contains("vignette")) {
         clip.vignette = decodeVignette(node.at("vignette"));
     }
@@ -528,26 +560,10 @@ Result<model::Track> decodeTrack(const json& node, model::TrackKind kind) {
     track.setMuted(node.value("muted", false));
     track.setSoloed(node.value("soloed", false));
     if (node.contains("eq") && node.at("eq").is_object()) {
-        const json& eqNode = node.at("eq");
-        model::AudioEq eq;
-        eq.enabled = eqNode.value("enabled", false);
-        eq.highPassHz = eqNode.value("highPassHz", eq.highPassHz);
-        eq.lowPassHz = eqNode.value("lowPassHz", eq.lowPassHz);
-        eq.peakHz = eqNode.value("peakHz", eq.peakHz);
-        eq.peakGainDb = eqNode.value("peakGainDb", eq.peakGainDb);
-        eq.peakQ = eqNode.value("peakQ", eq.peakQ);
-        track.setEq(eq);
+        track.setEq(decodeEq(node.at("eq")));
     }
     if (node.contains("compressor") && node.at("compressor").is_object()) {
-        const json& compressorNode = node.at("compressor");
-        model::Compressor compressor;
-        compressor.enabled = compressorNode.value("enabled", false);
-        compressor.thresholdDb = compressorNode.value("thresholdDb", compressor.thresholdDb);
-        compressor.ratio = compressorNode.value("ratio", compressor.ratio);
-        compressor.attackMs = compressorNode.value("attackMs", compressor.attackMs);
-        compressor.releaseMs = compressorNode.value("releaseMs", compressor.releaseMs);
-        compressor.makeupDb = compressorNode.value("makeupDb", compressor.makeupDb);
-        track.setCompressor(compressor);
+        track.setCompressor(decodeCompressor(node.at("compressor")));
     }
     track.setLocked(node.value("locked", false));
     track.setGainDb(node.value("gainDb", 0.0));

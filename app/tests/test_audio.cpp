@@ -5,11 +5,17 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QGroupBox>
+#include <cmath>
 #include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/io/ProjectIo.h"
+
 #include "../AudioStrip.h"
+#include "../EffectControls.h"
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -370,4 +376,109 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
         window.commands().undo(window.project());
     }
     window.mixer()->refresh();
+}
+
+// Per-clip filtering and compression: the repair a track's channel strip
+// cannot do, because a track's applies to everything on it.
+//
+// `AudioEq` and `Compressor` were on `Track` alone until now, so the only way
+// to hold one loud take down was to split it onto a track of its own — which
+// is how a three-track mix becomes an eleven-track one.
+TEST_CASE("A clip's own repair, set from the inspector", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* panel = window.effects();
+    const auto& sequence = *window.sequence();
+    const auto sequenceId = sequence.id();
+    const auto& audioTrack = sequence.audioTracks().front();
+    if (audioTrack.clips().empty()) {
+        zaro::app::testing::failf("the fixture has no sound clip\n");
+    }
+    const auto trackId = audioTrack.id();
+    const auto clipId = audioTrack.clips().front().id;
+
+    panel->setSelection(trackId, clipId);
+    panel->setPane(zaro::app::EffectControls::Pane::Audio);
+    QApplication::processEvents();
+
+    auto* repair = panel->findChild<QGroupBox*>("inspector-group-processing");
+    if (repair == nullptr || !repair->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a sound clip is not offered any repair\n");
+    }
+
+    auto* filterOn = panel->findChild<QCheckBox*>("clip-eq-on");
+    auto* highPass = panel->findChild<QDoubleSpinBox*>("clip-highpass");
+    auto* compressOn = panel->findChild<QCheckBox*>("clip-compressor-on");
+    auto* ratio = panel->findChild<QDoubleSpinBox*>("clip-ratio");
+    if (filterOn == nullptr || highPass == nullptr || compressOn == nullptr || ratio == nullptr) {
+        zaro::app::testing::failf("the repair group is missing its controls\n");
+    }
+
+    const auto clipNow = [&]() -> const zaro::model::Clip* {
+        return window.project().findSequence(sequenceId)->findTrack(trackId)->find(clipId);
+    };
+    if (clipNow()->eq.enabled || clipNow()->compressor.enabled) {
+        zaro::app::testing::failf("a clip arrives already processed\n");
+    }
+
+    filterOn->setChecked(true);
+    highPass->setValue(120.0);
+    compressOn->setChecked(true);
+    ratio->setValue(6.0);
+    QApplication::processEvents();
+
+    if (!clipNow()->eq.enabled || std::fabs(clipNow()->eq.highPassHz - 120.0) > 1e-6) {
+        zaro::app::testing::failf("the filter did not reach the clip (%.1f Hz, %s)\n",
+                                  clipNow()->eq.highPassHz,
+                                  clipNow()->eq.enabled ? "on" : "off");
+    }
+    if (!clipNow()->compressor.enabled || std::fabs(clipNow()->compressor.ratio - 6.0) > 1e-6) {
+        zaro::app::testing::failf("the compressor did not reach the clip\n");
+    }
+    // The track it sits on is untouched: that is the whole point of the clip
+    // having its own.
+    const auto& track = *window.project().findSequence(sequenceId)->findTrack(trackId);
+    if (track.eq().enabled || track.compressor().enabled) {
+        zaro::app::testing::failf("repairing a clip processed its whole track\n");
+    }
+
+    // It survives a save, which is what makes it a repair rather than a
+    // preview.
+    const auto text = zaro::io::saveProjectToString(window.project());
+    if (!text) {
+        zaro::app::testing::failf("could not save\n");
+    }
+    const auto reloaded = zaro::io::loadProjectFromString(*text);
+    if (!reloaded) {
+        zaro::app::testing::failf("could not load back\n");
+    }
+    const zaro::model::Clip* saved =
+        reloaded->project.findSequence(sequenceId)->findTrack(trackId)->find(clipId);
+    if (saved == nullptr || !saved->eq.enabled ||
+        std::fabs(saved->eq.highPassHz - 120.0) > 1e-6) {
+        zaro::app::testing::failf("the repair did not survive a save\n");
+    }
+
+    window.commands().undo(window.project());
+    panel->refresh();
+    QApplication::processEvents();
+    if (std::fabs(clipNow()->compressor.ratio - 6.0) < 1e-6 && clipNow()->compressor.enabled) {
+        zaro::app::testing::failf("undo did not take the last change back\n");
+    }
+
+    // And a picture clip is not offered any of it: the Audio page has nothing
+    // behind it for one.
+    const auto videoTrackId = window.sequence()->videoTracks().front().id();
+    const auto videoClipId = window.sequence()->videoTracks().front().clips().front().id;
+    panel->setSelection(videoTrackId, videoClipId);
+    QApplication::processEvents();
+    if (repair->isVisibleTo(panel)) {
+        zaro::app::testing::failf("a picture clip is offered audio repair\n");
+    }
+
+    std::printf("  clip repair: 120 Hz high pass and 6:1, on the clip and not the track\n");
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
 }
