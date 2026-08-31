@@ -44,6 +44,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
                            const model::Mask* wipe) {
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
+    const HueTable& hues = hueCurves_.tableFor(clip.id.value(), clip.hueCurves);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     // Effects first, and on the image rather than on a sampled pixel: they are
@@ -73,6 +74,7 @@ void RenderGraph::drawClip(const model::Clip& clip, const RgbaImage& image, Rgba
     shading.secondary = active ? &secondary : nullptr;
     shading.lut = lut;
     shading.lutAmount = static_cast<float>(clip.lut.amount);
+    shading.hue = &hues;
     shading.mask = mask.isSet() ? &mask : nullptr;
     shading.keyer = keyer.isActive() ? &keyer : nullptr;
     shading.vignette = clip.vignette.isSet() ? &clip.vignette : nullptr;
@@ -91,6 +93,7 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
                                   const time::RationalTime& at) {
     const GradeConstants grade = gradeConstantsFor(clip.colorAt(at), clip.wheels);
     const CurveTable& table = curves_.tableFor(clip.id.value(), clip.curves, transfer_);
+    const HueTable& hues = hueCurves_.tableFor(clip.id.value(), clip.hueCurves);
     const SecondaryConstants secondary = secondaryConstantsFor(clip.secondary, transfer_);
     const LutTable* lut = clip.lut.isSet() ? luts_.tableFor(clip.lut.path, transfer_) : nullptr;
     if (grade.isIdentity() && table.isIdentity() && !secondary.isActive() && lut == nullptr) {
@@ -130,7 +133,7 @@ void RenderGraph::applyAdjustment(const model::Clip& clip, RgbaImage& out,
             const float wasG = g;
             const float wasB = b;
             gradePixel(grade, r, g, b, &table, &secondary, lut,
-                       static_cast<float>(clip.lut.amount));
+                       static_cast<float>(clip.lut.amount), &hues);
             // Blended by opacity and mask rather than switched, so a partly
             // opaque adjustment is a partial correction -- which is how the
             // control reads.

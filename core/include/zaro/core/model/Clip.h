@@ -179,6 +179,11 @@ struct Clip {
     /// render::CurveTable.
     ToneCurves curves;
 
+    /// Saturation against hue, applied with the primary saturation because it
+    /// is the same operation: one number scales how far a pixel is from grey,
+    /// and this makes that number depend on which way from grey it is.
+    HueCurves hueCurves;
+
     /// One secondary: a correction applied only where its qualifier selects.
     /// One rather than a list, for now — the machinery is the same either way,
     /// and a list with no UI to manage it is a list nobody can reach.

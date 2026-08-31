@@ -123,6 +123,10 @@ private:
     render::RenderCache* cache_{nullptr};
     render::TextRasterizer* text_{nullptr};
     render::CurveTableCache curves_;
+    /// The same, for the hue curve. Separate for the reason the CPU graph
+    /// keeps them apart: the two are rebuilt by different edits, and one cache
+    /// would rebuild both every time either moved.
+    render::HueTableCache hueCurves_;
     render::LutCache luts_;
 
     media::TransferFunction transfer_{media::TransferFunction::BT709};

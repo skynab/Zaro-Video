@@ -266,6 +266,19 @@ json encode(const model::ToneCurves& curves) {
     return out;
 }
 
+json encode(const model::HueCurves& curves) {
+    json out = json::object();
+    if (curves.saturation.isIdentity()) {
+        return out;
+    }
+    json points = json::array();
+    for (const model::CurvePoint& point : curves.saturation.points()) {
+        points.push_back(json{{"x", point.x}, {"y", point.y}});
+    }
+    out["saturation"] = std::move(points);
+    return out;
+}
+
 json encode(const model::ClipAnimation& animation) {
     // Curves keyed by parameter name rather than an array of {param, curve}
     // pairs: a parameter can only be animated once, and a map says so in the
@@ -463,6 +476,9 @@ json encode(const model::Clip& clip) {
     }
     if (json curves = encode(clip.curves); !curves.empty()) {
         out["curves"] = std::move(curves);
+    }
+    if (json hue = encode(clip.hueCurves); !hue.empty()) {
+        out["hueCurves"] = std::move(hue);
     }
     if (json animation = encode(clip.animation); !animation.empty()) {
         out["animation"] = std::move(animation);

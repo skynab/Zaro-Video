@@ -31,7 +31,8 @@ bool GpuRenderGraph::drawClipImage(const model::Clip& clip, const render::RgbaIm
                &curves_.tableFor(clip.id.value(), clip.curves, transfer_), &secondary, lut,
                static_cast<float>(clip.lut.amount), mask.isSet() ? &mask : nullptr,
                keyer.isActive() ? &keyer : nullptr,
-               clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
+               clip.vignette.isSet() ? &clip.vignette : nullptr, wipe,
+               &hueCurves_.tableFor(clip.id.value(), clip.hueCurves))
         .ok();
 }
 
@@ -49,7 +50,8 @@ bool GpuRenderGraph::drawClip(const model::Clip& clip, const media::VideoFrame& 
                      clip.blend, &curves_.tableFor(clip.id.value(), clip.curves, transfer_),
                      &secondary, lut, static_cast<float>(clip.lut.amount),
                      mask.isSet() ? &mask : nullptr, keyer.isActive() ? &keyer : nullptr,
-                     clip.vignette.isSet() ? &clip.vignette : nullptr, wipe)
+                     clip.vignette.isSet() ? &clip.vignette : nullptr, wipe,
+                     &hueCurves_.tableFor(clip.id.value(), clip.hueCurves))
         .ok();
 }
 

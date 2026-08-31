@@ -273,6 +273,24 @@ model::Secondary decodeSecondary(const json& node) {
     return out;
 }
 
+model::HueCurves decodeHueCurves(const json& node) {
+    model::HueCurves out;
+    if (!node.is_object() || !node.contains("saturation") ||
+        !node.at("saturation").is_array()) {
+        return out;
+    }
+    for (const json& point : node.at("saturation")) {
+        if (!point.is_object()) {
+            continue;
+        }
+        // set() rather than push_back, for the reason the tone curves give: a
+        // hand-edited file can hold points out of order or twice over, and
+        // evaluation depends on neither being possible.
+        out.saturation.set(model::CurvePoint{point.value("x", 0.0), point.value("y", 0.0)});
+    }
+    return out;
+}
+
 model::ToneCurves decodeCurves(const json& node) {
     model::ToneCurves out;
     if (!node.is_object()) {
@@ -536,6 +554,9 @@ Result<model::Clip> decodeClip(const json& node) {
     }
     if (node.contains("effects")) {
         clip.effects = decodeEffects(node.at("effects"));
+    }
+    if (node.contains("hueCurves")) {
+        clip.hueCurves = decodeHueCurves(node.at("hueCurves"));
     }
     if (node.contains("curves")) {
         clip.curves = decodeCurves(node.at("curves"));

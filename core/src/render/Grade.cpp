@@ -84,8 +84,36 @@ SecondaryConstants secondaryConstantsFor(const model::Secondary& secondary,
     return out;
 }
 
+/// A pixel's hue as a turn around the circle, 0 to 1.
+///
+/// The same formula the shader uses, in the same place in the chain, because
+/// the two are compared pixel for pixel. A neutral pixel has no hue at all --
+/// the formula divides by a range of zero -- and answers 0, which is harmless:
+/// a pixel with no colour in it is unchanged by any saturation multiplier.
+float hueTurn(float r, float g, float b) {
+    const float high = std::max(r, std::max(g, b));
+    const float low = std::min(r, std::min(g, b));
+    const float range = high - low;
+    if (range <= 0.0F) {
+        return 0.0F;
+    }
+    float degrees = 0.0F;
+    if (high == r) {
+        degrees = 60.0F * std::fmod((g - b) / range, 6.0F);
+    } else if (high == g) {
+        degrees = 60.0F * (((b - r) / range) + 2.0F);
+    } else {
+        degrees = 60.0F * (((r - g) / range) + 4.0F);
+    }
+    if (degrees < 0.0F) {
+        degrees += 360.0F;
+    }
+    return degrees / 360.0F;
+}
+
 void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const CurveTable* curves,
-                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
+                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
+                const HueTable* hue) {
     r *= grade.balance.r * grade.exposure;
     g *= grade.balance.g * grade.exposure;
     b *= grade.balance.b * grade.exposure;
@@ -121,14 +149,24 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
         b = pivot(b);
     }
 
-    if (grade.saturation != 1.0F) {
+    // Saturation, and the hue curve with it, because they are the same
+    // operation: one number scales how far a pixel is from grey, and the curve
+    // makes that number depend on which way from grey it is. Applying them
+    // separately would mix toward luma twice and cost a second pass over the
+    // pixel to reach the same place.
+    const bool shapedByHue = hue != nullptr && !hue->isIdentity();
+    if (grade.saturation != 1.0F || shapedByHue) {
         // Toward the luma of the pixel, so desaturating never changes its
         // brightness. Mixing toward a fixed grey would darken saturated
         // colours and lighten dark ones.
         const float grey = luma(r, g, b);
-        r = grey + ((r - grey) * grade.saturation);
-        g = grey + ((g - grey) * grade.saturation);
-        b = grey + ((b - grey) * grade.saturation);
+        float amount = grade.saturation;
+        if (shapedByHue) {
+            amount *= hue->saturationAt(hueTurn(r, g, b));
+        }
+        r = grey + ((r - grey) * amount);
+        g = grey + ((g - grey) * amount);
+        b = grey + ((b - grey) * amount);
     }
 
     if (lut != nullptr && lut->isValid()) {
@@ -167,11 +205,13 @@ void gradePixel(const GradeConstants& grade, float& r, float& g, float& b, const
 }
 
 void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable* curves,
-                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount) {
+                const SecondaryConstants* secondary, const LutTable* lut, float lutAmount,
+                const HueTable* hue) {
     const bool curved = curves != nullptr && !curves->isIdentity();
     const bool keyed = secondary != nullptr && secondary->isActive();
     const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
-    if ((grade.isIdentity() && !curved && !keyed && !looked) || !image.isValid()) {
+    const bool shapedByHue = hue != nullptr && !hue->isIdentity();
+    if ((grade.isIdentity() && !curved && !keyed && !looked && !shapedByHue) || !image.isValid()) {
         return;
     }
     for (std::int32_t y = 0; y < image.height(); ++y) {
@@ -186,7 +226,7 @@ void gradeImage(const GradeConstants& grade, RgbaImage& image, const CurveTable*
             float r = pixel.r * inverse;
             float g = pixel.g * inverse;
             float b = pixel.b * inverse;
-            gradePixel(grade, r, g, b, curves, secondary, lut, lutAmount);
+            gradePixel(grade, r, g, b, curves, secondary, lut, lutAmount, hue);
             pixel.r = r * alpha;
             pixel.g = g * alpha;
             pixel.b = b * alpha;

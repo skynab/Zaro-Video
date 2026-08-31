@@ -40,6 +40,8 @@ struct ClipShading {
     const SecondaryConstants* secondary{nullptr};
     const LutTable* lut{nullptr};
     float lutAmount{1.0F};
+    /// Saturation against hue, applied with the primary saturation.
+    const HueTable* hue{nullptr};
     const model::Mask* mask{nullptr};
     const KeyerConstants* keyer{nullptr};
     const model::Vignette* vignette{nullptr};

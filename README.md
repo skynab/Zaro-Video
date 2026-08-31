@@ -140,6 +140,7 @@ FCPXML for Final Cut Pro, which reads neither of the other two.
 | 8b | A track page, and titles named by what they say | **done** |
 | 8c | Wider gamuts converted into the working space, on both paths | **done** |
 | 8d | Saying what a file's gamut really is, beside its curve | **done** |
+| 8e | Saturation against hue, on both paths | **done** |
 
 ## Building
 

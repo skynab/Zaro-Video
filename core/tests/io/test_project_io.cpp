@@ -728,3 +728,32 @@ TEST_CASE("A file's gamut correction survives a save", "[io]") {
     const model::MediaRef& untouched = loaded->project.media().back();
     CHECK(untouched.primariesOverride == media::ColorPrimaries::Unknown);
 }
+
+TEST_CASE("A hue curve survives a save", "[io]") {
+    Fixture f = populated();
+    const auto trackId = f.v1;
+    const auto clipId = f.track(trackId).clips().front().id;
+
+    model::HueCurves curves;
+    curves.saturation.set(model::CurvePoint{0.1, 0.8});
+    curves.saturation.set(model::CurvePoint{0.6, 0.2});
+    f.track(trackId).find(clipId)->hueCurves = curves;
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    const auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+
+    const model::Clip* back =
+        loaded->project.findSequence(f.sequenceId)->findTrack(trackId)->find(clipId);
+    REQUIRE(back != nullptr);
+    CHECK(back->hueCurves == curves);
+
+    // And a clip with no hue curve writes nothing, so a project made before
+    // this existed reads back exactly as it did.
+    const model::Clip& untouched = loaded->project.findSequence(f.sequenceId)
+                                       ->findTrack(f.v2)
+                                       ->clips()
+                                       .front();
+    CHECK(untouched.hueCurves.isIdentity());
+}

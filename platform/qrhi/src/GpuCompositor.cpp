@@ -25,6 +25,7 @@
 
 #include "zaro/core/render/ColorPipeline.h"
 #include "zaro/core/render/Gamut.h"
+#include "zaro/core/render/HueTable.h"
 
 namespace zaro::platform::qrhi {
 namespace {
@@ -99,26 +100,60 @@ std::unique_ptr<QRhiTexture> makeLutTexture(QRhi& rhi, QRhiResourceUpdateBatch& 
 /// RGBA rather than RGB: three-component float textures are not universally
 /// supported for sampling, and a quarter of 16 kB is not worth the risk of a
 /// format that works on one machine and not the next.
+/// The grade's lookup tables, as one two-row texture.
+///
+/// Row 0 is the tone curves, indexed by `CurveTable::indexFor`; row 1 is the
+/// saturation-against-hue curve, indexed by hue. Two rows of one texture rather
+/// than two textures, because a second sampler would be a fourth binding to add
+/// at eight call sites and a fourth fallback to get right at each of them --
+/// and a binding missed is undefined behaviour rather than a compile error.
+///
+/// Sampled at v = 0.25 and v = 0.75, which are the two rows' texel centres, so
+/// the linear filter returns each row exactly rather than a blend of both.
+/// That is why the existing tone lookups moved off v = 0.5: on a two-row
+/// texture that is the seam between them.
+///
+/// Either table may be absent, and the row it would have filled is left at
+/// values the shader's flags stop it reading.
 std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch& batch,
-                                              const render::CurveTable& table) {
+                                              const render::CurveTable* table,
+                                              const render::HueTable* hue) {
     constexpr int kEntries = render::CurveTable::kEntries;
     auto texture = std::unique_ptr<QRhiTexture>(rhi.newTexture(
-        QRhiTexture::RGBA32F, QSize(kEntries, 1), 1, QRhiTexture::UsedAsTransferSource));
+        QRhiTexture::RGBA32F, QSize(kEntries, 2), 1, QRhiTexture::UsedAsTransferSource));
     if (!texture->create()) {
         return nullptr;
     }
 
-    std::vector<float> padded(static_cast<std::size_t>(kEntries) * 4, 0.0F);
-    const float* entries = table.data();
+    std::vector<float> padded(static_cast<std::size_t>(kEntries) * 2 * 4, 0.0F);
+    const float* entries = table != nullptr ? table->data() : nullptr;
     for (int i = 0; i < kEntries; ++i) {
         for (int channel = 0; channel < 3; ++channel) {
             padded[(static_cast<std::size_t>(i) * 4) + static_cast<std::size_t>(channel)] =
-                entries[(static_cast<std::size_t>(i) * 3) + static_cast<std::size_t>(channel)];
+                entries != nullptr
+                    ? entries[(static_cast<std::size_t>(i) * 3) + static_cast<std::size_t>(channel)]
+                    : 0.0F;
         }
         padded[(static_cast<std::size_t>(i) * 4) + 3] = 1.0F;
     }
+    // The hue row, resampled to the texture's width at texel centres, so the
+    // GPU's linear filter walks the same interpolation the CPU's own table
+    // does. The one place they cannot agree exactly is the half texel either
+    // side of red, where the CPU wraps and a clamped sampler does not -- about
+    // a fifth of a degree of hue, and the sampler is shared with the tone row,
+    // which must clamp.
+    const std::size_t second = static_cast<std::size_t>(kEntries) * 4;
+    for (int i = 0; i < kEntries; ++i) {
+        const float turn = (static_cast<float>(i) + 0.5F) / static_cast<float>(kEntries);
+        const float value = hue != nullptr ? hue->saturationAt(turn) : 1.0F;
+        const std::size_t at = second + (static_cast<std::size_t>(i) * 4);
+        padded[at] = value;
+        padded[at + 1] = value;
+        padded[at + 2] = value;
+        padded[at + 3] = 1.0F;
+    }
 
-    QImage staging(reinterpret_cast<const uchar*>(padded.data()), kEntries, 1,
+    QImage staging(reinterpret_cast<const uchar*>(padded.data()), kEntries, 2,
                    kEntries * 4 * static_cast<int>(sizeof(float)), QImage::Format_RGBA32FPx4);
     QRhiTextureSubresourceUploadDescription upload(staging.copy());
     batch.uploadTexture(texture.get(), QRhiTextureUploadDescription({0, 0, upload}));
@@ -126,7 +161,7 @@ std::unique_ptr<QRhiTexture> makeCurveTexture(QRhi& rhi, QRhiResourceUpdateBatch
 }
 
 void writeGrade(std::array<float, kUniformFloats>& uniformData, const render::GradeConstants& grade,
-                bool curved, const render::SecondaryConstants* secondary) {
+                bool curved, const render::SecondaryConstants* secondary, bool shaped = false) {
     uniformData[20] = grade.balance.r;
     uniformData[21] = grade.balance.g;
     uniformData[22] = grade.balance.b;
@@ -137,6 +172,10 @@ void writeGrade(std::array<float, kUniformFloats>& uniformData, const render::Gr
     // ungraded pixel through the table's own resolution, and an ungraded clip
     // has to come out bit-identical.
     uniformData[26] = curved ? 1.0F : 0.0F;
+    // And the same for the hue curve, for the same reason: sampling an
+    // identity row would round every ungraded pixel through the table's
+    // resolution, and an ungraded clip has to come out bit-identical.
+    uniformData[27] = shaped ? 1.0F : 0.0F;
 
     // The three wheels. Written here with the rest of the primary, so a call
     // site cannot pick up one and forget the other.
@@ -703,7 +742,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
                            const render::SecondaryConstants* secondary, const render::LutTable* lut,
                            float lutAmount, const model::Mask* mask,
                            const render::KeyerConstants* keyer, const model::Vignette* vignette,
-                           const model::Mask* wipe) {
+                           const model::Mask* wipe, const render::HueTable* hue) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -762,11 +801,13 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
     batch->uploadTexture(texture.get(), description);
 
     const bool curved = curves != nullptr && !curves->isIdentity();
+    const bool shaped = hue != nullptr && !hue->isIdentity();
     const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
     std::unique_ptr<QRhiTexture> lutTexture;
     std::unique_ptr<QRhiTexture> curveTexture;
-    if (curved) {
-        curveTexture = makeCurveTexture(*state.rhi, *batch, *curves);
+    if (curved || shaped) {
+        curveTexture = makeCurveTexture(*state.rhi, *batch, curved ? curves : nullptr,
+                                        shaped ? hue : nullptr);
         if (curveTexture == nullptr) {
             return Error{ErrorCode::Internal, "cannot allocate a curve texture"};
         }
@@ -787,7 +828,8 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
                                                   texture.get(), state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
-                                                  curved ? curveTexture.get() : state.noCurve.get(),
+                                                  curveTexture ? curveTexture.get()
+                                                               : state.noCurve.get(),
                                                   state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
                                                   looked ? lutTexture.get() : state.noLut.get(),
@@ -803,7 +845,7 @@ Status GpuCompositor::draw(const render::RgbaImage& source, const model::Transfo
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
-    writeGrade(uniformData, grade, curved, secondary);
+    writeGrade(uniformData, grade, curved, secondary, shaped);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeVignette(uniformData, vignette);
@@ -1009,7 +1051,8 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
                                  const render::SecondaryConstants* secondary,
                                  const render::LutTable* lut, float lutAmount,
                                  const model::Mask* mask, const render::KeyerConstants* keyer,
-                                 const model::Vignette* vignette, const model::Mask* wipe) {
+                                 const model::Vignette* vignette, const model::Mask* wipe,
+                                 const render::HueTable* hue) {
     State& state = *state_;
     if (!state.inFrame) {
         return Error{ErrorCode::Internal, "draw outside a frame"};
@@ -1244,12 +1287,14 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         return Error{ErrorCode::Internal, "cannot allocate a uniform buffer"};
     }
     const bool curved = curves != nullptr && !curves->isIdentity();
+    const bool shaped = hue != nullptr && !hue->isIdentity();
     const bool looked = lut != nullptr && lut->isValid() && lutAmount > 0.0F;
     std::unique_ptr<QRhiTexture> lutTexture;
     std::unique_ptr<QRhiTexture> curveTexture;
-    if (curved) {
+    if (curved || shaped) {
         QRhiResourceUpdateBatch* curveBatch = state.rhi->nextResourceUpdateBatch();
-        curveTexture = makeCurveTexture(*state.rhi, *curveBatch, *curves);
+        curveTexture = makeCurveTexture(*state.rhi, *curveBatch, curved ? curves : nullptr,
+                                        shaped ? hue : nullptr);
         if (curveTexture == nullptr) {
             return Error{ErrorCode::Internal, "cannot allocate a curve texture"};
         }
@@ -1273,7 +1318,8 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage,
                                                   staging.texture.get(), state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage,
-                                                  curved ? curveTexture.get() : state.noCurve.get(),
+                                                  curveTexture ? curveTexture.get()
+                                                               : state.noCurve.get(),
                                                   state.sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage,
                                                   looked ? lutTexture.get() : state.noLut.get(),
@@ -1289,7 +1335,7 @@ Status GpuCompositor::drawSource(const media::VideoFrame& source, const model::T
         uniformData[static_cast<std::size_t>(i)] = matrixData[i];
     }
     uniformData[16] = static_cast<float>(transform.opacity);
-    writeGrade(uniformData, grade, curved, secondary);
+    writeGrade(uniformData, grade, curved, secondary, shaped);
     writeLook(uniformData, lut, lutAmount);
     writeMask(uniformData, mask, state.size);
     writeVignette(uniformData, vignette);

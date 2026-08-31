@@ -4979,3 +4979,54 @@ passed or failed on which clip somebody generated. What the app layer can prove
 is that the tag reaches the decoder and that clearing it takes the correction
 back; that the tag then changes a coloured picture is checked in core, where the
 source is built to have colour in it.
+
+
+### Phase 8e — saturation against hue §7.3 ✅
+
+The other half of Lumetri's curve set, and the one people reach for first: pull
+a sky down without touching skin, lift a tired green, take the ring out of a
+magenta practical. `ToneCurves` has been master, red, green and blue since Phase
+5e; nothing was indexed by hue.
+
+**The machinery is the tone curves', and almost none of the meaning is.**
+
+*x wraps.* Hue is a circle, so 0 and 1 are the same place, and a curve evaluated
+on the line has a seam at red — which is the single most common hue anybody
+adjusts. `render::HueTable` bakes with the curve's points repeated a turn either
+side, so the interpolation carries across the seam exactly as it does anywhere
+else. Doing that per pixel would mean rebuilding a point list six million times
+a frame; doing it at bake time costs nothing, which is the same argument that
+put the tone curves in a table.
+
+*0.5 is neutral, not 0.* The value is a multiplier and the curve has to go both
+ways, so the middle of the range means leave it alone: 0 removes the colour, 0.5
+keeps it, 1 doubles it. A curve with no points is identity and costs nothing,
+which is not the same as a flat curve at 0.5 — that is the identity spelled out,
+and it still builds a table.
+
+*It is not a separate stage.* The curve is applied with the primary saturation,
+because they are one operation: a number that scales how far a pixel is from
+grey, and a curve that makes that number depend on which way from grey it is.
+Two stages would mix toward luma twice and cost a second pass over the pixel to
+arrive in the same place.
+
+**The GPU carries it in the second row of the table it already had.** A second
+sampler would have been a fourth binding to add at eight call sites and a fourth
+fallback to get right at each — and a binding missed is undefined behaviour
+rather than a compile error. So the curve texture is two rows: tone indexed by
+brightness, hue indexed by hue, sampled at v = 0.25 and v = 0.75, which are the
+rows' texel centres. The tone lookups had to move off v = 0.5, which on a
+two-row texture is the seam between them and returns a blend of both — the kind
+of change that is invisible until a picture is slightly wrong everywhere. The
+existing tone-curve golden tests are what say it was done right.
+
+The two paths cannot agree exactly in the half texel either side of red, where
+the CPU wraps and a clamped sampler does not: about a fifth of a degree of hue,
+and the sampler is shared with the tone row, which must clamp. The golden test
+includes a curve straddling that seam deliberately, so the size of the
+disagreement is measured rather than assumed.
+
+**Not done here.** Hue against hue, and luma against saturation: the same table
+gains a row each, and the same argument covers them. And a way to draw one — the
+curve editor has a channel selector and this is another entry in it, which is
+where this goes next.

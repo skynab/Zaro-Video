@@ -1981,3 +1981,75 @@ TEST_CASE("The GPU agrees with the CPU on a wipe", "[gpu][golden][transition]") 
         }
     }
 }
+
+TEST_CASE("The GPU hue curve agrees with the CPU reference", "[gpu][golden][curves]") {
+    // Saturation against hue, on both paths. The curve rides in the second row
+    // of the same texture the tone curves use, indexed by hue rather than by
+    // brightness -- so this also checks that the tone lookups still land on
+    // their own row and not on a blend of the two.
+    auto compositor = gpu();
+    if (!compositor) {
+        SKIP("no GPU backend on this machine");
+    }
+    INFO("backend: " << compositor->backendName());
+
+    struct Case {
+        const char* name;
+        model::HueCurves curves;
+    };
+    std::vector<Case> cases;
+    {
+        // The blues pulled down and the rest left alone: what somebody does to
+        // a sky. Hue 0.6 is around blue on the circle.
+        Case pulled{"blues down", {}};
+        pulled.curves.saturation.set(model::CurvePoint{0.0, 0.5});
+        pulled.curves.saturation.set(model::CurvePoint{0.45, 0.5});
+        pulled.curves.saturation.set(model::CurvePoint{0.6, 0.1});
+        pulled.curves.saturation.set(model::CurvePoint{0.75, 0.5});
+        cases.push_back(pulled);
+
+        // And a curve that straddles red, which is the seam the table wraps
+        // across and the one place the two paths could differ.
+        Case red{"reds lifted, across the seam", {}};
+        red.curves.saturation.set(model::CurvePoint{0.9, 0.9});
+        red.curves.saturation.set(model::CurvePoint{0.1, 0.9});
+        red.curves.saturation.set(model::CurvePoint{0.5, 0.2});
+        cases.push_back(red);
+    }
+
+    // Colour in every direction, so the curve has something to act on at every
+    // hue -- a ramp of one hue would pass a curve that only worked on that one.
+    RgbaImage source{32, 32};
+    for (std::int32_t y = 0; y < 32; ++y) {
+        Rgba* row = source.row(y);
+        for (std::int32_t x = 0; x < 32; ++x) {
+            const float u = static_cast<float>(x) / 31.0F;
+            const float v = static_cast<float>(y) / 31.0F;
+            row[x] = Rgba{0.2F + (0.8F * u), 0.2F + (0.8F * v),
+                          0.2F + (0.8F * (1.0F - (u * v))), 1.0F};
+        }
+    }
+
+    for (const Case& testCase : cases) {
+        const render::HueTable table{testCase.curves};
+        REQUIRE_FALSE(table.isIdentity());
+        const render::GradeConstants neutral;
+
+        RgbaImage cpuOut{32, 32};
+        render::drawTransformed(source, cpuOut, Transform{}, BlendMode::Normal,
+                                {.grade = &neutral, .hue = &table});
+
+        ZARO_REQUIRE_OK(compositor->beginFrame(32, 32));
+        ZARO_REQUIRE_OK(compositor->draw(source, Transform{}, BlendMode::Normal, neutral, nullptr,
+                                         nullptr, nullptr, 1.0F, nullptr, nullptr, nullptr, nullptr,
+                                         &table));
+        RgbaImage gpuOut;
+        ZARO_REQUIRE_OK(compositor->endFrame(gpuOut));
+
+        const Difference difference = compare(cpuOut, gpuOut, 1);
+        INFO(testCase.name << ": worst " << difference.worst << " at " << difference.worstX << ","
+                           << difference.worstY << ", mean " << difference.mean);
+        CHECK(difference.worst < 0.01F);
+        CHECK(difference.mean < 0.002F);
+    }
+}

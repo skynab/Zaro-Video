@@ -83,7 +83,7 @@ Rgba shaded(const Rgba& pixel, const ClipShading& shading) {
 
     if (shading.grade != nullptr) {
         gradePixel(*shading.grade, r, g, b, shading.curves, shading.secondary, shading.lut,
-                   shading.lutAmount);
+                   shading.lutAmount, shading.hue);
     }
     return Rgba{r * alpha, g * alpha, b * alpha, alpha};
 }

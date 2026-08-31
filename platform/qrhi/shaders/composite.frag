@@ -179,9 +179,38 @@ vec3 applyGrade(vec3 colour)
         colour = mix(colour, curved, step(vec3(1e-8), colour));
     }
 
-    if (ubuf.grade.y != 1.0) {
+    // Saturation, and the hue curve with it: one number scales how far a pixel
+    // is from grey, and the curve makes that number depend on which way from
+    // grey it is. Must match render::gradePixel, which does the same thing in
+    // the same place and is compared against this pixel for pixel.
+    if (ubuf.grade.y != 1.0 || ubuf.grade.w != 0.0) {
         float grey = dot(colour, kLumaWeights);
-        colour = vec3(grey) + (colour - vec3(grey)) * ubuf.grade.y;
+        float amount = ubuf.grade.y;
+        if (ubuf.grade.w != 0.0) {
+            // Row 1 of the table, at its texel centre. Indexed by hue, where
+            // the tone rows are indexed by brightness -- two different axes in
+            // one texture, which is what the second row is for.
+            float high = max(colour.r, max(colour.g, colour.b));
+            float low = min(colour.r, min(colour.g, colour.b));
+            float span = high - low;
+            float turn = 0.0;
+            if (span > 0.0) {
+                float degrees;
+                if (high == colour.r) {
+                    degrees = 60.0 * mod((colour.g - colour.b) / span, 6.0);
+                } else if (high == colour.g) {
+                    degrees = 60.0 * (((colour.b - colour.r) / span) + 2.0);
+                } else {
+                    degrees = 60.0 * (((colour.r - colour.g) / span) + 4.0);
+                }
+                if (degrees < 0.0) {
+                    degrees += 360.0;
+                }
+                turn = degrees / 360.0;
+            }
+            amount *= texture(curveTable, vec2(turn, 0.75)).r;
+        }
+        colour = vec3(grey) + (colour - vec3(grey)) * amount;
     }
 
     if (ubuf.look.z != 0.0) {
@@ -208,9 +237,12 @@ vec3 applyGrade(vec3 colour)
         // there is nothing here to get subtly different.
         vec3 lifted = max(colour, vec3(0.0));
         vec3 index = sqrt(lifted / (vec3(1.0) + lifted));
-        colour = vec3(texture(curveTable, vec2(index.r, 0.5)).r,
-                      texture(curveTable, vec2(index.g, 0.5)).g,
-                      texture(curveTable, vec2(index.b, 0.5)).b);
+        // v = 0.25 is row 0's texel centre on the two-row table. 0.5 is the
+        // seam between the rows, where a linear filter returns a blend of the
+        // tone curve and the hue curve.
+        colour = vec3(texture(curveTable, vec2(index.r, 0.25)).r,
+                      texture(curveTable, vec2(index.g, 0.25)).g,
+                      texture(curveTable, vec2(index.b, 0.25)).b);
     }
 
     if (ubuf.secGrade.w != 0.0) {

@@ -55,6 +55,31 @@ private:
     std::vector<CurvePoint> points_;
 };
 
+/// Curves whose x axis is hue rather than brightness.
+///
+/// A different kind of curve from the tone ones below, sharing their machinery
+/// and almost none of their meaning:
+///
+///   * **x wraps.** Hue is a circle, so 0 and 1 are the same place. A curve
+///     evaluated without wrapping has a seam at red, which is the single most
+///     common hue anybody adjusts. `render::HueTable` is where the wrap
+///     happens, once, at bake time.
+///   * **0.5 is neutral, not 0.** The value is a multiplier on saturation and
+///     the curve has to be able to go both ways, so the middle of the range
+///     means "leave it alone": 0 removes the colour, 0.5 keeps it, 1 doubles
+///     it. A curve with no points is identity, as the tone curves are, which
+///     is not the same as a flat curve at 0.5 -- that is the identity spelled
+///     out, and it still costs a table.
+struct HueCurves {
+    /// Saturation against hue: pull the sky down without touching skin, lift a
+    /// tired green, take the ring out of a magenta practical.
+    ToneCurve saturation;
+
+    [[nodiscard]] bool isIdentity() const { return saturation.isIdentity(); }
+
+    friend bool operator==(const HueCurves&, const HueCurves&) = default;
+};
+
 /// The four curves a primary grade has: one on luma and one per channel.
 struct ToneCurves {
     ToneCurve master;
