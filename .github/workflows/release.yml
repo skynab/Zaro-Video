@@ -230,8 +230,7 @@ jobs:
           mkdir -p dist
           # CPack drops the archive in the build tree next to everything else.
           find "build/${{ matrix.preset }}" -maxdepth 1 \
-            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.zip' \
-               -o -name 'CutReel-*.msi' -o -name 'CutReel-*.exe' \
+            \( -name 'CutReel-*.tar.gz' -o -name 'CutReel-*.exe' \
                -o -name 'cutreel_*.deb' \) -exec cp {} dist/ \;
           ls -l dist
           # An empty upload is a green job that shipped nothing, which is worse

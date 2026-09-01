@@ -8,13 +8,21 @@
 #   cmake --build   --preset release
 #   cpack           --preset release
 #
-# produces build/release/CutReel-<version>-<platform>.{tar.gz,zip}.
+# produces build/release/CutReel-<version>-<platform>.tar.gz on Unix, and on
+# Windows the installer described below.
 
-# Windows produces two things: the ZIP, for anybody who wants the files, and an
-# MSI built by WiX, for anybody who wants it installed. Everything in bin/ is
-# self-contained there -- Qt from windeployqt, FFmpeg and SDL from the vcpkg
-# DLLs installed in cmake/WindowsRuntimeDeps.cmake, and the MSVC runtime from
-# InstallRequiredSystemLibraries below.
+# Windows ships one file: the bootstrapper .exe, which is an MSI inside a
+# wrapper that can carry an icon. The MSI is still built -- it is what the .exe
+# installs -- but it is not shipped beside it, because two downloads that
+# install the same thing is a choice nobody wants to be asked to make.
+#
+# There is no ZIP any more either. It was the loose files for anybody who did
+# not want an installer, and it was a second self-contained copy of Qt, FFmpeg
+# and SDL to build, upload and keep in step for that.
+#
+# Everything in bin/ is self-contained there -- Qt from windeployqt, FFmpeg and
+# SDL from the vcpkg DLLs installed in cmake/WindowsRuntimeDeps.cmake, and the
+# MSVC runtime from InstallRequiredSystemLibraries below.
 #
 # Linux produces two as well: the tarball, self-contained, unpack it anywhere;
 # and a .deb that puts the same tree under /usr. Everything both carry is in
@@ -58,7 +66,7 @@ set(CPACK_PACKAGE_FILE_NAME
     "CutReel-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 
 if(WIN32)
-    set(CPACK_GENERATOR ZIP WIX)
+    set(CPACK_GENERATOR WIX)
 
     # --- The MSI ---------------------------------------------------------------
     # Stable for the life of the product, and the one value here that must never
