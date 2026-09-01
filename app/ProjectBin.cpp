@@ -3,6 +3,10 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCursor>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -16,12 +20,14 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStringList>
 #include <QStyledItemDelegate>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -33,6 +39,7 @@
 #include <vector>
 
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/io/MediaBrowser.h"
 #include "zaro/core/media/Waveform.h"
 #include "zaro/core/model/MediaSearch.h"
 #include "zaro/core/time/Timecode.h"
@@ -441,6 +448,13 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     chipHolder_->setSizePolicy(chipPolicy);
     chipGroup_ = new QButtonGroup(this);
     chipGroup_->setExclusive(false);
+
+    // Files dragged from the file manager land on the pane, not on whichever
+    // child they happen to be over: the list is NoDragDrop, so its viewport
+    // lets the event through, and the search field is told to do the same
+    // rather than take a path in as text to search for.
+    setAcceptDrops(true);
+    search_->setAcceptDrops(false);
 
     // --- the list ---------------------------------------------------------
     list_ = new QListWidget(this);
@@ -955,18 +969,60 @@ void ProjectBin::importFiles() {
     if (chosen.isEmpty()) {
         return;
     }
+    static_cast<void>(importPaths(chosen));
+}
+
+int ProjectBin::importPaths(const QStringList& paths) {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return 0;
+    }
+
+    // A folder stands for the media in it. One level down, not a walk of the
+    // tree: a card's clips are in its folder, and a recursive import of a home
+    // directory somebody let go of over the wrong pane is not recoverable in
+    // one undo.
+    QStringList files;
+    for (const QString& path : paths) {
+        const QFileInfo info{path};
+        if (!info.isDir()) {
+            files.push_back(path);
+            continue;
+        }
+        auto listed = io::listFolder(path.toStdString());
+        if (!listed) {
+            continue;
+        }
+        for (const io::FolderEntry& entry : *listed) {
+            if (!entry.isFolder) {
+                files.push_back(QString::fromStdString(entry.path));
+            }
+        }
+    }
 
     // Probed on this thread rather than a background one. A probe reads a
     // header, not a stream -- it takes milliseconds -- and every background
     // thread added is another lifetime to get right, which is what caused the
     // abort-on-quit bug.
-    for (const QString& path : chosen) {
-        auto probed = zaro::platform::ffmpeg::probe(path.toStdString());
+    int added = 0;
+    for (const QString& path : files) {
+        const std::string where = path.toStdString();
+
+        // Already in the project? Importing it twice gives two entries
+        // pointing at one file, which is two things to grade and relink -- and
+        // dropping the same folder twice is an easy thing to do.
+        const bool known =
+            std::any_of(project_->media().begin(), project_->media().end(),
+                        [&where](const model::MediaRef& ref) { return ref.path == where; });
+        if (known) {
+            continue;
+        }
+
+        auto probed = zaro::platform::ffmpeg::probe(where);
         if (!probed) {
             continue;
         }
         model::MediaRef ref;
-        ref.path = path.toStdString();
+        ref.path = where;
         ref.name = QFileInfo(path).fileName().toStdString();
         ref.info = *probed;
         if (auto hash = media::quickContentHash(ref.path)) {
@@ -982,11 +1038,127 @@ void ProjectBin::importFiles() {
         auto built = edit::makeImportMedia(*project_, std::move(ref));
         if (built) {
             commands_->execute(*project_, std::move(*built));
+            ++added;
         }
     }
     commands_->breakMerge();
     refresh();
     emit edited();
+    return added;
+}
+
+namespace {
+
+/// The local files in a drag, if it carries any this pane would take.
+///
+/// By extension, like the browser lists by extension: the answer is needed
+/// while the pointer is moving, and opening every file under the cursor to be
+/// sure is not something that can happen at that speed. A folder counts,
+/// because a folder of rushes is the usual thing to let go of here.
+QStringList droppedMedia(const QMimeData* mime) {
+    QStringList paths;
+    if (mime == nullptr || !mime->hasUrls()) {
+        return paths;
+    }
+    for (const QUrl& url : mime->urls()) {
+        if (!url.isLocalFile()) {
+            continue;  // a URL is not a file this program can open
+        }
+        const QString path = url.toLocalFile();
+        const QFileInfo info{path};
+        if (info.isDir() || io::looksLikeMedia(path.toStdString())) {
+            paths.push_back(path);
+        }
+    }
+    return paths;
+}
+
+/// The border that says the pane will take what is over it.
+///
+/// A child laid over the list rather than a paint in the pane's own
+/// `paintEvent`: the pane's layout has no margins, so its children cover every
+/// pixel a border would be drawn on, and whatever it painted would be painted
+/// over.
+class DropHint : public QWidget {
+public:
+    explicit DropHint(QWidget* parent) : QWidget{parent} {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        hide();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* /*event*/) override {
+        QPainter painter{this};
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.fillRect(rect(), theme::mix(theme::surface(), theme::accent(), 0.14));
+        painter.setPen(QPen{theme::accent(), 2.0, Qt::DashLine});
+        painter.drawRoundedRect(QRectF{rect()}.adjusted(3.0, 3.0, -3.0, -3.0), 6.0, 6.0);
+    }
+};
+
+}  // namespace
+
+void ProjectBin::dragEnterEvent(QDragEnterEvent* event) {
+    if (project_ == nullptr || commands_ == nullptr || droppedMedia(event->mimeData()).isEmpty()) {
+        event->ignore();
+        return;
+    }
+    // Copy rather than move: the files stay where the shoot left them, and the
+    // project holds a path to them.
+    event->setDropAction(Qt::CopyAction);
+    event->acceptProposedAction();
+    dropHover_ = true;
+    footer_->setText(QStringLiteral("Drop to import"));
+    if (dropHint_ == nullptr) {
+        dropHint_ = new DropHint{this};
+    }
+    dropHint_->setGeometry(pages_->geometry());
+    dropHint_->raise();
+    dropHint_->show();
+}
+
+void ProjectBin::dragMoveEvent(QDragMoveEvent* event) {
+    if (dropHover_) {
+        event->setDropAction(Qt::CopyAction);
+        event->acceptProposedAction();
+        return;
+    }
+    event->ignore();
+}
+
+void ProjectBin::dragLeaveEvent(QDragLeaveEvent* event) {
+    dropHover_ = false;
+    if (dropHint_ != nullptr) {
+        dropHint_->hide();
+    }
+    applyFilter();  // puts the summary back over the "Drop to import"
+    event->accept();
+}
+
+void ProjectBin::dropEvent(QDropEvent* event) {
+    dropHover_ = false;
+    if (dropHint_ != nullptr) {
+        dropHint_->hide();
+    }
+    const QStringList paths = droppedMedia(event->mimeData());
+    if (paths.isEmpty()) {
+        applyFilter();
+        event->ignore();
+        return;
+    }
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const int added = importPaths(paths);
+    QApplication::restoreOverrideCursor();
+
+    // `importPaths` has already put the summary back; only the case worth
+    // remarking on -- files that could not be read, or were here already --
+    // says anything more.
+    if (added == 0) {
+        footer_->setText(QStringLiteral("Nothing to import"));
+    }
 }
 
 ProjectBin::Selection ProjectBin::selection() const {

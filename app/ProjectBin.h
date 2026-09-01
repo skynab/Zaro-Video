@@ -12,6 +12,10 @@
 
 class QAbstractButton;
 class QButtonGroup;
+class QDragEnterEvent;
+class QDragLeaveEvent;
+class QDragMoveEvent;
+class QDropEvent;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -44,6 +48,14 @@ public:
     /// item in this panel's overflow menu, and both should be the same action.
     void importFiles();
 
+    /// Import these paths, and return how many the project gained.
+    ///
+    /// The action behind both ways of asking -- the file dialog and a drop
+    /// from the file manager -- and behind the test that checks either. A
+    /// folder among them is listed rather than refused: dropping a card's
+    /// folder is how somebody hands over a shoot.
+    int importPaths(const QStringList& paths);
+
     /// Transcode files into an editing codec and import the results.
     ///
     /// Public without the dialogs in the way, for the same reason `setNotes`
@@ -59,6 +71,15 @@ public:
     /// weigh, and where the proxies stand. Public so the self-test can read it
     /// without scraping a label.
     [[nodiscard]] QString summary() const;
+
+protected:
+    // A drop from the file manager is the shortest path from "these are my
+    // rushes" to "the project has them", so the pane takes files as well as
+    // asking for them.
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
 signals:
     /// Media was imported, or a clip appended.
@@ -122,6 +143,10 @@ private:
     /// The outline chip: only what the cut actually uses.
     bool usedOnly_{false};
     bool compact_{false};
+    /// Files are hovering over the pane, so it says it will take them.
+    bool dropHover_{false};
+    /// The border drawn over the list while they hover.
+    QWidget* dropHint_{nullptr};
 };
 
 }  // namespace zaro::app

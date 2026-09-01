@@ -3,8 +3,12 @@
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMimeData>
+#include <QUrl>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -957,6 +961,105 @@ TEST_CASE("The media browser imports what is wanted", "[gui]") {
     }
 
     std::filesystem::remove_all(browseRoot);
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    if (Status reopened = window.reopenMedia(); !reopened) {
+        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
+    }
+    QApplication::processEvents();
+}
+
+// Files let go of over the media pane.
+//
+// The drop is delivered as Qt delivers it -- a drag-enter to ask whether the
+// pane will have them, then the drop itself -- because what this covers is the
+// wiring: that the pane says yes to footage, no to a manifest, and that saying
+// yes ends in the same import the file dialog performs.
+TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    const std::filesystem::path dropRoot =
+        std::filesystem::temp_directory_path() / "zaro-selftest-drop";
+    std::filesystem::remove_all(dropRoot);
+    std::filesystem::create_directories(dropRoot);
+    std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"),
+                               dropRoot / "B001.mov");
+    std::filesystem::copy_file(zaro::app::testing::mediaFixture("tone_48k.wav"),
+                               dropRoot / "B001.wav");
+    {
+        std::ofstream junk{dropRoot / "MEDIAPRO.XML"};
+        junk << "<manifest/>";
+    }
+
+    auto* bin = window.bin();
+    if (bin == nullptr) {
+        zaro::app::testing::failf("there is no media pane\n");
+    }
+
+    const auto drag = [bin](const QList<QUrl>& urls) {
+        QMimeData mime;
+        mime.setUrls(urls);
+        QDragEnterEvent entering{QPoint{bin->width() / 2, bin->height() / 2}, Qt::CopyAction, &mime,
+                                 Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(bin, &entering);
+        return entering.isAccepted();
+    };
+    // The enter comes first, as it does in a real drag: Qt only delivers a
+    // drop to a widget that has just said it would take one.
+    const auto drop = [bin, drag](const QList<QUrl>& urls) {
+        static_cast<void>(drag(urls));
+        QMimeData mime;
+        mime.setUrls(urls);
+        QDropEvent dropping{QPointF{bin->width() / 2.0, bin->height() / 2.0}, Qt::CopyAction, &mime,
+                            Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(bin, &dropping);
+        QApplication::processEvents();
+    };
+
+    // A manifest is not footage, and the pane should not offer to take it.
+    if (drag({QUrl::fromLocalFile(QString::fromStdString((dropRoot / "MEDIAPRO.XML").string()))})) {
+        zaro::app::testing::failf("the pane offered to import a manifest\n");
+    }
+
+    const QList<QUrl> footage{
+        QUrl::fromLocalFile(QString::fromStdString((dropRoot / "B001.mov").string())),
+        QUrl::fromLocalFile(QString::fromStdString((dropRoot / "B001.wav").string()))};
+    if (!drag(footage)) {
+        zaro::app::testing::failf("the pane refused a picture and a sound file\n");
+    }
+
+    const std::size_t before = window.project().media().size();
+    drop(footage);
+    if (window.project().media().size() != before + 2) {
+        zaro::app::testing::failf("%zu media after the drop, not %zu\n",
+                                  window.project().media().size(), before + 2);
+    }
+
+    // The same files again, and the folder that holds them: neither adds a
+    // second entry pointing at a file the project already has.
+    drop(footage);
+    drop({QUrl::fromLocalFile(QString::fromStdString(dropRoot.string()))});
+    if (window.project().media().size() != before + 2) {
+        zaro::app::testing::failf("dropping the same files twice made %zu entries, not %zu\n",
+                                  window.project().media().size(), before + 2);
+    }
+
+    // A folder of footage the project has never seen is listed and taken.
+    const std::filesystem::path second = dropRoot / "DAY 3";
+    std::filesystem::create_directories(second);
+    std::filesystem::copy_file(zaro::app::testing::mediaFixture("wide_texture.mp4"),
+                               second / "C001.mp4");
+    drop({QUrl::fromLocalFile(QString::fromStdString(second.string()))});
+    if (window.project().media().size() != before + 3) {
+        zaro::app::testing::failf("the dropped folder added %zu, not one\n",
+                                  window.project().media().size() - before - 2);
+    }
+
+    std::printf("  dropped media: %zu now in the project\n", window.project().media().size());
+
+    std::filesystem::remove_all(dropRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
