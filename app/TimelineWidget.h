@@ -256,7 +256,11 @@ private:
 
     void scrubTo(int x);
     void beginDrag(const ui::TimelineLayout::Hit& hit, int x, bool ripple);
-    void updateDrag(int x);
+    /// Follow the pointer with the clip being dragged.
+    ///
+    /// `y` as well as `x`: a clip may be moved to another row of its own kind,
+    /// which is the only thing the vertical half of the gesture can mean.
+    void updateDrag(int x, int y);
     void updateTrim(int x);
     void finishDrag();
 

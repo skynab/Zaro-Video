@@ -2124,7 +2124,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
     if (drag_ == Drag::MoveClip) {
-        updateDrag(x);
+        updateDrag(x, y);
         return;
     }
     if (drag_ == Drag::TrimIn || drag_ == Drag::TrimOut) {
@@ -2152,7 +2152,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     }
 }
 
-void TimelineWidget::updateDrag(int x) {
+void TimelineWidget::updateDrag(int x, int y) {
     model::Sequence* seq = project_->findSequence(sequenceId_);
     if (seq == nullptr || !selected_.isValid() || commands_ == nullptr) {
         return;
@@ -2169,7 +2169,29 @@ void TimelineWidget::updateDrag(int x) {
         start = time::RationalTime{0, seq->frameRate()};
     }
 
+    // Which row the pointer is over, if the clip may go there.
+    //
+    // Picture to picture and sound to sound: the two families are not
+    // interchangeable -- a sound clip on a video track would draw as an empty
+    // block and show nothing -- so a drag that wanders across the boundary
+    // keeps the clip on the row it came from rather than refusing to move at
+    // all. A locked row is no destination either.
+    //
+    // Anything linked to the clip stays on its own track and follows the same
+    // shift in time, which is what `makeMove` does with a link group: sound
+    // follows picture rather than joining it.
+    model::TrackId destination = selectedTrack_;
+    if (const auto row = layout_.rowAt(*seq, y); row && row->track != selectedTrack_) {
+        const model::Track* wanted = seq->findTrack(row->track);
+        if (wanted != nullptr && wanted->kind() == track->kind() && !wanted->isLocked()) {
+            destination = row->track;
+        }
+    }
+
     if (selection_.size() > 1) {
+        // Sideways only, for a set: moving several clips between rows is a
+        // different question -- which row does each of them land on -- and one
+        // this gesture has no way to ask.
         // The whole set moves by whatever the dragged clip moved, measured
         // against where the clip is now, so a step the model refuses does not
         // accumulate into a growing offset.
@@ -2187,15 +2209,29 @@ void TimelineWidget::updateDrag(int x) {
         return;
     }
 
+    if (destination == selectedTrack_ && start == clip->start()) {
+        return;  // the pointer moved, the clip would not
+    }
+
     // Each move is its own command, and they coalesce: the merge key is the
     // clip, so a whole drag collapses into one undo step rather than several
-    // hundred.
+    // hundred -- including the steps that changed which row it is on.
     auto built =
-        edit::makeMove(*project_, {sequenceId_, selectedTrack_}, selected_, selectedTrack_, start);
+        edit::makeMove(*project_, {sequenceId_, selectedTrack_}, selected_, destination, start);
     if (!built) {
         return;  // the move is not legal from here; leave the clip where it was
     }
     commands_->execute(*project_, std::move(*built));
+    // The clip is on the destination now, and every later step of this drag has
+    // to look for it there. Without this the next mouse-move finds nothing on
+    // the track it remembers and the drag dies where it crossed the boundary.
+    if (destination != selectedTrack_) {
+        selectedTrack_ = destination;
+        if (!selection_.empty()) {
+            selection_.front().track = destination;
+        }
+        announceSelection();
+    }
     emit edited();
     update();
 }

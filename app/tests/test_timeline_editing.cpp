@@ -11,6 +11,7 @@
 #include <QListWidget>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -935,6 +936,168 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     }
 
     std::printf("  dropped on the timeline: two new rows made, four drops undone\n");
+
+    timeline->setSnapEnabled(snapWas);
+    QApplication::processEvents();
+}
+
+/// Which picture row a clip is on, for a test that has just moved it about.
+zaro::model::TrackId onPictureTrack(zaro::app::PreviewWindow& window, zaro::model::ClipId clip) {
+    for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+        if (track.find(clip) != nullptr) {
+            return track.id();
+        }
+    }
+    return {};
+}
+
+// A clip dragged from one row to another.
+//
+// Vertically as well as sideways, which is the half of the gesture the panel
+// used to throw away. What this covers is the wiring and the two rules on it:
+// a clip may only join a row of its own kind, and whatever is linked to it
+// follows the same shift in time while staying on its own track.
+TEST_CASE("A clip drags to another row of its own kind", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+
+    // Somewhere to drag to. The fixture has one row of each kind.
+    for (const auto kind : {zaro::model::TrackKind::Video, zaro::model::TrackKind::Audio}) {
+        auto built = zaro::edit::makeAddTrack(window.project(), window.sequence()->id(), kind,
+                                              kind == zaro::model::TrackKind::Video ? "V2" : "A2");
+        REQUIRE(built.hasValue());
+        window.commands().execute(window.project(), std::move(*built));
+        window.commands().breakMerge();
+    }
+    QApplication::processEvents();
+
+    // Snapping off: these assertions are about where the clip lands, and an
+    // edge pulled onto a nearby edit point would be measuring the snap.
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+
+    const auto v1 = window.sequence()->videoTracks().front().id();
+    const auto v2 = window.sequence()->videoTracks().back().id();
+    const auto a1 = window.sequence()->audioTracks().front().id();
+    const auto moving = window.sequence()->videoTracks().front().clips().front().id;
+    const auto partner = window.sequence()->audioTracks().front().clips().front().id;
+    timeline->selectOnly(v1, moving);
+
+    const auto rowY = [timeline](zaro::model::TrackId track) {
+        const auto row = timeline->rowFor(track);
+        REQUIRE(row.has_value());
+        return row->top + row->height / 2;
+    };
+
+    // A drag that moves in both directions at once, which is the only way to
+    // reach another row.
+    const auto dragTo = [timeline](int fromX, int fromY, int toX, int toY) {
+        const auto send = [&](QEvent::Type type, int x, int y, Qt::MouseButton button,
+                              Qt::MouseButtons buttons) {
+            QMouseEvent event(type, QPointF(x, y), QPointF(x, y), button, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(timeline, &event);
+        };
+        send(QEvent::MouseButtonPress, fromX, fromY, Qt::LeftButton, Qt::LeftButton);
+        const int steps = 8;
+        for (int i = 1; i <= steps; ++i) {
+            send(QEvent::MouseMove, fromX + (toX - fromX) * i / steps,
+                 fromY + (toY - fromY) * i / steps, Qt::NoButton, Qt::LeftButton);
+        }
+        send(QEvent::MouseButtonRelease, toX, toY, Qt::LeftButton, Qt::NoButton);
+        QApplication::processEvents();
+    };
+
+    const zaro::time::Rational rate = window.sequence()->frameRate();
+    const auto startBefore = window.sequence()->findTrack(v1)->find(moving)->start();
+    const auto partnerBefore = window.sequence()->findTrack(a1)->find(partner)->start();
+    const int grabX = static_cast<int>(timeline->layout().xForTime(startBefore)) + 40;
+    const int landX = grabX + 60;
+    const auto shift =
+        timeline->layout().timeForX(landX, rate) - timeline->layout().timeForX(grabX, rate);
+
+    // Up onto the empty picture row.
+    const std::size_t stepsBefore = window.commands().position();
+    dragTo(grabX, rowY(v1), landX, rowY(v2));
+
+    if (window.sequence()->findTrack(v1)->find(moving) != nullptr) {
+        zaro::app::testing::failf("the clip is still on the row it was dragged off\n");
+    }
+    const zaro::model::Clip* landed = window.sequence()->findTrack(v2)->find(moving);
+    if (landed == nullptr) {
+        zaro::app::testing::failf("the clip did not arrive on the other picture row\n");
+    }
+    if (landed->start() != startBefore + shift) {
+        zaro::app::testing::failf("it landed at %lld, not at %lld\n",
+                                  static_cast<long long>(landed->start().frames()),
+                                  static_cast<long long>((startBefore + shift).frames()));
+    }
+
+    // Its sound followed by the same amount, and stayed where sound lives.
+    const zaro::model::Clip* followed = window.sequence()->findTrack(a1)->find(partner);
+    if (followed == nullptr) {
+        zaro::app::testing::failf("the linked sound left A1\n");
+    }
+    if (followed->start() != partnerBefore + shift) {
+        zaro::app::testing::failf("the linked sound is at %lld, not at %lld\n",
+                                  static_cast<long long>(followed->start().frames()),
+                                  static_cast<long long>((partnerBefore + shift).frames()));
+    }
+
+    // The whole drag is one undo step, however many rows it crossed.
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the drag made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+
+    // Down onto a sound row: picture has no business there. The clip follows the
+    // pointer as far as the bottom of the picture block and stays on the last
+    // row it could legally be on, rather than crossing the boundary.
+    const auto beforeCrossing = window.sequence()->findTrack(v2)->find(moving)->start();
+    const std::size_t soundClipsBefore = window.sequence()->findTrack(a1)->clips().size();
+    const int crossX = static_cast<int>(timeline->layout().xForTime(beforeCrossing)) + 40;
+    dragTo(crossX, rowY(v2), crossX + 30, rowY(a1));
+
+    const bool onPicture = std::any_of(
+        window.sequence()->videoTracks().begin(), window.sequence()->videoTracks().end(),
+        [moving](const zaro::model::Track& track) { return track.find(moving) != nullptr; });
+    if (!onPicture) {
+        zaro::app::testing::failf("a picture clip was dragged off the picture rows\n");
+    }
+    if (window.sequence()->findTrack(a1)->clips().size() != soundClipsBefore) {
+        zaro::app::testing::failf("the sound row gained a clip it should have refused\n");
+    }
+
+    // And the same gesture on the sound side, which is the other half of what
+    // "a row of its own kind" means. Its linked picture follows in time and
+    // stays where picture lives.
+    const auto a2 = window.sequence()->audioTracks().back().id();
+    const auto soundBefore = window.sequence()->findTrack(a1)->find(partner)->start();
+    const auto pictureTrack = onPictureTrack(window, moving);
+    const auto pictureBefore = window.sequence()->findTrack(pictureTrack)->find(moving)->start();
+    const int soundX = static_cast<int>(timeline->layout().xForTime(soundBefore)) + 40;
+    timeline->selectOnly(a1, partner);
+    dragTo(soundX, rowY(a1), soundX + 50, rowY(a2));
+
+    const zaro::model::Clip* movedSound = window.sequence()->findTrack(a2)->find(partner);
+    if (movedSound == nullptr) {
+        zaro::app::testing::failf("the sound clip did not reach the other sound row\n");
+    }
+    const auto soundShift = movedSound->start() - soundBefore;
+    if (soundShift.frames() == 0) {
+        zaro::app::testing::failf("the sound clip changed rows without moving in time\n");
+    }
+    const zaro::model::Clip* picture = window.sequence()->findTrack(pictureTrack)->find(moving);
+    if (picture == nullptr) {
+        zaro::app::testing::failf("the linked picture left its row\n");
+    }
+    if (picture->start() != pictureBefore + soundShift) {
+        zaro::app::testing::failf("the linked picture is at %lld, not at %lld\n",
+                                  static_cast<long long>(picture->start().frames()),
+                                  static_cast<long long>((pictureBefore + soundShift).frames()));
+    }
+
+    std::printf("  clip moved between rows: V1 to V2 and A1 to A2, each partner following\n");
 
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();
