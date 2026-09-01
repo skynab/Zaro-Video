@@ -998,6 +998,19 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
         zaro::app::testing::failf("there is no media pane\n");
     }
 
+    // The events below go straight to the pane, which is not how a drag from
+    // the file manager arrives: Qt hands it to the first widget under the
+    // pointer that takes drops, walking up from whichever child is there. A
+    // child that took drops -- a search field, a list in drag-drop mode --
+    // would swallow the files before the pane ever saw them, so no child may.
+    for (QWidget* under = bin->childAt(bin->width() / 2, bin->height() / 2);
+         under != nullptr && under != bin; under = under->parentWidget()) {
+        if (under->acceptDrops()) {
+            zaro::app::testing::failf("%s sits over the pane and takes drops itself\n",
+                                      under->metaObject()->className());
+        }
+    }
+
     const auto drag = [bin](const QList<QUrl>& urls) {
         QMimeData mime;
         mime.setUrls(urls);

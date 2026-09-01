@@ -357,6 +357,26 @@ private:
     const bool* compact_;
 };
 
+/// A path in the one spelling the project stores.
+///
+/// The same file arrives spelled two ways: Qt hands out forward slashes, the
+/// filesystem walk behind a dropped folder hands out backslashes, and Windows
+/// treats either drive letter as the same disk. Without a single spelling, a
+/// folder dropped after the files inside it imports every one of them a second
+/// time.
+QString canonicalPath(const QString& path) {
+    return QFileInfo{path}.absoluteFilePath();
+}
+
+/// The same path as something two spellings of one file compare equal on.
+QString pathKey(const QString& path) {
+#ifdef Q_OS_WIN
+    return canonicalPath(path).toLower();
+#else
+    return canonicalPath(path);
+#endif
+}
+
 }  // namespace
 
 ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
@@ -985,7 +1005,7 @@ int ProjectBin::importPaths(const QStringList& paths) {
     for (const QString& path : paths) {
         const QFileInfo info{path};
         if (!info.isDir()) {
-            files.push_back(path);
+            files.push_back(canonicalPath(path));
             continue;
         }
         auto listed = io::listFolder(path.toStdString());
@@ -994,7 +1014,7 @@ int ProjectBin::importPaths(const QStringList& paths) {
         }
         for (const io::FolderEntry& entry : *listed) {
             if (!entry.isFolder) {
-                files.push_back(QString::fromStdString(entry.path));
+                files.push_back(canonicalPath(QString::fromStdString(entry.path)));
             }
         }
     }
@@ -1009,10 +1029,14 @@ int ProjectBin::importPaths(const QStringList& paths) {
 
         // Already in the project? Importing it twice gives two entries
         // pointing at one file, which is two things to grade and relink -- and
-        // dropping the same folder twice is an easy thing to do.
-        const bool known =
-            std::any_of(project_->media().begin(), project_->media().end(),
-                        [&where](const model::MediaRef& ref) { return ref.path == where; });
+        // dropping the same folder twice is an easy thing to do. Compared by
+        // key rather than by string, because a project holds paths written by
+        // older imports as well as this one.
+        const QString key = pathKey(path);
+        const bool known = std::any_of(project_->media().begin(), project_->media().end(),
+                                       [&key](const model::MediaRef& ref) {
+                                           return pathKey(QString::fromStdString(ref.path)) == key;
+                                       });
         if (known) {
             continue;
         }
