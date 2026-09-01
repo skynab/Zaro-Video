@@ -395,6 +395,22 @@ void PreviewWindow::wireWorkspacePanels() {
         monitor_->update();
         refresh();
     });
+    // A file imported into a session already running has no decoder until the
+    // media source is opened again: it resolves every path in the project once,
+    // when it opens, and knows nothing of what arrives after. Without this the
+    // import lands in the pane and both monitors stay black on it -- the file
+    // is in the project, and nothing in the program can read a frame of it.
+    //
+    // The same call the media browser's own import makes, for the same reason;
+    // it is only the Import button and a drop onto the pane that arrived here
+    // without it.
+    connect(bin_, &app::ProjectBin::mediaImported, this, [this] {
+        if (Status reopened = openMedia(); !reopened) {
+            app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
+        }
+        bin_->refresh();
+        updateTitle();
+    });
 }
 
 void PreviewWindow::buildWindowLayout() {

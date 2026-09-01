@@ -988,6 +988,7 @@ Status ProjectBin::importTranscoded(const std::vector<std::string>& paths,
     commands_->breakMerge();
     refresh();
     emit edited();
+    emit mediaImported();
     return {};
 }
 
@@ -1101,6 +1102,9 @@ int ProjectBin::importPaths(const QStringList& paths) {
     commands_->breakMerge();
     refresh();
     emit edited();
+    if (added > 0) {
+        emit mediaImported();
+    }
     return added;
 }
 

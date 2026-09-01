@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <system_error>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -1080,4 +1081,70 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
     QApplication::processEvents();
+}
+
+// A file imported into a session that is already running.
+//
+// The regression: the media source resolves every path in the project once, as
+// it opens, and knows nothing about what arrives afterwards. Importing through
+// the pane -- the Import button, and a drop from the file manager -- left the
+// file in the project with no decoder behind it, so the bin listed it and both
+// monitors stayed black on it. Opening a project worked, which is why this
+// survived: everything a project is opened with is resolved at that moment.
+//
+// Deliberately no `reopenMedia()` here. That call is the thing that used to be
+// missing, and a test that made it would pass against the bug.
+TEST_CASE("Media imported into a running session can be decoded", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    const std::filesystem::path importRoot =
+        std::filesystem::temp_directory_path() / "zaro-selftest-late-import";
+    std::filesystem::remove_all(importRoot);
+    std::filesystem::create_directories(importRoot);
+    const std::filesystem::path arrival = importRoot / "ARRIVED_LATE.mov";
+    std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"), arrival);
+
+    auto* bin = window.bin();
+    if (bin == nullptr) {
+        zaro::app::testing::failf("there is no media pane\n");
+    }
+    const std::size_t before = window.project().media().size();
+    if (bin->importPaths({QString::fromStdString(arrival.string())}) != 1 ||
+        window.project().media().size() != before + 1) {
+        zaro::app::testing::failf("the file did not import\n");
+    }
+
+    // Read afresh: reopening the media replaces the source, so a reference
+    // taken before the import would be to the one that never knew about it.
+    const auto arrived = window.project().media().back().id;
+    if (!window.frameSource().imageFor(arrived,
+                                       zaro::time::RationalTime{1, zaro::time::rates::fps25})) {
+        zaro::app::testing::failf("nothing can decode a file imported since the session began\n");
+    }
+
+    // And the source monitor, which is where somebody looks at what they have
+    // just imported. It renders through the provider the window handed it, so
+    // it goes black on a file the provider cannot read.
+    window.sourceMonitor()->load(*window.project().findMedia(arrived));
+    QApplication::processEvents();
+    if (window.sourceMonitor()->media() != arrived) {
+        zaro::app::testing::failf("the source monitor did not open the imported file\n");
+    }
+
+    std::printf("  late import: %s decodes\n", arrival.filename().string().c_str());
+
+    // Undone and reopened before the copy is deleted, not after: the decoder
+    // this test just proved exists is holding the file open, and Windows will
+    // not delete a file that something has open.
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    if (Status reopened = window.reopenMedia(); !reopened) {
+        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
+    }
+    window.sourceMonitor()->load(window.project().media().front());
+    QApplication::processEvents();
+    std::error_code ignored;
+    std::filesystem::remove_all(importRoot, ignored);
 }

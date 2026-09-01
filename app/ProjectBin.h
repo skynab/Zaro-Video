@@ -84,6 +84,14 @@ protected:
 signals:
     /// Media was imported, or a clip appended.
     void edited();
+    /// Files were added to the project.
+    ///
+    /// Separate from `edited`, which also covers appending a clip to the cut:
+    /// this one means the *set of media* changed, and a media source opened
+    /// before it resolved every file the project had at that moment. Nothing
+    /// can decode a file imported since until it is opened again -- which is
+    /// what the window does with this.
+    void mediaImported();
     /// Open this in the source monitor.
     void openRequested(zaro::model::MediaRefId media);
     /// Open this subclip in the source monitor, marked to its range.
