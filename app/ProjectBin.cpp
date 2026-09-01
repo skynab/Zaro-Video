@@ -47,6 +47,7 @@
 #include "zaro/platform/ffmpeg/FFmpegRender.h"
 
 #include "Icons.h"
+#include "MediaDrag.h"
 #include "Say.h"
 #include "Theme.h"
 #include "chrome/FlowLayout.h"
@@ -357,6 +358,32 @@ private:
     const bool* compact_;
 };
 
+/// The bin's list, with its rows draggable onto the timeline.
+///
+/// The drag carries ids rather than the item model's own format: what is on the
+/// other end of it is the timeline, which needs to know which file was let go
+/// of, and Qt's `application/x-qabstractitemmodeldatalist` says only which row
+/// of which list -- true, and useless to anything outside this widget.
+class BinList : public QListWidget {
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override {
+        for (const QListWidgetItem* item : items) {
+            if (item == nullptr || item->data(kRoleHeader).toBool()) {
+                continue;  // a folder heading is a place, not a file
+            }
+            return encodeMediaDrag(
+                MediaDrag{model::MediaRefId{item->data(kRoleMedia).toULongLong()},
+                          model::SubclipId{item->data(kRoleSubclip).toULongLong()}});
+        }
+        // Nothing draggable was picked. Qt takes null to mean "no drag", which
+        // is the right answer for a heading rather than an empty one.
+        return nullptr;
+    }
+};
+
 /// A path in the one spelling the project stores.
 ///
 /// The same file arrives spelled two ways: Qt hands out forward slashes, the
@@ -477,7 +504,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     search_->setAcceptDrops(false);
 
     // --- the list ---------------------------------------------------------
-    list_ = new QListWidget(this);
+    list_ = new BinList(this);
     list_->setObjectName("bin-list");
     list_->setFrameShape(QFrame::NoFrame);
     list_->setMouseTracking(true);
@@ -487,6 +514,12 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
     list_->setItemDelegate(new BinDelegate{&compact_, list_});
     list_->viewport()->setAutoFillBackground(false);
+    // Rows drag out onto the timeline. DragOnly, not DragDrop: the pane takes
+    // files from the file manager itself, and a list that also accepted drops
+    // would swallow them before the pane's own handling ever saw them.
+    list_->setDragEnabled(true);
+    list_->setDragDropMode(QAbstractItemView::DragOnly);
+    list_->setDefaultDropAction(Qt::CopyAction);
 
     footer_ = new QLabel(this);
     footer_->setObjectName("bin-footer");

@@ -3,16 +3,25 @@
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
+#include <QApplication>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <cstdint>
+#include <cstdio>
+#include <memory>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/core/edit/Operations.h"
 
 #include "../FrameGrab.h"
+#include "../MediaDrag.h"
+#include "../ProjectBin.h"
 #include "GuiFixture.h"
 
 // The suite was written inside main(), which had this at file scope; the
@@ -746,4 +755,187 @@ TEST_CASE("Dragging a track boundary resizes that kind of track", "[gui]") {
 
     timeline->setTrackHeight(zaro::model::TrackKind::Video,
                              zaro::app::TimelineWidget::kDefaultVideoTrackHeight);
+}
+
+// A file dragged out of the media pane and let go of on the timeline.
+//
+// The gesture is delivered as Qt delivers it -- a drag-enter to ask whether the
+// panel will take it, then the drop -- because what this covers is the wiring:
+// that the bin's drag says which file, that where it lands decides which row
+// and when, that a drop over something already cut makes a row instead of
+// overwriting it, and that the whole thing is one undo.
+TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    auto* bin = window.bin();
+    if (timeline == nullptr || bin == nullptr) {
+        zaro::app::testing::failf("there is no timeline or no media pane\n");
+    }
+
+    // Snapping off for the duration: the assertions below are about where a
+    // drop lands, and a start time pulled onto a nearby edit point would be
+    // measuring the snap instead.
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+
+    // A sound-only file, which the fixture project does not have and which the
+    // rule about picture rows is about.
+    const int imported = bin->importPaths(
+        {QString::fromStdString(zaro::app::testing::mediaFixture("tone_48k.wav"))});
+    if (imported != 1) {
+        zaro::app::testing::failf("the sound file did not import\n");
+    }
+    const zaro::model::MediaRefId sound = window.project().media().back().id;
+    const zaro::model::MediaRefId picture = window.project().media().front().id;
+
+    // The drag the bin actually starts, rather than one this test made up. The
+    // events below go straight to the timeline, which skips the half of the
+    // gesture that begins in the list -- so the list has to be draggable, and
+    // what it hands over has to be what the timeline reads.
+    auto* binList = bin->findChild<QListWidget*>("bin-list");
+    if (binList == nullptr || !binList->dragEnabled()) {
+        zaro::app::testing::failf("the bin's rows cannot be dragged out\n");
+    }
+    int mediaRow = -1;
+    for (int row = 0; row < binList->count(); ++row) {
+        if (binList->item(row)->data(Qt::UserRole).toULongLong() != 0) {
+            mediaRow = row;
+            break;
+        }
+    }
+    if (mediaRow < 0) {
+        zaro::app::testing::failf("no row in the bin stands for a file\n");
+    }
+    const std::unique_ptr<QMimeData> fromBin{
+        binList->model()->mimeData({binList->model()->index(mediaRow, 0)})};
+    const auto decoded = zaro::app::decodeMediaDrag(fromBin.get());
+    if (!decoded ||
+        decoded->media.value() != binList->item(mediaRow)->data(Qt::UserRole).toULongLong()) {
+        zaro::app::testing::failf("the bin's drag does not say which file it is\n");
+    }
+
+    // Zoomed out, so there is empty timeline to the right of the fixture's one
+    // clip to drop things into.
+    timeline->zoomToFit();
+    timeline->zoomBy(0.4);
+    QApplication::processEvents();
+
+    const auto drop = [timeline](zaro::model::MediaRefId media, int x, int y) {
+        const std::unique_ptr<QMimeData> mime{
+            zaro::app::encodeMediaDrag(zaro::app::MediaDrag{media, {}})};
+        QDragEnterEvent entering{QPoint{x, y}, Qt::CopyAction, mime.get(), Qt::LeftButton,
+                                 Qt::NoModifier};
+        QCoreApplication::sendEvent(timeline, &entering);
+        if (!entering.isAccepted()) {
+            zaro::app::testing::failf("the timeline refused a file dragged over it at %d,%d\n", x,
+                                      y);
+        }
+        QDropEvent dropping{QPointF{static_cast<double>(x), static_cast<double>(y)}, Qt::CopyAction,
+                            mime.get(), Qt::LeftButton, Qt::NoModifier};
+        QCoreApplication::sendEvent(timeline, &dropping);
+        QApplication::processEvents();
+    };
+
+    // Looked up afresh every time: each drop executes a command, which replaces
+    // the sequence, so anything held across one is a reference into freed
+    // memory. This is the bug the fixture's own comment warns about.
+    const auto videoRowY = [&window, timeline](std::size_t index) {
+        const auto row = window.sequence()->videoTracks()[index].id();
+        const auto found = timeline->rowFor(row);
+        REQUIRE(found.has_value());
+        return found->top + found->height / 2;
+    };
+    const auto audioRowY = [&window, timeline](std::size_t index) {
+        const auto row = window.sequence()->audioTracks()[index].id();
+        const auto found = timeline->rowFor(row);
+        REQUIRE(found.has_value());
+        return found->top + found->height / 2;
+    };
+
+    const zaro::time::Rational rate = window.sequence()->frameRate();
+    const auto cutEnd = window.sequence()->videoTracks().front().extent().endExclusive();
+    const int overX = static_cast<int>(timeline->layout().xForTime(
+        cutEnd - zaro::time::RationalTime::fromSeconds(zaro::time::Rational{1, 2}, rate)));
+    const int emptyX = timeline->width() - 40;
+    if (timeline->layout().timeForX(emptyX, rate) <= cutEnd) {
+        zaro::app::testing::failf("the timeline is not zoomed out enough to have empty room\n");
+    }
+
+    const std::size_t stepsBefore = window.commands().position();
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+    const std::size_t audioTracksBefore = window.sequence()->audioTracks().size();
+    const std::size_t v1ClipsBefore = window.sequence()->videoTracks().front().clips().size();
+    const std::size_t a1ClipsBefore = window.sequence()->audioTracks().front().clips().size();
+
+    // 1. Onto empty timeline on V1: it joins the row it was let go of on.
+    drop(picture, emptyX, videoRowY(0));
+    if (window.sequence()->videoTracks().size() != videoTracksBefore) {
+        zaro::app::testing::failf("a drop into empty room made a track it did not need\n");
+    }
+    if (window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore + 1) {
+        zaro::app::testing::failf("the drop did not land on V1\n");
+    }
+    const auto landed = window.sequence()->videoTracks().front().clips().back();
+    if (landed.start() != timeline->layout().timeForX(emptyX, rate)) {
+        zaro::app::testing::failf(
+            "the clip starts at %lld, not where it was let go of (%lld)\n",
+            static_cast<long long>(landed.start().frames()),
+            static_cast<long long>(timeline->layout().timeForX(emptyX, rate).frames()));
+    }
+
+    // 2. Over the clip already cut on V1: a new picture row rather than an
+    // overwrite of somebody's cut.
+    drop(picture, overX, videoRowY(0));
+    if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
+        zaro::app::testing::failf("dropping over an existing clip made %zu video tracks, not %zu\n",
+                                  window.sequence()->videoTracks().size(), videoTracksBefore + 1);
+    }
+    if (window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore + 1) {
+        zaro::app::testing::failf("the drop overwrote what was already on V1\n");
+    }
+    if (window.sequence()->videoTracks().back().clips().size() != 1) {
+        zaro::app::testing::failf("the new video track did not get the clip\n");
+    }
+
+    // 3. Sound over the sound block, where A1 is already busy: a new sound row.
+    drop(sound, overX, audioRowY(0));
+    if (window.sequence()->audioTracks().size() != audioTracksBefore + 1) {
+        zaro::app::testing::failf("dropping sound over a busy row did not make one for it\n");
+    }
+    if (window.sequence()->audioTracks().back().clips().size() != 1) {
+        zaro::app::testing::failf("the new audio track did not get the sound\n");
+    }
+
+    // 4. Sound let go of over a *picture* row goes to the sound block anyway: a
+    // file with no picture in it has nothing to be on V1.
+    drop(sound, emptyX, videoRowY(0));
+    if (window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore + 1) {
+        zaro::app::testing::failf("a sound file landed on a picture track\n");
+    }
+    if (window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore + 1) {
+        zaro::app::testing::failf("the sound file did not fall through to A1\n");
+    }
+
+    // One undo step per drop, including the two that had to make a track: the
+    // track is part of putting the clip down, not a separate thing anybody
+    // asked for.
+    if (window.commands().position() != stepsBefore + 4) {
+        zaro::app::testing::failf("four drops made %zu undo steps, not four\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    for (int i = 0; i < 4; ++i) {
+        window.commands().undo(window.project());
+    }
+    if (window.sequence()->videoTracks().size() != videoTracksBefore ||
+        window.sequence()->audioTracks().size() != audioTracksBefore ||
+        window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore ||
+        window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore) {
+        zaro::app::testing::failf("undoing the four drops did not put the cut back\n");
+    }
+
+    std::printf("  dropped on the timeline: two new rows made, four drops undone\n");
+
+    timeline->setSnapEnabled(snapWas);
+    QApplication::processEvents();
 }

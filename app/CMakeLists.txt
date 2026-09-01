@@ -44,6 +44,8 @@ add_library(zaro_app_ui STATIC
     LoudnessPanel.h
     MaskOverlay.cpp
     MediaBrowser.cpp
+    MediaDrag.cpp
+    MediaDrag.h
     MixerPanel.cpp
     MixerPanel.h
     PlaybackController.cpp

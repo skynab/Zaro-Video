@@ -3,6 +3,7 @@
 #include <QFont>
 #include <QPoint>
 #include <QRect>
+#include <QRectF>
 #include <QString>
 #include <QWidget>
 #include <cstdint>
@@ -21,6 +22,12 @@
 #include "zaro/ui/SequenceBinding.h"
 #include "zaro/ui/TimelineLayout.h"
 
+#include "MediaDrag.h"
+
+class QDragEnterEvent;
+class QDragLeaveEvent;
+class QDragMoveEvent;
+class QDropEvent;
 class QLineEdit;
 
 namespace zaro::app {
@@ -177,6 +184,12 @@ protected:
     void leaveEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    // A file dragged out of the media pane. The bin says which file; where it
+    // is let go of says which track it joins and when it starts.
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
 private:
     [[nodiscard]] const model::Sequence* sequence() const;
@@ -213,6 +226,30 @@ private:
     void paintSnapGuide(QPainter& painter);
     /// Where the blade would cut, while it is only hovering.
     void paintBladePreview(QPainter& painter);
+    /// Where a file being dragged over the panel would land.
+    void paintDropPreview(QPainter& painter);
+
+    /// What a drop at a given point would do.
+    ///
+    /// Worked out on every mouse-move so the panel can draw it, and worked out
+    /// again on the drop rather than trusted: conforming an empty sequence to
+    /// the first file changes the frame rate the start time is expressed in.
+    struct DropSpot {
+        model::TrackKind kind{model::TrackKind::Video};
+        /// The track the clip joins. Invalid when a new one is wanted, which
+        /// is what happens when the clip would land on top of something.
+        model::TrackId track;
+        bool newTrack{false};
+        time::RationalTime start{};
+        time::RationalTime duration{};
+    };
+    [[nodiscard]] std::optional<DropSpot> dropSpotFor(const MediaDrag& dragged, const QPoint& at);
+    /// Where the ghost for a spot is drawn: the clip's own body on an existing
+    /// row, or the strip a new row would occupy.
+    [[nodiscard]] QRectF dropPreviewRect(const DropSpot& spot) const;
+    /// Make the edit a drop asks for: a track first if it needs one, then the
+    /// clip, both inside one undo step.
+    void placeDropped(const MediaDrag& dragged, const DropSpot& where);
 
     /// Keep the playhead on screen, paging when it leaves.
     void followPlayhead();
@@ -455,6 +492,10 @@ private:
         time::RationalTime time{};
     };
     BladeMark bladeMark_;
+    /// Where the file currently being dragged over the panel would land, and
+    /// what it carries. Empty whenever nothing is hovering.
+    std::optional<DropSpot> dropSpot_;
+    MediaDrag dragged_;
     /// The track whose name is being edited, and the editor doing it. The
     /// editor is a child widget, so it is destroyed with this one.
     model::TrackId renamingTrack_;

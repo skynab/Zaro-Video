@@ -3,12 +3,17 @@
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QCursor>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QEvent>
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -16,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/edit/Snapping.h"
@@ -158,6 +164,8 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget{parent} {
     setMouseTracking(true);
     setMinimumHeight(180);
     setAutoFillBackground(false);
+    // Files dragged out of the media pane land here.
+    setAcceptDrops(true);
 }
 
 void TimelineWidget::setTool(Tool tool) {
@@ -433,6 +441,7 @@ void TimelineWidget::paintEvent(QPaintEvent* /*event*/) {
     // going, and the playhead is where the picture is. When they coincide --
     // which is the whole point of snapping to it -- the playhead should be the
     // line you see.
+    paintDropPreview(painter);
     paintBladePreview(painter);
     paintSnapGuide(painter);
     paintPlayhead(painter);
@@ -2706,6 +2715,315 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
             break;
     }
     QWidget::keyPressEvent(event);
+}
+
+// --- Files dropped from the media pane --------------------------------------
+//
+// The bin says which file was picked up; where it is let go of says everything
+// else. Dropping over a picture row puts the clip on that row, over a sound row
+// on that one -- and when the clip would land on top of something already
+// there, a new row is made for it rather than overwriting a cut somebody has
+// already made. That last rule is what makes the gesture safe enough to be
+// quick: the worst a mis-aimed drop can do is add a track.
+
+namespace {
+
+/// The part of a file a dragged bin row stands for, in the file's own time.
+///
+/// A subclip stands for its range; a file stands for all of it. The same rule
+/// the bin's own Append uses, and the only place a subclip means anything --
+/// what lands on the timeline is an ordinary clip either way.
+std::optional<time::TimeRange> draggedSourceRange(const model::Project& project,
+                                                  const MediaDrag& dragged,
+                                                  const time::Rational& sequenceRate) {
+    const model::MediaRef* ref = project.findMedia(dragged.media);
+    if (ref == nullptr || !ref->info.duration.isPositive()) {
+        return std::nullopt;
+    }
+    const media::VideoStreamInfo* video = ref->info.primaryVideo();
+    const time::Rational sourceRate = video != nullptr ? video->frameRate : sequenceRate;
+    if (const model::Subclip* subclip = project.findSubclip(dragged.subclip)) {
+        return subclip->range.rescaledTo(sourceRate);
+    }
+    return time::TimeRange{time::RationalTime{0, sourceRate},
+                           time::RationalTime::fromSeconds(ref->info.duration, sourceRate)};
+}
+
+}  // namespace
+
+std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaDrag& dragged,
+                                                                    const QPoint& at) {
+    const model::Sequence* seq = sequence();
+    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        return std::nullopt;
+    }
+    const model::MediaRef* ref = project_->findMedia(dragged.media);
+    if (ref == nullptr) {
+        return std::nullopt;
+    }
+    const auto& metrics = layout_.metrics();
+    if (at.x() < metrics.headerWidth) {
+        return std::nullopt;  // over the track headers, which are not a time
+    }
+
+    const time::Rational& rate = seq->frameRate();
+    const auto sourceRange = draggedSourceRange(*project_, dragged, rate);
+    if (!sourceRange) {
+        return std::nullopt;
+    }
+    DropSpot spot;
+    spot.duration = sourceRange->duration().rescaledTo(rate);
+    if (spot.duration.frames() <= 0) {
+        return std::nullopt;
+    }
+
+    // Where the block of picture rows ends and the block of sound rows begins,
+    // which is the line that decides what a drop between rows -- or past the
+    // last one -- means.
+    const auto videoCount = static_cast<std::int32_t>(seq->videoTracks().size());
+    const std::int32_t audioTop =
+        metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
+
+    const auto row = layout_.rowAt(*seq, at.y());
+    spot.kind =
+        row ? row->kind : (at.y() < audioTop ? model::TrackKind::Video : model::TrackKind::Audio);
+    // Sound has nowhere to be on a picture row: a file with no picture in it
+    // would draw as a blank block and show nothing. The other way round is
+    // allowed -- a take dropped on a sound row is how you use its audio and
+    // leave its picture out.
+    if (ref->info.primaryVideo() == nullptr) {
+        spot.kind = model::TrackKind::Audio;
+    }
+
+    spot.start = maybeSnap(layout_.timeForX(at.x(), rate), model::ClipId{});
+    if (spot.start.frames() < 0) {
+        spot.start = time::RationalTime{0, rate};
+    }
+
+    // The row under the pointer, unless the redirection above moved the drop to
+    // the other block, in which case the first row of that block is what it was
+    // nearest to.
+    const auto& tracks =
+        spot.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
+    model::TrackId candidate;
+    if (row && row->kind == spot.kind) {
+        candidate = row->track;
+    } else if (!tracks.empty()) {
+        candidate = tracks.front().id();
+    }
+
+    const model::Track* track = candidate.isValid() ? seq->findTrack(candidate) : nullptr;
+    const time::TimeRange range{spot.start, spot.duration};
+    // A locked track refuses an edit as firmly as an occupied one, and means
+    // the same thing here: not this row, then.
+    spot.newTrack = track == nullptr || track->isLocked() || !track->clipsIn(range).empty();
+    spot.track = spot.newTrack ? model::TrackId{} : candidate;
+
+    return spot;
+}
+
+/// Where the ghost goes, worked out at paint time rather than kept in the spot.
+///
+/// The view can zoom or scroll between the pointer moving and the panel
+/// repainting, and a rectangle worked out at the earlier moment would be drawn
+/// against the later one -- a ghost sitting somewhere the clip is not going.
+QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return {};
+    }
+    const auto& metrics = layout_.metrics();
+    const bool isVideo = spot.kind == model::TrackKind::Video;
+
+    // On an existing row the ghost is the clip's own body. On a new one it is
+    // the strip the new row will occupy: the top of the picture block, since
+    // video stacks upward, or under the last sound row.
+    const auto videoCount = static_cast<std::int32_t>(seq->videoTracks().size());
+    const auto audioCount = static_cast<std::int32_t>(seq->audioTracks().size());
+    const std::int32_t audioTop =
+        metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
+    const std::optional<ui::TimelineLayout::Row> placed =
+        spot.newTrack ? std::nullopt : rowFor(spot.track);
+    const double top =
+        (placed
+             ? placed->top
+             : (isVideo ? metrics.rulerHeight
+                        : audioTop + audioCount * (metrics.audioTrackHeight + metrics.trackGap))) +
+        2.0;
+    const double height =
+        (placed ? placed->height
+                : (isVideo ? metrics.videoTrackHeight : metrics.audioTrackHeight)) -
+        4.0;
+
+    const double left = std::max<double>(layout_.xForTime(spot.start), metrics.headerWidth);
+    const double right = layout_.xForTime(spot.start + spot.duration);
+    return QRectF{left, top, std::max(2.0, right - left), std::max(2.0, height)};
+}
+
+void TimelineWidget::paintDropPreview(QPainter& painter) {
+    if (!dropSpot_) {
+        return;
+    }
+    const DropSpot& spot = *dropSpot_;
+    const QRectF body = dropPreviewRect(spot);
+    if (body.isEmpty()) {
+        return;
+    }
+    const QColor accent =
+        spot.kind == model::TrackKind::Audio ? theme::audio(400) : theme::accent(400);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    if (spot.newTrack) {
+        // The whole lane, not just the clip: what is being previewed is a row
+        // that does not exist yet, and a ghost floating inside a lane that is
+        // already somebody else's would say the opposite of what happens.
+        const double headers = layout_.metrics().headerWidth;
+        const QRectF lane{headers, body.top() - 2.0, width() - headers, body.height() + 4.0};
+        QColor wash = accent;
+        wash.setAlpha(30);
+        painter.fillRect(lane, wash);
+        // A solid bar along the edge the row opens at. The picture block grows
+        // upward, so a new row's strip is drawn over the row currently at the
+        // top of it -- the bar is what says "a lane opens here" rather than
+        // "this is going onto that track".
+        painter.fillRect(QRectF{headers, lane.top(), lane.width(), 3.0}, accent);
+    }
+
+    QColor fill = accent;
+    fill.setAlpha(90);
+    painter.setBrush(fill);
+    painter.setPen(QPen{accent, spot.newTrack ? 2.0 : 1.0, Qt::DashLine});
+    painter.drawRoundedRect(body, 5.0, 5.0);
+}
+
+void TimelineWidget::dragEnterEvent(QDragEnterEvent* event) {
+    const auto dragged = decodeMediaDrag(event->mimeData());
+    if (!dragged) {
+        event->ignore();
+        return;
+    }
+    dragged_ = *dragged;
+    dropSpot_ = dropSpotFor(dragged_, event->position().toPoint());
+    if (!dropSpot_) {
+        event->ignore();
+        return;
+    }
+    // Copy, not move: the bin keeps the file. Taking it out of the bin because
+    // it was put on the timeline is not what anybody means by this gesture.
+    event->setDropAction(Qt::CopyAction);
+    event->acceptProposedAction();
+    update();
+}
+
+void TimelineWidget::dragMoveEvent(QDragMoveEvent* event) {
+    dropSpot_ = dropSpotFor(dragged_, event->position().toPoint());
+    if (!dropSpot_) {
+        clearGestureMarks();
+        update();
+        event->ignore();
+        return;
+    }
+    event->setDropAction(Qt::CopyAction);
+    event->acceptProposedAction();
+    update();
+}
+
+void TimelineWidget::dragLeaveEvent(QDragLeaveEvent* event) {
+    dropSpot_.reset();
+    clearGestureMarks();
+    update();
+    event->accept();
+}
+
+void TimelineWidget::dropEvent(QDropEvent* event) {
+    dropSpot_.reset();
+    const auto dragged = decodeMediaDrag(event->mimeData());
+    if (!dragged || project_ == nullptr || commands_ == nullptr || sequence() == nullptr) {
+        clearGestureMarks();
+        update();
+        event->ignore();
+        return;
+    }
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+
+    // One undo step for the whole drop, however many commands it takes: the
+    // track it may have to make is part of putting the clip down rather than a
+    // separate thing somebody asked for.
+    const edit::CommandStack::Group step{*commands_};
+
+    // The first file on an empty timeline decides its shape, exactly as it does
+    // when the bin appends one. Before the drop is worked out rather than
+    // after: conforming changes the frame rate the start time is counted in.
+    if (const model::MediaRef* ref = project_->findMedia(dragged->media)) {
+        const media::VideoStreamInfo* video = ref->info.primaryVideo();
+        if (video != nullptr && sequence()->duration().frames() == 0) {
+            if (auto conformed = edit::makeConformSequence(*project_, sequenceId_, video->frameRate,
+                                                           video->width, video->height)) {
+                commands_->execute(*project_, std::move(*conformed));
+            }
+        }
+    }
+
+    const auto spot = dropSpotFor(*dragged, event->position().toPoint());
+    if (spot) {
+        placeDropped(*dragged, *spot);
+    }
+    clearGestureMarks();
+    update();
+}
+
+void TimelineWidget::placeDropped(const MediaDrag& dragged, const DropSpot& where) {
+    const model::Sequence* seq = sequence();
+    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
+        return;
+    }
+    const model::MediaRef* ref = project_->findMedia(dragged.media);
+    const auto sourceRange = draggedSourceRange(*project_, dragged, seq->frameRate());
+    if (ref == nullptr || !sourceRange) {
+        return;
+    }
+    const std::string name = ref->name;
+
+    const edit::CommandStack::Group step{*commands_};
+
+    model::TrackId target = where.track;
+    if (where.newTrack) {
+        addTrack(where.kind);
+        // The command replaced the sequence wholesale, so nothing read before
+        // this line may be used after it. The new track is the last of its kind.
+        seq = sequence();
+        if (seq == nullptr) {
+            return;
+        }
+        const auto& tracks =
+            where.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
+        if (tracks.empty()) {
+            return;
+        }
+        target = tracks.back().id();
+    }
+
+    const model::Subclip* subclip = project_->findSubclip(dragged.subclip);
+    model::Clip clip;
+    clip.id = project_->ids().next<model::ClipTag>();
+    clip.source = dragged.media;
+    clip.name = subclip != nullptr && !subclip->name.empty() ? subclip->name : name;
+    clip.sourceRange = *sourceRange;
+    clip.timelineRange = time::TimeRange{where.start, where.duration};
+
+    auto built = edit::makeOverwrite(*project_, {sequenceId_, target}, clip);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
+    // Selected, the way a clip somebody has just put down is the one they are
+    // about to move or trim.
+    selectOnly(target, clip.id);
+    emit edited();
+    emit viewChanged();
+    update();
 }
 
 }  // namespace zaro::app
