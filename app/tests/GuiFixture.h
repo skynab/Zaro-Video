@@ -14,6 +14,7 @@
 #pragma once
 
 #include <QImage>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -65,6 +66,28 @@ double meanGray(const QImage& image);
 struct Rewind {
     ~Rewind();
 };
+
+/// Delete something a test made, without letting the delete fail the test.
+///
+/// Windows refuses to delete a file that any handle still has open, and a
+/// test's media is open in more places than the test can see: a decoder in the
+/// media source, a poster frame being decoded for a bin row, and -- for a
+/// moment after a file is written -- the virus scanner. Callers still let go of
+/// what they hold first, by undoing their edits and reopening the media; this
+/// covers the rest by retrying, and then by giving up rather than failing.
+///
+/// A file left behind in the temp folder is not a reason to fail a test about
+/// editing, and every test that makes one clears it on the way in.
+void discard(const std::filesystem::path& path);
+
+/// Move a file a test made, once whatever had it open has let go.
+///
+/// The twin of `discard` for the one case that cannot be given up on: a test
+/// about a file that moved has to actually move it. Retried for the same
+/// reasons a delete is, and fails the test if the file never comes free --
+/// carrying on would test relinking against a file still sitting where the
+/// project last saw it.
+void moveAside(const std::filesystem::path& from, const std::filesystem::path& to);
 
 /// Put the window back the way the fixture built it.
 ///

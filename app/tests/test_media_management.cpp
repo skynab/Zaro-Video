@@ -319,7 +319,7 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
 
     const std::filesystem::path proxyFolder =
         std::filesystem::temp_directory_path() / "zaro-selftest-proxy-swap";
-    std::filesystem::remove_all(proxyFolder);
+    zaro::app::testing::discard(proxyFolder);
     std::filesystem::create_directories(proxyFolder);
     for (auto& media : window.project().mediaMutable()) {
         zaro::platform::ffmpeg::ProxySettings settings;
@@ -377,13 +377,17 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
     // Back to the originals, which is also what export uses whatever
     // this toggle says.
     window.project().setUsingProxies(false);
-    if (Status reopened = window.reopenMedia(); !reopened) {
-        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
-    }
+    // The proxy paths are cleared before the reopen rather than after it:
+    // reopening while the project still names them opens the proxy files
+    // again, and a file the media source has open is one that cannot be
+    // deleted underneath it.
     for (auto& media : window.project().mediaMutable()) {
         media.proxyPath.clear();
     }
-    std::filesystem::remove_all(proxyFolder);
+    if (Status reopened = window.reopenMedia(); !reopened) {
+        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
+    }
+    zaro::app::testing::discard(proxyFolder);
     window.monitor()->update();
     QApplication::processEvents();
 }
@@ -536,7 +540,7 @@ TEST_CASE("Transcoding on the way in", "[gui]") {
 
     const std::filesystem::path ingestRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-ingest";
-    std::filesystem::remove_all(ingestRoot);
+    zaro::app::testing::discard(ingestRoot);
     std::filesystem::create_directories(ingestRoot);
 
     const std::size_t mediaBefore = window.project().media().size();
@@ -589,13 +593,15 @@ TEST_CASE("Transcoding on the way in", "[gui]") {
         zaro::app::testing::failf("the ingested file does not decode\n");
     }
 
-    std::filesystem::remove_all(ingestRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    // Deleted after the undo and the reopen, never before: while the project
+    // still names these files, the media source holds a decoder on each one.
+    zaro::app::testing::discard(ingestRoot);
     window.renderCache().clear();
     window.monitor()->update();
     QApplication::processEvents();
@@ -617,7 +623,7 @@ TEST_CASE("Making a proxy, then editing against it", "[gui]") {
 
     const std::filesystem::path proxyRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-proxy";
-    std::filesystem::remove_all(proxyRoot);
+    zaro::app::testing::discard(proxyRoot);
     std::filesystem::create_directories(proxyRoot);
     const std::filesystem::path heavyPath = proxyRoot / "proxied_clip.mov";
     std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"), heavyPath);
@@ -695,13 +701,15 @@ TEST_CASE("Making a proxy, then editing against it", "[gui]") {
                                   proxyWidth, (*onOriginal)->width());
     }
 
-    std::filesystem::remove_all(proxyRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    // Deleted after the undo and the reopen, never before: while the project
+    // still names these files, the media source holds a decoder on each one.
+    zaro::app::testing::discard(proxyRoot);
     window.renderCache().clear();
     window.monitor()->update();
     QApplication::processEvents();
@@ -723,7 +731,7 @@ TEST_CASE("Consolidating the project's media into one folder", "[gui]") {
 
     const std::filesystem::path gatherRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-consolidate";
-    std::filesystem::remove_all(gatherRoot);
+    zaro::app::testing::discard(gatherRoot);
     std::filesystem::create_directories(gatherRoot / "cards");
     const std::filesystem::path scattered = gatherRoot / "cards" / "gathered_clip.mov";
     std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"), scattered);
@@ -776,13 +784,15 @@ TEST_CASE("Consolidating the project's media into one folder", "[gui]") {
         zaro::app::testing::failf("only the new file was gathered (%zu)\n", gathered->files.size());
     }
 
-    std::filesystem::remove_all(gatherRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    // Deleted after the undo and the reopen, never before: while the project
+    // still names these files, the media source holds a decoder on each one.
+    zaro::app::testing::discard(gatherRoot);
     window.renderCache().clear();
     window.monitor()->update();
     QApplication::processEvents();
@@ -804,7 +814,7 @@ TEST_CASE("Relinking a file that really moved", "[gui]") {
 
     const std::filesystem::path relinkRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-relink";
-    std::filesystem::remove_all(relinkRoot);
+    zaro::app::testing::discard(relinkRoot);
     std::filesystem::create_directories(relinkRoot / "before");
     std::filesystem::create_directories(relinkRoot / "after" / "deeper");
     const std::filesystem::path was = relinkRoot / "before" / "moved_clip.mov";
@@ -838,8 +848,26 @@ TEST_CASE("Relinking a file that really moved", "[gui]") {
     }
 
     // Now move it, the way a card being copied to a server does.
+    //
+    // The project stops naming it first. Windows will not rename a file this
+    // process has open, and the media source opens every file the project
+    // names -- so the decoder is dropped, the file moves, and the old path goes
+    // straight back, which is precisely the state relinking is about: a project
+    // pointing at a file that is not where it says it is.
     const std::filesystem::path now = relinkRoot / "after" / "deeper" / "moved_clip.mov";
-    std::filesystem::rename(was, now);
+    const std::string wasPath = was.string();
+    for (auto& media : window.project().mediaMutable()) {
+        if (media.id == movingId) {
+            media.path.clear();
+        }
+    }
+    static_cast<void>(window.reopenMedia());
+    zaro::app::testing::moveAside(was, now);
+    for (auto& media : window.project().mediaMutable()) {
+        if (media.id == movingId) {
+            media.path = wasPath;
+        }
+    }
     // Reopening tolerates a missing file -- one unreadable clip must
     // not stop a project opening -- so what says it is gone is that it
     // no longer decodes.
@@ -866,13 +894,15 @@ TEST_CASE("Relinking a file that really moved", "[gui]") {
         zaro::app::testing::failf("the relinked media does not decode\n");
     }
 
-    std::filesystem::remove_all(relinkRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    // Deleted after the undo and the reopen, never before: while the project
+    // still names these files, the media source holds a decoder on each one.
+    zaro::app::testing::discard(relinkRoot);
     window.renderCache().clear();
     window.monitor()->update();
     QApplication::processEvents();
@@ -894,7 +924,7 @@ TEST_CASE("The media browser imports what is wanted", "[gui]") {
 
     const std::filesystem::path browseRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-browse";
-    std::filesystem::remove_all(browseRoot);
+    zaro::app::testing::discard(browseRoot);
     std::filesystem::create_directories(browseRoot / "DAY 2");
     std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"),
                                browseRoot / "DAY 2" / "A001.mov");
@@ -962,13 +992,15 @@ TEST_CASE("The media browser imports what is wanted", "[gui]") {
         zaro::app::testing::failf("what the browser imported does not decode\n");
     }
 
-    std::filesystem::remove_all(browseRoot);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
     if (Status reopened = window.reopenMedia(); !reopened) {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
+    // Deleted after the undo and the reopen, never before: while the project
+    // still names these files, the media source holds a decoder on each one.
+    zaro::app::testing::discard(browseRoot);
     QApplication::processEvents();
 }
 
@@ -984,7 +1016,7 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
 
     const std::filesystem::path dropRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-drop";
-    std::filesystem::remove_all(dropRoot);
+    zaro::app::testing::discard(dropRoot);
     std::filesystem::create_directories(dropRoot);
     std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"),
                                dropRoot / "B001.mov");
@@ -1086,8 +1118,7 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
     QApplication::processEvents();
-    std::error_code ignored;
-    std::filesystem::remove_all(dropRoot, ignored);
+    zaro::app::testing::discard(dropRoot);
 }
 
 // A file imported into a session that is already running.
@@ -1107,7 +1138,7 @@ TEST_CASE("Media imported into a running session can be decoded", "[gui]") {
 
     const std::filesystem::path importRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-late-import";
-    std::filesystem::remove_all(importRoot);
+    zaro::app::testing::discard(importRoot);
     std::filesystem::create_directories(importRoot);
     const std::filesystem::path arrival = importRoot / "ARRIVED_LATE.mov";
     std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"), arrival);
@@ -1152,8 +1183,7 @@ TEST_CASE("Media imported into a running session can be decoded", "[gui]") {
     }
     window.sourceMonitor()->load(window.project().media().front());
     QApplication::processEvents();
-    std::error_code ignored;
-    std::filesystem::remove_all(importRoot, ignored);
+    zaro::app::testing::discard(importRoot);
 }
 
 // A row in the media pane shows a frame of its file.
@@ -1169,7 +1199,7 @@ TEST_CASE("Media pane rows show a frame of the file", "[gui]") {
 
     const std::filesystem::path posterRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-poster";
-    std::filesystem::remove_all(posterRoot);
+    zaro::app::testing::discard(posterRoot);
     std::filesystem::create_directories(posterRoot);
     // Texture rather than the fixture clip: `sync_click_flash.mov` is black
     // except on its flash frames, and a black poster frame is indistinguishable
@@ -1238,6 +1268,5 @@ TEST_CASE("Media pane rows show a frame of the file", "[gui]") {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
     QApplication::processEvents();
-    std::error_code ignored;
-    std::filesystem::remove_all(posterRoot, ignored);
+    zaro::app::testing::discard(posterRoot);
 }

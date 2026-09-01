@@ -4,6 +4,7 @@
 #include <QEventLoop>
 #include <QMouseEvent>
 #include <QSize>
+#include <QThread>
 #include <array>
 #include <cstdarg>
 #include <cstdio>
@@ -188,6 +189,36 @@ Rewind::~Rewind() {
     }
     window.renderCache().clear();
     QApplication::processEvents();
+}
+
+void discard(const std::filesystem::path& path) {
+    std::error_code code;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        std::filesystem::remove_all(path, code);
+        if (!std::filesystem::exists(path, code)) {
+            return;
+        }
+        // Pumping the loop between attempts is not just a wait: a thumbnail
+        // decode this test queued finishes on its worker and lets go of the
+        // file, and the answer it posts back is delivered here.
+        QApplication::processEvents();
+        QThread::msleep(50);
+    }
+    std::fprintf(stderr, "  note: %s could not be deleted and was left behind\n",
+                 path.string().c_str());
+}
+
+void moveAside(const std::filesystem::path& from, const std::filesystem::path& to) {
+    std::error_code code;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        std::filesystem::rename(from, to, code);
+        if (!code) {
+            return;
+        }
+        QApplication::processEvents();
+        QThread::msleep(50);
+    }
+    failf("could not move %s: %s\n", from.string().c_str(), code.message().c_str());
 }
 
 void restoreFixtureProject() {

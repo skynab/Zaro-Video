@@ -53,7 +53,7 @@ TEST_CASE("The Deliver panel renders a file", "[gui]") {
 
     const std::filesystem::path deliverRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-deliver";
-    std::filesystem::remove_all(deliverRoot);
+    zaro::app::testing::discard(deliverRoot);
     std::filesystem::create_directories(deliverRoot);
 
     app::DeliverPanel* deliver = window.deliver();
@@ -90,7 +90,7 @@ TEST_CASE("The Deliver panel renders a file", "[gui]") {
     std::printf("  deliver: queued one job and rendered %llu bytes to %s\n",
                 static_cast<unsigned long long>(size), "selftest.mp4");
 
-    std::filesystem::remove_all(deliverRoot);
+    zaro::app::testing::discard(deliverRoot);
     window.setWorkspace("Edit");
     QApplication::processEvents();
 }
@@ -857,7 +857,7 @@ TEST_CASE("Review comments, ticked off and sent", "[gui]") {
 
     const std::filesystem::path notesPath =
         std::filesystem::temp_directory_path() / "zaro-selftest-review.md";
-    std::filesystem::remove(notesPath);
+    zaro::app::testing::discard(notesPath);
     if (Status written = window.writeReviewNotes(notesPath.string()); !written) {
         zaro::app::testing::failf("%s\n", written.error().toString().c_str());
     }
@@ -882,7 +882,10 @@ TEST_CASE("Review comments, ticked off and sent", "[gui]") {
     const auto* firstMarker = &window.project().findSequence(reviewSequenceId)->markers().front();
     static_cast<void>(firstMarker);
 
-    std::filesystem::remove(notesPath);
+    // Closed before it is deleted: the stream that read it back is still open
+    // otherwise, and on Windows an open handle is a delete that fails.
+    reading.close();
+    zaro::app::testing::discard(notesPath);
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
@@ -910,7 +913,7 @@ TEST_CASE("A lock beside the project, and what it stops", "[gui]") {
     PreviewWindow::setLockingEnabled(true);
     const std::filesystem::path lockRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-locks";
-    std::filesystem::remove_all(lockRoot);
+    zaro::app::testing::discard(lockRoot);
     std::filesystem::create_directories(lockRoot);
     const std::string shared = (lockRoot / "shared.zaro").string();
 
@@ -979,7 +982,7 @@ TEST_CASE("A lock beside the project, and what it stops", "[gui]") {
         "lock\n");
 
     window.releaseLock();
-    std::filesystem::remove_all(lockRoot);
+    zaro::app::testing::discard(lockRoot);
     PreviewWindow::setLockingEnabled(false);
 }
 
@@ -999,7 +1002,7 @@ TEST_CASE("Saving a new version and carrying on in it", "[gui]") {
 
     const std::filesystem::path versionRoot =
         std::filesystem::temp_directory_path() / "zaro-selftest-versions";
-    std::filesystem::remove_all(versionRoot);
+    zaro::app::testing::discard(versionRoot);
     std::filesystem::create_directories(versionRoot);
     const std::string first = (versionRoot / "cut.zaro").string();
 
@@ -1044,7 +1047,7 @@ TEST_CASE("Saving a new version and carrying on in it", "[gui]") {
     if (Status back = window.openProject(first); !back) {
         zaro::app::testing::failf("%s\n", back.error().toString().c_str());
     }
-    std::filesystem::remove_all(versionRoot);
+    zaro::app::testing::discard(versionRoot);
 }
 
 // New and Open, through the real window.
