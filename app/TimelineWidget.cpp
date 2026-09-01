@@ -2821,41 +2821,62 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
         metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
 
     const auto row = layout_.rowAt(*seq, at.y());
-    spot.kind =
+    spot.at.kind =
         row ? row->kind : (at.y() < audioTop ? model::TrackKind::Video : model::TrackKind::Audio);
     // Sound has nowhere to be on a picture row: a file with no picture in it
     // would draw as a blank block and show nothing. The other way round is
     // allowed -- a take dropped on a sound row is how you use its audio and
     // leave its picture out.
     if (ref->info.primaryVideo() == nullptr) {
-        spot.kind = model::TrackKind::Audio;
+        spot.at.kind = model::TrackKind::Audio;
     }
 
     spot.start = maybeSnap(layout_.timeForX(at.x(), rate), model::ClipId{});
     if (spot.start.frames() < 0) {
         spot.start = time::RationalTime{0, rate};
     }
+    const time::TimeRange range{spot.start, spot.duration};
 
     // The row under the pointer, unless the redirection above moved the drop to
     // the other block, in which case the first row of that block is what it was
     // nearest to.
     const auto& tracks =
-        spot.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
-    model::TrackId candidate;
-    if (row && row->kind == spot.kind) {
-        candidate = row->track;
+        spot.at.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
+    model::TrackId wanted;
+    if (row && row->kind == spot.at.kind) {
+        wanted = row->track;
     } else if (!tracks.empty()) {
-        candidate = tracks.front().id();
+        wanted = tracks.front().id();
+    }
+    spot.at = landingFor(spot.at.kind, wanted, range);
+
+    // The sound of a take that has one, on a sound row of its own. Not a
+    // property of where the pointer is: what the pointer chose is where the
+    // picture goes, and sound goes under it -- on A1 if A1 is free there, and
+    // on a row of its own if it is not.
+    if (spot.at.kind == model::TrackKind::Video && ref->info.primaryAudio() != nullptr) {
+        const auto& audioTracks = seq->audioTracks();
+        spot.sound =
+            landingFor(model::TrackKind::Audio,
+                       audioTracks.empty() ? model::TrackId{} : audioTracks.front().id(), range);
     }
 
-    const model::Track* track = candidate.isValid() ? seq->findTrack(candidate) : nullptr;
-    const time::TimeRange range{spot.start, spot.duration};
+    return spot;
+}
+
+TimelineWidget::DropSpot::Landing TimelineWidget::landingFor(model::TrackKind kind,
+                                                             model::TrackId wanted,
+                                                             const time::TimeRange& range) const {
+    DropSpot::Landing landing;
+    landing.kind = kind;
+    const model::Sequence* seq = sequence();
+    const model::Track* track =
+        seq != nullptr && wanted.isValid() ? seq->findTrack(wanted) : nullptr;
     // A locked track refuses an edit as firmly as an occupied one, and means
     // the same thing here: not this row, then.
-    spot.newTrack = track == nullptr || track->isLocked() || !track->clipsIn(range).empty();
-    spot.track = spot.newTrack ? model::TrackId{} : candidate;
-
-    return spot;
+    landing.newTrack = track == nullptr || track->isLocked() || !track->clipsIn(range).empty();
+    landing.track = landing.newTrack ? model::TrackId{} : wanted;
+    return landing;
 }
 
 /// Where the ghost goes, worked out at paint time rather than kept in the spot.
@@ -2863,13 +2884,14 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
 /// The view can zoom or scroll between the pointer moving and the panel
 /// repainting, and a rectangle worked out at the earlier moment would be drawn
 /// against the later one -- a ghost sitting somewhere the clip is not going.
-QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot) const {
+QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot,
+                                       const DropSpot::Landing& landing) const {
     const model::Sequence* seq = sequence();
     if (seq == nullptr) {
         return {};
     }
     const auto& metrics = layout_.metrics();
-    const bool isVideo = spot.kind == model::TrackKind::Video;
+    const bool isVideo = landing.kind == model::TrackKind::Video;
 
     // On an existing row the ghost is the clip's own body. On a new one it is
     // the strip the new row will occupy: the top of the picture block, since
@@ -2879,7 +2901,7 @@ QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot) const {
     const std::int32_t audioTop =
         metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
     const std::optional<ui::TimelineLayout::Row> placed =
-        spot.newTrack ? std::nullopt : rowFor(spot.track);
+        landing.newTrack ? std::nullopt : rowFor(landing.track);
     const double top =
         (placed
              ? placed->top
@@ -2901,35 +2923,47 @@ void TimelineWidget::paintDropPreview(QPainter& painter) {
         return;
     }
     const DropSpot& spot = *dropSpot_;
-    const QRectF body = dropPreviewRect(spot);
-    if (body.isEmpty()) {
-        return;
-    }
-    const QColor accent =
-        spot.kind == model::TrackKind::Audio ? theme::audio(400) : theme::accent(400);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    if (spot.newTrack) {
-        // The whole lane, not just the clip: what is being previewed is a row
-        // that does not exist yet, and a ghost floating inside a lane that is
-        // already somebody else's would say the opposite of what happens.
-        const double headers = layout_.metrics().headerWidth;
-        const QRectF lane{headers, body.top() - 2.0, width() - headers, body.height() + 4.0};
-        QColor wash = accent;
-        wash.setAlpha(30);
-        painter.fillRect(lane, wash);
-        // A solid bar along the edge the row opens at. The picture block grows
-        // upward, so a new row's strip is drawn over the row currently at the
-        // top of it -- the bar is what says "a lane opens here" rather than
-        // "this is going onto that track".
-        painter.fillRect(QRectF{headers, lane.top(), lane.width(), 3.0}, accent);
-    }
+    // One ghost per clip the drop would make, so a file with sound in it shows
+    // both rows it is about to occupy rather than only the one under the
+    // pointer.
+    const auto ghost = [this, &painter, &spot](const DropSpot::Landing& landing) {
+        const QRectF body = dropPreviewRect(spot, landing);
+        if (body.isEmpty()) {
+            return;
+        }
+        const QColor accent =
+            landing.kind == model::TrackKind::Audio ? theme::audio(400) : theme::accent(400);
 
-    QColor fill = accent;
-    fill.setAlpha(90);
-    painter.setBrush(fill);
-    painter.setPen(QPen{accent, spot.newTrack ? 2.0 : 1.0, Qt::DashLine});
-    painter.drawRoundedRect(body, 5.0, 5.0);
+        if (landing.newTrack) {
+            // The whole lane, not just the clip: what is being previewed is a
+            // row that does not exist yet, and a ghost floating inside a lane
+            // that is already somebody else's would say the opposite of what
+            // happens.
+            const double headers = layout_.metrics().headerWidth;
+            const QRectF lane{headers, body.top() - 2.0, width() - headers, body.height() + 4.0};
+            QColor wash = accent;
+            wash.setAlpha(30);
+            painter.fillRect(lane, wash);
+            // A solid bar along the edge the row opens at. The picture block
+            // grows upward, so a new row's strip is drawn over the row
+            // currently at the top of it -- the bar is what says "a lane opens
+            // here" rather than "this is going onto that track".
+            painter.fillRect(QRectF{headers, lane.top(), lane.width(), 3.0}, accent);
+        }
+
+        QColor fill = accent;
+        fill.setAlpha(90);
+        painter.setBrush(fill);
+        painter.setPen(QPen{accent, landing.newTrack ? 2.0 : 1.0, Qt::DashLine});
+        painter.drawRoundedRect(body, 5.0, 5.0);
+    };
+
+    ghost(spot.at);
+    if (spot.sound) {
+        ghost(*spot.sound);
+    }
 }
 
 void TimelineWidget::dragEnterEvent(QDragEnterEvent* event) {
@@ -3009,33 +3043,31 @@ void TimelineWidget::dropEvent(QDropEvent* event) {
     update();
 }
 
-void TimelineWidget::placeDropped(const MediaDrag& dragged, const DropSpot& where) {
+model::TrackId TimelineWidget::placeOne(const MediaDrag& dragged, const DropSpot& where,
+                                        const DropSpot::Landing& landing, model::ClipId& placed) {
     const model::Sequence* seq = sequence();
-    if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
-        return;
+    const model::MediaRef* ref = project_ != nullptr ? project_->findMedia(dragged.media) : nullptr;
+    if (seq == nullptr || ref == nullptr) {
+        return {};
     }
-    const model::MediaRef* ref = project_->findMedia(dragged.media);
     const auto sourceRange = draggedSourceRange(*project_, dragged, seq->frameRate());
-    if (ref == nullptr || !sourceRange) {
-        return;
+    if (!sourceRange) {
+        return {};
     }
-    const std::string name = ref->name;
 
-    const edit::CommandStack::Group step{*commands_};
-
-    model::TrackId target = where.track;
-    if (where.newTrack) {
-        addTrack(where.kind);
+    model::TrackId target = landing.track;
+    if (landing.newTrack) {
+        addTrack(landing.kind);
         // The command replaced the sequence wholesale, so nothing read before
         // this line may be used after it. The new track is the last of its kind.
         seq = sequence();
         if (seq == nullptr) {
-            return;
+            return {};
         }
         const auto& tracks =
-            where.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
+            landing.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
         if (tracks.empty()) {
-            return;
+            return {};
         }
         target = tracks.back().id();
     }
@@ -3044,19 +3076,56 @@ void TimelineWidget::placeDropped(const MediaDrag& dragged, const DropSpot& wher
     model::Clip clip;
     clip.id = project_->ids().next<model::ClipTag>();
     clip.source = dragged.media;
-    clip.name = subclip != nullptr && !subclip->name.empty() ? subclip->name : name;
+    clip.name = subclip != nullptr && !subclip->name.empty() ? subclip->name : ref->name;
     clip.sourceRange = *sourceRange;
     clip.timelineRange = time::TimeRange{where.start, where.duration};
 
     auto built = edit::makeOverwrite(*project_, {sequenceId_, target}, clip);
     if (!built) {
-        return;
+        return {};
     }
     commands_->execute(*project_, std::move(*built));
+    placed = clip.id;
+    return target;
+}
+
+void TimelineWidget::placeDropped(const MediaDrag& dragged, const DropSpot& where) {
+    if (project_ == nullptr || commands_ == nullptr || sequence() == nullptr) {
+        return;
+    }
+
+    const edit::CommandStack::Group step{*commands_};
+
+    model::ClipId pictureClip;
+    const model::TrackId pictureTrack = placeOne(dragged, where, where.at, pictureClip);
+    if (!pictureTrack.isValid()) {
+        return;
+    }
+
+    // The sound of the same take, on a row of its own, joined to the picture.
+    //
+    // Two clips rather than one because that is what the program can hear: the
+    // audio graph mixes clips on audio tracks and nothing else, so a take that
+    // arrived as a single clip on V1 played silently. Linked because picture
+    // and sound that arrived together should stay together -- dragging one and
+    // leaving the other is how a cut goes out of sync without anyone noticing.
+    if (where.sound) {
+        model::ClipId soundClip;
+        const model::TrackId soundTrack = placeOne(dragged, where, *where.sound, soundClip);
+        if (soundTrack.isValid()) {
+            if (auto linked =
+                    edit::makeLinkClips(*project_, sequenceId_,
+                                        {{pictureTrack, pictureClip}, {soundTrack, soundClip}})) {
+                commands_->execute(*project_, std::move(*linked));
+            }
+        }
+    }
+
     commands_->breakMerge();
     // Selected, the way a clip somebody has just put down is the one they are
-    // about to move or trim.
-    selectOnly(target, clip.id);
+    // about to move or trim. The picture, not its sound: the picture is the
+    // half somebody points at, and the link brings the other along anyway.
+    selectOnly(pictureTrack, pictureClip);
     emit edited();
     emit viewChanged();
     update();

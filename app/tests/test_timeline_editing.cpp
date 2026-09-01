@@ -869,7 +869,9 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     const std::size_t v1ClipsBefore = window.sequence()->videoTracks().front().clips().size();
     const std::size_t a1ClipsBefore = window.sequence()->audioTracks().front().clips().size();
 
-    // 1. Onto empty timeline on V1: it joins the row it was let go of on.
+    // 1. Onto empty timeline on V1: it joins the row it was let go of on, and
+    // its sound goes under it. Two clips, because that is what the program can
+    // hear -- the audio graph mixes clips on audio tracks and nothing else.
     drop(picture, emptyX, videoRowY(0));
     if (window.sequence()->videoTracks().size() != videoTracksBefore) {
         zaro::app::testing::failf("a drop into empty room made a track it did not need\n");
@@ -884,9 +886,23 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
             static_cast<long long>(landed.start().frames()),
             static_cast<long long>(timeline->layout().timeForX(emptyX, rate).frames()));
     }
+    if (window.sequence()->audioTracks().size() != audioTracksBefore ||
+        window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore + 1) {
+        zaro::app::testing::failf("the take's sound did not land on A1\n");
+    }
+    const auto& landedSound = window.sequence()->audioTracks().front().clips().back();
+    if (landedSound.start() != landed.start() || landedSound.duration() != landed.duration()) {
+        zaro::app::testing::failf("the sound is not where the picture is\n");
+    }
+    // Linked, so a later drag of either takes the other with it.
+    if (!landed.link.isValid() || landedSound.link != landed.link) {
+        zaro::app::testing::failf("picture and sound arrived unlinked\n");
+    }
 
     // 2. Over the clip already cut on V1: a new picture row rather than an
-    // overwrite of somebody's cut.
+    // overwrite of somebody's cut -- and, since A1 is busy at that time too, a
+    // new sound row for the sound.
+    const std::size_t audioTracksAfterFirst = window.sequence()->audioTracks().size();
     drop(picture, overX, videoRowY(0));
     if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
         zaro::app::testing::failf("dropping over an existing clip made %zu video tracks, not %zu\n",
@@ -898,24 +914,46 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     if (window.sequence()->videoTracks().back().clips().size() != 1) {
         zaro::app::testing::failf("the new video track did not get the clip\n");
     }
+    if (window.sequence()->audioTracks().size() != audioTracksAfterFirst + 1) {
+        zaro::app::testing::failf("the sound overwrote A1 instead of taking a row of its own\n");
+    }
+    if (window.sequence()->audioTracks().back().clips().size() != 1) {
+        zaro::app::testing::failf("the new sound row did not get the sound\n");
+    }
 
-    // 3. Sound over the sound block, where A1 is already busy: a new sound row.
+    // 3. A sound file over the sound block, where A1 is already busy: a new
+    // sound row, and no picture anywhere -- a file with no picture in it has
+    // none to place.
+    const std::size_t videoTracksAfterSecond = window.sequence()->videoTracks().size();
+    const std::size_t audioTracksAfterSecond = window.sequence()->audioTracks().size();
     drop(sound, overX, audioRowY(0));
-    if (window.sequence()->audioTracks().size() != audioTracksBefore + 1) {
+    if (window.sequence()->audioTracks().size() != audioTracksAfterSecond + 1) {
         zaro::app::testing::failf("dropping sound over a busy row did not make one for it\n");
     }
     if (window.sequence()->audioTracks().back().clips().size() != 1) {
         zaro::app::testing::failf("the new audio track did not get the sound\n");
     }
+    if (window.sequence()->videoTracks().size() != videoTracksAfterSecond) {
+        zaro::app::testing::failf("a sound file made a picture row\n");
+    }
 
-    // 4. Sound let go of over a *picture* row goes to the sound block anyway: a
-    // file with no picture in it has nothing to be on V1.
+    // 4. A sound file let go of over a *picture* row goes to the sound block
+    // anyway, for the same reason.
+    const std::size_t v1ClipsAfterThird = window.sequence()->videoTracks().front().clips().size();
+    std::size_t soundClipsBefore = 0;
+    for (const zaro::model::Track& track : window.sequence()->audioTracks()) {
+        soundClipsBefore += track.clips().size();
+    }
     drop(sound, emptyX, videoRowY(0));
-    if (window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore + 1) {
+    if (window.sequence()->videoTracks().front().clips().size() != v1ClipsAfterThird) {
         zaro::app::testing::failf("a sound file landed on a picture track\n");
     }
-    if (window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore + 1) {
-        zaro::app::testing::failf("the sound file did not fall through to A1\n");
+    std::size_t soundClipsAfter = 0;
+    for (const zaro::model::Track& track : window.sequence()->audioTracks()) {
+        soundClipsAfter += track.clips().size();
+    }
+    if (soundClipsAfter != soundClipsBefore + 1) {
+        zaro::app::testing::failf("the sound file did not fall through to the sound rows\n");
     }
 
     // One undo step per drop, including the two that had to make a track: the
@@ -935,7 +973,7 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
         zaro::app::testing::failf("undoing the four drops did not put the cut back\n");
     }
 
-    std::printf("  dropped on the timeline: two new rows made, four drops undone\n");
+    std::printf("  dropped on the timeline: picture and sound linked, four drops undone\n");
 
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();

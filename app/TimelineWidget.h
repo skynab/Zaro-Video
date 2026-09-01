@@ -235,18 +235,40 @@ private:
     /// again on the drop rather than trusted: conforming an empty sequence to
     /// the first file changes the frame rate the start time is expressed in.
     struct DropSpot {
-        model::TrackKind kind{model::TrackKind::Video};
-        /// The track the clip joins. Invalid when a new one is wanted, which
-        /// is what happens when the clip would land on top of something.
-        model::TrackId track;
-        bool newTrack{false};
+        /// One clip's destination.
+        struct Landing {
+            model::TrackKind kind{model::TrackKind::Video};
+            /// The track it joins. Invalid when a new one is wanted, which is
+            /// what happens when the clip would land on top of something.
+            model::TrackId track;
+            bool newTrack{false};
+        };
+        Landing at;
+        /// Where its sound goes.
+        ///
+        /// A file with both streams arrives as two clips, linked -- the
+        /// arrangement `zaro-cut` writes and the one the mixer can hear, since
+        /// the audio graph reads clips on audio tracks and nothing else. Empty
+        /// when the file is silent, and when the drop was aimed at a sound row
+        /// in the first place: that gesture means "use the sound of this take",
+        /// and it has already landed where it was asked to.
+        std::optional<Landing> sound;
         time::RationalTime start{};
         time::RationalTime duration{};
     };
     [[nodiscard]] std::optional<DropSpot> dropSpotFor(const MediaDrag& dragged, const QPoint& at);
-    /// Where the ghost for a spot is drawn: the clip's own body on an existing
-    /// row, or the strip a new row would occupy.
-    [[nodiscard]] QRectF dropPreviewRect(const DropSpot& spot) const;
+    /// Which track of its kind a clip of this length would land on at this
+    /// time: the one asked for, or a new one when that is taken or locked.
+    [[nodiscard]] DropSpot::Landing landingFor(model::TrackKind kind, model::TrackId wanted,
+                                               const time::TimeRange& range) const;
+    /// Where the ghost for a landing is drawn: the clip's own body on an
+    /// existing row, or the strip a new row would occupy.
+    [[nodiscard]] QRectF dropPreviewRect(const DropSpot& spot,
+                                         const DropSpot::Landing& landing) const;
+    /// Put one clip down, making its track first if it needs one. Returns the
+    /// track it ended up on, invalid if it could not be placed.
+    [[nodiscard]] model::TrackId placeOne(const MediaDrag& dragged, const DropSpot& where,
+                                          const DropSpot::Landing& landing, model::ClipId& placed);
     /// Make the edit a drop asks for: a track first if it needs one, then the
     /// clip, both inside one undo step.
     void placeDropped(const MediaDrag& dragged, const DropSpot& where);
