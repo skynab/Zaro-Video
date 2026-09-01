@@ -5,6 +5,7 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QEventLoop>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
@@ -1073,7 +1074,11 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
 
     std::printf("  dropped media: %zu now in the project\n", window.project().media().size());
 
-    std::filesystem::remove_all(dropRoot);
+    // Let go of the files before deleting them, and do not insist that the
+    // delete succeeds. Everything the pane lists is open somewhere -- a decoder
+    // for the monitor, a poster frame for the row -- and Windows will not
+    // delete a file another handle still holds. The copies are in the system
+    // temp folder and this test starts by clearing them.
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
@@ -1081,6 +1086,8 @@ TEST_CASE("Files dropped on the media pane are imported", "[gui]") {
         zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
     }
     QApplication::processEvents();
+    std::error_code ignored;
+    std::filesystem::remove_all(dropRoot, ignored);
 }
 
 // A file imported into a session that is already running.
@@ -1147,4 +1154,90 @@ TEST_CASE("Media imported into a running session can be decoded", "[gui]") {
     QApplication::processEvents();
     std::error_code ignored;
     std::filesystem::remove_all(importRoot, ignored);
+}
+
+// A row in the media pane shows a frame of its file.
+//
+// Measured off the list itself rather than off the cache, because what was
+// missing was not a decoder -- the timeline has drawn filmstrips from this same
+// cache all along -- but a row that asks for a frame and draws it. The frame
+// arrives on a worker thread, so the check waits for it the way the panel does:
+// paint, let the loop run, paint again.
+TEST_CASE("Media pane rows show a frame of the file", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    const std::filesystem::path posterRoot =
+        std::filesystem::temp_directory_path() / "zaro-selftest-poster";
+    std::filesystem::remove_all(posterRoot);
+    std::filesystem::create_directories(posterRoot);
+    // Texture rather than the fixture clip: `sync_click_flash.mov` is black
+    // except on its flash frames, and a black poster frame is indistinguishable
+    // from no poster frame at all.
+    const std::filesystem::path textured = posterRoot / "TEXTURED.mov";
+    std::filesystem::copy_file(zaro::app::testing::mediaFixture("shaky_texture.mov"), textured);
+
+    auto* bin = window.bin();
+    if (bin == nullptr || bin->importPaths({QString::fromStdString(textured.string())}) != 1) {
+        zaro::app::testing::failf("the textured file did not import\n");
+    }
+    auto* list = bin->findChild<QListWidget*>("bin-list");
+    if (list == nullptr) {
+        zaro::app::testing::failf("the pane has no list\n");
+    }
+
+    const auto imported = window.project().media().back().id;
+    QListWidgetItem* row = nullptr;
+    for (int i = 0; i < list->count(); ++i) {
+        if (list->item(i)->data(Qt::UserRole).toULongLong() == imported.value()) {
+            row = list->item(i);
+            break;
+        }
+    }
+    if (row == nullptr) {
+        zaro::app::testing::failf("the imported file has no row in the pane\n");
+    }
+    list->scrollToItem(row);
+    QApplication::processEvents();
+
+    // Where the delegate draws the picture: the plate is the row inset by half
+    // the gutter, and the thumbnail sits six pixels inside it.
+    const QRect rowRect = list->visualItemRect(row);
+    const QRect plate{rowRect.left() + 9, rowRect.top() + (rowRect.height() - 38) / 2 + 1, 64, 38};
+    // The upper-left of the picture, which is picture and nothing else: the
+    // running time is a near-white badge in the bottom-right corner of the same
+    // plate, and a box that included it would be satisfied by the placeholder.
+    const QRect thumb{plate.left() + 12, plate.top() + 4, 33, 22};
+
+    // The plate the row falls back to is dark and nearly flat; a frame of this
+    // file runs from black to white. Waiting for the worker, not for a fixed
+    // time: how long a decode takes is a property of the machine.
+    int brightest = 0;
+    for (int spin = 0; spin < 400 && brightest < 180; ++spin) {
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+        QImage shot{list->viewport()->size(), QImage::Format_ARGB32};
+        shot.fill(Qt::black);
+        list->viewport()->render(&shot);
+        brightest = 0;
+        for (int y = thumb.top(); y < thumb.bottom() && y < shot.height(); ++y) {
+            for (int x = thumb.left(); x < thumb.right() && x < shot.width(); ++x) {
+                brightest = std::max(brightest, qGray(shot.pixel(x, y)));
+            }
+        }
+    }
+    if (brightest < 180) {
+        zaro::app::testing::failf("the row's picture never arrived (brightest pixel %d)\n",
+                                  brightest);
+    }
+    std::printf("  media pane poster: brightest pixel %d in the row's thumbnail\n", brightest);
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    if (Status reopened = window.reopenMedia(); !reopened) {
+        zaro::app::testing::failf("%s\n", reopened.error().toString().c_str());
+    }
+    QApplication::processEvents();
+    std::error_code ignored;
+    std::filesystem::remove_all(posterRoot, ignored);
 }

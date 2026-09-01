@@ -169,6 +169,9 @@ void PreviewWindow::createPanels() {
     // Monitor and parameters side by side, transport under them, timeline
     // across the bottom.
     bin_ = adopting(new app::ProjectBin(this));
+    // The same frames the timeline draws on its clips, from the same worker:
+    // a bin row and a filmstrip cell of one file are the same decode.
+    bin_->setThumbnailCache(thumbnails_);
     // The width the design fixes the media pane at. Fixed rather than a
     // range because the row inside it is fixed too -- a 64-pixel thumbnail,
     // two lines of type and a dot -- and the pane has nothing that would

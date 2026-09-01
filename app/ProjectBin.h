@@ -26,6 +26,8 @@ class QStackedWidget;
 
 namespace zaro::app {
 
+class ThumbnailCache;
+
 /// The media pane: what media the project knows about, and how to look through
 /// it.
 ///
@@ -43,6 +45,11 @@ public:
 
     void bind(const ui::SequenceBinding& binding) override;
     void refresh();
+
+    /// Where the rows get their preview frames. Not owned; may be null, in
+    /// which case a row draws the placeholder plate the design falls back to.
+    /// Shared with the timeline, which wants the same frames of the same files.
+    void setThumbnailCache(ThumbnailCache* cache);
 
     /// Ask for files. Public because Import is a File-menu item as well as an
     /// item in this panel's overflow menu, and both should be the same action.
@@ -135,6 +142,7 @@ private:
     model::SequenceId sequenceId_;
     edit::CommandStack* commands_{nullptr};
 
+    ThumbnailCache* thumbnails_{nullptr};
     QListWidget* list_{nullptr};
     QLineEdit* search_{nullptr};
     QLabel* footer_{nullptr};

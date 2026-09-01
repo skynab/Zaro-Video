@@ -50,6 +50,7 @@
 #include "MediaDrag.h"
 #include "Say.h"
 #include "Theme.h"
+#include "ThumbnailCache.h"
 #include "chrome/FlowLayout.h"
 
 namespace zaro::app {
@@ -68,6 +69,8 @@ constexpr int kRoleUsed = Qt::UserRole + 6;     ///< bool: the cut uses this
 constexpr int kRoleCount = Qt::UserRole + 7;    ///< a heading's tally
 constexpr int kRoleBin = Qt::UserRole + 8;      ///< which folder this row is under
 constexpr int kRoleFolded = Qt::UserRole + 9;   ///< bool: a shut heading
+constexpr int kRolePath = Qt::UserRole + 10;    ///< the file a preview frame comes from
+constexpr int kRolePoster = Qt::UserRole + 11;  ///< double: seconds into it to show
 
 // The row geometry the design draws, in logical pixels.
 constexpr int kThumbWidth = 64;
@@ -85,6 +88,17 @@ QString binNameFor(const std::string& path) {
     const std::filesystem::path file{path};
     const std::filesystem::path folder = file.parent_path().filename();
     return folder.empty() ? QStringLiteral("Media") : QString::fromStdString(folder.string());
+}
+
+/// How far into a file its preview frame is taken from.
+///
+/// A second in, not the first frame: a shot that opens on a slate, a fade or
+/// the lens cap coming off is common enough that frame zero is the one frame
+/// least likely to say what the file is. Halfway for anything shorter, so a
+/// two-second clip still gets a frame from inside itself.
+double posterSecondsFor(const time::Rational& duration) {
+    const double seconds = duration.toDouble();
+    return seconds > 2.0 ? 1.0 : seconds / 2.0;
 }
 
 icons::Glyph glyphFor(const model::MediaRef& ref) {
@@ -186,8 +200,9 @@ std::set<std::uint64_t> usedMedia(const model::Project& project) {
 /// four draw calls, against four widgets and a layout each.
 class BinDelegate : public QStyledItemDelegate {
 public:
-    explicit BinDelegate(const bool* compact, QObject* parent = nullptr)
-        : QStyledItemDelegate{parent}, compact_{compact} {}
+    explicit BinDelegate(const bool* compact, ThumbnailCache* const* thumbnails,
+                         QObject* parent = nullptr)
+        : QStyledItemDelegate{parent}, compact_{compact}, thumbnails_{thumbnails} {}
 
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         Q_UNUSED(option);
@@ -314,10 +329,50 @@ private:
                           Qt::AlignRight | Qt::AlignVCenter, index.data(kRoleCount).toString());
     }
 
-    /// The placeholder frame the design draws: a dark gradient plate, a hairline
-    /// inside it, the file's kind in the middle, and the running time in the
-    /// corner. No decoded frame -- pulling one is a seek per row, and the design
-    /// itself shows a glyph.
+    /// The row's own frame, if one has been decoded. Returns whether it drew.
+    ///
+    /// Fitted rather than cropped: what the picture is for is recognising a
+    /// shot, and a crop that takes a fifth off a 4:3 frame to fill a wider box
+    /// is a picture of something slightly other than what the file holds.
+    bool paintFrame(QPainter* painter, const QPainterPath& plate, const QRect& thumb,
+                    const QModelIndex& index) const {
+        ThumbnailCache* cache = thumbnails_ != nullptr ? *thumbnails_ : nullptr;
+        const QString path = index.data(kRolePath).toString();
+        if (cache == nullptr || path.isEmpty()) {
+            return false;
+        }
+        // A whole second in, quantised, so that every row asks for a frame the
+        // cache can actually hit twice rather than one per repaint.
+        const auto at = time::RationalTime::fromSeconds(
+            time::Rational::approximate(index.data(kRolePoster).toDouble()), time::rates::fps25);
+        const QImage frame = cache->lookup(path.toStdString(), at, thumb.height());
+        if (frame.isNull() || frame.width() <= 0 || frame.height() <= 0) {
+            return false;
+        }
+
+        const QRectF box{thumb};
+        const double scale = std::min(box.width() / frame.width(), box.height() / frame.height());
+        const QSizeF fitted{frame.width() * scale, frame.height() * scale};
+        const QRectF where{box.center().x() - fitted.width() / 2.0,
+                           box.center().y() - fitted.height() / 2.0, fitted.width(),
+                           fitted.height()};
+        painter->save();
+        painter->setClipPath(plate);
+        painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+        painter->drawImage(where, frame);
+        painter->restore();
+        return true;
+    }
+
+    /// A frame of the file, on the plate the design draws: a dark gradient, a
+    /// hairline inside it, and the running time in the corner.
+    ///
+    /// The frame is asked for, never waited for. `ThumbnailCache::lookup` hands
+    /// back what it already has and queues the rest on its worker, so a bin of
+    /// three hundred files fills in over a moment rather than seeking three
+    /// hundred times inside one `paintEvent`. Until a row's frame arrives -- and
+    /// for ever, on a file with no picture in it -- the plate carries the glyph
+    /// for what kind of thing it is, which is what the design falls back to.
     void paintThumbnail(QPainter* painter, const QRect& thumb, const QModelIndex& index) const {
         QPainterPath plate;
         plate.addRoundedRect(thumb, 5, 5);
@@ -331,10 +386,12 @@ private:
         painter->setPen(QPen{theme::mix(theme::neutral(900), theme::text(), 0.10), 1.0});
         painter->drawRoundedRect(QRectF{thumb}.adjusted(0.5, 0.5, -0.5, -0.5), 4.5, 4.5);
 
-        const auto glyph = static_cast<icons::Glyph>(index.data(kRoleGlyph).toInt());
-        const QPixmap picture =
-            icons::pixmap(glyph, 15, theme::mix(theme::neutral(900), theme::text(), 0.30));
-        painter->drawPixmap(QPoint{thumb.center().x() - 7, thumb.center().y() - 7}, picture);
+        if (!paintFrame(painter, plate, thumb, index)) {
+            const auto glyph = static_cast<icons::Glyph>(index.data(kRoleGlyph).toInt());
+            const QPixmap picture =
+                icons::pixmap(glyph, 15, theme::mix(theme::neutral(900), theme::text(), 0.30));
+            painter->drawPixmap(QPoint{thumb.center().x() - 7, thumb.center().y() - 7}, picture);
+        }
 
         const QString badge = index.data(kRoleBadge).toString();
         if (badge.isEmpty()) {
@@ -356,6 +413,10 @@ private:
     }
 
     const bool* compact_;
+    /// By pointer to the pane's own pointer: the cache is handed to the pane
+    /// after the delegate exists, and a copy taken at construction would stay
+    /// null for the life of the list.
+    ThumbnailCache* const* thumbnails_;
 };
 
 /// The bin's list, with its rows draggable onto the timeline.
@@ -512,7 +573,7 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
-    list_->setItemDelegate(new BinDelegate{&compact_, list_});
+    list_->setItemDelegate(new BinDelegate{&compact_, &thumbnails_, list_});
     list_->viewport()->setAutoFillBackground(false);
     // Rows drag out onto the timeline. DragOnly, not DragDrop: the pane takes
     // files from the file manager itself, and a list that also accepted drops
@@ -893,6 +954,15 @@ void ProjectBin::refresh() {
             item->setData(kRoleMeta, metaFor(*ref));
             item->setData(kRoleBadge, badgeFor(ref->info.duration));
             item->setData(kRoleGlyph, static_cast<int>(glyphFor(*ref)));
+            // Through the project rather than off the reference, so a row shows
+            // the proxy's frame when proxies are on -- decoding the original
+            // for a picture 38 pixels tall is the cost proxies exist to avoid.
+            // Only where there is a picture to show: a sound file keeps its
+            // waveform glyph.
+            if (ref->info.primaryVideo() != nullptr) {
+                item->setData(kRolePath, QString::fromStdString(project_->resolvedPath(*ref)));
+                item->setData(kRolePoster, posterSecondsFor(ref->info.duration));
+            }
             item->setData(kRoleUsed, used.count(ref->id.value()) != 0);
             QString tip = QString::fromStdString(ref->path);
             if (!ref->notes.empty()) {
@@ -916,12 +986,35 @@ void ProjectBin::refresh() {
                     kRoleBadge,
                     QString("%1s").arg(subclip.range.duration().toSecondsDouble(), 0, 'f', 2));
                 child->setData(kRoleUsed, false);
+                // No preview frame: a subclip row is drawn compact, and a
+                // compact row has no plate to put one on.
             }
         }
     }
 
     rebuildChips();
     applyFilter();
+}
+
+void ProjectBin::setThumbnailCache(ThumbnailCache* cache) {
+    if (thumbnails_ == cache) {
+        return;
+    }
+    thumbnails_ = cache;
+    if (thumbnails_ != nullptr) {
+        // Decoding happens on the cache's worker, so a row that had nothing to
+        // draw when it was painted has to be painted again when its frame
+        // lands. The viewport rather than the rows: which rows arrived is not
+        // something the signal says, and a bin is a screenful either way.
+        connect(thumbnails_, &ThumbnailCache::ready, this, [this] {
+            if (list_ != nullptr) {
+                list_->viewport()->update();
+            }
+        });
+    }
+    if (list_ != nullptr) {
+        list_->viewport()->update();
+    }
 }
 
 int ProjectBin::count() const {
