@@ -13,6 +13,7 @@
 #   CutReel-V2-1024px.png     the application mark, square, transparent
 #   CutReel-V2-512px.ico      the same mark as a Windows icon, all sizes
 #   Installer Copy-512px.ico  the installer's mark as a Windows icon
+#   Installer Copy-512px.png  the same installer mark, square, transparent
 #
 # macOS only: iconutil builds the .icns and ships with Xcode. ImageMagick is
 # the other requirement -- brew install imagemagick.
@@ -24,7 +25,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 MASTER="$SRC/CutReel-V2-1024px.png"
-for f in "$MASTER" "$SRC/CutReel-V2-512px.ico" "$SRC/Installer Copy-512px.ico"; do
+INSTALLER_MASTER="$SRC/Installer Copy-512px.png"
+for f in "$MASTER" "$INSTALLER_MASTER" \
+         "$SRC/CutReel-V2-512px.ico" "$SRC/Installer Copy-512px.ico"; do
     [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 
@@ -38,6 +41,11 @@ cp "$SRC/Installer Copy-512px.ico" "$OUT/CutReel-Installer.ico"
 for size in 16 32 48 64 128 256 512; do
     magick "$MASTER" -resize "${size}x${size}" -strip "PNG32:$OUT/CutReel-${size}.png"
 done
+
+# The logo on the bootstrapper .exe's one page. 64 pixels because that is the
+# box WixStandardBootstrapperApplication's theme draws it in, and the theme does
+# not scale what it is given.
+magick "$INSTALLER_MASTER" -resize 64x64 -strip "PNG32:$OUT/CutReel-Installer-64.png"
 
 # The macOS bundle icon. iconutil wants exactly these names and rejects the
 # directory outright -- with no word on which file it objected to -- if one is

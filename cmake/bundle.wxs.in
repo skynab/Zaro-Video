@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  The .exe that carries the MSI.
+
+  Its whole reason for existing is the icon. A .msi cannot have one: Windows
+  registers the extension to Msi.Package, whose DefaultIcon is msiexec.exe,0, so
+  every package on every machine draws the same generic glyph and Explorer never
+  looks inside the file. An .exe carries an icon in its own resources, which is
+  why nearly every product ships its installer as one.
+
+  So this is a Burn bundle with a chain of exactly one package. It installs
+  nothing the MSI does not, and running the MSI directly still works and is
+  still supported: this is a wrapper, not a second installer.
+
+  Note for anybody editing the comments here. XML forbids a double hyphen inside
+  a comment, and candle reports it as a parse error at the element after it,
+  which reads like the markup is wrong rather than the prose. The house style of
+  setting a clause off with one is unavailable in this file.
+
+  Configured by cmake/Packaging.cmake, which is where the paths below come from.
+  Built by scripts/build-msi-bundle.ps1 after cpack has produced the MSI.
+-->
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+
+  <!-- The UpgradeCode is the bundle's identity across versions and must never
+       change, for the same reason the MSI's must not: it is how Burn recognises
+       an installed older bundle. It is deliberately not the MSI's upgrade GUID.
+       A bundle and the package it carries are two different products to
+       Windows, and sharing one GUID makes each look like a downgrade of the
+       other. -->
+  <Bundle Name="@ZARO_BUNDLE_NAME@"
+          Version="@ZARO_BUNDLE_VERSION@"
+          Manufacturer="@ZARO_BUNDLE_VENDOR@"
+          UpgradeCode="38453F4A-4D7B-48D0-85C7-1E10AF279A8A"
+          IconSourceFile="@ZARO_BUNDLE_ICON@"
+          Compressed="yes">
+
+    <!-- One page: the logo, the name, the licence as a link, Install. The MSI
+         inside runs with its own UI suppressed, because two wizards in a row
+         for one product is worse than either alone.
+
+         LicenseUrl rather than a licence page of Burn's own: hyperlinkLicense
+         is the theme that offers the terms without a full page for them, and it
+         wants a URL where the other themes want RTF. Anyone who runs the MSI
+         directly still gets the licence page WixUI shows. -->
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication
+          LogoFile="@ZARO_BUNDLE_LOGO@"
+          LicenseUrl="@ZARO_BUNDLE_LICENSE_URL@"
+          SuppressOptionsUI="yes"/>
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <!-- Vital, and the only package: if the MSI fails the bundle failed, and
+           there is nothing to carry on with.
+
+           DisplayInternalUI is deliberately absent. With it, the MSI's own
+           wizard opens on top of this one; without it the MSI installs quietly
+           behind Burn's progress bar, which is the single window experience the
+           wrapper is for. -->
+      <MsiPackage Id="CutReel"
+                  SourceFile="@ZARO_BUNDLE_MSI@"
+                  Vital="yes"
+                  Compressed="yes"/>
+    </Chain>
+  </Bundle>
+</Wix>

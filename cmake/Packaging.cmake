@@ -117,6 +117,28 @@ if(WIN32)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                    "${CMAKE_BINARY_DIR}/License.txt" COPYONLY)
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_BINARY_DIR}/License.txt")
+
+    # --- The .exe around the MSI -----------------------------------------------
+    # An .msi cannot carry its own icon -- see cmake/bundle.wxs.in for why -- so
+    # the file somebody downloads is a Burn bundle wrapping it, and that is what
+    # shows the installer icon in Explorer and in a browser's download list.
+    #
+    # Written here rather than built here: cpack has to produce the MSI before
+    # anything can wrap it, and cpack runs after the build. The workflows call
+    # scripts/build-msi-bundle.ps1 on this file once it has.
+    set(ZARO_BUNDLE_NAME "${CPACK_PACKAGE_NAME}")
+    set(ZARO_BUNDLE_VERSION "${CPACK_PACKAGE_VERSION}")
+    set(ZARO_BUNDLE_VENDOR "${CPACK_PACKAGE_VENDOR}")
+    set(ZARO_BUNDLE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/CutReel-Installer.ico")
+    set(ZARO_BUNDLE_LOGO "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/CutReel-Installer-64.png")
+    set(ZARO_BUNDLE_LICENSE_URL
+        "https://github.com/skynab/Zaro-Video/blob/dev/LICENSE")
+    # The name cpack gives the MSI, spelled the same way it spells it. Absolute,
+    # because light.exe resolves a relative SourceFile against its own working
+    # directory and that is not necessarily this one.
+    set(ZARO_BUNDLE_MSI "${CMAKE_BINARY_DIR}/${CPACK_PACKAGE_FILE_NAME}.msi")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle.wxs.in"
+                   "${CMAKE_BINARY_DIR}/bundle.wxs" @ONLY)
 elseif(APPLE)
     set(CPACK_GENERATOR TGZ)
 else()
