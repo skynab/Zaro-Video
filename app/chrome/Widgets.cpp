@@ -412,9 +412,11 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
     bars.rowHeightSlider->setToolTip("How tall the tracks are drawn");
     const auto setRowHeight = hooks.setTrackHeightFraction;
     // Every way of moving it counts, not only a drag of the handle: a click on
-    // the groove pages it, and the arrow keys step it. There is no feedback to
-    // guard against -- the status pass that follows the model blocks the
-    // slider's signals while it writes to it.
+    // the groove pages it, and the wheel steps it. A guard on `isSliderDown`
+    // would let both of those move the handle and change nothing, and the next
+    // status pass would put the handle back -- which reads as a control that
+    // ignores you. There is no feedback to guard against either: the pass that
+    // follows the model blocks this slider's signals while it writes to it.
     QObject::connect(bars.rowHeightSlider, &QSlider::valueChanged, bars.rowHeightSlider,
                      [setRowHeight](int value) {
                          if (setRowHeight) {
@@ -430,10 +432,13 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
     bars.zoomSlider->setFixedWidth(96);
     bars.zoomSlider->setRange(0, 1000);
     bars.zoomSlider->setFocusPolicy(Qt::NoFocus);
+    // Driven the same way the row-height slider is, for the reason given there:
+    // this one used to answer only to a drag of its handle, so a click on the
+    // groove moved the handle and left the zoom where it was.
     const auto setZoom = hooks.setZoomFraction;
     QObject::connect(bars.zoomSlider, &QSlider::valueChanged, bars.zoomSlider,
-                     [&bars, setZoom](int value) {
-                         if (bars.zoomSlider->isSliderDown()) {
+                     [setZoom](int value) {
+                         if (setZoom) {
                              setZoom(value / 1000.0);
                          }
                      });
