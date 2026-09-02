@@ -956,24 +956,60 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
         zaro::app::testing::failf("the sound file did not fall through to the sound rows\n");
     }
 
-    // One undo step per drop, including the two that had to make a track: the
+    // 5. In the band along the very top of the rows: a new picture row, even
+    // though the row under it has room for the clip.
+    //
+    // The band is the only way to ask for a new row at all -- everywhere else,
+    // a drop with space for it joins the row it landed on -- so what it covers
+    // is that aiming at the top edge means something different from aiming a
+    // few pixels lower.
+    const std::size_t videoTracksAfterFourth = window.sequence()->videoTracks().size();
+    const int bandY = timeline->layout().metrics().rulerHeight + 4;
+    const int roomyX = static_cast<int>(timeline->layout().xForTime(
+        timeline->layout().timeForX(emptyX, rate) + zaro::time::RationalTime{2, rate}));
+    drop(picture, roomyX, bandY);
+    if (window.sequence()->videoTracks().size() != videoTracksAfterFourth + 1) {
+        zaro::app::testing::failf("a drop in the band at the top did not make a picture row\n");
+    }
+    if (window.sequence()->videoTracks().back().clips().size() != 1) {
+        zaro::app::testing::failf("the row the band made did not get the clip\n");
+    }
+    // Below the band is the ordinary rule again: aimed at empty room on that
+    // same new row, the clip joins it rather than making another. This is the
+    // contrast the band exists for -- the same row, a few pixels apart, meaning
+    // two different things.
+    const std::size_t videoTracksAfterBand = window.sequence()->videoTracks().size();
+    const auto topRow = timeline->rowFor(window.sequence()->videoTracks().back().id());
+    REQUIRE(topRow.has_value());
+    const int earlyX = timeline->layout().metrics().headerWidth + 20;
+    drop(picture, earlyX, topRow->top + topRow->height / 2);
+    if (window.sequence()->videoTracks().size() != videoTracksAfterBand) {
+        zaro::app::testing::failf("a drop below the band made a row it did not need\n");
+    }
+    if (window.sequence()->videoTracks().back().clips().size() != 2) {
+        zaro::app::testing::failf("the drop below the band did not join the row it was on\n");
+    }
+
+    // One undo step per drop, including the ones that had to make a track: the
     // track is part of putting the clip down, not a separate thing anybody
     // asked for.
-    if (window.commands().position() != stepsBefore + 4) {
-        zaro::app::testing::failf("four drops made %zu undo steps, not four\n",
+    if (window.commands().position() != stepsBefore + 6) {
+        zaro::app::testing::failf("six drops made %zu undo steps, not six\n",
                                   window.commands().position() - stepsBefore);
     }
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 6; ++i) {
         window.commands().undo(window.project());
     }
     if (window.sequence()->videoTracks().size() != videoTracksBefore ||
         window.sequence()->audioTracks().size() != audioTracksBefore ||
         window.sequence()->videoTracks().front().clips().size() != v1ClipsBefore ||
         window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore) {
-        zaro::app::testing::failf("undoing the four drops did not put the cut back\n");
+        zaro::app::testing::failf("undoing the six drops did not put the cut back\n");
     }
 
-    std::printf("  dropped on the timeline: picture and sound linked, four drops undone\n");
+    std::printf(
+        "  dropped on the timeline: picture and sound linked, a row made from the "
+        "top band, six drops undone\n");
 
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();

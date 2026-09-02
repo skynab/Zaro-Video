@@ -2945,8 +2945,8 @@ QString TimelineWidget::nextTrackBadge(model::TrackKind kind) const {
     if (seq == nullptr) {
         return {};
     }
-    const std::size_t count = kind == model::TrackKind::Video ? seq->videoTracks().size()
-                                                             : seq->audioTracks().size();
+    const std::size_t count =
+        kind == model::TrackKind::Video ? seq->videoTracks().size() : seq->audioTracks().size();
     return QString{kind == model::TrackKind::Video ? "V%1" : "A%1"}.arg(count + 1);
 }
 
