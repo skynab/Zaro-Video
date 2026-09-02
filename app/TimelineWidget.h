@@ -228,6 +228,9 @@ private:
     void paintBladePreview(QPainter& painter);
     /// Where a file being dragged over the panel would land.
     void paintDropPreview(QPainter& painter);
+    /// What a row added now would be called, for the header the preview draws
+    /// on a row that does not exist yet.
+    [[nodiscard]] QString nextTrackBadge(model::TrackKind kind) const;
 
     /// What a drop at a given point would do.
     ///

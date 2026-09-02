@@ -2837,13 +2837,34 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     }
     const time::TimeRange range{spot.start, spot.duration};
 
-    // The row under the pointer, unless the redirection above moved the drop to
-    // the other block, in which case the first row of that block is what it was
-    // nearest to.
+    // A band along the outer edge of the rows asks for a row of its own.
+    //
+    // Above the top picture row, and below the bottom sound row, there is
+    // nothing else the gesture could mean -- and it is the only way to ask for
+    // a new row at all when the one already there has room for the clip. The
+    // band is at the top of the block rather than above it because there is no
+    // "above": the ruler is there, and the rows start directly under it.
+    constexpr std::int32_t kNewRowBand = 12;
+    bool wantsNewRow = false;
+    if (at.y() < metrics.rulerHeight + kNewRowBand && ref->info.primaryVideo() != nullptr) {
+        // Named as picture even where there are no picture rows yet, which is
+        // the one case where the top of the block and the top of the sound
+        // block are the same pixel.
+        spot.at.kind = model::TrackKind::Video;
+        wantsNewRow = true;
+    } else if (spot.at.kind == model::TrackKind::Audio && !row) {
+        wantsNewRow = true;  // past the last sound row, over nothing at all
+    }
+
+    // Otherwise the row under the pointer, unless the redirection above moved
+    // the drop to the other block, in which case the first row of that block is
+    // what it was nearest to.
     const auto& tracks =
         spot.at.kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
     model::TrackId wanted;
-    if (row && row->kind == spot.at.kind) {
+    if (wantsNewRow) {
+        wanted = model::TrackId{};
+    } else if (row && row->kind == spot.at.kind) {
         wanted = row->track;
     } else if (!tracks.empty()) {
         wanted = tracks.front().id();
@@ -2918,6 +2939,17 @@ QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot,
     return QRectF{left, top, std::max(2.0, right - left), std::max(2.0, height)};
 }
 
+/// What a row added now would be called: the next V or A number along.
+QString TimelineWidget::nextTrackBadge(model::TrackKind kind) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return {};
+    }
+    const std::size_t count = kind == model::TrackKind::Video ? seq->videoTracks().size()
+                                                             : seq->audioTracks().size();
+    return QString{kind == model::TrackKind::Video ? "V%1" : "A%1"}.arg(count + 1);
+}
+
 void TimelineWidget::paintDropPreview(QPainter& painter) {
     if (!dropSpot_) {
         return;
@@ -2951,6 +2983,23 @@ void TimelineWidget::paintDropPreview(QPainter& painter) {
             // currently at the top of it -- the bar is what says "a lane opens
             // here" rather than "this is going onto that track".
             painter.fillRect(QRectF{headers, lane.top(), lane.width(), 3.0}, accent);
+
+            // And a header for the row that does not exist yet, named as it
+            // will be named, in the column where every other row is named. The
+            // plainest way to say a channel is about to be created is to draw
+            // the channel: a wash over a lane is a hint, "+ V3" is a promise.
+            painter.save();
+            const QRectF header{0.0, lane.top(), headers, lane.height()};
+            painter.fillRect(header, kHeaderBackground);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen{accent, 1.0, Qt::DashLine});
+            painter.drawRect(header.adjusted(0.5, 0.5, -0.5, -0.5));
+            painter.setFont(badgeFont());
+            painter.setPen(accent);
+            painter.drawText(header.adjusted(10.0, 0.0, -6.0, 0.0),
+                             Qt::AlignVCenter | Qt::AlignLeft,
+                             QStringLiteral("+ ") + nextTrackBadge(landing.kind));
+            painter.restore();
         }
 
         QColor fill = accent;
