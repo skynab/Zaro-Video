@@ -396,6 +396,33 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
     row->addStretch(1);
     bars.snapLabel = mutedLabel(bar);
     row->addWidget(bars.snapLabel);
+
+    // How tall the rows are, beside how wide the time is: the two questions a
+    // timeline is read at, and the same shape of control for both. Rows keep
+    // whatever heights they were given one by one -- this scales them together,
+    // so a row made tall to work on stays the tallest of them.
+    auto* rowsLabel = mutedLabel(bar);
+    rowsLabel->setText("Rows");
+    row->addWidget(rowsLabel);
+    bars.rowHeightSlider = new QSlider(Qt::Horizontal, bar);
+    bars.rowHeightSlider->setObjectName("row-height-slider");
+    bars.rowHeightSlider->setFixedWidth(72);
+    bars.rowHeightSlider->setRange(0, 1000);
+    bars.rowHeightSlider->setFocusPolicy(Qt::NoFocus);
+    bars.rowHeightSlider->setToolTip("How tall the tracks are drawn");
+    const auto setRowHeight = hooks.setTrackHeightFraction;
+    // Every way of moving it counts, not only a drag of the handle: a click on
+    // the groove pages it, and the arrow keys step it. There is no feedback to
+    // guard against -- the status pass that follows the model blocks the
+    // slider's signals while it writes to it.
+    QObject::connect(bars.rowHeightSlider, &QSlider::valueChanged, bars.rowHeightSlider,
+                     [setRowHeight](int value) {
+                         if (setRowHeight) {
+                             setRowHeight(value / 1000.0);
+                         }
+                     });
+    row->addWidget(bars.rowHeightSlider);
+    row->addWidget(separator(bar));
     auto* zoomOut = iconButton(bar, app::icons::Glyph::Minus, "Zoom out (−)");
     runs(zoomOut, router, "zoom-out");
     row->addWidget(zoomOut);

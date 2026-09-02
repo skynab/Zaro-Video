@@ -83,6 +83,31 @@ public:
     /// unreachable rather than roomy. Growing redistributes the space there is.
     void setTrackHeight(model::TrackKind kind, int pixels);
     [[nodiscard]] int trackHeight(model::TrackKind kind) const;
+
+    /// One row's height, in the pixels it is drawn at.
+    ///
+    /// Per track as well as per kind, because rows are not interchangeable: the
+    /// shot being graded wants room, and the six tracks of atmos under it do
+    /// not. Setting one leaves every other row alone; clearing it puts the row
+    /// back to whatever its kind says.
+    void setTrackHeight(model::TrackId track, int pixels);
+    [[nodiscard]] int trackHeight(model::TrackId track) const;
+    void clearTrackHeight(model::TrackId track);
+
+    /// Scale every row at once, the way the zoom control scales time.
+    ///
+    /// A multiplier over each row's own height rather than a height of its own,
+    /// so the two controls compose: rows tuned individually keep their
+    /// proportions as the whole panel is made taller or shorter.
+    [[nodiscard]] double trackHeightScale() const noexcept { return heightScale_; }
+    void setTrackHeightScale(double scale);
+    static constexpr double kMinTrackHeightScale = 0.5;
+    static constexpr double kMaxTrackHeightScale = 2.0;
+    /// The scale as a fraction of the range the control offers, and the way
+    /// back -- the same pair the zoom slider is driven through.
+    [[nodiscard]] double trackHeightFraction() const;
+    void setTrackHeightFraction(double fraction);
+
     /// The heights the panel opens with, for the double-click that resets one.
     static constexpr int kDefaultVideoTrackHeight = 62;
     static constexpr int kDefaultAudioTrackHeight = 48;
@@ -259,6 +284,9 @@ private:
         time::RationalTime start{};
         time::RationalTime duration{};
     };
+    /// The top edge of the sound block, or -- with `past` -- the empty space
+    /// under the last row of all, which is where a new sound row would open.
+    [[nodiscard]] std::int32_t soundBlockTop(bool past = false) const;
     [[nodiscard]] std::optional<DropSpot> dropSpotFor(const MediaDrag& dragged, const QPoint& at);
     /// Which track of its kind a clip of this length would land on at this
     /// time: the one asked for, or a new one when that is taken or locked.
@@ -351,14 +379,18 @@ private:
     /// button that does not react to being pointed at does not look like one.
     void updateHeaderHover(int x, int y);
 
-    /// The kind whose height the boundary under this point would resize, if the
+    /// The row whose height the boundary under this point would resize, if the
     /// point is on one.
     ///
     /// A boundary belongs to the row above it. Every row's bottom edge moves
     /// down as its own kind grows -- video stacks upward from the audio block,
     /// audio downward from it -- so "drag the edge down to make this taller"
     /// holds for all of them without exception.
-    [[nodiscard]] std::optional<model::TrackKind> headerResizeAt(int x, int y) const;
+    [[nodiscard]] model::TrackId headerResizeAt(int x, int y) const;
+    /// The height a row was asked for, before the panel-wide scale and before
+    /// any squashing to fit: its own if it has been given one, its kind's if
+    /// not.
+    [[nodiscard]] int wantedHeightFor(model::TrackId track, model::TrackKind kind) const;
     void updateTrackHeight(int y);
     /// Put the asked-for heights into the layout, squashed to whatever the
     /// panel can actually show.
@@ -536,7 +568,10 @@ private:
     /// applyTrackHeights.
     int wantedVideoHeight_{kDefaultVideoTrackHeight};
     int wantedAudioHeight_{kDefaultAudioTrackHeight};
-    std::optional<model::TrackKind> resizeKind_;
+    /// Rows somebody has given a height of their own, before scaling.
+    std::map<model::TrackId, int> wantedHeights_;
+    double heightScale_{1.0};
+    model::TrackId resizeTrack_;
     int resizeAnchorY_{0};
     int resizeStartHeight_{0};
     HeaderHit hoverHeader_;

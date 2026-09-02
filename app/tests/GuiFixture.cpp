@@ -254,6 +254,15 @@ void restoreFixtureProject() {
     // a cut, which it reports as a trim that did not trim -- and which of the
     // two failed depended on the order Catch2 happened to run them in.
     window.timeline()->setTool(app::TimelineWidget::Tool::Select);
+    // Row heights are chrome in the same way, and they are per row: a test that
+    // made one track tall -- or that threw partway through a drag on its edge,
+    // leaving the row it had grown -- hands the next test a panel laid out
+    // differently from the one it measured, and the failure lands over there.
+    window.timeline()->setTrackHeightScale(1.0);
+    window.timeline()->setTrackHeight(model::TrackKind::Video,
+                                      app::TimelineWidget::kDefaultVideoTrackHeight);
+    window.timeline()->setTrackHeight(model::TrackKind::Audio,
+                                      app::TimelineWidget::kDefaultAudioTrackHeight);
     // Take the deferred fit now rather than whenever the next resize arrives.
     //
     // Binding a project asks the timeline to zoom to fit, and it does that on

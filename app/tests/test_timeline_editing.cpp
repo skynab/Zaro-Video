@@ -712,38 +712,47 @@ TEST_CASE("Escape abandons a track rename", "[gui]") {
     }
 }
 
-TEST_CASE("Dragging a track boundary resizes that kind of track", "[gui]") {
+TEST_CASE("Dragging a track boundary resizes that row alone", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;
     auto* timeline = window.timeline();
     const auto trackId = window.sequence()->videoTracks().front().id();
+    const auto otherId = window.sequence()->audioTracks().front().id();
 
     const auto before = timeline->rowFor(trackId);
     REQUIRE(before.has_value());
     const int startHeight = before->height;
+    const int otherHeight = timeline->trackHeight(otherId);
 
     // Grab the row's bottom edge, in the header column.
     const int edgeY = before->top + before->height;
-    const QPointF from(60, edgeY);
-    const QPointF to(60, edgeY + 20);
-    QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton,
-                      Qt::NoModifier);
-    QCoreApplication::sendEvent(timeline, &press);
-    QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QCoreApplication::sendEvent(timeline, &move);
-    QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QCoreApplication::sendEvent(timeline, &release);
+    const auto dragEdge = [timeline](int fromY, int toY) {
+        const QPointF from(60, fromY);
+        const QPointF to(60, toY);
+        QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &press);
+        QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &release);
+    };
+    dragEdge(edgeY, edgeY + 20);
 
-    const int grown = timeline->trackHeight(zaro::model::TrackKind::Video);
+    const int grown = timeline->trackHeight(trackId);
     if (grown <= startHeight) {
-        zaro::app::testing::failf("dragging the boundary down left video tracks at %d (was %d)\n",
-                                  grown, startHeight);
+        zaro::app::testing::failf("dragging the boundary left the row at %d (was %d)\n", grown,
+                                  startHeight);
     }
-    // Audio is a separate setting and should not have moved with it.
-    if (timeline->trackHeight(zaro::model::TrackKind::Audio) !=
-        zaro::app::TimelineWidget::kDefaultAudioTrackHeight) {
-        zaro::app::testing::failf("resizing video also changed the audio track height\n");
+    // One row, not every row of its kind: that is the whole point of the
+    // gesture, and the sound rows are not involved at all.
+    if (timeline->trackHeight(otherId) != otherHeight) {
+        zaro::app::testing::failf("resizing a picture row changed a sound row too\n");
+    }
+    if (timeline->trackHeight(zaro::model::TrackKind::Video) !=
+        zaro::app::TimelineWidget::kDefaultVideoTrackHeight) {
+        zaro::app::testing::failf("resizing one row moved what a new row would be\n");
     }
 
     // Every row has to stay on screen: there is no vertical scrolling, so a
@@ -754,17 +763,40 @@ TEST_CASE("Dragging a track boundary resizes that kind of track", "[gui]") {
         }
     }
 
+    // A double-click on the edge gives the row back to its kind.
+    const auto after = timeline->rowFor(trackId);
+    REQUIRE(after.has_value());
+    const QPointF onEdge(60, after->top + after->height);
+    QMouseEvent doubleClick(QEvent::MouseButtonDblClick, onEdge, onEdge, Qt::LeftButton,
+                            Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(timeline, &doubleClick);
+    if (timeline->trackHeight(trackId) != startHeight) {
+        zaro::app::testing::failf("a double-click on the edge left the row at %d, not %d\n",
+                                  timeline->trackHeight(trackId), startHeight);
+    }
+
+    // And the panel-wide control scales what is there, without forgetting it.
+    timeline->setTrackHeight(trackId, startHeight + 20);
+    const int tuned = timeline->trackHeight(trackId);
+    timeline->setTrackHeightScale(0.5);
+    const int scaled = timeline->trackHeight(trackId);
+    if (scaled >= tuned) {
+        zaro::app::testing::failf("scaling the rows down left one at %d (was %d)\n", scaled, tuned);
+    }
+    if (timeline->trackHeight(otherId) >= otherHeight) {
+        zaro::app::testing::failf("scaling the rows down missed the sound rows\n");
+    }
+    timeline->setTrackHeightScale(1.0);
+    if (timeline->trackHeight(trackId) != tuned) {
+        zaro::app::testing::failf("scaling back did not give the row its own height again\n");
+    }
+    std::printf("  row heights: one row %d, scaled to %d, back to %d\n", tuned, scaled,
+                timeline->trackHeight(trackId));
+
     timeline->setTrackHeight(zaro::model::TrackKind::Video,
                              zaro::app::TimelineWidget::kDefaultVideoTrackHeight);
 }
 
-// A file dragged out of the media pane and let go of on the timeline.
-//
-// The gesture is delivered as Qt delivers it -- a drag-enter to ask whether the
-// panel will take it, then the drop -- because what this covers is the wiring:
-// that the bin's drag says which file, that where it lands decides which row
-// and when, that a drop over something already cut makes a row instead of
-// overwriting it, and that the whole thing is one undo.
 TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

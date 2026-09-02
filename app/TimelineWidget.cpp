@@ -242,14 +242,86 @@ int TimelineWidget::trackHeight(model::TrackKind kind) const {
                                            : layout_.metrics().videoTrackHeight;
 }
 
+/// The height asked for, from the height drawn.
+///
+/// Everything that sets a height is pointing at the screen -- a pointer on a
+/// row's edge, a number in a test -- and what is remembered is the height
+/// before the panel-wide scale, so that scaling and resizing compose instead of
+/// fighting.
+static int unscaled(int pixels, double scale) {
+    return static_cast<int>(std::lround(static_cast<double>(pixels) / std::max(0.01, scale)));
+}
+
 void TimelineWidget::setTrackHeight(model::TrackKind kind, int pixels) {
     // What was asked for is remembered separately from what fits. A panel
     // dragged short squashes the rows, and dragging it tall again should give
     // back the height that was chosen -- which it cannot do if the squashed
     // value has overwritten it.
     (kind == model::TrackKind::Audio ? wantedAudioHeight_ : wantedVideoHeight_) =
-        std::clamp(pixels, kMinTrackHeight, kMaxTrackHeight);
+        std::clamp(unscaled(pixels, heightScale_), kMinTrackHeight, kMaxTrackHeight);
+
+    // Setting the height of a kind means all of its rows, so the ones that had
+    // a height of their own give it up rather than silently ignoring the
+    // instruction.
+    const model::Sequence* seq = sequence();
+    if (seq != nullptr) {
+        for (const model::Track& track :
+             kind == model::TrackKind::Audio ? seq->audioTracks() : seq->videoTracks()) {
+            wantedHeights_.erase(track.id());
+        }
+    }
     applyTrackHeights();
+}
+
+int TimelineWidget::trackHeight(model::TrackId track) const {
+    const model::Sequence* seq = sequence();
+    const model::Track* found = seq != nullptr ? seq->findTrack(track) : nullptr;
+    if (found == nullptr) {
+        return 0;
+    }
+    return layout_.heightOf(track, found->kind());
+}
+
+void TimelineWidget::setTrackHeight(model::TrackId track, int pixels) {
+    if (!track.isValid()) {
+        return;
+    }
+    wantedHeights_[track] =
+        std::clamp(unscaled(pixels, heightScale_), kMinTrackHeight, kMaxTrackHeight);
+    applyTrackHeights();
+}
+
+void TimelineWidget::clearTrackHeight(model::TrackId track) {
+    if (wantedHeights_.erase(track) > 0) {
+        applyTrackHeights();
+    }
+}
+
+int TimelineWidget::wantedHeightFor(model::TrackId track, model::TrackKind kind) const {
+    const auto found = wantedHeights_.find(track);
+    if (found != wantedHeights_.end()) {
+        return found->second;
+    }
+    return kind == model::TrackKind::Audio ? wantedAudioHeight_ : wantedVideoHeight_;
+}
+
+void TimelineWidget::setTrackHeightScale(double scale) {
+    const double clamped = std::clamp(scale, kMinTrackHeightScale, kMaxTrackHeightScale);
+    if (std::abs(clamped - heightScale_) < 0.0001) {
+        return;
+    }
+    heightScale_ = clamped;
+    applyTrackHeights();
+    emit viewChanged();
+}
+
+double TimelineWidget::trackHeightFraction() const {
+    return (heightScale_ - kMinTrackHeightScale) / (kMaxTrackHeightScale - kMinTrackHeightScale);
+}
+
+void TimelineWidget::setTrackHeightFraction(double fraction) {
+    const double f = std::clamp(fraction, 0.0, 1.0);
+    setTrackHeightScale(kMinTrackHeightScale + f * (kMaxTrackHeightScale - kMinTrackHeightScale));
 }
 
 void TimelineWidget::applyTrackHeights() {
@@ -259,37 +331,58 @@ void TimelineWidget::applyTrackHeights() {
     }
     ui::TimelineLayout::Metrics metrics = layout_.metrics();
 
-    // Rows do not scroll vertically, so the tallest a kind may be is the height
-    // that still leaves every other row on screen. Asked of the layout rather
-    // than rebuilt here, which would be a second copy of its arithmetic to keep
-    // in step.
-    const auto fit = [&](model::TrackKind kind, int wanted) {
-        const int count =
-            static_cast<int>(kind == model::TrackKind::Audio ? seq->audioTracks().size()
-                                                             : seq->videoTracks().size());
-        if (count == 0) {
-            return wanted;
-        }
-        ui::TimelineLayout::Metrics probe = metrics;
-        (kind == model::TrackKind::Audio ? probe.audioTrackHeight : probe.videoTrackHeight) =
-            wanted;
-        const int over = ui::TimelineLayout{probe}.contentHeight(*seq) - height();
-        if (over <= 0) {
-            return wanted;
-        }
-        // Share the overflow across the rows of this kind, then floor it: when
-        // the panel is too small even for the minimum, there is nothing better
-        // to do than be as compact as possible.
-        return std::max(kMinTrackHeight, wanted - (over + count - 1) / count);
+    const auto scaled = [this](int wanted) {
+        return std::clamp(static_cast<int>(std::lround(wanted * heightScale_)), kMinTrackHeight,
+                          kMaxTrackHeight);
     };
 
-    metrics.videoTrackHeight = fit(model::TrackKind::Video, wantedVideoHeight_);
-    metrics.audioTrackHeight = fit(model::TrackKind::Audio, wantedAudioHeight_);
-    if (metrics.videoTrackHeight == layout_.metrics().videoTrackHeight &&
-        metrics.audioTrackHeight == layout_.metrics().audioTrackHeight) {
+    // What every row would take if it got what it asked for.
+    std::map<model::TrackId, int> heights;
+    int total = metrics.rulerHeight;
+    for (const auto* tracks : {&seq->videoTracks(), &seq->audioTracks()}) {
+        for (const model::Track& track : *tracks) {
+            const int height = scaled(wantedHeightFor(track.id(), track.kind()));
+            heights[track.id()] = height;
+            total += height + metrics.trackGap;
+        }
+    }
+
+    // Rows do not scroll vertically, so what will not fit is shared out evenly
+    // and then floored: when the panel is too small even for the minimum, there
+    // is nothing better to do than be as compact as possible.
+    int squash = 0;
+    if (const int over = total - height(); over > 0 && !heights.empty()) {
+        squash = (over + static_cast<int>(heights.size()) - 1) / static_cast<int>(heights.size());
+        for (auto& [id, value] : heights) {
+            value = std::max(kMinTrackHeight, value - squash);
+        }
+    }
+
+    // The kind heights follow the same arithmetic. They are what a row that
+    // does not exist yet is drawn at -- the strip the drop preview paints for a
+    // track it is about to make -- and what `trackHeight(kind)` answers.
+    metrics.videoTrackHeight = std::max(kMinTrackHeight, scaled(wantedVideoHeight_) - squash);
+    metrics.audioTrackHeight = std::max(kMinTrackHeight, scaled(wantedAudioHeight_) - squash);
+
+    const bool sameMetrics = metrics.videoTrackHeight == layout_.metrics().videoTrackHeight &&
+                             metrics.audioTrackHeight == layout_.metrics().audioTrackHeight;
+    const bool sameRows =
+        std::all_of(heights.begin(), heights.end(), [this, seq](const auto& entry) {
+            const model::Track* track = seq->findTrack(entry.first);
+            return track != nullptr && layout_.heightOf(entry.first, track->kind()) == entry.second;
+        });
+    if (sameMetrics && sameRows) {
         return;
     }
+
     layout_.setMetrics(metrics);
+    // Set outright rather than merged: a track removed since the last pass has
+    // no row to give a height to, and an override left behind for it would be
+    // handed to whatever id came next.
+    layout_.clearTrackHeights();
+    for (const auto& [id, value] : heights) {
+        layout_.setTrackHeight(id, value);
+    }
     emit viewChanged();
     update();
 }
@@ -897,29 +990,29 @@ TimelineWidget::CornerControl TimelineWidget::cornerHitTest(int x, int y) const 
     return CornerControl::None;
 }
 
-std::optional<model::TrackKind> TimelineWidget::headerResizeAt(int x, int y) const {
+model::TrackId TimelineWidget::headerResizeAt(int x, int y) const {
     const model::Sequence* seq = sequence();
     if (seq == nullptr || !layout_.isInHeaders(x) || y < layout_.metrics().rulerHeight) {
-        return std::nullopt;
+        return {};
     }
     for (const ui::TimelineLayout::Row& row : layout_.rows(*seq)) {
         const int bottom = row.top + row.height;
         if (std::abs(y - bottom) <= kResizeGrabPixels) {
-            return row.kind;
+            return row.track;
         }
     }
-    return std::nullopt;
+    return {};
 }
 
 void TimelineWidget::updateTrackHeight(int y) {
-    if (!resizeKind_) {
+    if (!resizeTrack_.isValid()) {
         return;
     }
     // Measured from where the gesture started rather than from the last move.
     // A clamped drag would otherwise lose the difference between "the pointer
     // has gone 40 past the limit" and "the pointer is back at the limit", and
     // the row would not start shrinking again until the pointer caught up.
-    setTrackHeight(*resizeKind_, resizeStartHeight_ + (y - resizeAnchorY_));
+    setTrackHeight(resizeTrack_, resizeStartHeight_ + (y - resizeAnchorY_));
 }
 
 void TimelineWidget::updateHeaderHover(int x, int y) {
@@ -1746,10 +1839,10 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         // The boundary first. It is a thin band at the very bottom of a row and
         // the buttons are centred in it, so the two do not overlap until a row
         // is at its minimum -- and there, resizing is what the pointer is for.
-        if (const auto kind = headerResizeAt(x, y)) {
-            resizeKind_ = kind;
+        if (const model::TrackId track = headerResizeAt(x, y); track.isValid()) {
+            resizeTrack_ = track;
             resizeAnchorY_ = y;
-            resizeStartHeight_ = trackHeight(*kind);
+            resizeStartHeight_ = trackHeight(track);
             drag_ = Drag::TrackHeight;
             return;
         }
@@ -2063,9 +2156,10 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     // been delivered as a press.
     // A boundary resets to the height the panel opened with, which is the
     // usual way back from having dragged something to a size you regret.
-    if (const auto kind = headerResizeAt(x, y)) {
-        setTrackHeight(*kind, *kind == model::TrackKind::Audio ? kDefaultAudioTrackHeight
-                                                               : kDefaultVideoTrackHeight);
+    if (const model::TrackId track = headerResizeAt(x, y); track.isValid()) {
+        // Back to whatever its kind is set to, rather than to a number of its
+        // own: a double-click on an edge means "undo what I did to this row".
+        clearTrackHeight(track);
         return;
     }
 
@@ -2092,7 +2186,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
             // Answered here and gone: nothing further down the function is
             // about the headers, and applyCursor at the end would put the
             // arrow back over a boundary that wants the resize cursor.
-            setCursor(headerResizeAt(x, y) ? Qt::SizeVerCursor : Qt::ArrowCursor);
+            setCursor(headerResizeAt(x, y).isValid() ? Qt::SizeVerCursor : Qt::ArrowCursor);
             return;
         }
     }
@@ -2247,7 +2341,7 @@ void TimelineWidget::finishDrag() {
         // Close the merge group, so the next gesture is a separate undo step.
         commands_->breakMerge();
     }
-    resizeKind_.reset();
+    resizeTrack_ = model::TrackId{};
     drag_ = Drag::None;
     rippleTrim_ = false;
     // The guide belongs to the gesture that made it. Left up, it becomes a
@@ -2787,6 +2881,23 @@ std::optional<time::TimeRange> draggedSourceRange(const model::Project& project,
 
 }  // namespace
 
+std::int32_t TimelineWidget::soundBlockTop(bool past) const {
+    const model::Sequence* seq = sequence();
+    const auto& metrics = layout_.metrics();
+    if (seq == nullptr) {
+        return metrics.rulerHeight;
+    }
+    // The bottom edge of everything above: the picture rows for the top of the
+    // sound block, and every row for the empty space past the last of them.
+    std::int32_t edge = metrics.rulerHeight;
+    for (const ui::TimelineLayout::Row& row : layout_.rows(*seq)) {
+        if (past || row.kind == model::TrackKind::Video) {
+            edge = std::max(edge, row.top + row.height + metrics.trackGap);
+        }
+    }
+    return edge;
+}
+
 std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaDrag& dragged,
                                                                     const QPoint& at) {
     const model::Sequence* seq = sequence();
@@ -2815,10 +2926,9 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
 
     // Where the block of picture rows ends and the block of sound rows begins,
     // which is the line that decides what a drop between rows -- or past the
-    // last one -- means.
-    const auto videoCount = static_cast<std::int32_t>(seq->videoTracks().size());
-    const std::int32_t audioTop =
-        metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
+    // last one -- means. Measured off the rows rather than multiplied out of a
+    // height: rows may be any height, and two of the same kind need not match.
+    const std::int32_t audioTop = soundBlockTop();
 
     const auto row = layout_.rowAt(*seq, at.y());
     spot.at.kind =
@@ -2916,19 +3026,11 @@ QRectF TimelineWidget::dropPreviewRect(const DropSpot& spot,
 
     // On an existing row the ghost is the clip's own body. On a new one it is
     // the strip the new row will occupy: the top of the picture block, since
-    // video stacks upward, or under the last sound row.
-    const auto videoCount = static_cast<std::int32_t>(seq->videoTracks().size());
-    const auto audioCount = static_cast<std::int32_t>(seq->audioTracks().size());
-    const std::int32_t audioTop =
-        metrics.rulerHeight + videoCount * (metrics.videoTrackHeight + metrics.trackGap);
+    // video stacks upward, or the empty space under the last sound row.
     const std::optional<ui::TimelineLayout::Row> placed =
         landing.newTrack ? std::nullopt : rowFor(landing.track);
     const double top =
-        (placed
-             ? placed->top
-             : (isVideo ? metrics.rulerHeight
-                        : audioTop + audioCount * (metrics.audioTrackHeight + metrics.trackGap))) +
-        2.0;
+        (placed ? placed->top : (isVideo ? metrics.rulerHeight : soundBlockTop(true))) + 2.0;
     const double height =
         (placed ? placed->height
                 : (isVideo ? metrics.videoTrackHeight : metrics.audioTrackHeight)) -

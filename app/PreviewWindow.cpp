@@ -1963,6 +1963,9 @@ chrome::Hooks PreviewWindow::chromeHooks() {
     hooks.setGuides = [this](bool on) { viewerOverlay_->setGuides(on); };
     hooks.setSnapEnabled = [this](bool on) { timeline_->setSnapEnabled(on); };
     hooks.setZoomFraction = [this](double fraction) { timeline_->setZoomFraction(fraction); };
+    hooks.setTrackHeightFraction = [this](double fraction) {
+        timeline_->setTrackHeightFraction(fraction);
+    };
     hooks.queueRender = [this] { deliver_->queueCurrent(); };
     hooks.toggleRendering = [this] {
         deliver_->toggleRendering();
@@ -2112,6 +2115,7 @@ void PreviewWindow::updateChrome() {
     status.binItems = bin_->count();
     status.snapEnabled = timeline_->snapEnabled();
     status.zoomFraction = timeline_->zoomFraction();
+    status.trackHeightFraction = timeline_->trackHeightFraction();
     status.inDeliver = workspace_ == "Deliver" && deliver_ != nullptr;
     if (status.inDeliver) {
         status.deliverStatus = deliver_->statusSummary();

@@ -40,6 +40,7 @@ struct Hooks {
     std::function<void(bool)> setGuides;
     std::function<void(bool)> setSnapEnabled;
     std::function<void(double)> setZoomFraction;
+    std::function<void(double)> setTrackHeightFraction;
     std::function<void()> queueRender;
     std::function<void()> toggleRendering;
 };

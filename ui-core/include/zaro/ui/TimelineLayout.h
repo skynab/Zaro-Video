@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -41,6 +42,23 @@ public:
 
     [[nodiscard]] const Metrics& metrics() const noexcept { return metrics_; }
     void setMetrics(const Metrics& metrics) { metrics_ = metrics; }
+
+    // --- Row heights --------------------------------------------------------
+
+    /// Give one row a height of its own, in place of its kind's default.
+    ///
+    /// Per track rather than per kind, and kept here rather than in `Metrics`
+    /// for that reason: two rows of the same kind may be different heights,
+    /// which is what makes room for a tall row on the shot being worked on
+    /// while everything else stays out of the way.
+    void setTrackHeight(model::TrackId track, std::int32_t height);
+    /// Forget one override, or all of them: the rows go back to their kind's
+    /// default height.
+    void clearTrackHeight(model::TrackId track);
+    void clearTrackHeights();
+    /// The height this track's row is drawn at -- its own if it has one, and
+    /// its kind's otherwise.
+    [[nodiscard]] std::int32_t heightOf(model::TrackId track, model::TrackKind kind) const;
 
     /// Leftmost visible time. Never negative: scrolling before the start of the
     /// sequence shows nothing useful and makes every coordinate signed.
@@ -160,6 +178,9 @@ public:
 
 private:
     Metrics metrics_{};
+    /// Rows given a height of their own. Absent means "whatever the kind says",
+    /// so a sequence nobody has resized costs nothing to lay out.
+    std::map<model::TrackId, std::int32_t> heights_;
     time::RationalTime scroll_{};
     std::int32_t viewportWidth_{0};
     std::int32_t viewportHeight_{0};

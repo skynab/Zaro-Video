@@ -100,37 +100,68 @@ void TimelineLayout::zoomToFit(const time::RationalTime& duration) {
     scroll_ = time::RationalTime{0, duration.rate()};
 }
 
+void TimelineLayout::setTrackHeight(model::TrackId track, std::int32_t height) {
+    if (track.isValid()) {
+        heights_[track] = height;
+    }
+}
+
+void TimelineLayout::clearTrackHeight(model::TrackId track) {
+    heights_.erase(track);
+}
+
+void TimelineLayout::clearTrackHeights() {
+    heights_.clear();
+}
+
+std::int32_t TimelineLayout::heightOf(model::TrackId track, model::TrackKind kind) const {
+    const auto found = heights_.find(track);
+    if (found != heights_.end()) {
+        return found->second;
+    }
+    return kind == model::TrackKind::Audio ? metrics_.audioTrackHeight : metrics_.videoTrackHeight;
+}
+
 std::vector<TimelineLayout::Row> TimelineLayout::rows(const model::Sequence& sequence) const {
     std::vector<Row> out;
     const auto& videoTracks = sequence.videoTracks();
     const auto& audioTracks = sequence.audioTracks();
     out.reserve(videoTracks.size() + audioTracks.size());
 
-    const auto videoCount = static_cast<std::int32_t>(videoTracks.size());
-    const std::int32_t videoStride = metrics_.videoTrackHeight + metrics_.trackGap;
-    const std::int32_t audioStride = metrics_.audioTrackHeight + metrics_.trackGap;
+    // Where the sound block starts, which is everything the picture rows take
+    // together. Measured rather than multiplied out: rows may be different
+    // heights from one another.
+    std::int32_t audioTop = metrics_.rulerHeight;
+    for (const model::Track& track : videoTracks) {
+        audioTop += heightOf(track.id(), model::TrackKind::Video) + metrics_.trackGap;
+    }
 
     // Video stacks upward: V1 sits at the bottom of the video block, directly
     // above A1. Higher video tracks composite over lower ones and are drawn
-    // above them, which is the arrangement every editor expects.
-    for (std::int32_t i = 0; i < videoCount; ++i) {
+    // above them, which is the arrangement every editor expects. Laid out from
+    // V1's bottom edge upwards for that reason -- it is the edge that stays put
+    // when a row above it changes height.
+    std::int32_t bottom = audioTop - metrics_.trackGap;
+    for (std::size_t i = 0; i < videoTracks.size(); ++i) {
         Row row;
-        row.track = videoTracks[static_cast<std::size_t>(i)].id();
+        row.track = videoTracks[i].id();
         row.kind = model::TrackKind::Video;
-        row.index = i;
-        row.height = metrics_.videoTrackHeight;
-        row.top = metrics_.rulerHeight + (videoCount - 1 - i) * videoStride;
+        row.index = static_cast<std::int32_t>(i);
+        row.height = heightOf(row.track, model::TrackKind::Video);
+        row.top = bottom - row.height;
+        bottom = row.top - metrics_.trackGap;
         out.push_back(row);
     }
 
-    const std::int32_t audioTop = metrics_.rulerHeight + videoCount * videoStride;
+    std::int32_t top = audioTop;
     for (std::size_t i = 0; i < audioTracks.size(); ++i) {
         Row row;
         row.track = audioTracks[i].id();
         row.kind = model::TrackKind::Audio;
         row.index = static_cast<std::int32_t>(i);
-        row.height = metrics_.audioTrackHeight;
-        row.top = audioTop + static_cast<std::int32_t>(i) * audioStride;
+        row.height = heightOf(row.track, model::TrackKind::Audio);
+        row.top = top;
+        top += row.height + metrics_.trackGap;
         out.push_back(row);
     }
     return out;
@@ -147,10 +178,13 @@ std::optional<TimelineLayout::Row> TimelineLayout::rowAt(const model::Sequence& 
 }
 
 std::int32_t TimelineLayout::contentHeight(const model::Sequence& sequence) const {
-    const auto videoCount = static_cast<std::int32_t>(sequence.videoTracks().size());
-    const auto audioCount = static_cast<std::int32_t>(sequence.audioTracks().size());
-    return metrics_.rulerHeight + videoCount * (metrics_.videoTrackHeight + metrics_.trackGap) +
-           audioCount * (metrics_.audioTrackHeight + metrics_.trackGap);
+    std::int32_t total = metrics_.rulerHeight;
+    for (const auto* tracks : {&sequence.videoTracks(), &sequence.audioTracks()}) {
+        for (const model::Track& track : *tracks) {
+            total += heightOf(track.id(), track.kind()) + metrics_.trackGap;
+        }
+    }
+    return total;
 }
 
 bool TimelineLayout::isInHeaders(std::int32_t x) const {

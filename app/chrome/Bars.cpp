@@ -49,6 +49,10 @@ void refresh(const Bars& bars, const Status& status) {
         const QSignalBlocker blocker{bars.zoomSlider};
         bars.zoomSlider->setValue(static_cast<int>(status.zoomFraction * 1000.0));
     }
+    if (bars.rowHeightSlider != nullptr && !bars.rowHeightSlider->isSliderDown()) {
+        const QSignalBlocker blocker{bars.rowHeightSlider};
+        bars.rowHeightSlider->setValue(static_cast<int>(status.trackHeightFraction * 1000.0));
+    }
 }
 
 }  // namespace zaro::app::chrome

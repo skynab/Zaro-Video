@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <vector>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -175,6 +176,57 @@ TEST_CASE("Video stacks upward, audio downward, V1 above A1", "[ui][timeline]") 
     CHECK(a1.kind == model::TrackKind::Audio);
     CHECK(v1.index == 0);
     CHECK(v2.index == 1);
+}
+
+TEST_CASE("A row given a height of its own grows downward", "[ui][timeline]") {
+    testing::Fixture f;  // V1, V2, A1
+    TimelineLayout layout = makeLayout();
+
+    const auto find = [](const std::vector<TimelineLayout::Row>& rows, model::TrackId id) {
+        return *std::find_if(rows.begin(), rows.end(),
+                             [id](const TimelineLayout::Row& r) { return r.track == id; });
+    };
+    const auto before = layout.rows(f.sequence());
+
+    // A row's top edge is fixed by whatever is above it, so a taller row takes
+    // the space below: its own bottom edge moves, and everything under it moves
+    // with it. That is what makes dragging the edge of a header feel like
+    // dragging that edge rather than rearranging the panel.
+    layout.setTrackHeight(f.v2, 120);
+    const auto after = layout.rows(f.sequence());
+    CHECK(find(after, f.v2).height == 120);
+    CHECK(find(after, f.v2).top == find(before, f.v2).top);
+    CHECK(find(after, f.v1).top == find(before, f.v1).top + 60);
+    CHECK(find(after, f.a1).top == find(before, f.a1).top + 60);
+    // The rows stay in contact: no gap opens up where one used to end.
+    CHECK(find(after, f.v2).top + 120 == find(after, f.v1).top);
+
+    // The same for V1, which sits directly above A1: the sound block moves down
+    // by exactly what V1 gained, and the rows above V1 do not move at all.
+    layout.setTrackHeight(f.v1, 90);
+    const auto taller = layout.rows(f.sequence());
+    const auto v1 = find(taller, f.v1);
+    const auto a1 = find(taller, f.a1);
+    CHECK(v1.height == 90);
+    CHECK(v1.top == find(after, f.v1).top);
+    CHECK(find(taller, f.v2).top == find(after, f.v2).top);
+    CHECK(v1.top + v1.height == a1.top);
+    CHECK(a1.top == find(after, f.a1).top + 30);
+
+    // The point-to-row lookup follows, since it reads the same rows.
+    REQUIRE(layout.rowAt(f.sequence(), v1.top + 1).has_value());
+    CHECK(layout.rowAt(f.sequence(), v1.top + 1)->track == f.v1);
+    CHECK(layout.rowAt(f.sequence(), a1.top + 1)->track == f.a1);
+
+    // Content height counts what each row actually takes rather than a multiple
+    // of one kind's default: 26 ruler + 120 + 90 + 50.
+    CHECK(layout.contentHeight(f.sequence()) == 26 + 120 + 90 + 50);
+
+    // Cleared, every row goes back to its kind's height.
+    layout.clearTrackHeights();
+    CHECK(layout.contentHeight(f.sequence()) == 26 + 60 + 60 + 50);
+    CHECK(find(layout.rows(f.sequence()), f.v2).height == 60);
+    CHECK(find(layout.rows(f.sequence()), f.v1).top == find(before, f.v1).top);
 }
 
 TEST_CASE("A point resolves to the row it is in", "[ui][timeline]") {

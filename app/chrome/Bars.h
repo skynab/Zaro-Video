@@ -58,6 +58,8 @@ struct Bars {
     QLabel* snapLabel{nullptr};
     QPushButton* snapButton{nullptr};
     QSlider* zoomSlider{nullptr};
+    /// How tall the rows are drawn, all of them together.
+    QSlider* rowHeightSlider{nullptr};
     std::vector<QPushButton*> toolButtons;
 
     /// The status line along the bottom.
@@ -99,6 +101,7 @@ struct Status {
     bool snapEnabled{true};
     std::size_t toolIndex{0};
     double zoomFraction{0.0};
+    double trackHeightFraction{0.0};
 
     /// Deliver shows its queue where the others show the bin, and its range
     /// where they show the format.
