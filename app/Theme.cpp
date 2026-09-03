@@ -240,8 +240,20 @@ QLabel { background: transparent; }
 #deliver-header { background: %SURFACE%; border-bottom: 1px solid %DIVIDER%; }
 #timecode-big { color: %ACCENT300%; }
 #segment-group { border: 1px solid %DIVIDER%; border-radius: 8px; }
+/* Boxed to the 24 pixels these tabs are given, for the reason given on the
+   workspace tabs below. */
+#segment-group QPushButton { padding: 3px 10px; min-height: 16px; }
 #tab-group { background: %HOVER%; border-radius: 8px; }
-#tab-group QPushButton { border-color: transparent; color: %MUTED%; }
+/* The box adds up to the 26 pixels the tab is given: 18 of content, 3 of
+   padding above and below, and a pixel of border on each edge. The general
+   button rule asks for 32, and a button told to be shorter than its own style
+   demands has its background drawn at the height the style wanted and pinned to
+   one edge -- which is the gap that used to sit above these tabs and not below
+   them. */
+#tab-group QPushButton {
+    border-color: transparent; color: %MUTED%;
+    padding: 3px 10px; min-height: 18px;
+}
 #tab-group QPushButton:checked { background: %SURFACE%; color: %ACCENT200%; border-color: %DIVIDER%; }
 
 /* --- the media pane ----------------------------------------------------- */
