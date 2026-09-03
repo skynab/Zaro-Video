@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -63,8 +64,17 @@ struct StabiliseResult {
 /// **Translation only**, as the tracker is: see `Tracker.h` for why one patch
 /// cannot separate rotation and scale from it. A shot with roll in it comes out
 /// better than it went in and not perfect.
+///
+/// `tell` is asked once per frame analysed, with how many are done and how many
+/// there are, and stops the analysis when it answers false. Optional: the
+/// offline callers pass nothing. It exists because a stabilise reads every
+/// frame of the clip, and a caller with a window to keep alive needs both to
+/// say so and to be able to stop.
+using StabiliseProgress = std::function<bool(std::int64_t done, std::int64_t total)>;
+
 [[nodiscard]] Result<StabiliseResult> stabilise(FrameSource& source, model::MediaRefId media,
                                                 const std::vector<time::RationalTime>& sourceTimes,
-                                                const StabiliseOptions& options = {});
+                                                const StabiliseOptions& options = {},
+                                                const StabiliseProgress& tell = {});
 
 }  // namespace zaro::render

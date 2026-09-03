@@ -111,6 +111,68 @@ TEST_CASE("Lift leaves a gap, extract closes it", "[edit][lift][extract]") {
     }
 }
 
+TEST_CASE("Pasting puts a set of clips down as one edit", "[edit][paste]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+
+    // Two clips copied and put down at 200, keeping the gap between them.
+    // Fresh ids, because the originals are still on the timeline.
+    std::vector<edit::PastedClip> placing;
+    for (const model::Clip& original : f.track(f.v1).clips()) {
+        model::Clip copy = original;
+        copy.id = f.project.ids().next<model::ClipTag>();
+        copy.timelineRange = time::TimeRange{original.start() + f.at(200), original.duration()};
+        placing.push_back(edit::PastedClip{f.v1, copy});
+    }
+
+    REQUIRE(f.run(edit::makePasteClips(f.project, f.sequenceId, placing)));
+    CHECK(f.layout(f.v1) == "0-50@500 50-100@600 200-250@500 250-300@600");
+
+    SECTION("and one undo takes the whole paste back") {
+        // The point of it being one command: four clips went down, and nobody
+        // expects to press Ctrl+Z twice for one Ctrl+V.
+        f.stack.undo(f.project);
+        CHECK(f.layout(f.v1) == "0-50@500 50-100@600");
+    }
+}
+
+TEST_CASE("A paste that cannot land is refused before anything moves", "[edit][paste]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    const std::string before = f.layout(f.v1);
+
+    const auto pasted = [&](std::int64_t at, model::TrackId track, bool freshId) {
+        model::Clip copy = f.track(f.v1).clips().front();
+        if (freshId) {
+            copy.id = f.project.ids().next<model::ClipTag>();
+        }
+        copy.timelineRange = time::TimeRange{f.at(at), copy.duration()};
+        return std::vector<edit::PastedClip>{edit::PastedClip{track, copy}};
+    };
+
+    SECTION("nothing to paste") {
+        CHECK_FALSE(edit::makePasteClips(f.project, f.sequenceId, {}));
+    }
+    SECTION("a track that is not in this sequence") {
+        CHECK_FALSE(
+            edit::makePasteClips(f.project, f.sequenceId, pasted(100, model::TrackId{}, true)));
+    }
+    SECTION("an id already on the timeline") {
+        // Reusing the copied clip's own id would put two clips with one
+        // identity on the same track, and every later edit would pick whichever
+        // it found first.
+        CHECK_FALSE(edit::makePasteClips(f.project, f.sequenceId, pasted(100, f.v1, false)));
+    }
+    SECTION("before the start of the timeline") {
+        CHECK_FALSE(edit::makePasteClips(f.project, f.sequenceId, pasted(-10, f.v1, true)));
+    }
+
+    // Refused means untouched, which is the whole reason the checks are up
+    // front rather than inside the loop that places them.
+    CHECK(f.layout(f.v1) == before);
+}
+
 TEST_CASE("Ripple delete removes a range and closes the gap", "[edit][ripple]") {
     Fixture f;
     REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));

@@ -131,6 +131,17 @@ public:
     void addDissolveAtPlayhead();
     void addMarkerAtPlayhead();
     void selectAll();
+    /// What is selected, primary first. Empty when nothing is.
+    [[nodiscard]] const std::vector<edit::ClipRef>& selection() const noexcept {
+        return selection_;
+    }
+
+    /// Remove what is selected. `ripple` closes the gap behind it.
+    ///
+    /// Public because the window binds it to an action: it used to be reachable
+    /// only through this widget's own key handler, which is why Delete did
+    /// nothing whenever anything else had focus.
+    void removeSelected(bool ripple);
 
     /// Where video clips get their filmstrip frames. Not owned; may be null,
     /// in which case clips are drawn as plain blocks. Set by the window, which
@@ -428,7 +439,6 @@ private:
     void clearGestureMarks();
     /// The cursor this tool wants over this point.
     void applyCursor(const ui::TimelineLayout::Hit* hit);
-    void removeSelected(bool ripple);
     void switchAngle(int angle);
 
 public:

@@ -94,9 +94,17 @@ render::AudioGraph::Meters PlaybackController::meters() const {
 void PlaybackController::startClock(const time::RationalTime& from) {
     const time::Rational& audioRate = sequence_->audioSampleRate();
     if (!sink_) {
+        audioAttempted_ = true;
         auto opened = platform::sdl::AudioSink::open(audioRate, 2);
         if (opened) {
             sink_ = std::move(*opened);
+            audioError_.clear();
+        } else {
+            // Kept rather than dropped. "No audio device" is a different
+            // problem from "the device is busy" or "the rate is unsupported",
+            // and the one who has to fix it is the only one who can tell them
+            // apart.
+            audioError_ = QString::fromStdString(opened.error().toString());
         }
     }
     if (sink_) {

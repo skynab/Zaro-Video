@@ -165,14 +165,28 @@ on `PATH` and a real platform plugin (not offscreen).
 `zaro_core_tests` is deterministic: 790/790 green on `dev` at 4cf0e1e, and any
 failure there is real.
 
-**`zaro_app_tests` is flaky — do not compare single runs.** Measured on
-2026-09-02, three consecutive runs of the *same* binary gave **3, 2, 2**
-failures, drawn from a small pool that includes mask tracking, the cut-snap
-alignment case, and a couple of compositor checks; one case is intermittently
-skipped as well. A single run showing 1 failure is luck, not a baseline — an
-earlier version of this file recorded exactly that and it was wrong.
+**`zaro_app_tests` is non-deterministic, and three runs is not enough.**
+Measured repeatedly on 2026-09-02: the failure count sits at **2 or 3**, and
+the variation is *not* ordering — two runs with `--order decl`, the same fixed
+order, gave 2 and 3. The intermittent case is "Multi-selection, driven as a
+rubber band", which passes **8/8 when run alone** and only wobbles inside the
+full suite. Mask tracking and the cut-snap case fail nearly always.
 
-So: **run it at least three times on the baseline and three times with your
-change, and compare the distributions.** Identical spreads mean no regression,
-which is the only honest read at this noise level. Every app-test failure
-reports through `GuiFixture.cpp(175)`, so grep the message, not the line.
+A three-run sample happened to give 2/2/2 twice in that session and was twice
+treated as ground truth; both times it was luck. At a ~1-in-3 rate three
+samples cannot tell "always 2" from "usually 2".
+
+**The cheap decisive test is a filter, not a rebuild.** To find out whether a
+test *you* added is responsible, run the same binary with it excluded:
+
+```bash
+build/windows-release/bin/zaro_app_tests.exe "~Your test name*"
+```
+
+Same binary, same suite, one variable. That settled in four runs what a
+stash-rebuild-compare cycle had failed to settle in three attempts.
+
+For a real regression hunt, use six or more runs a side and compare
+distributions rather than counts. Every app-test failure reports through
+`GuiFixture.cpp(175)`, so grep the message, not the line — and note that a
+grep like `^[A-Z][a-z]` silently misses "A cut snaps…".

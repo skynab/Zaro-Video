@@ -434,6 +434,59 @@ Result<CommandPtr> makeMoveClips(Project& project, model::SequenceId sequenceId,
                        });
 }
 
+Result<CommandPtr> makePasteClips(Project& project, model::SequenceId sequenceId,
+                                  const std::vector<PastedClip>& clips) {
+    Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (clips.empty()) {
+        return Error{ErrorCode::InvalidData, "there is nothing to paste"};
+    }
+
+    // Everything is checked before anything is placed. A paste that put two of
+    // four clips down and then found the third had nowhere to go would leave a
+    // timeline nobody asked for, and the undo for it would be the caller's
+    // problem rather than the command's.
+    for (const PastedClip& pasted : clips) {
+        const Track* track = sequence->findTrack(pasted.track);
+        if (track == nullptr) {
+            return Error{ErrorCode::NotFound,
+                         "the track one of those clips came from is not in this sequence"};
+        }
+        if (track->isLocked()) {
+            return Error{ErrorCode::Unsupported, "one of those clips would land on a locked track"};
+        }
+        if (pasted.clip.timelineRange.duration().isZero()) {
+            return Error{ErrorCode::InvalidData, "a clip with no duration cannot be pasted"};
+        }
+        if (pasted.clip.start().frames() < 0) {
+            return Error{ErrorCode::InvalidData, "that would put a clip before the start"};
+        }
+        if (!pasted.clip.id.isValid()) {
+            return Error{ErrorCode::InvalidData, "pasted clips need ids; see the header"};
+        }
+        if (track->find(pasted.clip.id) != nullptr) {
+            return Error{ErrorCode::InvalidData, "that clip id is already on the timeline"};
+        }
+        if (Status fits = checkSourceFits(project, pasted.clip); !fits) {
+            return fits.error();
+        }
+    }
+
+    model::IdGenerator& ids = project.ids();
+    return makeCommand(sequenceId, clips.size() == 1 ? "Paste clip" : "Paste clips", {},
+                       [clips, &ids](Sequence& sequence) {
+                           for (const PastedClip& pasted : clips) {
+                               Track* track = sequence.findTrack(pasted.track);
+                               ZARO_CHECK(track != nullptr,
+                                          "track vanished between build and apply");
+                               clearRange(*track, pasted.clip.timelineRange, ids);
+                               track->insert(pasted.clip);
+                           }
+                       });
+}
+
 Result<CommandPtr> makeRemoveClips(Project& project, model::SequenceId sequenceId,
                                    const std::vector<ClipRef>& clips, bool ripple) {
     Sequence* sequence = project.findSequence(sequenceId);

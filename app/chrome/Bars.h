@@ -110,6 +110,11 @@ struct Status {
     bool rendering{false};
 
     QString platformLabel;
+
+    /// Set once a device has been asked for and refused. The clock is the audio
+    /// device (ADR-006), so without one the playhead does not move -- which is
+    /// indistinguishable from a hung transport unless it is said out loud.
+    bool audioDeviceMissing{false};
 };
 
 /// Put everything the bars say back in step with what the window is showing.

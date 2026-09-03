@@ -98,6 +98,30 @@ enum class PlaceMode {
                                                  model::SequenceId sequence,
                                                  const std::vector<ClipRef>& clips, bool ripple);
 
+/// One clip on its way back onto a timeline, and the track it lands on.
+struct PastedClip {
+    model::TrackId track;
+    model::Clip clip;
+};
+
+/// Put a set of clips down at once, overwriting what is under them.
+///
+/// One command rather than one per clip, because a paste of four clips is one
+/// thing somebody did and one thing they will expect Ctrl+Z to take back.
+///
+/// The caller decides where everything lands: this takes clips whose timeline
+/// ranges and track ids are already final, and its job is to validate them
+/// together and place them atomically. That split is deliberate -- "paste at
+/// the playhead, keeping the shape of what was copied" is a decision about
+/// what somebody meant, and those belong with the interaction rather than in
+/// the model.
+///
+/// Ids must already be set and must not be ones the sequence is using. The
+/// caller allocates them from the project, which is the only thing that can:
+/// the command runs against a Sequence and has no id generator of its own.
+[[nodiscard]] Result<CommandPtr> makePasteClips(model::Project& project, model::SequenceId sequence,
+                                                const std::vector<PastedClip>& clips);
+
 // --- Cutting ----------------------------------------------------------------
 
 /// Split the clip under `at` into two abutting clips. `at` must fall strictly

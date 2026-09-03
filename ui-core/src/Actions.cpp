@@ -40,6 +40,9 @@ constexpr std::array kActions{
     ActionInfo{"undo", "Undo", "Edit", "Ctrl+Z"},
     ActionInfo{"redo", "Redo", "Edit", "Ctrl+Shift+Z"},
     ActionInfo{"select-all", "Select All", "Edit", "Ctrl+A"},
+    ActionInfo{"cut-clips", "Cut", "Edit", "Ctrl+X"},
+    ActionInfo{"copy-clips", "Copy", "Edit", "Ctrl+C"},
+    ActionInfo{"paste-clips", "Paste", "Edit", "Ctrl+V"},
     ActionInfo{"detect-scenes", "Detect Cuts in Selected Clip", "Edit", "Ctrl+D"},
 
     // --- Clip ---------------------------------------------------------------
@@ -48,6 +51,23 @@ constexpr std::array kActions{
     ActionInfo{"proxies", "Proxies…", "Clip", ""},
     ActionInfo{"multicam", "Multicam…", "Clip", ""},
     ActionInfo{"captions", "Captions…", "Clip", ""},
+    // Lift and extract, in the words the timeline already used for them: one
+    // leaves the gap, the other closes it.
+    ActionInfo{"delete-selected", "Delete", "Clip", "Delete"},
+    ActionInfo{"ripple-delete", "Ripple Delete", "Clip", "Shift+Delete"},
+
+    // --- Tools --------------------------------------------------------------
+    //
+    // These were keys in TimelineWidget::keyPressEvent and nowhere else, which
+    // meant they could not be found in the hotkeys list, could not be rebound,
+    // and only worked while the timeline had focus. A key that does something
+    // useful and cannot be discovered is a key nobody presses.
+    ActionInfo{"tool-select", "Select Tool", "Tools", "V"},
+    ActionInfo{"tool-blade", "Blade Tool", "Tools", "B"},
+    ActionInfo{"tool-trim", "Trim Tool", "Tools", "T"},
+    ActionInfo{"tool-slip", "Slip Tool", "Tools", "Y"},
+    ActionInfo{"tool-hand", "Hand Tool", "Tools", "H"},
+    ActionInfo{"toggle-snap", "Snapping", "Tools", "S"},
 
     // --- Sequence -----------------------------------------------------------
     ActionInfo{"razor", "Razor at Playhead", "Sequence", "Ctrl+K"},

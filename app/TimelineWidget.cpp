@@ -2793,28 +2793,19 @@ void TimelineWidget::keyPressEvent(QKeyEvent* event) {
         case Qt::Key_C:
             razorAtPlayhead();
             return;
+        // Snapping and the five tools used to be handled here. They are actions
+        // now -- see ui::allActions() -- so they appear in the hotkeys list,
+        // can be rebound, and work whatever has focus.
+        //
+        // Delete and Backspace stay, and are the deliberate exception. They are
+        // also registered as actions, for the same discoverability, but a
+        // timeline that stops deleting because somebody rebound something is a
+        // worse outcome than the duplication: these two keys are what every
+        // editor's hands do without looking. The keymap binds one key per
+        // action, so the pair could not be expressed there anyway.
         case Qt::Key_Backspace:
         case Qt::Key_Delete:
-            // Shift closes the gap, matching the lift/extract pair.
             removeSelected(event->modifiers().testFlag(Qt::ShiftModifier));
-            return;
-        case Qt::Key_S:
-            setSnapEnabled(!snapEnabled_);
-            return;
-        case Qt::Key_V:
-            setTool(Tool::Select);
-            return;
-        case Qt::Key_B:
-            setTool(Tool::Blade);
-            return;
-        case Qt::Key_T:
-            setTool(Tool::Trim);
-            return;
-        case Qt::Key_Y:
-            setTool(Tool::Slip);
-            return;
-        case Qt::Key_H:
-            setTool(Tool::Hand);
             return;
         case Qt::Key_M:
             addMarkerAtPlayhead();

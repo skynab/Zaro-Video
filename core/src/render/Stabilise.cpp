@@ -43,7 +43,7 @@ namespace {
 
 Result<StabiliseResult> stabilise(FrameSource& source, model::MediaRefId media,
                                   const std::vector<time::RationalTime>& sourceTimes,
-                                  const StabiliseOptions& options) {
+                                  const StabiliseOptions& options, const StabiliseProgress& tell) {
     if (sourceTimes.size() < 3) {
         return Error{ErrorCode::InvalidData, "there is not enough of this clip to stabilise"};
     }
@@ -85,6 +85,13 @@ Result<StabiliseResult> stabilise(FrameSource& source, model::MediaRefId media,
     std::vector<double> sawX;
     std::vector<double> sawY;
     for (std::size_t i = 1; i < sourceTimes.size(); ++i) {
+        if (tell &&
+            !tell(static_cast<std::int64_t>(i), static_cast<std::int64_t>(sourceTimes.size()))) {
+            // Stopped by hand. What has been measured so far is smoothed and
+            // returned rather than discarded: half a stabilised shot is worth
+            // having, and it is what the caller asked for by stopping.
+            break;
+        }
         auto next = source.imageFor(media, sourceTimes[i]);
         if (!next) {
             return next.error();

@@ -91,6 +91,10 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, edit, "undo");
     addItem(router, edit, "redo");
     edit->addSeparator();
+    addItem(router, edit, "cut-clips");
+    addItem(router, edit, "copy-clips");
+    addItem(router, edit, "paste-clips");
+    edit->addSeparator();
     addItem(router, edit, "select-all");
     edit->addSeparator();
     addItem(router, edit, "detect-scenes");
@@ -102,6 +106,21 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, clip, "proxies");
     addItem(router, clip, "multicam");
     addItem(router, clip, "captions");
+    clip->addSeparator();
+    addItem(router, clip, "delete-selected");
+    addItem(router, clip, "ripple-delete");
+
+    // The tools have a menu of their own now. They were keys and a row of
+    // toolbar buttons, and neither says what the key is -- so the one place
+    // that could teach somebody "B is the blade" did not exist.
+    QMenu* tools = bar->addMenu("Tools");
+    addItem(router, tools, "tool-select");
+    addItem(router, tools, "tool-blade");
+    addItem(router, tools, "tool-trim");
+    addItem(router, tools, "tool-slip");
+    addItem(router, tools, "tool-hand");
+    tools->addSeparator();
+    addItem(router, tools, "toggle-snap");
 
     QMenu* sequence = bar->addMenu("Sequence");
     addItem(router, sequence, "razor");

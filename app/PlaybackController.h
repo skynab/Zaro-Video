@@ -14,6 +14,7 @@
 #pragma once
 
 #include <QObject>
+#include <QString>
 #include <QTimer>
 #include <atomic>
 #include <cstdint>
@@ -61,6 +62,20 @@ public:
     /// because "the playhead did not move" means something different on a
     /// machine with no sound card than it does on one with.
     [[nodiscard]] bool hasAudioClock() const noexcept { return sink_ != nullptr; }
+
+    /// Whether opening a device has been tried and failed.
+    ///
+    /// Distinct from `!hasAudioClock()`, which is also true before anything has
+    /// been tried -- the device is opened lazily on the first play. Only this
+    /// one means "this machine will not give us a clock", which is the state
+    /// worth telling somebody about: without a device the transport still says
+    /// it is playing and the playhead never moves, and that looks like a bug
+    /// rather than a missing sound card.
+    [[nodiscard]] bool audioDeviceMissing() const noexcept {
+        return audioAttempted_ && sink_ == nullptr;
+    }
+    /// Why the device would not open, in the words the platform used.
+    [[nodiscard]] const QString& audioDeviceError() const noexcept { return audioError_; }
 
     /// Play or pause, from wherever the playhead is now.
     void togglePlay(const time::RationalTime& from);
@@ -123,6 +138,10 @@ private:
     /// Whether the transport is at 1x, for the pump. Reading the transport's
     /// Rational across threads would be a race on a two-field value.
     std::atomic<bool> atUnitySpeed_{true};
+
+    /// Whether a device has ever been asked for. See audioDeviceMissing().
+    bool audioAttempted_{false};
+    QString audioError_;
 
     std::thread audioThread_;
     std::atomic<bool> audioRunning_{false};

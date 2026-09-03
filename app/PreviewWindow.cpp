@@ -27,11 +27,14 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QProgressDialog>
 #include <QRegularExpression>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <cstdint>
+#include <map>
+#include <optional>
 
 #include <zaro/Version.h>
 
@@ -563,6 +566,18 @@ void PreviewWindow::wireEditingSignals() {
         if (bars_.playButton != nullptr) {
             bars_.playButton->setText(playing ? kPauseGlyph : kPlayGlyph);
         }
+        // Said at the moment somebody presses play and nothing happens, which
+        // is when the question is being asked. Once per session: it is a fact
+        // about the machine, and repeating it every press would be nagging
+        // about something they cannot fix from here.
+        if (playing && playback_.audioDeviceMissing() && !warnedNoAudioDevice_) {
+            warnedNoAudioDevice_ = true;
+            app::say(this, "Playback",
+                     "No audio device would open, so the playhead has nothing to keep time "
+                     "by and will not move.\n\n" +
+                         playback_.audioDeviceError());
+        }
+        updateChrome();
     });
 }
 
@@ -715,9 +730,19 @@ void PreviewWindow::adoptImported(model::Project imported, const QString& format
 void PreviewWindow::trackMask() {
     // Every frame of the rest of the clip gets composited, which is not
     // instant on a long one.
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    auto tracked = trackMaskForward();
-    QApplication::restoreOverrideCursor();
+    // A dialog rather than a wait cursor. This composites every frame of the
+    // rest of the clip, and on a long one a frozen window with a spinning
+    // cursor and no way out is indistinguishable from a hang.
+    QProgressDialog progress("Tracking the mask…", "Stop", 0, 1, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(400);
+    auto tracked = trackMaskForward([&](std::int64_t done, std::int64_t total) {
+        progress.setMaximum(static_cast<int>(total));
+        progress.setValue(static_cast<int>(done));
+        QCoreApplication::processEvents();
+        return !progress.wasCanceled();
+    });
+    progress.reset();
     if (!tracked) {
         app::say(this, "Track mask", QString::fromStdString(tracked.error().message()));
         return;
@@ -735,9 +760,16 @@ void PreviewWindow::trackMask() {
 }
 
 void PreviewWindow::stabilise() {
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    auto held = stabiliseClip();
-    QApplication::restoreOverrideCursor();
+    QProgressDialog progress("Measuring the camera move…", "Stop", 0, 1, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(400);
+    auto held = stabiliseClip([&](std::int64_t done, std::int64_t total) {
+        progress.setMaximum(static_cast<int>(total));
+        progress.setValue(static_cast<int>(done));
+        QCoreApplication::processEvents();
+        return !progress.wasCanceled();
+    });
+    progress.reset();
     if (!held) {
         app::say(this, "Stabilise", QString::fromStdString(held.error().message()));
         return;
@@ -1177,16 +1209,16 @@ Result<render::ShotMatch> PreviewWindow::matchToReference() {
     return matched;
 }
 
-Result<commands::MaskTrack> PreviewWindow::trackMaskForward() {
-    auto tracked = commands::trackMaskForward(editContext());
+Result<commands::MaskTrack> PreviewWindow::trackMaskForward(const commands::Progress& tell) {
+    auto tracked = commands::trackMaskForward(editContext(), tell);
     if (tracked) {
         afterEdit();
     }
     return tracked;
 }
 
-Result<render::StabiliseResult> PreviewWindow::stabiliseClip() {
-    auto steadied = commands::stabiliseClip(editContext());
+Result<render::StabiliseResult> PreviewWindow::stabiliseClip(const commands::Progress& tell) {
+    auto steadied = commands::stabiliseClip(editContext(), tell);
     if (steadied) {
         afterEdit();
     }
@@ -1352,6 +1384,99 @@ void PreviewWindow::setCompareSplit(double split) {
     compareSplit_ = std::clamp(split, 0.0, 1.0);
     monitor_->setComparison(comparing_, referenceAt_, compareMode_, compareSplit_);
     monitor_->update();
+}
+
+void PreviewWindow::copySelection() {
+    const model::Sequence* sequence = liveSequence();
+    const std::vector<edit::ClipRef>& picked = timeline_->selection();
+    if (sequence == nullptr || picked.empty()) {
+        app::say(this, "Copy", "Select a clip on the timeline first.");
+        return;
+    }
+
+    // Measured from the earliest clip in the copy, not from the playhead: what
+    // is being remembered is the shape of the selection, and where the playhead
+    // happened to be when somebody pressed Ctrl+C is not part of it.
+    std::vector<Copied> gathered;
+    std::optional<time::RationalTime> earliest;
+    for (const edit::ClipRef& ref : picked) {
+        const model::Track* track = sequence->findTrack(ref.track);
+        const model::Clip* clip = track != nullptr ? track->find(ref.clip) : nullptr;
+        if (clip == nullptr) {
+            continue;
+        }
+        if (!earliest || clip->start() < *earliest) {
+            earliest = clip->start();
+        }
+        gathered.push_back(Copied{ref.track, *clip, {}});
+    }
+    if (gathered.empty() || !earliest) {
+        app::say(this, "Copy", "Those clips are no longer on the timeline.");
+        return;
+    }
+    for (Copied& copied : gathered) {
+        copied.offset = copied.clip.start() - *earliest;
+    }
+    clipboard_ = std::move(gathered);
+    updateChrome();
+}
+
+void PreviewWindow::cutSelection() {
+    const std::size_t before = clipboard_.size();
+    copySelection();
+    if (clipboard_.size() == before && clipboard_.empty()) {
+        return;  // copy said why
+    }
+    // Lift, not extract: the gap stays. Delete does the same thing unmodified,
+    // and a cut that silently closed the gap would move every clip after it --
+    // which is a different edit from the one somebody asked for.
+    timeline_->removeSelected(false);
+}
+
+void PreviewWindow::pasteAtPlayhead() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+    if (clipboard_.empty()) {
+        app::say(this, "Paste", "Nothing has been copied yet.");
+        return;
+    }
+
+    // Fresh ids for everything, allocated here because only the project can:
+    // the command runs against a sequence. Links are remapped rather than
+    // reused, so a pasted picture-and-sound pair is linked to each other and
+    // not to the clips they were copied from.
+    std::map<std::uint64_t, model::LinkId> relinked;
+    std::vector<edit::PastedClip> placing;
+    placing.reserve(clipboard_.size());
+    for (const Copied& copied : clipboard_) {
+        model::Clip fresh = copied.clip;
+        fresh.id = document_.project().ids().next<model::ClipTag>();
+        if (copied.clip.link.isValid()) {
+            auto found = relinked.find(copied.clip.link.value());
+            if (found == relinked.end()) {
+                found = relinked
+                            .emplace(copied.clip.link.value(),
+                                     document_.project().ids().next<model::LinkTag>())
+                            .first;
+            }
+            fresh.link = found->second;
+        }
+        const time::RationalTime at = position_ + copied.offset;
+        fresh.timelineRange = time::TimeRange{at, copied.clip.timelineRange.duration()};
+        placing.push_back(edit::PastedClip{copied.track, std::move(fresh)});
+    }
+
+    auto built = edit::makePasteClips(document_.project(), sequence->id(), placing);
+    if (!built) {
+        app::warn(this, "Paste", QString::fromStdString(built.error().toString()));
+        return;
+    }
+    document_.commands().execute(document_.project(), std::move(*built));
+    document_.commands().breakMerge();
+    renderCache_.clear();
+    afterEdit();
 }
 
 void PreviewWindow::frameSizeMenu() {
@@ -1970,6 +2095,23 @@ void PreviewWindow::bindCommands() {
     actions_.bind("razor", [this] { timeline_->razorAtPlayhead(); });
     actions_.bind("add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
     actions_.bind("render-range", [this] { renderMenu(); });
+    // One binding per key, here, rather than a second copy in the timeline's
+    // own key handler. Bound on the window so they work wherever the focus is:
+    // Delete used to do nothing unless the timeline had been clicked first.
+    actions_.bind("copy-clips", [this] { copySelection(); });
+    actions_.bind("cut-clips", [this] { cutSelection(); });
+    actions_.bind("paste-clips", [this] { pasteAtPlayhead(); });
+    actions_.bind("tool-select", [this] { timeline_->setTool(TimelineWidget::Tool::Select); });
+    actions_.bind("tool-blade", [this] { timeline_->setTool(TimelineWidget::Tool::Blade); });
+    actions_.bind("tool-trim", [this] { timeline_->setTool(TimelineWidget::Tool::Trim); });
+    actions_.bind("tool-slip", [this] { timeline_->setTool(TimelineWidget::Tool::Slip); });
+    actions_.bind("tool-hand", [this] { timeline_->setTool(TimelineWidget::Tool::Hand); });
+    actions_.bind("toggle-snap", [this] {
+        timeline_->setSnapEnabled(!timeline_->snapEnabled());
+        updateChrome();
+    });
+    actions_.bind("delete-selected", [this] { timeline_->removeSelected(false); });
+    actions_.bind("ripple-delete", [this] { timeline_->removeSelected(true); });
     actions_.bind("frame-size", [this] { frameSizeMenu(); });
     actions_.bind("delivery", [this] { deliveryMenu(); });
     actions_.bind("loudness", [this] { loudnessMenu(); });
@@ -2215,6 +2357,7 @@ void PreviewWindow::updateChrome() {
         status.deliverRange = deliver_->rangeSummary();
         status.rendering = deliver_->rendering();
     }
+    status.audioDeviceMissing = playback_.audioDeviceMissing();
     status.platformLabel = kPlatformLabel;
     chrome::refresh(bars_, status);
 }

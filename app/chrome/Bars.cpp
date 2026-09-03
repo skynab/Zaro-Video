@@ -38,7 +38,13 @@ void refresh(const Bars& bars, const Status& status) {
                                        .arg(status.binItems == 1 ? "item" : "items",
                                             status.modified ? "edited" : "clean"));
     }
-    bars.statusRight->setText(QString("%1 · Qt %2").arg(status.platformLabel, QT_VERSION_STR));
+    // The missing device takes the right-hand slot while it is missing. What
+    // normally sits there is the platform and the Qt version, which nobody is
+    // reading while wondering why the playhead will not move.
+    bars.statusRight->setText(
+        status.audioDeviceMissing
+            ? QString("no audio device — the playhead is driven by one, so playback cannot run")
+            : QString("%1 · Qt %2").arg(status.platformLabel, QT_VERSION_STR));
 
     // Whether snapping is on is said by the magnet being lit, and saying it
     // again in words beside the button was the same fact twice.

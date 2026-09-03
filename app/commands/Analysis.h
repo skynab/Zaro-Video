@@ -42,7 +42,12 @@ Result<render::ShotMatch> matchToReference(const Context& context,
 /// **On the composited picture, not on the decoded source.** The mask lives
 /// in output coordinates over whatever is on screen, so what it has to
 /// follow is what is on screen.
-Result<MaskTrack> trackMaskForward(const Context& context);
+///
+/// `tell` is asked once a frame and stops the track when it answers false, the
+/// same bargain detectScenes makes. Without it this composited every frame of
+/// the clip behind a wait cursor, which on a long one is a window that looks
+/// hung with no way out but to kill it.
+Result<MaskTrack> trackMaskForward(const Context& context, const Progress& tell = {});
 
 /// Hold the selected clip still.
 ///
@@ -52,7 +57,9 @@ Result<MaskTrack> trackMaskForward(const Context& context);
 /// computed, which would make the analysis chase its own tail. It also has
 /// whatever is layered over the clip in it, which moved for reasons of its
 /// own.
-Result<render::StabiliseResult> stabiliseClip(const Context& context);
+///
+/// Reports progress and can be stopped, for the reason trackMaskForward can.
+Result<render::StabiliseResult> stabiliseClip(const Context& context, const Progress& tell = {});
 
 /// Recompose the selected clip to fill the sequence's frame.
 ///

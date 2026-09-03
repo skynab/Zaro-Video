@@ -632,6 +632,71 @@ TEST_CASE("Multi-selection, driven as a rubber band", "[gui]") {
     window.commands().undo(window.project());
 }
 
+TEST_CASE("Copy a clip and paste it at the playhead", "[gui]") {
+    // Through the actions, not the command: what this checks is the wiring
+    // between a selection, the clipboard and the playhead, which is the part
+    // the core tests cannot see.
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto row = timeline->rowFor(videoTrack.id());
+    REQUIRE(row.has_value());
+    const int y = row->top + row->height / 2;
+
+    const auto first = videoTrack.clips().front();
+    const auto playheadWas = window.position();
+
+    // Click the clip to select it, the way a pointer would.
+    const auto& rate = sequence.frameRate();
+    const auto inside = first.start() + zaro::time::RationalTime{2, rate};
+    const int clipX = static_cast<int>(timeline->layout().xForTime(inside));
+    dragOnTimeline(timeline, clipX, clipX, y);
+    QApplication::processEvents();
+    if (timeline->selection().empty()) {
+        zaro::app::testing::failf("clicking a clip did not select it\n");
+    }
+
+    REQUIRE(window.trigger("copy-clips"));
+
+    // Asked for past the end, then read back: the playhead clamps to the last
+    // frame of the sequence, so where the paste should land is wherever the
+    // playhead actually is rather than where it was sent. A test that assumed
+    // otherwise would be checking its own arithmetic.
+    window.setPosition(sequence.duration() + zaro::time::RationalTime{10, rate});
+    const auto pasteAt = window.position();
+    REQUIRE(window.trigger("paste-clips"));
+    QApplication::processEvents();
+
+    const auto& after = window.sequence()->videoTracks().front();
+    const model::Clip* landed = after.clipAt(pasteAt);
+    if (landed == nullptr) {
+        zaro::app::testing::failf("nothing was pasted at the playhead\n");
+    }
+    if (landed->id == first.id) {
+        zaro::app::testing::failf("the pasted clip reused the original's id\n");
+    }
+    if (landed->start() != pasteAt) {
+        zaro::app::testing::failf("the paste landed at %lld, not the playhead %lld\n",
+                                  static_cast<long long>(landed->start().frames()),
+                                  static_cast<long long>(pasteAt.frames()));
+    }
+    std::printf("  copy and paste: clip landed at %lld with a new id\n",
+                static_cast<long long>(landed->start().frames()));
+
+    // Undone through the widget rather than the stack, because the widget also
+    // drops the selection -- and the playhead is put back by hand. Rewind only
+    // undoes commands, and neither the selection nor the playhead is one. This
+    // suite shares a single window, so whatever a test leaves behind is the
+    // next one's starting state.
+    while (window.commands().canUndo()) {
+        timeline->undo();
+    }
+    window.setPosition(playheadWas);
+    QApplication::processEvents();
+}
+
 TEST_CASE("Renaming a track from its header, and undoing it", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

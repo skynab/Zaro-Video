@@ -287,10 +287,10 @@ public:
     using MaskTrack = commands::MaskTrack;
 
     /// Follow the selected clip's mask through the rest of the clip.
-    Result<commands::MaskTrack> trackMaskForward();
+    Result<commands::MaskTrack> trackMaskForward(const commands::Progress& tell = {});
 
     /// Steady the selected clip.
-    Result<render::StabiliseResult> stabiliseClip();
+    Result<render::StabiliseResult> stabiliseClip(const commands::Progress& tell = {});
 
     /// Point the project's media at files that moved.
     Result<io::RelinkReport> relinkMedia(const std::string& root);
@@ -388,6 +388,18 @@ public:
     /// A sequence property rather than an export option, because the curve
     /// editor and the scopes are drawn against it: choosing it at export time
     /// would mean grading against one curve and delivering through another.
+    /// Copy the selection, and cut/paste around it.
+    ///
+    /// The clipboard is this window's, not the system's. What is copied is a
+    /// set of clips with the shape of the selection in it -- which track each
+    /// came from and how far apart they were -- and nothing outside this
+    /// program has a use for that. A picture of the frames would be a
+    /// different feature with a different name.
+    void copySelection();
+    void cutSelection();
+    void pasteAtPlayhead();
+    [[nodiscard]] bool haveClipboard() const noexcept { return !clipboard_.empty(); }
+
     void deliveryMenu();
     /// Ask for a frame size and apply it. This is the export's resolution:
     /// the render path does not scale, so the sequence's size is the file's.
@@ -937,7 +949,20 @@ private:
     app::ViewerOverlay* viewerOverlay_{nullptr};
     QString workspace_{"Edit"};
 
+    /// One copied clip: what it was, which track it was on, and how far it
+    /// began after the earliest clip in the copy. The offset is what makes a
+    /// paste keep the shape of what was copied rather than piling everything
+    /// onto the playhead.
+    struct Copied {
+        model::TrackId track;
+        model::Clip clip;
+        time::RationalTime offset;
+    };
+    std::vector<Copied> clipboard_;
+
     time::RationalTime position_{};
+    /// Said once per session; see the playingChanged handler.
+    bool warnedNoAudioDevice_{false};
 
     std::thread waveformThread_;
     std::atomic<bool> shuttingDown_{false};

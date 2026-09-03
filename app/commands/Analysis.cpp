@@ -94,7 +94,7 @@ Result<render::ShotMatch> matchToReference(const Context& context,
 /// **On the composited picture, not on the decoded source.** The mask lives
 /// in output coordinates over whatever is on screen, so what it has to
 /// follow is what is on screen.
-Result<MaskTrack> trackMaskForward(const Context& context) {
+Result<MaskTrack> trackMaskForward(const Context& context, const Progress& tell) {
     const model::Sequence* sequence = context.sequence();
     const model::Clip* clip = context.selectedClip();
     if (clip == nullptr || context.media == nullptr) {
@@ -142,7 +142,18 @@ Result<MaskTrack> trackMaskForward(const Context& context) {
 
     MaskTrack result;
     result.confidence = 1.0;
+    const std::int64_t totalFrames = (clip->endExclusive() - from).rescaledTo(rate).frames();
+    std::int64_t doneFrames = 0;
     for (time::RationalTime at = from + step; at < clip->endExclusive(); at = at + step) {
+        ++doneFrames;
+        if (tell && !tell(doneFrames, totalFrames)) {
+            // Stopped by hand. What was tracked up to here is kept: the
+            // keyframes so far are real work, and throwing them away because
+            // somebody stopped a long track early is the opposite of what
+            // stopping it was for.
+            result.stopped = "stopped here";
+            break;
+        }
         render::RgbaImage current;
         if (Status status = graph.compositeInto(*sequence, at, current); !status) {
             return status.error();
@@ -190,7 +201,7 @@ Result<MaskTrack> trackMaskForward(const Context& context) {
 /// computed, which would make the analysis chase its own tail. It also has
 /// whatever is layered over the clip in it, which moved for reasons of its
 /// own.
-Result<render::StabiliseResult> stabiliseClip(const Context& context) {
+Result<render::StabiliseResult> stabiliseClip(const Context& context, const Progress& tell) {
     const model::Sequence* sequence = context.sequence();
     const model::Clip* clip = context.selectedClip();
     if (clip == nullptr || context.media == nullptr) {
@@ -210,7 +221,7 @@ Result<render::StabiliseResult> stabiliseClip(const Context& context) {
         times.push_back(clip->activeSourceTimeAt(at));
     }
 
-    auto analysed = render::stabilise(*context.media, clip->activeSource(), times);
+    auto analysed = render::stabilise(*context.media, clip->activeSource(), times, {}, tell);
     if (!analysed) {
         return analysed;
     }

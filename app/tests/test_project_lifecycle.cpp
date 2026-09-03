@@ -519,7 +519,11 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     }
 
     // A command with no menu item is rebindable too, and the key
-    // handler follows: mark-in moves from I to Y.
+    // handler follows: mark-in moves from I to G.
+    //
+    // G rather than Y: Y is the slip tool, the binding it has in every other
+    // editor. What this checks is that rebinding reaches the key handler, so
+    // the destination only has to be a key nothing else holds.
     //
     // What is checked is where the in point *is*, not whether there is
     // one: a marked range may already exist, so a test that asked "is
@@ -533,7 +537,7 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     QApplication::processEvents();
     window.sourceMonitor()->step(7);
     const auto parkedAt = window.sourceMonitor()->position();
-    if (Status moved = manager->assign("mark-in", "Y"); !moved) {
+    if (Status moved = manager->assign("mark-in", "G"); !moved) {
         zaro::app::testing::failf("%s\n", moved.error().toString().c_str());
     }
     QKeyEvent oldKey(QEvent::KeyPress, Qt::Key_I, Qt::NoModifier);
@@ -542,7 +546,7 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     if (afterOldKey.has_value() && afterOldKey->start() == parkedAt) {
         zaro::app::testing::failf("the old key still marks in\n");
     }
-    QKeyEvent newKey(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier);
+    QKeyEvent newKey(QEvent::KeyPress, Qt::Key_G, Qt::NoModifier);
     QCoreApplication::sendEvent(&window, &newKey);
     const auto afterNewKey = window.sourceMonitor()->markedRange();
     if (!afterNewKey.has_value() || afterNewKey->start() != parkedAt) {
@@ -553,7 +557,7 @@ TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     const std::string written = window.keymap().encode();
     auto reloaded = zaro::ui::Keymap::decode(written);
     if (!reloaded || reloaded->shortcutFor("save-project") != "Ctrl+Alt+9" ||
-        reloaded->shortcutFor("mark-in") != "Y") {
+        reloaded->shortcutFor("mark-in") != "G") {
         zaro::app::testing::failf("the keymap did not survive a round trip\n");
     }
     std::printf("  hotkeys: %zu commands, %zu bytes of keymap when two are changed\n",
