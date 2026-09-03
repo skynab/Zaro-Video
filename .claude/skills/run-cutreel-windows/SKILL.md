@@ -73,6 +73,21 @@ Make a project from the test media:
 Other flags: `--selftest` (render, verify a picture came out, exit),
 `--capture <png>`, `--selftest-quit`, `--locking`.
 
+### Delete the autosave before an automated run
+
+The app writes `<project>.zaro.autosave` on every close, so the *next* launch
+opens a modal **Recover** dialog ("There is a more recent recovery file…").
+This is normal, not a crash artefact. It is also a silent trap for scripted
+runs: the dialog takes the focus, so clicks and keystrokes aimed at the main
+window vanish and playback simply never starts.
+
+```bash
+rm -f "$SCRATCH/demo.zaro.autosave"   # before launching
+```
+
+A window capture that comes back ~516x194 instead of full size *is* that
+dialog — screenshot before assuming a click landed.
+
 ## Screenshotting the live window
 
 **`QT_QPA_PLATFORM=offscreen` does not work here.** Only
@@ -93,25 +108,37 @@ powershell -ExecutionPolicy Bypass -File .claude/skills/run-cutreel-windows/shot
 Then **read the PNG**. Clicks can be driven the same way with `SetCursorPos` +
 `mouse_event`, and native file dialogs with `[System.Windows.Forms.SendKeys]`.
 
-### The program monitor captures black — this is not your bug
+### A black program monitor almost always means the media did not resolve
 
-The program monitor is a `QRhiWidget` on a D3D swapchain, and that surface is
-**not** in either capture route: not `QWidget::grab`/`grabFramebuffer`, and not
-`CopyFromScreen` off the desktop. So the big video pane reads as solid black in
-every screenshot while the real window shows picture fine.
+**Run the app from the repository root.** `.zaro` projects store media paths
+*relative to the working directory*, so launching from `build/windows-release/bin`
+resolves nothing: the monitor is black, the audio is silent, and neither the
+app nor `--selftest` says why.
 
-`--selftest` reports this as a failure:
+```bash
+# right
+./build/windows-release/bin/zaro-preview.exe "$SCRATCH/demo.zaro" --quiet
+# wrong -- no media resolves, and nothing tells you
+cd build/windows-release/bin && ./zaro-preview.exe "$SCRATCH/demo.zaro" --quiet
+```
+
+`--selftest` reports the symptom, not the cause:
 
 ```
 grabbed 1268x418, 0.0% of it lit
 FAIL: the monitor is essentially black
 ```
 
-Verified on 2026-09-02 to be identical on an unmodified `dev`, so it says
-nothing about your change. **Before believing a black monitor is a regression,
-stash and run the same capture on the baseline.** Everything else in the window
-— timeline, media pane, inspector, timecode — captures correctly and is what
-these screenshots are actually good for.
+This cost a long detour on 2026-09-02. The trap is that stashing and
+re-running "confirms" it is pre-existing — both runs have the same wrong
+working directory, so the control varies the code while holding the real cause
+fixed. **Before concluding anything from a black monitor, check the media
+resolved at all**: run from the repo root, or watch stderr for
+`not found: opening testdata/...`.
+
+Anything that decodes fails the same silent way. `AudioGraph` in particular
+treats a clip it cannot read as silence rather than an error, so a project
+whose media is missing plays perfectly timed nothing.
 
 `zaro-preview --selftest --capture <png>` writes two files: the monitor's
 `grabFramebuffer` at `<png>` and the whole window at `<png>.window.png`.
@@ -135,9 +162,17 @@ build/windows-release/bin/zaro_app_tests.exe
 `zaro_app_tests.exe` drives a real window: it needs `~/devtools/Qt/6.9.3/msvc2022_64/bin`
 on `PATH` and a real platform plugin (not offscreen).
 
-Baseline on 2026-09-02 (`dev` at 4cf0e1e): core 790/790 green; app tests 84
-cases, 83 pass, **one pre-existing failure** — "tracking the mask showed no more
-of the picture than leaving it behind did". Anything else is yours. The `[gui]`
-cases are GPU-dependent and the failing set has drifted before, so re-measure
-by stashing rather than trusting that number. Every app-test failure reports
-through `GuiFixture.cpp(175)`, so grep the message, not the line.
+`zaro_core_tests` is deterministic: 790/790 green on `dev` at 4cf0e1e, and any
+failure there is real.
+
+**`zaro_app_tests` is flaky — do not compare single runs.** Measured on
+2026-09-02, three consecutive runs of the *same* binary gave **3, 2, 2**
+failures, drawn from a small pool that includes mask tracking, the cut-snap
+alignment case, and a couple of compositor checks; one case is intermittently
+skipped as well. A single run showing 1 failure is luck, not a baseline — an
+earlier version of this file recorded exactly that and it was wrong.
+
+So: **run it at least three times on the baseline and three times with your
+change, and compare the distributions.** Identical spreads mean no regression,
+which is the only honest read at this noise level. Every app-test failure
+reports through `GuiFixture.cpp(175)`, so grep the message, not the line.

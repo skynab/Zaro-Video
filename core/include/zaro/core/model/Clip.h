@@ -251,6 +251,26 @@ struct Clip {
     [[nodiscard]] time::RationalTime activeBaseSourceTimeAt(
         const time::RationalTime& timelineTime) const;
 
+    /// The same mapping, answered at `atRate` instead of at the source's own
+    /// frame rate.
+    ///
+    /// Audio needs this and picture does not. The picture asks "which frame",
+    /// so an answer in source frames loses nothing. Sound is read in blocks
+    /// whose size is a property of the audio device -- 1024 samples, say --
+    /// and 1024 samples is a fifth of a frame at 25fps: rounded to source
+    /// frames, four blocks out of five ask for the sample the last block
+    /// already got, and the fifth jumps a whole frame. The mixer then reads the
+    /// same 40ms of source over and over, which is heard as a buzz at the block
+    /// rate rather than as the recording.
+    ///
+    /// The single-argument versions answer at the source rate, which is what
+    /// every picture caller wants; these answer at whatever precision the
+    /// caller can use.
+    [[nodiscard]] time::RationalTime baseSourceTimeAt(const time::RationalTime& timelineTime,
+                                                      const time::Rational& atRate) const;
+    [[nodiscard]] time::RationalTime activeBaseSourceTimeAt(const time::RationalTime& timelineTime,
+                                                            const time::Rational& atRate) const;
+
     /// Whether the clip picks its frames from a curve rather than from its
     /// range and speed.
     [[nodiscard]] bool isTimeRemapped() const;

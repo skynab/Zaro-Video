@@ -46,6 +46,8 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
     media::AudioBuffer mixed{channelCount, sampleCount, rate};
     const std::int32_t outerClips = lastClipCount_;
     lastClipCount_ = 0;
+    unreadable_ = 0;
+    lastReadError_.clear();
     meters_.tracks.clear();
     meters_.reduction.clear();
     meters_.master.assign(static_cast<std::size_t>(channelCount), 0.0F);
@@ -111,8 +113,8 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                     continue;
                 }
                 ++depth_;
-                auto nested =
-                    mix(*inner, clip.baseSourceTimeAt(overlap->start()), wanted, channelCount);
+                auto nested = mix(*inner, clip.baseSourceTimeAt(overlap->start(), rate), wanted,
+                                  channelCount);
                 --depth_;
                 if (!nested) {
                     continue;
@@ -131,7 +133,13 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
 
             // The base mapping: time remapping is a picture operation (see
             // Clip::baseSourceTimeAt), so the sound runs at the clip's own speed.
-            const time::RationalTime sourceStart = clip.activeBaseSourceTimeAt(overlap->start());
+            // At the audio rate, not the source's frame rate. Asked at the
+            // frame rate this rounds every read down to a frame boundary, and a
+            // block shorter than a frame then re-reads what the last block
+            // already had: the mixer repeats a fortieth of a second over and
+            // over, which is heard as a buzz at the block rate.
+            const time::RationalTime sourceStart =
+                clip.activeBaseSourceTimeAt(overlap->start(), rate);
             // A retimed clip covers more (or less) source than it occupies on
             // the timeline, so it has to read that much and resample. Without
             // this the picture retimes and the sound does not, which is drift
@@ -144,14 +152,20 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                                                         2)
                         : wanted;
             const time::RationalTime readFrom =
-                clip.reversed ? clip.activeBaseSourceTimeAt(overlap->endExclusive() -
-                                                            time::RationalTime{1, rate})
+                clip.reversed ? clip.activeBaseSourceTimeAt(
+                                    overlap->endExclusive() - time::RationalTime{1, rate}, rate)
                               : sourceStart;
             if (Status status = source_->read(clip.activeSource(), readFrom, toRead, rate, scratch);
                 !status) {
                 // A clip whose audio cannot be read is silence, not a failed
                 // render. The same reasoning as a missing picture: a hole is
-                // diagnosable, a stalled export is not.
+                // diagnosable, a stalled export is not. Recorded rather than
+                // merely swallowed, so a caller can tell this silence from the
+                // quiet passage it is otherwise identical to.
+                ++unreadable_;
+                if (lastReadError_.empty()) {
+                    lastReadError_ = status.error().toString();
+                }
                 continue;
             }
 

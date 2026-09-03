@@ -112,4 +112,40 @@ private:
     std::int64_t available_{-1};
 };
 
+/// An AudioSource whose every sample says which source sample it is.
+///
+/// A constant source cannot tell a correct read from one that re-read the same
+/// place, because every sample of it is the same. This one makes the mapping
+/// from timeline to source visible in the signal itself: read a range and the
+/// samples must count up by one, whatever block sizes the caller used to ask
+/// for it. A repeat shows up as a flat spot and a skip as a jump, which is
+/// exactly what those faults sound like.
+class RampAudioSource final : public render::AudioSource {
+public:
+    void define(model::MediaRefId media, std::int32_t channels = 2) {
+        channels_[media.value()] = channels;
+    }
+
+    Status read(model::MediaRefId media, const time::RationalTime& sourceStart,
+                std::int64_t sampleCount, const time::Rational& sampleRate,
+                media::AudioBuffer& out) override {
+        const auto found = channels_.find(media.value());
+        if (found == channels_.end()) {
+            return Error{ErrorCode::NotFound, "no such media in this test source"};
+        }
+        const std::int64_t start = sourceStart.rescaledTo(sampleRate).frames();
+        out = media::AudioBuffer{found->second, sampleCount, sampleRate};
+        for (std::int32_t channel = 0; channel < found->second; ++channel) {
+            float* samples = out.channel(channel);
+            for (std::int64_t i = 0; i < sampleCount; ++i) {
+                samples[i] = static_cast<float>(start + i);
+            }
+        }
+        return {};
+    }
+
+private:
+    std::map<std::uint64_t, std::int32_t> channels_;
+};
+
 }  // namespace zaro::testing

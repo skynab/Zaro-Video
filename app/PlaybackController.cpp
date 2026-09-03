@@ -1,5 +1,6 @@
 #include "PlaybackController.h"
 
+#include <QDebug>
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -164,6 +165,7 @@ void PlaybackController::pumpAudio() {
     // the ring is what keeps the first frame of playback in sync with the first
     // sound of it.
     bool deviceStarted = false;
+    bool warnedUnreadable = false;
 
     while (audioRunning_.load(std::memory_order_relaxed)) {
         const std::int64_t lead =
@@ -189,6 +191,17 @@ void PlaybackController::pumpAudio() {
                 const time::RationalTime from{anchorFrames + (audioWritten_ - anchorClock),
                                               audioRate};
                 if (auto mixed = mixer.mix(*sequence_, from, block, kChannels)) {
+                    // Silence because a clip would not read is not the same as
+                    // silence because the timeline is quiet, and the two are
+                    // identical in the buffer. Said once per run, from the
+                    // thread that found it, so a project whose media has moved
+                    // explains itself instead of just playing nothing.
+                    if (mixer.lastUnreadableClipCount() > 0 && !warnedUnreadable) {
+                        warnedUnreadable = true;
+                        qWarning().noquote()
+                            << "playback: a clip's audio could not be read, so it is silent --"
+                            << QString::fromStdString(mixer.lastReadError());
+                    }
                     {
                         // Copied under a lock for the UI to read. The realtime
                         // path is the device callback draining the ring, and it

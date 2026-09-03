@@ -41,7 +41,12 @@ time::RationalTime Clip::activeSourceTimeAt(const time::RationalTime& timelineTi
 }
 
 time::RationalTime Clip::activeBaseSourceTimeAt(const time::RationalTime& timelineTime) const {
-    const time::RationalTime base = baseSourceTimeAt(timelineTime);
+    return activeBaseSourceTimeAt(timelineTime, sourceRange.start().rate());
+}
+
+time::RationalTime Clip::activeBaseSourceTimeAt(const time::RationalTime& timelineTime,
+                                                const time::Rational& atRate) const {
+    const time::RationalTime base = baseSourceTimeAt(timelineTime, atRate);
     if (angles.empty()) {
         return base;
     }
@@ -85,13 +90,22 @@ time::RationalTime Clip::sourceTimeAt(const time::RationalTime& timelineTime) co
 }
 
 time::RationalTime Clip::baseSourceTimeAt(const time::RationalTime& timelineTime) const {
+    return baseSourceTimeAt(timelineTime, sourceRange.start().rate());
+}
+
+time::RationalTime Clip::baseSourceTimeAt(const time::RationalTime& timelineTime,
+                                          const time::Rational& atRate) const {
     ZARO_CHECK(!timelineRange.isEmpty(), "sourceTimeAt on a zero-length clip");
 
     const time::RationalTime offset = timelineTime - timelineRange.start();
     if (!reversed && timelineRange.duration() == sourceRange.duration()) {
         // The common case: same rate, normal speed, forwards. Stay in integer
         // frames rather than round-tripping through a ratio that can only lose.
-        return sourceRange.start() + offset.rescaledTo(sourceRange.start().rate());
+        //
+        // Rescaled to the rate the caller asked for rather than to the source's
+        // own: at the source rate this truncates, and for a caller reading in
+        // audio blocks the truncation is most of the signal. See the header.
+        return sourceRange.start().rescaledTo(atRate) + offset.rescaledTo(atRate);
     }
 
     time::Rational fraction = offset.toSeconds() / timelineRange.duration().toSeconds();
@@ -109,7 +123,7 @@ time::RationalTime Clip::baseSourceTimeAt(const time::RationalTime& timelineTime
         }
     }
     const time::Rational into = sourceRange.duration().toSeconds() * fraction;
-    return sourceRange.start() + time::RationalTime::fromSeconds(into, sourceRange.start().rate());
+    return sourceRange.start().rescaledTo(atRate) + time::RationalTime::fromSeconds(into, atRate);
 }
 
 time::RationalTime Clip::timelineTimeOf(const time::RationalTime& sourceTime) const {

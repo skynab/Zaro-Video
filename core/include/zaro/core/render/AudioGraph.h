@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "zaro/core/media/AudioBuffer.h"
@@ -31,6 +32,18 @@ public:
                                                  std::int32_t channelCount = 2);
 
     [[nodiscard]] std::int32_t lastClipCount() const noexcept { return lastClipCount_; }
+
+    /// Clips the last mix wanted but could not read, and why the first of them
+    /// failed.
+    ///
+    /// A clip whose audio will not read is mixed as silence rather than failing
+    /// the whole mix -- a hole is diagnosable and a stalled export is not. But
+    /// silence is also what a correct mix of a quiet passage looks like, so
+    /// without this the two are indistinguishable, and a project whose media
+    /// has all gone missing plays perfectly timed nothing without a word. That
+    /// is not a hypothetical: it cost an afternoon.
+    [[nodiscard]] std::int32_t lastUnreadableClipCount() const noexcept { return unreadable_; }
+    [[nodiscard]] const std::string& lastReadError() const noexcept { return lastReadError_; }
 
     /// The project a nested clip's sequence is looked up in. Without it a
     /// nested clip contributes silence, the same way it draws nothing.
@@ -102,6 +115,8 @@ private:
     const model::Project* project_{nullptr};
     std::int32_t depth_{0};
     std::int32_t lastClipCount_{0};
+    std::int32_t unreadable_{0};
+    std::string lastReadError_;
     Meters meters_;
     /// One processing chain per track, kept between blocks because a filter's
     /// delay line and a compressor's envelope are exactly the state that makes

@@ -16,6 +16,7 @@ using namespace zaro;
 using Catch::Approx;
 using zaro::testing::ConstantAudioSource;
 using zaro::testing::Fixture;
+using zaro::testing::RampAudioSource;
 
 namespace {
 
@@ -699,4 +700,62 @@ TEST_CASE("A stereo clip is untouched by the fold", "[render][audio]") {
     REQUIRE(mixed);
     CHECK(mixed->channel(0)[0] == Approx(1.0F).margin(1e-5));
     CHECK(mixed->channel(1)[0] == Approx(0.25F).margin(1e-5));
+}
+
+TEST_CASE("Mixing is sample accurate whatever the block size", "[render][audio]") {
+    // The bug this guards made playback sound robotic, and nothing else caught
+    // it: every offline path mixes in whole video frames, where the fault is
+    // invisible. The audio device does not. It asks for 1024 samples at a time,
+    // and 1024 is not a whole frame at any normal rate -- so a mapping that
+    // answers in source *frames* hands back the same 1920 samples for two
+    // blocks running and then jumps one frame. Held up to a ramp, that is a
+    // flat spot followed by a step; through a speaker it is a buzz at the block
+    // rate.
+    //
+    // So: read the same range twice, once frame aligned and once in device
+    // sized blocks, and require both to be the ramp itself.
+    Fixture f;
+    RampAudioSource source;
+    source.define(f.longMedia, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    // The clip starts 500 frames into its media, so timeline sample 0 is source
+    // sample 500 * 1920.
+    const std::int64_t sourceOrigin = 500 * kSamplesPerFrame;
+    constexpr std::int64_t kTotal = 12000;  // not a whole number of frames
+
+    const auto gather = [&](std::int64_t blockSize) {
+        std::vector<float> out;
+        out.reserve(static_cast<std::size_t>(kTotal));
+        for (std::int64_t at = 0; at < kTotal; at += blockSize) {
+            const std::int64_t count = std::min(blockSize, kTotal - at);
+            auto mixed = graph.mix(f.sequence(), samples(at), count);
+            REQUIRE(mixed);
+            REQUIRE(mixed->sampleCount() == count);
+            for (std::int64_t i = 0; i < count; ++i) {
+                out.push_back(mixed->channel(0)[i]);
+            }
+        }
+        return out;
+    };
+
+    const std::vector<float> frameAligned = gather(kSamplesPerFrame);
+    const std::vector<float> deviceSized = gather(1024);
+    REQUIRE(frameAligned.size() == static_cast<std::size_t>(kTotal));
+    REQUIRE(deviceSized.size() == static_cast<std::size_t>(kTotal));
+
+    for (std::int64_t i = 0; i < kTotal; ++i) {
+        const auto expected = static_cast<float>(sourceOrigin + i);
+        const auto index = static_cast<std::size_t>(i);
+        if (frameAligned[index] != Approx(expected)) {
+            FAIL("frame aligned mix is wrong at sample " << i << ": got " << frameAligned[index]
+                                                         << ", expected " << expected);
+        }
+        if (deviceSized[index] != Approx(expected)) {
+            FAIL("1024 sample blocks gave sample "
+                 << i << " as " << deviceSized[index] << ", expected " << expected
+                 << " -- the source mapping is rounding to whole frames");
+        }
+    }
 }
