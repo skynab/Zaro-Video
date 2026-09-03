@@ -1552,6 +1552,70 @@ void PreviewWindow::frameSizeMenu() {
     afterEdit();
 }
 
+void PreviewWindow::frameRateMenu() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+
+    bool hasClips = false;
+    for (const auto* list : {&sequence->videoTracks(), &sequence->audioTracks()}) {
+        for (const model::Track& track : *list) {
+            if (!track.isEmpty()) {
+                hasClips = true;
+                break;
+            }
+        }
+        if (hasClips) {
+            break;
+        }
+    }
+
+    // The rate of the biggest picture on the timeline, the same clip
+    // frameSizeMenu would offer to match -- so "match the footage" means the
+    // same footage in both menus. Only asked for on an empty sequence: once
+    // there are clips the menu is explaining a refusal, not offering a rate.
+    time::Rational sourceRate{};
+    if (!hasClips) {
+        std::int64_t sourceArea = 0;
+        for (const model::Track& track : sequence->videoTracks()) {
+            for (const model::Clip& clip : track.clips()) {
+                if (clip.nested.isValid() || clip.graphic.isSet()) {
+                    continue;
+                }
+                const model::MediaRef* ref = document_.project().findMedia(clip.activeSource());
+                const media::VideoStreamInfo* video =
+                    ref != nullptr ? ref->info.primaryVideo() : nullptr;
+                if (video == nullptr) {
+                    continue;
+                }
+                const auto area = static_cast<std::int64_t>(video->width) * video->height;
+                if (area > sourceArea) {
+                    sourceArea = area;
+                    sourceRate = video->frameRate;
+                }
+            }
+        }
+    }
+
+    const chrome::FrameRateChoice chosen =
+        chrome::frameRateMenu(sequence->frameRate(), sourceRate, hasClips);
+    if (!chosen.chosen) {
+        return;
+    }
+
+    auto built = edit::makeConformSequence(document_.project(), sequence->id(), chosen.rate,
+                                           sequence->width(), sequence->height());
+    if (!built) {
+        app::warn(this, "Frame rate", QString::fromStdString(built.error().toString()));
+        return;
+    }
+    document_.commands().execute(document_.project(), std::move(*built));
+    document_.commands().breakMerge();
+    renderCache_.clear();
+    afterEdit();
+}
+
 void PreviewWindow::deliveryMenu() {
     const model::Sequence* sequence = liveSequence();
     if (sequence == nullptr) {
@@ -2113,6 +2177,7 @@ void PreviewWindow::bindCommands() {
     actions_.bind("delete-selected", [this] { timeline_->removeSelected(false); });
     actions_.bind("ripple-delete", [this] { timeline_->removeSelected(true); });
     actions_.bind("frame-size", [this] { frameSizeMenu(); });
+    actions_.bind("frame-rate", [this] { frameRateMenu(); });
     actions_.bind("delivery", [this] { deliveryMenu(); });
     actions_.bind("loudness", [this] { loudnessMenu(); });
     actions_.bind("show-transcript", [this] { showTranscript(); });

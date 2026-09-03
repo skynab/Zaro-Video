@@ -404,6 +404,9 @@ public:
     /// Ask for a frame size and apply it. This is the export's resolution:
     /// the render path does not scale, so the sequence's size is the file's.
     void frameSizeMenu();
+    /// Ask for a frame rate, on an empty sequence, or explain why not on one
+    /// that already has clips on it. See chrome::frameRateMenu.
+    void frameRateMenu();
 
     /// Set the curve the sequence goes out through.
     bool setDelivery(const model::Sequence::Output& output);

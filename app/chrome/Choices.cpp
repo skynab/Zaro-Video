@@ -195,6 +195,76 @@ FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHei
     return choice;
 }
 
+namespace {
+
+/// "23.976", "25", "29.97" -- five significant figures is enough to tell every
+/// rate in `time::rates` apart and short enough to sit in a menu label.
+QString rateLabel(const time::Rational& rate) {
+    return QString::number(rate.toDouble(), 'g', 5);
+}
+
+}  // namespace
+
+FrameRateChoice frameRateMenu(const time::Rational& currentRate, const time::Rational& sourceRate,
+                              bool hasClips) {
+    QMenu menu;
+    menu.addAction(QString("Frame rate — now %1 fps").arg(rateLabel(currentRate)))
+        ->setEnabled(false);
+    menu.addSeparator();
+
+    if (hasClips) {
+        // The door is locked, but there is a sign on it: without this the menu
+        // item either did not exist -- what shipped before -- or opened a
+        // picker that failed on the click, which explains nothing at the
+        // moment somebody is looking for an explanation.
+        menu.addAction("Every clip's position is measured in frames at this rate, so changing")
+            ->setEnabled(false);
+        menu.addAction("it now would silently retime the whole sequence. Move everything")
+            ->setEnabled(false);
+        menu.addAction("off this sequence first, or start a new one at the rate you want.")
+            ->setEnabled(false);
+        menu.exec(QCursor::pos());
+        return FrameRateChoice{};
+    }
+
+    std::map<QAction*, time::Rational> rates;
+    const auto offer = [&](const QString& label, const time::Rational& rate) {
+        QAction* action = menu.addAction(QString("%1  (%2 fps)").arg(label, rateLabel(rate)));
+        action->setCheckable(true);
+        action->setChecked(currentRate == rate);
+        rates.emplace(action, rate);
+    };
+
+    // The footage first, for the reason frameSizeMenu puts the footage first:
+    // matching what is about to be cut is nearly always the answer somebody
+    // opened this menu for.
+    if (sourceRate.isPositive()) {
+        offer("Match the footage", sourceRate);
+        menu.addSeparator();
+    }
+
+    offer("Film, 24", time::rates::fps24);
+    offer("NTSC film, 23.976", time::rates::fps23_976);
+    offer("PAL, 25", time::rates::fps25);
+    offer("NTSC, 29.97", time::rates::fps29_97);
+    offer("30", time::rates::fps30);
+    menu.addSeparator();
+    offer("PAL high frame rate, 50", time::rates::fps50);
+    offer("NTSC high frame rate, 59.94", time::rates::fps59_94);
+    offer("60", time::rates::fps60);
+
+    QAction* chosen = menu.exec(QCursor::pos());
+    FrameRateChoice choice;
+    if (chosen == nullptr) {
+        return choice;
+    }
+    if (const auto found = rates.find(chosen); found != rates.end()) {
+        choice.chosen = true;
+        choice.rate = found->second;
+    }
+    return choice;
+}
+
 ProxyChoice proxyMenu(const std::vector<ProxyEntry>& entries, bool usingProxies) {
     std::size_t proxied = 0;
     for (const ProxyEntry& entry : entries) {

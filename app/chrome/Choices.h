@@ -21,6 +21,7 @@
 
 #include "zaro/core/media/ColorInfo.h"
 #include "zaro/core/model/Ids.h"
+#include "zaro/core/time/Rational.h"
 
 namespace zaro::app::chrome {
 
@@ -88,5 +89,29 @@ struct FrameSizeChoice {
 /// click rather than arithmetic the user does in their head.
 FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHeight,
                               std::int32_t sourceWidth, std::int32_t sourceHeight);
+
+/// A frame rate, or nothing when the menu was dismissed.
+struct FrameRateChoice {
+    bool chosen{false};
+    time::Rational rate{};
+};
+
+/// Pick the sequence's frame rate -- or, once there is a clip on the
+/// timeline, be told why not.
+///
+/// Unlike frame size, a rate change has no safe version once anything has
+/// been cut: every clip's timeline range is expressed at the sequence's rate,
+/// so changing it retimes the whole edit by however much the two rates
+/// disagree, silently. `makeConformSequence` already refuses that; what was
+/// missing was anywhere to *ask* and be told why, rather than a command with
+/// no menu item pointing at it. So `hasClips` true shows the current rate
+/// alongside that reason, every choice disabled -- a locked door with a sign
+/// on it beats one that was never there.
+///
+/// `sourceRate` is the framerate of the largest clip on the timeline (0 if
+/// none), offered as "Match the footage" the same way frameSizeMenu offers a
+/// source size, and only when the sequence is empty.
+FrameRateChoice frameRateMenu(const time::Rational& currentRate, const time::Rational& sourceRate,
+                              bool hasClips);
 
 }  // namespace zaro::app::chrome

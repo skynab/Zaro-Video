@@ -126,12 +126,13 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, sequence, "razor");
     addItem(router, sequence, "add-dissolve");
     sequence->addSeparator();
-    // Above Delivery, and next to it, because the two together are "what comes
-    // out of this": the size of the picture and the curve it is delivered
-    // through. Frame size had no menu item at all, which made the one thing
-    // that decides the export's resolution the one thing with nowhere to set
-    // it.
+    // Above Delivery, and next to it, because the three together are "what
+    // comes out of this": the size of the picture, how fast it plays, and the
+    // curve it is delivered through. Frame size and frame rate used to have no
+    // menu item at all, which made the two things that decide the export's
+    // format the two things with nowhere to set or even ask about them.
     addItem(router, sequence, "frame-size");
+    addItem(router, sequence, "frame-rate");
     addItem(router, sequence, "delivery");
     sequence->addSeparator();
     addItem(router, sequence, "render-range");
