@@ -18,7 +18,18 @@ struct ProjectMediaSource::State {
     };
 
     /// The frame handed out by sourceFrameFor, kept alive until the next call.
+    ///
+    /// Also a one-frame memo. Asking the decoder for a time it has already
+    /// passed forces a seek and a decode forward from the keyframe before it,
+    /// so a second request for the frame already on screen is one of the most
+    /// expensive things that can be asked of it -- and the monitor asks
+    /// constantly: a resize, an overlay moving, any edit that repaints without
+    /// moving the playhead. Remembering which frame this is turns all of those
+    /// back into nothing.
     media::VideoFrame lastSourceFrame;
+    std::uint64_t lastSourceMedia{0};
+    time::RationalTime lastSourceTime{};
+    bool haveLastSourceFrame{false};
     struct AudioEntry {
         std::unique_ptr<media::AudioDecoder> decoder;
         media::AudioBuffer pending;     ///< Decoded but not yet handed out.
@@ -125,6 +136,11 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
 
 Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
     model::MediaRefId media, const time::RationalTime& sourceTime) {
+    if (state_->haveLastSourceFrame && state_->lastSourceMedia == media.value() &&
+        state_->lastSourceTime == sourceTime) {
+        return &state_->lastSourceFrame;
+    }
+
     const auto path = state_->paths.find(media.value());
     if (path == state_->paths.end()) {
         return Error{ErrorCode::NotFound, "this project has no media with that id"};
@@ -147,6 +163,9 @@ Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
     // No working-space cache here: the GPU converts on upload, so the frame the
     // caller wants is the one the decoder just produced.
     state_->lastSourceFrame = std::move(*decoded);
+    state_->lastSourceMedia = media.value();
+    state_->lastSourceTime = sourceTime;
+    state_->haveLastSourceFrame = true;
     return &state_->lastSourceFrame;
 }
 

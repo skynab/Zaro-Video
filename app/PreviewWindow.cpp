@@ -538,8 +538,24 @@ void PreviewWindow::wireEditingSignals() {
     // rather than the click: pressing play when the device will not open
     // leaves the transport stopped, and a button that already said "pause"
     // would be describing something that is not happening.
-    connect(&playback_, &PlaybackController::moved, this,
-            [this](const time::RationalTime& at) { setPosition(at); });
+    connect(&playback_, &PlaybackController::moved, this, [this](const time::RationalTime& at) {
+        // The clock is polled far faster than the sequence has frames --
+        // deliberately, so the playhead is never waiting on the timer --
+        // so most ticks arrive with the playhead still inside the frame
+        // it was already on. setPosition is per-frame work: formatting
+        // timecode, laying out the overlay, repainting the timeline. Run
+        // at the polling rate it spends the GUI thread on answers nobody
+        // can see, and it is the same thread that has to get the next
+        // frame drawn.
+        //
+        // The guard belongs here rather than inside setPosition, which
+        // every edit also calls to bring the preview back in step at a
+        // playhead that has not moved.
+        if (at == position_) {
+            return;
+        }
+        setPosition(at);
+    });
     connect(&playback_, &PlaybackController::playingChanged, this, [this](bool playing) {
         if (bars_.playButton != nullptr) {
             bars_.playButton->setText(playing ? kPauseGlyph : kPlayGlyph);

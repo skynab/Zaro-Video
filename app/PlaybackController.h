@@ -87,6 +87,9 @@ signals:
 
 private:
     void startClock(const time::RationalTime& from);
+    /// Republish the anchor for the pump thread. Call after every write to
+    /// `anchorPosition_` or `anchorClock_`.
+    void publishAnchor();
     void pumpAudio();
     void followClock();
 
@@ -105,6 +108,21 @@ private:
     std::int64_t anchorClock_{0};
     std::int64_t audioWritten_{0};
     bool playing_{false};
+
+    /// The same anchor the UI thread keeps above, in audio samples, for the
+    /// pump thread to read.
+    ///
+    /// The pump cannot read `anchorPosition_` and `anchorClock_` directly:
+    /// changing shuttle speed rewrites both from the UI thread while the pump
+    /// is midway through using them, and a block mixed from half of one anchor
+    /// and half of the next is audibly from the wrong place. Two atomics, both
+    /// published after the values they describe, are read as a pair that is at
+    /// worst one block stale rather than incoherent.
+    std::atomic<std::int64_t> anchorAudioFrames_{0};
+    std::atomic<std::int64_t> anchorClockFrames_{0};
+    /// Whether the transport is at 1x, for the pump. Reading the transport's
+    /// Rational across threads would be a race on a two-field value.
+    std::atomic<bool> atUnitySpeed_{true};
 
     std::thread audioThread_;
     std::atomic<bool> audioRunning_{false};

@@ -1,9 +1,14 @@
 ---
-name: run-cutreel
-description: Launch and drive zaro-preview, the CutReel editor, or render one panel to a PNG to look at it. Use whenever asked to run, start, screenshot, or visually check the app.
+name: run-cutreel-macos
+description: Run, screenshot or visually check CutReel (zaro-preview) ON MACOS. Covers the .app bundle launch path and the offscreen QPixmap harness. Use only on macOS -- on Windows use run-cutreel-windows instead, which is a different build tree, a different binary path, and a screenshot route that does not work here.
 ---
 
-# Running CutReel
+# Running CutReel on macOS
+
+**Platform: macOS only.** The paths here (`build/debug`, the `.app` bundle) and
+the offscreen harness do not exist or do not work on Windows. On a Windows box
+use the `run-cutreel-windows` skill instead -- `QT_QPA_PLATFORM=offscreen` dies
+silently there, and the binary is a plain `.exe` in a different tree.
 
 `zaro-preview` is a Qt6 desktop GUI. Two ways to see it; pick by what you need.
 

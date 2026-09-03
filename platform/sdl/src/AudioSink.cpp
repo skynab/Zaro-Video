@@ -51,11 +51,17 @@ Result<std::unique_ptr<AudioSink>> AudioSink::open(const time::Rational& sampleR
     state.channels = channels;
     state.bufferFrames = bufferFrames;
 
-    // Four device buffers of headroom. Less and an ordinary scheduling hiccup
-    // on the render thread becomes an audible dropout; much more and a seek
-    // takes noticeably long to be heard.
+    // Eight device buffers of headroom, which is more than the producer aims to
+    // keep filled. The producer's lead is what actually bounds latency; sizing
+    // the ring to exactly that lead would leave it unable to write a whole
+    // block whenever it was on target, so it would top up in slivers and lose
+    // the headroom it was given. The slack above the lead is what lets it
+    // refill in blocks.
+    //
+    // This costs nothing in seek latency: playback stops by pausing the device,
+    // and starting again empties the ring rather than playing it out.
     state.ring = std::make_unique<playback::AudioRingBuffer>(
-        channels, static_cast<std::int64_t>(bufferFrames) * 4);
+        channels, static_cast<std::int64_t>(bufferFrames) * 8);
 
     SDL_AudioSpec wanted{};
     wanted.freq = static_cast<int>(sampleRate.roundToInt());
