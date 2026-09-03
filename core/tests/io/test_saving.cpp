@@ -266,6 +266,51 @@ TEST_CASE("Conforming a sequence that has clips on it is refused", "[edit][newpr
     }
 }
 
+TEST_CASE("A sequence can be resized after it has clips on it", "[edit][newproject]") {
+    // The counterpart to the test above, and the distinction is the point.
+    // Conforming is refused on a populated sequence because it changes the
+    // *rate*, and every clip's timeline range is expressed at that rate. A
+    // resize changes only how many pixels wide the frame is, which nothing's
+    // timing depends on -- and refusing it would leave a project's output
+    // resolution fixed forever by whatever was dropped on it first, with no
+    // way back, because this program's export does not scale.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50))));
+    REQUIRE_FALSE(
+        edit::makeConformSequence(f.project, f.sequenceId, time::rates::fps24, 1280, 720));
+
+    auto built = edit::makeResizeSequence(f.project, f.sequenceId, 1080, 1920);
+    REQUIRE(built);
+    f.stack.execute(f.project, std::move(*built));
+
+    const model::Sequence* sequence = f.project.findSequence(f.sequenceId);
+    CHECK(sequence->width() == 1080);
+    CHECK(sequence->height() == 1920);
+    // The rate is untouched: this is the whole reason it is a separate command.
+    CHECK(sequence->frameRate() == time::rates::fps25);
+    // And the cut is where it was.
+    CHECK(sequence->duration().frames() == 50);
+
+    SECTION("and it undoes") {
+        f.stack.undo(f.project);
+        CHECK(f.project.findSequence(f.sequenceId)->width() == 1920);
+        CHECK(f.project.findSequence(f.sequenceId)->height() == 1080);
+    }
+
+    SECTION("odd sizes are refused, because the encoders reject them") {
+        // Caught here rather than at export: a resize that only fails once the
+        // render is queued fails after the work is done.
+        CHECK_FALSE(edit::makeResizeSequence(f.project, f.sequenceId, 1081, 1920));
+        CHECK_FALSE(edit::makeResizeSequence(f.project, f.sequenceId, 1080, 1921));
+    }
+
+    SECTION("so are nonsense sizes and the size it already is") {
+        CHECK_FALSE(edit::makeResizeSequence(f.project, f.sequenceId, 0, 1080));
+        CHECK_FALSE(edit::makeResizeSequence(f.project, f.sequenceId, -2, 1080));
+        CHECK_FALSE(edit::makeResizeSequence(f.project, f.sequenceId, 1080, 1920));
+    }
+}
+
 // --- Interpreting footage ---------------------------------------------------
 
 TEST_CASE("A media reference reads its curve from the file until told otherwise", "[io][color]") {

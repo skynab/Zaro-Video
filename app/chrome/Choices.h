@@ -71,4 +71,22 @@ struct ProxyEntry {
 
 ProxyChoice proxyMenu(const std::vector<ProxyEntry>& entries, bool usingProxies);
 
+/// A frame size, or nothing when the menu was dismissed.
+struct FrameSizeChoice {
+    bool chosen{false};
+    std::int32_t width{0};
+    std::int32_t height{0};
+    /// The user asked to type a size rather than pick one.
+    bool custom{false};
+};
+
+/// Pick the sequence's frame size -- which is the size it exports at, since
+/// the render path does not scale.
+///
+/// `sourceWidth`/`sourceHeight` are the largest piece of footage on the
+/// timeline, offered as a preset so "make the sequence match my footage" is one
+/// click rather than arithmetic the user does in their head.
+FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHeight,
+                              std::int32_t sourceWidth, std::int32_t sourceHeight);
+
 }  // namespace zaro::app::chrome

@@ -107,8 +107,15 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, sequence, "razor");
     addItem(router, sequence, "add-dissolve");
     sequence->addSeparator();
-    addItem(router, sequence, "render-range");
+    // Above Delivery, and next to it, because the two together are "what comes
+    // out of this": the size of the picture and the curve it is delivered
+    // through. Frame size had no menu item at all, which made the one thing
+    // that decides the export's resolution the one thing with nowhere to set
+    // it.
+    addItem(router, sequence, "frame-size");
     addItem(router, sequence, "delivery");
+    sequence->addSeparator();
+    addItem(router, sequence, "render-range");
     addItem(router, sequence, "loudness");
 
     QMenu* text = bar->addMenu("Text");

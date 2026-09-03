@@ -138,6 +138,63 @@ DeliveryChoice deliveryMenu(media::TransferFunction currentTransfer, double curr
     return choice;
 }
 
+FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHeight,
+                              std::int32_t sourceWidth, std::int32_t sourceHeight) {
+    QMenu menu;
+    menu.addAction(QString("Frame size — now %1 × %2").arg(currentWidth).arg(currentHeight))
+        ->setEnabled(false);
+    menu.addSeparator();
+
+    std::map<QAction*, std::pair<std::int32_t, std::int32_t>> sizes;
+    const auto offer = [&](const QString& label, std::int32_t width, std::int32_t height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        QAction* action =
+            menu.addAction(QString("%1  (%2 × %3)").arg(label).arg(width).arg(height));
+        action->setCheckable(true);
+        action->setChecked(currentWidth == width && currentHeight == height);
+        sizes.emplace(action, std::pair{width, height});
+    };
+
+    // The footage first. A sequence that does not match what is on it is the
+    // reason somebody opened this menu, and matching it is nearly always the
+    // answer -- the export does not scale, so anything else crops or pads.
+    if (sourceWidth > 0 && sourceHeight > 0) {
+        offer("Match the footage", sourceWidth - (sourceWidth % 2),
+              sourceHeight - (sourceHeight % 2));
+        menu.addSeparator();
+    }
+
+    offer("HD", 1920, 1080);
+    offer("HD ready", 1280, 720);
+    offer("4K UHD", 3840, 2160);
+    menu.addSeparator();
+    offer("Vertical HD", 1080, 1920);
+    offer("Vertical, small", 720, 1280);
+    offer("Square", 1080, 1080);
+
+    menu.addSeparator();
+    QAction* custom = menu.addAction("Custom…");
+
+    QAction* chosen = menu.exec(QCursor::pos());
+    FrameSizeChoice choice;
+    if (chosen == nullptr) {
+        return choice;
+    }
+    if (chosen == custom) {
+        choice.chosen = true;
+        choice.custom = true;
+        return choice;
+    }
+    if (const auto found = sizes.find(chosen); found != sizes.end()) {
+        choice.chosen = true;
+        choice.width = found->second.first;
+        choice.height = found->second.second;
+    }
+    return choice;
+}
+
 ProxyChoice proxyMenu(const std::vector<ProxyEntry>& entries, bool usingProxies) {
     std::size_t proxied = 0;
     for (const ProxyEntry& entry : entries) {

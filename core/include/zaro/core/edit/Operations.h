@@ -750,4 +750,24 @@ struct TrackState {
                                                      const time::Rational& frameRate,
                                                      std::int32_t width, std::int32_t height);
 
+/// Change a sequence's frame size, leaving its rate alone.
+///
+/// Allowed on a sequence with clips on it, which `makeConformSequence`
+/// deliberately is not -- and the difference is not an inconsistency. That
+/// refusal is about the *rate*: every clip's timeline range is expressed at it,
+/// so changing it under a cut retimes the whole edit. Nothing's timing depends
+/// on how many pixels wide the frame is, so a resize cannot do that.
+///
+/// What a resize can move is anything positioned in output pixels: a clip with
+/// an explicit position or scale, a mask, a vignette. Those are measured from
+/// the centre of the frame (see model::Transform), so a clip left where it was
+/// put stays centred and only deliberate offsets change meaning -- and the
+/// alternative, refusing outright, leaves the frame size of a project fixed
+/// forever by whatever was dropped on it first. Which is worse: a 320x240
+/// sequence cannot be exported at any other size, and this program's export
+/// does not scale.
+[[nodiscard]] Result<CommandPtr> makeResizeSequence(model::Project& project,
+                                                    model::SequenceId sequence, std::int32_t width,
+                                                    std::int32_t height);
+
 }  // namespace zaro::edit

@@ -157,6 +157,22 @@ Result<std::unique_ptr<Encoder>> Encoder::open(const EncodeSettings& settings) {
         video.flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     }
 
+    // Let the encoder use the machine. libavcodec's default thread count is
+    // one, and it is only read at open time -- so an export that never said
+    // otherwise encoded on a single core no matter how many the machine had.
+    // The decoder has always asked for this (DecoderOptions::threadCount is 0,
+    // which is the same "decide for yourself"); the encoder was simply never
+    // told, and on a 1080x1920 timeline that was the difference between an
+    // export running at a tenth of realtime and one that keeps up.
+    //
+    // Zero rather than a number of our own: FFmpeg counts the cores, and a
+    // count picked here would be wrong on the next machine. Frame and slice
+    // threading both, because which one an encoder can actually use is the
+    // encoder's business -- x264 slices, others do not, and asking for both
+    // lets each take what it has.
+    video.thread_count = 0;
+    video.thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+
     if (const int rc = avcodec_open2(state.videoCodec.get(), videoCodec, nullptr); rc < 0) {
         return toError(rc, "opening the video encoder");
     }

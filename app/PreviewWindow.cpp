@@ -24,7 +24,10 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
+#include <QRegularExpression>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -1351,6 +1354,79 @@ void PreviewWindow::setCompareSplit(double split) {
     monitor_->update();
 }
 
+void PreviewWindow::frameSizeMenu() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+
+    // The biggest picture on the timeline, offered as "match the footage".
+    // Biggest rather than the first: a cut of a 4K master and a phone clip
+    // should conform to the master, and a sequence smaller than its footage
+    // throws away detail that is already there.
+    std::int32_t sourceWidth = 0;
+    std::int32_t sourceHeight = 0;
+    for (const model::Track& track : sequence->videoTracks()) {
+        for (const model::Clip& clip : track.clips()) {
+            if (clip.nested.isValid() || clip.graphic.isSet()) {
+                continue;  // generated, so it has no size of its own to match
+            }
+            const model::MediaRef* ref = document_.project().findMedia(clip.activeSource());
+            if (ref == nullptr) {
+                continue;
+            }
+            const media::VideoStreamInfo* video = ref->info.primaryVideo();
+            if (video == nullptr) {
+                continue;
+            }
+            if (static_cast<std::int64_t>(video->width) * video->height >
+                static_cast<std::int64_t>(sourceWidth) * sourceHeight) {
+                sourceWidth = video->width;
+                sourceHeight = video->height;
+            }
+        }
+    }
+
+    const chrome::FrameSizeChoice chosen =
+        chrome::frameSizeMenu(sequence->width(), sequence->height(), sourceWidth, sourceHeight);
+    if (!chosen.chosen) {
+        return;
+    }
+
+    std::int32_t width = chosen.width;
+    std::int32_t height = chosen.height;
+    if (chosen.custom) {
+        bool ok = false;
+        const QString typed = QInputDialog::getText(
+            this, "Frame size",
+            "Width × height, in pixels — for example 1920x1080:", QLineEdit::Normal,
+            QString("%1x%2").arg(sequence->width()).arg(sequence->height()), &ok);
+        if (!ok) {
+            return;
+        }
+        const QStringList parts =
+            typed.trimmed().split(QRegularExpression("[^0-9]+"), Qt::SkipEmptyParts);
+        if (parts.size() != 2) {
+            app::say(this, "Frame size",
+                     "That did not read as a size. Two numbers, width first — 1920x1080.");
+            return;
+        }
+        width = parts[0].toInt();
+        height = parts[1].toInt();
+    }
+
+    auto built = edit::makeResizeSequence(document_.project(), sequence->id(), width, height);
+    if (!built) {
+        app::warn(this, "Frame size", QString::fromStdString(built.error().toString()));
+        return;
+    }
+    document_.commands().execute(document_.project(), std::move(*built));
+    document_.commands().breakMerge();
+    // Every cached frame was composited at the old size.
+    renderCache_.clear();
+    afterEdit();
+}
+
 void PreviewWindow::deliveryMenu() {
     const model::Sequence* sequence = liveSequence();
     if (sequence == nullptr) {
@@ -1894,6 +1970,7 @@ void PreviewWindow::bindCommands() {
     actions_.bind("razor", [this] { timeline_->razorAtPlayhead(); });
     actions_.bind("add-dissolve", [this] { timeline_->addDissolveAtPlayhead(); });
     actions_.bind("render-range", [this] { renderMenu(); });
+    actions_.bind("frame-size", [this] { frameSizeMenu(); });
     actions_.bind("delivery", [this] { deliveryMenu(); });
     actions_.bind("loudness", [this] { loudnessMenu(); });
     actions_.bind("show-transcript", [this] { showTranscript(); });

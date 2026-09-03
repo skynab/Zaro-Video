@@ -364,6 +364,28 @@ Result<CommandPtr> makeConformSequence(Project& project, model::SequenceId seque
                        });
 }
 
+Result<CommandPtr> makeResizeSequence(Project& project, model::SequenceId sequenceId,
+                                      std::int32_t width, std::int32_t height) {
+    const Sequence* sequence = project.findSequence(sequenceId);
+    if (sequence == nullptr) {
+        return Error{ErrorCode::NotFound, "no such sequence"};
+    }
+    if (width <= 0 || height <= 0) {
+        return Error{ErrorCode::InvalidData, "a sequence needs a frame size"};
+    }
+    // Even dimensions: the encoders this ships with reject odd ones for the
+    // subsampled formats, and a resize that only fails at export is a resize
+    // that fails after the work is done.
+    if ((width % 2) != 0 || (height % 2) != 0) {
+        return Error{ErrorCode::InvalidData, "a frame size has to be even on both sides"};
+    }
+    if (sequence->width() == width && sequence->height() == height) {
+        return Error{ErrorCode::InvalidData, "that is already the frame size"};
+    }
+    return makeCommand(sequenceId, "Resize sequence", {},
+                       [width, height](Sequence& target) { target.setSize(width, height); });
+}
+
 Result<CommandPtr> makeRemoveTrack(Project& project, model::SequenceId sequenceId,
                                    TrackId trackId) {
     const Sequence* sequence = project.findSequence(sequenceId);

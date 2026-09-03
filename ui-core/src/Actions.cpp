@@ -53,6 +53,7 @@ constexpr std::array kActions{
     ActionInfo{"razor", "Razor at Playhead", "Sequence", "Ctrl+K"},
     ActionInfo{"add-dissolve", "Add Dissolve at Playhead", "Sequence", ""},
     ActionInfo{"render-range", "Render Range…", "Sequence", ""},
+    ActionInfo{"frame-size", "Frame Size…", "Sequence", ""},
     ActionInfo{"delivery", "Delivery…", "Sequence", ""},
     ActionInfo{"loudness", "Loudness…", "Sequence", ""},
     ActionInfo{"insert-from-source", "Insert from Source", "Sequence", "Comma"},

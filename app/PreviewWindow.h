@@ -389,6 +389,9 @@ public:
     /// editor and the scopes are drawn against it: choosing it at export time
     /// would mean grading against one curve and delivering through another.
     void deliveryMenu();
+    /// Ask for a frame size and apply it. This is the export's resolution:
+    /// the render path does not scale, so the sequence's size is the file's.
+    void frameSizeMenu();
 
     /// Set the curve the sequence goes out through.
     bool setDelivery(const model::Sequence::Output& output);
