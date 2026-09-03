@@ -143,6 +143,33 @@ whose media is missing plays perfectly timed nothing.
 `zaro-preview --selftest --capture <png>` writes two files: the monitor's
 `grabFramebuffer` at `<png>` and the whole window at `<png>.window.png`.
 
+## This machine's audio device flatters the playback code
+
+The output here runs natively at **48kHz**, which is also what a default
+sequence asks for. So the device opens at exactly the rate it was asked for,
+nothing resamples on the way out, and a whole class of bug is invisible.
+
+That is not true everywhere. macOS commonly defaults to **44.1kHz**, and a
+machine whose device and sequence disagree exercises paths this one never
+does — the mix has to be made at the device's rate, and the clock counts the
+device's frames, so getting the rate from the sequence instead makes picture
+drift against sound by the ratio between them.
+
+`AudioSink` logs a line at device open when the two disagree:
+
+```
+playback: the audio device runs at 44100 Hz, not the sequence's 48000 Hz
+```
+
+**If a playback bug is reported on another platform and does not reproduce
+here, check that line first.** A clean measurement on this box is evidence
+about this box's rate, not about the code. Diagnosed on 2026-09-03, after a
+"still robotic on Mac" report that measured perfectly clean here.
+
+Test media is also nearly all 48kHz. `testdata/media/tone_48k.wav` read at
+44100 is the cheap way to exercise the resampling path without a fixture of
+its own — see the resampling test in `platform/tests/test_audio_decoder.cpp`.
+
 ## Test media traps
 
 Use `shaky_texture.mov` or `wide_texture.mp4` for anything visual — they have

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
+#include "zaro/platform/ffmpeg/FFmpegRender.h"
 
 #include "Fixtures.h"
 
@@ -128,4 +129,81 @@ TEST_CASE("Opening audio on a file with none fails cleanly", "[media][audio]") {
     const auto opened = platform::ffmpeg::openAudioDecoder(fixture("ladder_prores.mov"));
     REQUIRE_FALSE(opened);
     CHECK(opened.error().code() == ErrorCode::NotFound);
+}
+
+// A resampled read has to be continuous across block boundaries, whatever
+// size the blocks are.
+//
+// This is the layer the "robotic playback" bug lived in, and the reason it
+// survived a fix one level up: AudioGraph's mapping was made sample accurate,
+// but ProjectMediaSource is what actually decodes and resamples, and every
+// fixture the earlier tests used was already at the sequence's rate. A 44.1kHz
+// file in a 48kHz sequence -- which is most music, and most of what a phone
+// records -- takes a different path through here, and nothing covered it.
+//
+// The audio device asks in 1024-sample blocks; an export asks in whole video
+// frames. Both must produce the same samples, because they are the same
+// recording.
+TEST_CASE("A resampled read is continuous whatever the block size",
+          "[audio][resample][mediasource]") {
+    ZARO_REQUIRE_FIXTURE("tone_48k.wav");
+
+    // Deliberately not the file's own rate: asking for 44100 from a 48000
+    // source is the resampling path, and it is the one the device takes
+    // whenever the sequence and the footage disagree.
+    const time::Rational asked = time::rates::hz44100;
+
+    const auto gather = [&](std::int64_t blockSize) {
+        model::Project project;
+        auto probed = platform::ffmpeg::probe(fixture("tone_48k.wav"));
+        REQUIRE(probed);
+        model::MediaRef ref;
+        ref.id = project.ids().next<model::MediaRefTag>();
+        ref.path = fixture("tone_48k.wav");
+        ref.name = "tone_48k.wav";
+        ref.info = *probed;
+        const auto mediaId = project.addMedia(ref);
+
+        auto opened = platform::ffmpeg::ProjectMediaSource::open(project);
+        REQUIRE(opened);
+
+        std::vector<float> out;
+        media::AudioBuffer buffer;
+        for (std::int64_t at = 0; at < 40000; at += blockSize) {
+            const time::RationalTime from{at, asked};
+            REQUIRE((*opened)->read(mediaId, from, blockSize, asked, buffer).ok());
+            for (std::int64_t i = 0; i < buffer.sampleCount(); ++i) {
+                out.push_back(buffer.channel(0)[i]);
+            }
+        }
+        return out;
+    };
+
+    const std::vector<float> frameAligned = gather(1920);
+    const std::vector<float> deviceSized = gather(1024);
+
+    const std::size_t common = std::min(frameAligned.size(), deviceSized.size());
+    REQUIRE(common > 30000);
+
+    // Sample for sample. A resampler that is re-primed, flushed or asked to
+    // start over at a block boundary shows up here as a burst of difference at
+    // that boundary and nowhere else -- which through a speaker is the buzz at
+    // the block rate that this whole exercise started with.
+    std::size_t differing = 0;
+    double worst = 0.0;
+    std::size_t worstAt = 0;
+    for (std::size_t i = 0; i < common; ++i) {
+        const double delta =
+            std::fabs(static_cast<double>(frameAligned[i]) - static_cast<double>(deviceSized[i]));
+        if (delta > 1e-4) {
+            ++differing;
+            if (delta > worst) {
+                worst = delta;
+                worstAt = i;
+            }
+        }
+    }
+    INFO("worst difference " << worst << " at sample " << worstAt << " of " << common << "; "
+                             << differing << " samples differ");
+    CHECK(differing == 0);
 }

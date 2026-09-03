@@ -101,6 +101,15 @@ signals:
     void playingChanged(bool playing);
 
 private:
+    /// The rate everything about playback is measured in: the mix, the clock,
+    /// and the pump's lead.
+    ///
+    /// The device's rate once there is a device, because the clock counts the
+    /// frames the device consumed and dividing those by anything else makes
+    /// the playhead run fast or slow. The sequence's rate before then, which is
+    /// what the device gets asked for in the first place.
+    [[nodiscard]] const time::Rational& clockRate() const;
+
     void startClock(const time::RationalTime& from);
     /// Republish the anchor for the pump thread. Call after every write to
     /// `anchorPosition_` or `anchorClock_`.

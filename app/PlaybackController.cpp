@@ -91,6 +91,10 @@ render::AudioGraph::Meters PlaybackController::meters() const {
     return latestMeters_;
 }
 
+const time::Rational& PlaybackController::clockRate() const {
+    return sink_ ? sink_->sampleRate() : sequence_->audioSampleRate();
+}
+
 void PlaybackController::startClock(const time::RationalTime& from) {
     const time::Rational& audioRate = sequence_->audioSampleRate();
     if (!sink_) {
@@ -105,6 +109,19 @@ void PlaybackController::startClock(const time::RationalTime& from) {
             // and the one who has to fix it is the only one who can tell them
             // apart.
             audioError_ = QString::fromStdString(opened.error().toString());
+        }
+    }
+    if (sink_) {
+        // Said once, on the way in, because it is the first thing worth knowing
+        // when playback sounds wrong on a machine that is not to hand. A device
+        // that opened at a different rate from the one it was asked for used to
+        // do it silently, and the difference is audible: everything downstream
+        // is measured in these frames.
+        if (sink_->sampleRate() != audioRate) {
+            qInfo().noquote() << "playback: the audio device runs at"
+                              << sink_->sampleRate().toDouble() << "Hz, not the sequence's"
+                              << audioRate.toDouble()
+                              << "Hz -- mixing and clocking at the device's rate";
         }
     }
     if (sink_) {
@@ -136,7 +153,7 @@ void PlaybackController::startClock(const time::RationalTime& from) {
 }
 
 void PlaybackController::publishAnchor() {
-    const time::Rational& audioRate = sequence_->audioSampleRate();
+    const time::Rational& audioRate = clockRate();
     // Position first, then the clock it is anchored to. The pump reads them in
     // the other order, so the worst it can see is an anchor one write old --
     // never one value from before a re-anchor paired with one from after.
@@ -154,7 +171,10 @@ void PlaybackController::pumpAudio() {
     // first moment after a jump is ducked by whatever was loud wherever the
     // playhead was before.
     mixer.resetProcessing();
-    const time::Rational& audioRate = sequence_->audioSampleRate();
+    // The device's rate, not the sequence's. Mixing at one rate and clocking at
+    // another is how picture drifts against sound on any machine whose output
+    // is not set to whatever the sequence happens to say.
+    const time::Rational& audioRate = clockRate();
     constexpr std::int32_t kChannels = 2;
     constexpr std::int64_t kBlockFrames = 1024;
 
@@ -254,7 +274,7 @@ void PlaybackController::followClock() {
     if (!playing_) {
         return;
     }
-    const time::Rational& audioRate = sequence_->audioSampleRate();
+    const time::Rational& audioRate = clockRate();
     const std::int64_t clock = sink_ ? sink_->clockFrames() : 0;
 
     // Position is an exact rational function of elapsed audio, floored to

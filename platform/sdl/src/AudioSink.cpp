@@ -11,6 +11,7 @@ struct AudioSink::State {
     SDL_AudioDeviceID device{0};
     std::int32_t channels{2};
     std::int32_t bufferFrames{1024};
+    time::Rational sampleRate{time::rates::hz48000};
     std::unique_ptr<playback::AudioRingBuffer> ring;
 
     ~State() {
@@ -51,6 +52,46 @@ Result<std::unique_ptr<AudioSink>> AudioSink::open(const time::Rational& sampleR
     state.channels = channels;
     state.bufferFrames = bufferFrames;
 
+    SDL_AudioSpec wanted{};
+    wanted.freq = static_cast<int>(sampleRate.roundToInt());
+    wanted.format = AUDIO_F32SYS;
+    wanted.channels = static_cast<Uint8>(channels);
+    wanted.samples = static_cast<Uint16>(bufferFrames);
+    wanted.callback = &audioCallback;
+    wanted.userdata = &state;
+
+    // The rate is the device's to choose. Nothing else is.
+    //
+    // Rate, because the alternative is worse than accommodating it: a machine
+    // set to 44.1kHz will not open a 48kHz stream, and SDL asked to pretend
+    // otherwise resamples the finished mix on the way out with a converter
+    // nobody chose. Taking the device's rate and mixing at it costs nothing --
+    // the mixer takes a rate already, and the decoders resample to whatever
+    // they are asked for, which is a resampler we did choose.
+    //
+    // Not the buffer size, though SDL would happily negotiate that too. A
+    // different period is *lossless* -- SDL buffers to bridge it, no samples
+    // are harmed -- so there is nothing to gain, and something to lose: the
+    // pump's lead and the ring are both multiples of this number, tuned and
+    // measured at 1024. Letting the device halve it would quietly halve the
+    // headroom that keeps a slow decode from becoming a click.
+    //
+    // Format and channels stay fixed for a harder reason: the ring holds
+    // interleaved stereo floats, and every other line here assumes it.
+    SDL_AudioSpec obtained{};
+    state.device =
+        SDL_OpenAudioDevice(nullptr, 0, &wanted, &obtained, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    if (state.device == 0) {
+        return Error{ErrorCode::Io, std::string{"cannot open an audio device: "} + SDL_GetError()};
+    }
+
+    // What came back, not what was asked for. Reporting the request would make
+    // every consumer of it -- the clock, the mixer, the pump's lead -- wrong in
+    // the same direction at once, and silently.
+    if (obtained.freq > 0) {
+        state.sampleRate = time::Rational{obtained.freq, 1};
+    }
+
     // Eight device buffers of headroom, which is more than the producer aims to
     // keep filled. The producer's lead is what actually bounds latency; sizing
     // the ring to exactly that lead would leave it unable to write a whole
@@ -61,21 +102,7 @@ Result<std::unique_ptr<AudioSink>> AudioSink::open(const time::Rational& sampleR
     // This costs nothing in seek latency: playback stops by pausing the device,
     // and starting again empties the ring rather than playing it out.
     state.ring = std::make_unique<playback::AudioRingBuffer>(
-        channels, static_cast<std::int64_t>(bufferFrames) * 8);
-
-    SDL_AudioSpec wanted{};
-    wanted.freq = static_cast<int>(sampleRate.roundToInt());
-    wanted.format = AUDIO_F32SYS;
-    wanted.channels = static_cast<Uint8>(channels);
-    wanted.samples = static_cast<Uint16>(bufferFrames);
-    wanted.callback = &audioCallback;
-    wanted.userdata = &state;
-
-    SDL_AudioSpec obtained{};
-    state.device = SDL_OpenAudioDevice(nullptr, 0, &wanted, &obtained, 0);
-    if (state.device == 0) {
-        return Error{ErrorCode::Io, std::string{"cannot open an audio device: "} + SDL_GetError()};
-    }
+        channels, static_cast<std::int64_t>(state.bufferFrames) * 8);
     return sink;
 }
 
@@ -98,6 +125,9 @@ std::int64_t AudioSink::underrunFrames() const {
 }
 std::int32_t AudioSink::deviceBufferFrames() const {
     return state_->bufferFrames;
+}
+const time::Rational& AudioSink::sampleRate() const {
+    return state_->sampleRate;
 }
 
 }  // namespace zaro::platform::sdl

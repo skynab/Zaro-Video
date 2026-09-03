@@ -96,7 +96,9 @@ int main(int argc, char** argv) {
     }
 
     const zaro::time::Rational& rate = sequence->frameRate();
-    const zaro::time::Rational& audioRate = sequence->audioSampleRate();
+    // What the device is asked for. What it actually runs at is read back
+    // below, because that is what the clock counts in.
+    const zaro::time::Rational& wantedAudioRate = sequence->audioSampleRate();
     constexpr std::int32_t kChannels = 2;
 
     auto sourceOpened = zaro::platform::ffmpeg::ProjectMediaSource::open(project);
@@ -126,13 +128,19 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<zaro::platform::sdl::AudioSink> sink;
     if (useAudio) {
-        auto opened = zaro::platform::sdl::AudioSink::open(audioRate, kChannels);
+        auto opened = zaro::platform::sdl::AudioSink::open(wantedAudioRate, kChannels);
         if (!opened) {
             std::fprintf(stderr, "zaro-play: %s\n", opened.error().toString().c_str());
             return 1;
         }
         sink = std::move(*opened);
     }
+
+    // The device's rate once there is a device. Everything from here down --
+    // the mix, the scheduler's clock, the elapsed-seconds arithmetic -- counts
+    // in the frames the device consumes, and a machine whose output is set to
+    // 44.1kHz consumes them at 44.1kHz however politely it was asked for 48.
+    const zaro::time::Rational audioRate = sink ? sink->sampleRate() : wantedAudioRate;
 
     zaro::playback::PlaybackScheduler::Config config;
     config.frameRate = rate;

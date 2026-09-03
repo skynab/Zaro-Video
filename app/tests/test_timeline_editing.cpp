@@ -648,14 +648,45 @@ TEST_CASE("Copy a clip and paste it at the playhead", "[gui]") {
     const auto first = videoTrack.clips().front();
     const auto playheadWas = window.position();
 
-    // Click the clip to select it, the way a pointer would.
+    // Fit first, so where the clip is drawn does not depend on where the last
+    // test left the zoom and the scroll. This suite shares one window and
+    // restores neither.
+    timeline->zoomToFit();
+    QApplication::processEvents();
+
+    // Click the clip to select it, the way a pointer would -- at an x the
+    // layout agrees is on it, rather than one computed and hoped for. The trim
+    // test does the same, for the same reason: a press a pixel off the clip is
+    // a press on empty track, and "nothing got selected" is a poor way to be
+    // told the arithmetic was off by one.
     const auto& rate = sequence.frameRate();
-    const auto inside = first.start() + zaro::time::RationalTime{2, rate};
-    const int clipX = static_cast<int>(timeline->layout().xForTime(inside));
+    int clipX = 0;
+    for (const std::int64_t into : {2, 5, 10, 20}) {
+        const auto inside = first.start() + zaro::time::RationalTime{into, rate};
+        const int candidate = static_cast<int>(timeline->layout().xForTime(inside));
+        const auto hit = timeline->layout().hitTest(sequence, candidate, y);
+        if (hit && hit->clip == first.id) {
+            clipX = candidate;
+            break;
+        }
+    }
+    if (clipX == 0) {
+        zaro::app::testing::failf("no part of the first clip is hit-testable on row y=%d\n", y);
+    }
     dragOnTimeline(timeline, clipX, clipX, y);
     QApplication::processEvents();
-    if (timeline->selection().empty()) {
-        zaro::app::testing::failf("clicking a clip did not select it\n");
+    // That the click selected *this* clip, not merely that something is
+    // selected. The weaker check is worse than none: this suite shares one
+    // window and does not reset the selection between cases, so a click that
+    // missed leaves whatever the last test picked still selected -- and the
+    // copy then takes those clips instead, lands them by their own earliest
+    // start, and fails several assertions further down with a message about
+    // ids that says nothing about the click that actually went wrong.
+    if (timeline->selection().size() != 1 || timeline->selection().front().clip != first.id) {
+        zaro::app::testing::failf(
+            "clicking at x=%d on row y=%d did not select the first clip: %zu clips are "
+            "selected\n",
+            clipX, y, timeline->selection().size());
     }
 
     REQUIRE(window.trigger("copy-clips"));

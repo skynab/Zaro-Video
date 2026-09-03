@@ -37,6 +37,22 @@ public:
 
     [[nodiscard]] std::int32_t deviceBufferFrames() const;
 
+    /// The rate the device actually runs at, which is not always the one it
+    /// was asked for.
+    ///
+    /// A machine whose output is set to 44.1kHz will not open a 48kHz stream.
+    /// Ask for 48 anyway and SDL quietly resamples on the way out, with a
+    /// converter that is not one to hand a finished mix to. Worse, the clock
+    /// would then be counting frames at the device's rate while the position
+    /// arithmetic divided by the sequence's, so picture would drift against
+    /// sound by the ratio between the two -- 8% at 48 against 44.1, which is
+    /// half a second a minute.
+    ///
+    /// So the device is asked, and whatever it says is what the mix is made
+    /// at. That costs nothing: the mixer already takes a rate, and the
+    /// decoders already resample to whatever they are asked for.
+    [[nodiscard]] const time::Rational& sampleRate() const;
+
     /// Public only because the device callback, which is a free function with
     /// C linkage, needs to reach it. Not part of the interface.
     struct State;
