@@ -27,6 +27,7 @@
 #include <QStackedWidget>
 #include <QStringList>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -1303,16 +1304,24 @@ void ProjectBin::dropEvent(QDropEvent* event) {
     event->setDropAction(Qt::CopyAction);
     event->accept();
 
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const int added = importPaths(paths);
-    QApplication::restoreOverrideCursor();
+    // Imported after the drop returns, not during it. This runs inside
+    // Cocoa's drag session -- the mime data belongs to the drag and the
+    // cursor does too, and setting a wait cursor here segfaults inside
+    // AppKit. Taking the paths out and doing the work on the next turn of the
+    // event loop lets the drag finish first, which is also where the probes
+    // belong: the file manager is waiting for this handler to return.
+    QTimer::singleShot(0, this, [this, paths] {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        const int added = importPaths(paths);
+        QApplication::restoreOverrideCursor();
 
-    // `importPaths` has already put the summary back; only the case worth
-    // remarking on -- files that could not be read, or were here already --
-    // says anything more.
-    if (added == 0) {
-        footer_->setText(QStringLiteral("Nothing to import"));
-    }
+        // `importPaths` has already put the summary back; only the case worth
+        // remarking on -- files that could not be read, or were here already
+        // -- says anything more.
+        if (added == 0) {
+            footer_->setText(QStringLiteral("Nothing to import"));
+        }
+    });
 }
 
 ProjectBin::Selection ProjectBin::selection() const {

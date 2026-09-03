@@ -40,8 +40,9 @@ void refresh(const Bars& bars, const Status& status) {
     }
     bars.statusRight->setText(QString("%1 · Qt %2").arg(status.platformLabel, QT_VERSION_STR));
 
+    // Whether snapping is on is said by the magnet being lit, and saying it
+    // again in words beside the button was the same fact twice.
     bars.snapButton->setChecked(status.snapEnabled);
-    bars.snapLabel->setText(status.snapEnabled ? "Snap on" : "Snap off");
     for (std::size_t i = 0; i < bars.toolButtons.size(); ++i) {
         bars.toolButtons[i]->setChecked(i == status.toolIndex);
     }

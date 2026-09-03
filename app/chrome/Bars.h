@@ -55,7 +55,6 @@ struct Bars {
 
     /// The timeline pane's own strip: the tools, snapping and zoom.
     QLabel* timelineLabel{nullptr};
-    QLabel* snapLabel{nullptr};
     QPushButton* snapButton{nullptr};
     QSlider* zoomSlider{nullptr};
     /// How tall the rows are drawn, all of them together.
