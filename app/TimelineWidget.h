@@ -274,16 +274,18 @@ private:
             model::TrackId track;
             bool newTrack{false};
         };
+        /// Where the pointer put it: the half of the take somebody aimed at.
         Landing at;
-        /// Where its sound goes.
+        /// Where the other half of the take goes.
         ///
         /// A file with both streams arrives as two clips, linked -- the
         /// arrangement `zaro-cut` writes and the one the mixer can hear, since
-        /// the audio graph reads clips on audio tracks and nothing else. Empty
-        /// when the file is silent, and when the drop was aimed at a sound row
-        /// in the first place: that gesture means "use the sound of this take",
-        /// and it has already landed where it was asked to.
-        std::optional<Landing> sound;
+        /// the audio graph reads clips on audio tracks and nothing else. So a
+        /// take dropped on a picture row puts its sound on a sound row, and a
+        /// take dropped on a sound row puts its picture on a picture row: the
+        /// pointer chooses where one half lands, not which halves come in.
+        /// Empty only when the file has nothing to put on the other side.
+        std::optional<Landing> partner;
         time::RationalTime start{};
         time::RationalTime duration{};
     };

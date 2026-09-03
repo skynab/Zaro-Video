@@ -2960,9 +2960,9 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     spot.at.kind =
         row ? row->kind : (at.y() < audioTop ? model::TrackKind::Video : model::TrackKind::Audio);
     // Sound has nowhere to be on a picture row: a file with no picture in it
-    // would draw as a blank block and show nothing. The other way round is
-    // allowed -- a take dropped on a sound row is how you use its audio and
-    // leave its picture out.
+    // would draw as a blank block and show nothing. A take with picture in it
+    // may be aimed at either block, and brings both halves either way; where
+    // the pointer is decides which half lands under it.
     if (ref->info.primaryVideo() == nullptr) {
         spot.at.kind = model::TrackKind::Audio;
     }
@@ -3007,15 +3007,24 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     }
     spot.at = landingFor(spot.at.kind, wanted, range);
 
-    // The sound of a take that has one, on a sound row of its own. Not a
-    // property of where the pointer is: what the pointer chose is where the
-    // picture goes, and sound goes under it -- on A1 if A1 is free there, and
-    // on a row of its own if it is not.
-    if (spot.at.kind == model::TrackKind::Video && ref->info.primaryAudio() != nullptr) {
-        const auto& audioTracks = seq->audioTracks();
-        spot.sound =
-            landingFor(model::TrackKind::Audio,
-                       audioTracks.empty() ? model::TrackId{} : audioTracks.front().id(), range);
+    // The other half of the take, on the first row of the other block -- A1 or
+    // V1 if it is free there, and a row of its own if it is not. Not a
+    // property of where the pointer is: the pointer chose which half lands
+    // under it, and a take that has picture and sound arrives whole either
+    // way. Dropping a take on a sound row used to bring in its sound alone,
+    // which meant the same file behaved as two different files depending on
+    // which row it was let go of over.
+    const bool wantsSound =
+        spot.at.kind == model::TrackKind::Video && ref->info.primaryAudio() != nullptr;
+    const bool wantsPicture =
+        spot.at.kind == model::TrackKind::Audio && ref->info.primaryVideo() != nullptr;
+    if (wantsSound || wantsPicture) {
+        const model::TrackKind kind =
+            wantsSound ? model::TrackKind::Audio : model::TrackKind::Video;
+        const auto& partnerTracks =
+            kind == model::TrackKind::Video ? seq->videoTracks() : seq->audioTracks();
+        spot.partner = landingFor(
+            kind, partnerTracks.empty() ? model::TrackId{} : partnerTracks.front().id(), range);
     }
 
     return spot;
@@ -3138,8 +3147,8 @@ void TimelineWidget::paintDropPreview(QPainter& painter) {
     };
 
     ghost(spot.at);
-    if (spot.sound) {
-        ghost(*spot.sound);
+    if (spot.partner) {
+        ghost(*spot.partner);
     }
 }
 
@@ -3351,36 +3360,51 @@ void TimelineWidget::placeDropped(const MediaDrag& dragged, const DropSpot& wher
 
     const edit::CommandStack::Group step{*commands_};
 
-    model::ClipId pictureClip;
-    const model::TrackId pictureTrack = placeOne(dragged, where, where.at, pictureClip);
-    if (!pictureTrack.isValid()) {
+    // The half the pointer aimed at goes down first, so a take dropped on a
+    // sound row lands where it was let go of and its picture follows.
+    model::ClipId aimedClip;
+    const model::TrackId aimedTrack = placeOne(dragged, where, where.at, aimedClip);
+    if (!aimedTrack.isValid()) {
         return;
     }
+    model::TrackId pictureTrack =
+        where.at.kind == model::TrackKind::Video ? aimedTrack : model::TrackId{};
+    model::ClipId pictureClip =
+        where.at.kind == model::TrackKind::Video ? aimedClip : model::ClipId{};
 
-    // The sound of the same take, on a row of its own, joined to the picture.
+    // The other half of the same take, on a row of its own, joined to it.
     //
     // Two clips rather than one because that is what the program can hear: the
     // audio graph mixes clips on audio tracks and nothing else, so a take that
     // arrived as a single clip on V1 played silently. Linked because picture
     // and sound that arrived together should stay together -- dragging one and
     // leaving the other is how a cut goes out of sync without anyone noticing.
-    if (where.sound) {
-        model::ClipId soundClip;
-        const model::TrackId soundTrack = placeOne(dragged, where, *where.sound, soundClip);
-        if (soundTrack.isValid()) {
+    if (where.partner) {
+        model::ClipId partnerClip;
+        const model::TrackId partnerTrack = placeOne(dragged, where, *where.partner, partnerClip);
+        if (partnerTrack.isValid()) {
             if (auto linked =
                     edit::makeLinkClips(*project_, sequenceId_,
-                                        {{pictureTrack, pictureClip}, {soundTrack, soundClip}})) {
+                                        {{aimedTrack, aimedClip}, {partnerTrack, partnerClip}})) {
                 commands_->execute(*project_, std::move(*linked));
+            }
+            if (where.partner->kind == model::TrackKind::Video) {
+                pictureTrack = partnerTrack;
+                pictureClip = partnerClip;
             }
         }
     }
 
     commands_->breakMerge();
     // Selected, the way a clip somebody has just put down is the one they are
-    // about to move or trim. The picture, not its sound: the picture is the
-    // half somebody points at, and the link brings the other along anyway.
-    selectOnly(pictureTrack, pictureClip);
+    // about to move or trim. The picture where there is one, whichever row it
+    // was aimed at: the picture is the half somebody points at, and the link
+    // brings the other along anyway.
+    if (pictureTrack.isValid()) {
+        selectOnly(pictureTrack, pictureClip);
+    } else {
+        selectOnly(aimedTrack, aimedClip);
+    }
     emit edited();
     emit viewChanged();
     update();

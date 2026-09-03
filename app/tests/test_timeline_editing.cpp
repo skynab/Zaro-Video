@@ -1047,6 +1047,92 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     QApplication::processEvents();
 }
 
+// A take let go of over a sound row.
+//
+// It brings its picture with it. The pointer chooses which half lands where it
+// was dropped, not which halves come in at all: a file that arrived with
+// picture and sound is one take, and aiming at the sound block used to strip
+// the picture off it -- so the same file behaved as two different files
+// depending on which row somebody happened to release it over.
+TEST_CASE("A take dropped on a sound row brings its picture too", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    REQUIRE(timeline != nullptr);
+
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+
+    // Zoomed out, so there is empty room on both blocks to the right of the
+    // fixture's cut -- the drop has to be somewhere V1 and A1 are both free,
+    // or what is being measured is the rule about making new rows.
+    timeline->zoomToFit();
+    timeline->zoomBy(0.4);
+    QApplication::processEvents();
+
+    const zaro::model::MediaRefId picture = window.project().media().front().id;
+    const int dropX = timeline->width() - 40;
+    const auto soundRow = timeline->rowFor(window.sequence()->audioTracks().front().id());
+    REQUIRE(soundRow.has_value());
+    const int soundY = soundRow->top + soundRow->height / 2;
+
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+    const std::size_t audioTracksBefore = window.sequence()->audioTracks().size();
+    const std::size_t v1Before = window.sequence()->videoTracks().front().clips().size();
+    const std::size_t a1Before = window.sequence()->audioTracks().front().clips().size();
+    const std::size_t stepsBefore = window.commands().position();
+
+    const std::unique_ptr<QMimeData> mime{
+        zaro::app::encodeMediaDrag(zaro::app::MediaDrag{picture, {}})};
+    QDragEnterEvent entering{QPoint{dropX, soundY}, Qt::CopyAction, mime.get(), Qt::LeftButton,
+                             Qt::NoModifier};
+    QCoreApplication::sendEvent(timeline, &entering);
+    if (!entering.isAccepted()) {
+        zaro::app::testing::failf("the timeline refused a take dragged over a sound row\n");
+    }
+    QDropEvent dropping{QPointF{static_cast<double>(dropX), static_cast<double>(soundY)},
+                        Qt::CopyAction, mime.get(), Qt::LeftButton, Qt::NoModifier};
+    QCoreApplication::sendEvent(timeline, &dropping);
+    QApplication::processEvents();
+
+    if (window.sequence()->audioTracks().front().clips().size() != a1Before + 1) {
+        zaro::app::testing::failf("the take's sound did not land on the row it was dropped on\n");
+    }
+    if (window.sequence()->videoTracks().front().clips().size() != v1Before + 1) {
+        zaro::app::testing::failf("the take's picture did not come with it\n");
+    }
+    if (window.sequence()->videoTracks().size() != videoTracksBefore ||
+        window.sequence()->audioTracks().size() != audioTracksBefore) {
+        zaro::app::testing::failf("the drop made rows it did not need\n");
+    }
+
+    const auto& landedSound = window.sequence()->audioTracks().front().clips().back();
+    const auto& landedPicture = window.sequence()->videoTracks().front().clips().back();
+    if (landedPicture.start() != landedSound.start() ||
+        landedPicture.duration() != landedSound.duration()) {
+        zaro::app::testing::failf("the picture is not where the sound is\n");
+    }
+    if (!landedSound.link.isValid() || landedPicture.link != landedSound.link) {
+        zaro::app::testing::failf("picture and sound arrived unlinked\n");
+    }
+
+    // One undo step, as every other drop is.
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the drop made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    window.commands().undo(window.project());
+    if (window.sequence()->videoTracks().front().clips().size() != v1Before ||
+        window.sequence()->audioTracks().front().clips().size() != a1Before) {
+        zaro::app::testing::failf("undoing the drop did not put the cut back\n");
+    }
+
+    std::printf("  dropped on a sound row: picture on V1, sound on A1, linked\n");
+
+    timeline->setSnapEnabled(snapWas);
+    QApplication::processEvents();
+}
+
 /// Which picture row a clip is on, for a test that has just moved it about.
 zaro::model::TrackId onPictureTrack(zaro::app::PreviewWindow& window, zaro::model::ClipId clip) {
     for (const zaro::model::Track& track : window.sequence()->videoTracks()) {

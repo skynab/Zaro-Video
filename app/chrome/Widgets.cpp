@@ -383,8 +383,7 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
 
     row->addWidget(separator(bar));
 
-    bars.snapButton = iconButton(bar, app::icons::Glyph::Magnet,
-                                 "Pull edits to the edit points near them (S)", true);
+    bars.snapButton = iconButton(bar, app::icons::Glyph::Magnet, "Snap on (S)", true);
     QObject::connect(bars.snapButton, &QPushButton::clicked, bars.snapButton, hooks.setSnapEnabled);
     row->addWidget(bars.snapButton);
 
@@ -394,8 +393,6 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
     row->addWidget(markerButton);
 
     row->addStretch(1);
-    bars.snapLabel = mutedLabel(bar);
-    row->addWidget(bars.snapLabel);
 
     // How tall the rows are, beside how wide the time is: the two questions a
     // timeline is read at, and the same shape of control for both. Rows keep
