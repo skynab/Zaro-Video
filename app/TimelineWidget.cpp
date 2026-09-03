@@ -535,6 +535,7 @@ void TimelineWidget::paintEvent(QPaintEvent* /*event*/) {
     // which is the whole point of snapping to it -- the playhead should be the
     // line you see.
     paintDropPreview(painter);
+    paintMovePreview(painter);
     paintBladePreview(painter);
     paintSnapGuide(painter);
     paintPlayhead(painter);
@@ -2270,10 +2271,6 @@ void TimelineWidget::updateDrag(int x, int y) {
     // block and show nothing -- so a drag that wanders across the boundary
     // keeps the clip on the row it came from rather than refusing to move at
     // all. A locked row is no destination either.
-    //
-    // Anything linked to the clip stays on its own track and follows the same
-    // shift in time, which is what `makeMove` does with a link group: sound
-    // follows picture rather than joining it.
     model::TrackId destination = selectedTrack_;
     if (const auto row = layout_.rowAt(*seq, y); row && row->track != selectedTrack_) {
         const model::Track* wanted = seq->findTrack(row->track);
@@ -2286,14 +2283,39 @@ void TimelineWidget::updateDrag(int x, int y) {
         // Sideways only, for a set: moving several clips between rows is a
         // different question -- which row does each of them land on -- and one
         // this gesture has no way to ask.
-        // The whole set moves by whatever the dragged clip moved, measured
-        // against where the clip is now, so a step the model refuses does not
-        // accumulate into a growing offset.
-        const time::RationalTime delta = start - clip->start();
-        if (delta.frames() == 0) {
+        destination = selectedTrack_;
+    }
+
+    // Drawn, not done. What the pointer is over is a proposal until the button
+    // comes up; see MovePreview for why a move cannot be applied on the way
+    // through.
+    movePreview_ = MovePreview{true, destination, start, start - clip->start()};
+    update();
+}
+
+void TimelineWidget::commitMove() {
+    const MovePreview preview = movePreview_;
+    movePreview_ = {};
+    if (!preview.active || project_ == nullptr || commands_ == nullptr || !selected_.isValid()) {
+        return;
+    }
+    model::Sequence* seq = project_->findSequence(sequenceId_);
+    if (seq == nullptr) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(selectedTrack_);
+    const model::Clip* clip = track != nullptr ? track->find(selected_) : nullptr;
+    if (clip == nullptr) {
+        return;
+    }
+
+    if (selection_.size() > 1) {
+        // The whole set moves by whatever the dragged clip moved, and a set
+        // stays on its own rows.
+        if (preview.delta.frames() == 0) {
             return;
         }
-        auto multi = edit::makeMoveClips(*project_, sequenceId_, selection_, delta);
+        auto multi = edit::makeMoveClips(*project_, sequenceId_, selection_, preview.delta);
         if (!multi) {
             return;
         }
@@ -2303,26 +2325,24 @@ void TimelineWidget::updateDrag(int x, int y) {
         return;
     }
 
-    if (destination == selectedTrack_ && start == clip->start()) {
+    if (preview.track == selectedTrack_ && preview.start == clip->start()) {
         return;  // the pointer moved, the clip would not
     }
 
-    // Each move is its own command, and they coalesce: the merge key is the
-    // clip, so a whole drag collapses into one undo step rather than several
-    // hundred -- including the steps that changed which row it is on.
-    auto built =
-        edit::makeMove(*project_, {sequenceId_, selectedTrack_}, selected_, destination, start);
+    // One command for the gesture, made where the gesture ends. Anything
+    // linked to the clip stays on its own track and follows the same shift in
+    // time, which is what `makeMove` does with a link group: sound follows
+    // picture rather than joining it.
+    auto built = edit::makeMove(*project_, {sequenceId_, selectedTrack_}, selected_, preview.track,
+                                preview.start);
     if (!built) {
-        return;  // the move is not legal from here; leave the clip where it was
+        return;  // the move is not legal; leave the clip where it was
     }
     commands_->execute(*project_, std::move(*built));
-    // The clip is on the destination now, and every later step of this drag has
-    // to look for it there. Without this the next mouse-move finds nothing on
-    // the track it remembers and the drag dies where it crossed the boundary.
-    if (destination != selectedTrack_) {
-        selectedTrack_ = destination;
+    if (preview.track != selectedTrack_) {
+        selectedTrack_ = preview.track;
         if (!selection_.empty()) {
-            selection_.front().track = destination;
+            selection_.front().track = preview.track;
         }
         announceSelection();
     }
@@ -2331,6 +2351,12 @@ void TimelineWidget::updateDrag(int x, int y) {
 }
 
 void TimelineWidget::finishDrag() {
+    if (drag_ == Drag::MoveClip) {
+        // The move happens here, at the end of the gesture, rather than on
+        // every step of it.
+        commitMove();
+    }
+    movePreview_ = {};
     if (drag_ == Drag::Pan && tool_ == Tool::Hand) {
         setCursor(Qt::OpenHandCursor);
     }
@@ -3114,6 +3140,84 @@ void TimelineWidget::paintDropPreview(QPainter& painter) {
     ghost(spot.at);
     if (spot.sound) {
         ghost(*spot.sound);
+    }
+}
+
+/// Where the clip being dragged would land.
+///
+/// Drawn in the same language as a file dragged in from the bin -- a dashed
+/// ghost on the row it would join -- because it is the same question asked
+/// about a clip that is already on the timeline. The clip itself stays where
+/// it is until the button comes up, so what is on screen during the drag is
+/// the cut as it stands beside the cut as it would be.
+void TimelineWidget::paintMovePreview(QPainter& painter) {
+    const model::Sequence* seq = sequence();
+    if (!movePreview_.active || seq == nullptr) {
+        return;
+    }
+    const model::Track* from = seq->findTrack(selectedTrack_);
+    const model::Clip* clip = from != nullptr ? from->find(selected_) : nullptr;
+    if (clip == nullptr) {
+        return;
+    }
+    if (movePreview_.track == selectedTrack_ && movePreview_.delta.frames() == 0) {
+        return;  // nothing would change; a ghost over the clip itself says nothing
+    }
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const double headers = layout_.metrics().headerWidth;
+
+    const auto ghost = [this, &painter, headers](model::TrackId trackId,
+                                                 const time::RationalTime& start,
+                                                 const time::RationalTime& duration) {
+        const auto row = rowFor(trackId);
+        if (!row || start.frames() < 0) {
+            return;
+        }
+        const QColor accent =
+            row->kind == model::TrackKind::Audio ? theme::audio(400) : theme::accent(400);
+        const double left = layout_.xForTime(start);
+        const double right = layout_.xForTime(start + duration);
+        QRectF body{left, row->top + 2.0, std::max(1.0, right - left), row->height - 4.0};
+        if (body.left() < headers) {
+            body.setLeft(headers);
+        }
+        if (body.width() <= 0.0) {
+            return;
+        }
+        QColor fill = accent;
+        fill.setAlpha(90);
+        painter.setBrush(fill);
+        painter.setPen(QPen{accent, 1.0, Qt::DashLine});
+        painter.drawRoundedRect(body, 5.0, 5.0);
+    };
+
+    if (selection_.size() > 1) {
+        for (const edit::ClipRef& ref : selection_) {
+            const model::Track* track = seq->findTrack(ref.track);
+            const model::Clip* member = track != nullptr ? track->find(ref.clip) : nullptr;
+            if (member != nullptr) {
+                ghost(ref.track, member->start() + movePreview_.delta, member->duration());
+            }
+        }
+        return;
+    }
+
+    ghost(movePreview_.track, movePreview_.start, clip->duration());
+
+    // Whatever is linked to it shifts by the same amount on its own row, which
+    // is what the move will do -- so the ghost says so before it happens.
+    if (!clip->link.isValid()) {
+        return;
+    }
+    for (const std::vector<model::Track>* tracks : {&seq->videoTracks(), &seq->audioTracks()}) {
+        for (const model::Track& track : *tracks) {
+            for (const model::Clip& other : track.clips()) {
+                if (other.link == clip->link && other.id != clip->id) {
+                    ghost(track.id(), other.start() + movePreview_.delta, other.duration());
+                }
+            }
+        }
     }
 }
 

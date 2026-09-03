@@ -253,6 +253,9 @@ private:
     void paintBladePreview(QPainter& painter);
     /// Where a file being dragged over the panel would land.
     void paintDropPreview(QPainter& painter);
+    /// Where the clip being dragged would land, while the button is still
+    /// down.
+    void paintMovePreview(QPainter& painter);
     /// What a row added now would be called, for the header the preview draws
     /// on a row that does not exist yet.
     [[nodiscard]] QString nextTrackBadge(model::TrackKind kind) const;
@@ -314,6 +317,8 @@ private:
     /// `y` as well as `x`: a clip may be moved to another row of its own kind,
     /// which is the only thing the vertical half of the gesture can mean.
     void updateDrag(int x, int y);
+    /// Make the move the drag has been previewing, on the way up.
+    void commitMove();
     void updateTrim(int x);
     void finishDrag();
 
@@ -553,6 +558,25 @@ private:
         time::RationalTime time{};
     };
     BladeMark bladeMark_;
+    /// Where the clip being dragged would land, while the mouse is still down.
+    ///
+    /// A preview rather than the edit itself. A move clears whatever it lands
+    /// on -- that is what makes it a move and not a swap -- so performing one
+    /// per mouse-move cut every clip the pointer merely travelled over, and
+    /// only the last of those cuts was ever asked for. Nothing is committed
+    /// until the button comes up.
+    struct MovePreview {
+        bool active{false};
+        /// The row it would land on, which is the row it came from unless the
+        /// pointer reached another one of its kind.
+        model::TrackId track;
+        /// Where it would start, after snapping.
+        time::RationalTime start{};
+        /// How far it would move, which is what anything linked or
+        /// multi-selected shifts by.
+        time::RationalTime delta{};
+    };
+    MovePreview movePreview_;
     /// Where the file currently being dragged over the panel would land, and
     /// what it carries. Empty whenever nothing is hovering.
     std::optional<DropSpot> dropSpot_;

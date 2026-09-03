@@ -1208,3 +1208,95 @@ TEST_CASE("A clip drags to another row of its own kind", "[gui]") {
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();
 }
+
+// What a drag does to the row it is crossing, before the button comes up.
+//
+// Nothing. A move clears the range it lands on -- that is what makes it a move
+// and not a swap -- and the panel used to perform one on every mouse-move, so a
+// clip dragged across a busy row cut every clip the pointer travelled over and
+// only the last of those cuts was ever asked for. The gesture is a proposal
+// until it is let go of.
+TEST_CASE("A clip being dragged cuts nothing until it is let go of", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+
+    // A second picture row, with something on it to be run over.
+    auto built = zaro::edit::makeAddTrack(window.project(), window.sequence()->id(),
+                                          zaro::model::TrackKind::Video, "V2");
+    REQUIRE(built.hasValue());
+    window.commands().execute(window.project(), std::move(*built));
+    window.commands().breakMerge();
+
+    const auto v1 = window.sequence()->videoTracks().front().id();
+    const auto v2 = window.sequence()->videoTracks().back().id();
+    const auto moving = window.sequence()->findTrack(v1)->clips().front().id;
+
+    const zaro::model::Clip source = *window.sequence()->findTrack(v1)->find(moving);
+    zaro::model::Clip bystander = source;
+    bystander.id = window.project().ids().next<zaro::model::ClipTag>();
+    bystander.link = {};
+    bystander.timelineRange =
+        zaro::time::TimeRange{source.start(), zaro::time::RationalTime{200, source.start().rate()}};
+    window.project()
+        .findSequence(window.sequence()->id())
+        ->findTrack(v2)
+        ->insert(std::move(bystander));
+    QApplication::processEvents();
+
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+    timeline->selectOnly(v1, moving);
+
+    const auto rowY = [timeline](zaro::model::TrackId track) {
+        const auto row = timeline->rowFor(track);
+        REQUIRE(row.has_value());
+        return row->top + row->height / 2;
+    };
+
+    const auto send = [timeline](QEvent::Type type, int x, int y, Qt::MouseButton button,
+                                 Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(x, y), QPointF(x, y), button, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &event);
+    };
+
+    const auto startBefore = window.sequence()->findTrack(v1)->find(moving)->start();
+    const int grabX = static_cast<int>(timeline->layout().xForTime(startBefore)) + 40;
+    const int landX = grabX + 90;
+    const std::size_t onV2Before = window.sequence()->findTrack(v2)->clips().size();
+    const std::size_t stepsBefore = window.commands().position();
+
+    // Down onto the occupied row and along it, without letting go.
+    send(QEvent::MouseButtonPress, grabX, rowY(v1), Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 8; ++i) {
+        send(QEvent::MouseMove, grabX + (landX - grabX) * i / 8, rowY(v2), Qt::NoButton,
+             Qt::LeftButton);
+        QApplication::processEvents();
+
+        if (window.sequence()->findTrack(v2)->clips().size() != onV2Before) {
+            zaro::app::testing::failf("the row being crossed had a clip cut at step %d\n", i);
+        }
+        if (window.sequence()->findTrack(v1)->find(moving) == nullptr) {
+            zaro::app::testing::failf("the clip left its row before the button came up\n");
+        }
+        if (window.commands().position() != stepsBefore) {
+            zaro::app::testing::failf("the drag made an edit at step %d, before it ended\n", i);
+        }
+    }
+
+    // And on release it lands, in one undo step.
+    send(QEvent::MouseButtonRelease, landX, rowY(v2), Qt::LeftButton, Qt::NoButton);
+    QApplication::processEvents();
+
+    if (window.sequence()->findTrack(v2)->find(moving) == nullptr) {
+        zaro::app::testing::failf("the clip did not land when the button came up\n");
+    }
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the drag made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    std::printf("  drag preview: the crossed row kept its %zu clips until the drop\n", onV2Before);
+
+    timeline->setSnapEnabled(snapWas);
+    QApplication::processEvents();
+}
