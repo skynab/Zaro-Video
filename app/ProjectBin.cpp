@@ -1304,16 +1304,19 @@ void ProjectBin::dropEvent(QDropEvent* event) {
     event->setDropAction(Qt::CopyAction);
     event->accept();
 
-    // Imported after the drop returns, not during it. This runs inside
-    // Cocoa's drag session -- the mime data belongs to the drag and the
-    // cursor does too, and setting a wait cursor here segfaults inside
-    // AppKit. Taking the paths out and doing the work on the next turn of the
-    // event loop lets the drag finish first, which is also where the probes
-    // belong: the file manager is waiting for this handler to return.
+    // Imported after the drop returns, not during it. This runs inside the
+    // window system's drag session -- the mime data belongs to the drag, and
+    // the file manager is waiting for this handler to come back -- so the
+    // paths are taken out and the probing happens on the next turn of the
+    // event loop.
+    //
+    // No wait cursor over it. Building one crashes on macOS: Qt hands
+    // CGImageCreate an image it could not make, and AppKit dereferences the
+    // colour space that is not there. The import is a probe per file and the
+    // line along the bottom says what came of it, which is the feedback that
+    // was wanted from the cursor anyway.
     QTimer::singleShot(0, this, [this, paths] {
-        QApplication::setOverrideCursor(Qt::WaitCursor);
         const int added = importPaths(paths);
-        QApplication::restoreOverrideCursor();
 
         // `importPaths` has already put the summary back; only the case worth
         // remarking on -- files that could not be read, or were here already
