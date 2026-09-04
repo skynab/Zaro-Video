@@ -1,3 +1,4 @@
+#include <QLabel>
 #include <QMouseEvent>
 // Titles, captions and the things pinned to a shot.
 //
@@ -799,6 +800,85 @@ TEST_CASE("A title fades in", "[gui]") {
         if (window.commands().position() != steps) {
             zaro::app::testing::failf("the refusal still changed the cut\n");
         }
+    }
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}
+
+// A title asking for a font this machine does not have.
+//
+// The family is stored as a name and resolved when the text is drawn, so a
+// project made elsewhere keeps asking for the typeface it was made with and
+// gets it back on a machine that has one. The cost is that the substitution is
+// invisible: the font list can only show what is installed, so it reads back as
+// whichever font Qt chose and the panel quietly agrees with itself. This checks
+// the panel says so instead.
+TEST_CASE("A missing font is named rather than silently swapped", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    auto* note = window.findChild<QLabel*>("text-font-note");
+    if (note == nullptr) {
+        zaro::app::testing::failf("the inspector has no font note\n");
+    }
+    // A title made here asks for nothing in particular, which is a font every
+    // machine has.
+    // Asked of the widget rather than of the screen: whether the inspector's
+    // panel is up at all depends on the workspace, and a test that ran after
+    // one which switched workspaces would otherwise report a note that is set
+    // correctly as missing.
+    if (note->isVisibleTo(note->parentWidget())) {
+        zaro::app::testing::failf("a title with no family named said one was missing\n");
+    }
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    const zaro::model::Clip* title = titleNow();
+    REQUIRE(title != nullptr);
+
+    // The project now asks for a typeface that certainly is not installed --
+    // the same state a cut made on somebody else's machine arrives in.
+    zaro::model::Graphic wanting = title->graphic;
+    wanting.family = "Nonesuch Grotesk MMXXVI";
+    auto built = zaro::edit::makeSetGraphic(
+        window.project(), {sequence.id(), window.editContext().track}, title->id, wanting);
+    if (!built) {
+        zaro::app::testing::failf("%s\n", built.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*built));
+    window.effects()->refresh();
+    QApplication::processEvents();
+
+    if (!note->isVisibleTo(note->parentWidget())) {
+        zaro::app::testing::failf("a missing font was substituted without a word\n");
+    }
+    if (!note->text().contains("Nonesuch Grotesk MMXXVI")) {
+        zaro::app::testing::failf("the note does not name the font that is missing: %s\n",
+                                  note->text().toUtf8().constData());
+    }
+    std::printf("  missing font: %s\n", note->text().toUtf8().constData());
+
+    // The text still draws, in whatever was substituted: a title nobody can
+    // read is worse than one in the wrong face.
+    if (titleNow()->graphic.family != wanting.family) {
+        zaro::app::testing::failf("the project stopped asking for the font it wants\n");
     }
 
     while (window.commands().canUndo()) {

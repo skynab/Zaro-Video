@@ -463,6 +463,8 @@ private:
     QWidget* textGroup_{nullptr};
     QPlainTextEdit* textBody_{nullptr};
     QFontComboBox* textFamily_{nullptr};
+    /// Says so when the family a title asks for is not on this machine.
+    QLabel* textFontNote_{nullptr};
     QDoubleSpinBox* textSize_{nullptr};
     QCheckBox* textBold_{nullptr};
     QCheckBox* textItalic_{nullptr};

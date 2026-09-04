@@ -476,9 +476,9 @@ Result<CommandPtr> makePasteClips(Project& project, model::SequenceId sequenceId
 
     model::IdGenerator& ids = project.ids();
     return makeCommand(sequenceId, clips.size() == 1 ? "Paste clip" : "Paste clips", {},
-                       [clips, &ids](Sequence& sequence) {
+                       [clips, &ids](Sequence& seq) {
                            for (const PastedClip& pasted : clips) {
-                               Track* track = sequence.findTrack(pasted.track);
+                               Track* track = seq.findTrack(pasted.track);
                                ZARO_CHECK(track != nullptr,
                                           "track vanished between build and apply");
                                clearRange(*track, pasted.clip.timelineRange, ids);

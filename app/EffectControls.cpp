@@ -7,6 +7,8 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFontComboBox>
+#include <QFontDatabase>
+#include <QFontInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
@@ -980,6 +982,18 @@ void EffectControls::buildTextGroup() {
 
     form->addRow(textBody_);
     form->addRow("Font", textFamily_);
+
+    // What happens when a project arrives from a machine with a different set
+    // of fonts. The family is stored as a name and resolved when the text is
+    // drawn -- deliberately, so the title comes back to itself on a machine
+    // that has the typeface -- but the substitution is otherwise silent, and a
+    // silent substitution is a delivery somebody signs off without noticing.
+    textFontNote_ = new QLabel(this);
+    textFontNote_->setObjectName("text-font-note");
+    textFontNote_->setWordWrap(true);
+    textFontNote_->setProperty("muted", true);
+    textFontNote_->hide();
+    form->addRow(textFontNote_);
     form->addRow("Size", textSize_);
     auto* styleRow = new QWidget(this);
     auto* style = new QHBoxLayout(styleRow);
@@ -1782,7 +1796,19 @@ void EffectControls::applyToWidgets() {
             textBody_->setPlainText(said);
         }
         textDirty_ = false;
-        textFamily_->setCurrentFont(QFont{QString::fromStdString(clip->graphic.family)});
+        const QString wanted = QString::fromStdString(clip->graphic.family);
+        textFamily_->setCurrentFont(QFont{wanted});
+        // The combo lists what is installed, so a family this machine does not
+        // have cannot be shown in it: it silently reads back as whichever font
+        // Qt substituted. The note is what keeps the panel honest.
+        const bool missing =
+            !wanted.isEmpty() && !QFontDatabase::families().contains(wanted, Qt::CaseInsensitive);
+        if (missing) {
+            const QString instead = QFontInfo{QFont{wanted}}.family();
+            textFontNote_->setText(
+                QString("%1 is not on this machine \u2014 showing %2.").arg(wanted, instead));
+        }
+        textFontNote_->setVisible(missing);
         textSize_->setValue(clip->graphic.pointSize);
         textBold_->setChecked(clip->graphic.bold);
         textItalic_->setChecked(clip->graphic.italic);
