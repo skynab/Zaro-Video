@@ -13,6 +13,15 @@
 
 namespace zaro::media {
 
+/// How long a still is when nobody has said otherwise.
+///
+/// A photograph has no duration of its own, so one has to be chosen the moment
+/// it lands on a timeline. Five seconds is the length every editor picks for
+/// this and it is long enough to see and short enough to trim, which is all a
+/// default has to be -- the clip is stretchable from the instant it exists, so
+/// getting this wrong costs one drag.
+inline constexpr std::int64_t kDefaultStillSeconds = 5;
+
 struct VideoStreamInfo {
     std::int32_t streamIndex{-1};
     std::string codecName;
@@ -41,6 +50,22 @@ struct VideoStreamInfo {
     /// Container-reported frame count. Often absent, sometimes wrong; treat as
     /// a hint rather than as truth.
     std::int64_t frameCountHint{0};
+
+    /// One picture that lasts as long as somebody wants it to.
+    ///
+    /// A .png or a .jpg is a video stream of exactly one frame, and FFmpeg
+    /// reports it as one: a container called `png_pipe` or `image2`, a rate
+    /// invented out of nothing, and either no duration or one frame's worth.
+    /// Taken literally that makes a clip a fortieth of a second long, which is
+    /// not what anybody dragging a photograph onto a timeline means.
+    ///
+    /// So a still is marked here and treated as *unbounded* source: it can be
+    /// stretched to any length, because there is no more of it to run out of.
+    /// Everything else about it stays a video clip -- it is placed, trimmed,
+    /// moved, graded, masked, transformed and keyframed by exactly the code
+    /// that does those things to footage, which is the whole point of spelling
+    /// it as a flag on the stream rather than as a kind of its own.
+    bool isStill{false};
 
     std::optional<time::Timecode> startTimecode;
 
@@ -74,6 +99,16 @@ struct MediaInfo {
     }
     [[nodiscard]] const AudioStreamInfo* primaryAudio() const {
         return audioStreams.empty() ? nullptr : &audioStreams.front();
+    }
+
+    /// Whether this file is a single picture rather than footage.
+    ///
+    /// Asked of the file rather than of the stream because that is how callers
+    /// think of it: a .jpg is a still, and the fact that the stillness lives on
+    /// its one video stream is a detail of how it was probed.
+    [[nodiscard]] bool isStill() const {
+        const VideoStreamInfo* video = primaryVideo();
+        return video != nullptr && video->isStill && audioStreams.empty();
     }
 };
 

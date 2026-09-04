@@ -676,6 +676,16 @@ json encode(const model::MediaRef& ref) {
         // The codec name too, so a bin opened tomorrow can still be searched
         // for "prores" without reopening every file to find out.
         cached["videoCodec"] = video->codecName;
+        // Whether it is a picture rather than footage. This belongs in the
+        // "parts the model reasons about" above for exactly the reason the
+        // duration does: it is what says a clip has no end to be trimmed past,
+        // and a project reopened without it would find every still suddenly
+        // bounded by a duration of nothing.
+        //
+        // Written only when true, so no existing project file changes.
+        if (video->isStill) {
+            cached["still"] = true;
+        }
     }
     if (const media::AudioStreamInfo* audio = ref.info.primaryAudio()) {
         cached["audioSampleRate"] = encode(audio->sampleRate);

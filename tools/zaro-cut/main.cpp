@@ -93,10 +93,15 @@ int main(int argc, char** argv) {
     }
 
     const zaro::media::VideoStreamInfo* firstVideo = sources.front().info.primaryVideo();
-    zaro::time::Rational rate =
-        requestedRate.isPositive()
-            ? requestedRate
-            : (firstVideo != nullptr ? firstVideo->frameRate : zaro::time::rates::fps25);
+    // A still's frame rate is fiction -- the demuxer reports 25fps for a .png
+    // because it has to report something -- so a cut whose first input is a
+    // photograph takes the default rate rather than that one. Its *size* is
+    // real, and is taken below.
+    const bool firstIsStill = sources.front().info.isStill();
+    zaro::time::Rational rate = requestedRate.isPositive() ? requestedRate
+                                : (firstVideo != nullptr && !firstIsStill)
+                                    ? firstVideo->frameRate
+                                    : zaro::time::rates::fps25;
     if (width <= 0 || height <= 0) {
         width = firstVideo != nullptr ? firstVideo->width : 1920;
         height = firstVideo != nullptr ? firstVideo->height : 1080;
@@ -122,7 +127,11 @@ int main(int argc, char** argv) {
         const zaro::media::VideoStreamInfo* video = source.info.primaryVideo();
         const zaro::time::Rational sourceRate = video != nullptr ? video->frameRate : rate;
 
-        zaro::time::Rational useSeconds = source.info.duration;
+        // A still has no duration of its own, so it is given the default one --
+        // the same length the timeline gives a photograph dropped onto it.
+        zaro::time::Rational useSeconds =
+            source.info.isStill() ? zaro::time::Rational::fromInt(zaro::media::kDefaultStillSeconds)
+                                  : source.info.duration;
         if (secondsPerClip > 0.0) {
             const auto limit = zaro::time::Rational::approximate(secondsPerClip);
             if (limit < useSeconds) {
@@ -146,6 +155,14 @@ int main(int argc, char** argv) {
             zaro::time::TimeRange{zaro::time::RationalTime{0, sourceRate},
                                   zaro::time::RationalTime::fromSeconds(useSeconds, sourceRate)};
         clip.timelineRange = zaro::time::TimeRange{playhead, durationOnTimeline};
+
+        // A still's source range mirrors its timeline range, at the sequence's
+        // rate: that is what makes keyframes on it advance, since animation is
+        // read in source time. See model::Clip::sourceSecondsAt.
+        if (source.info.isStill()) {
+            clip.sourceRange =
+                zaro::time::TimeRange{zaro::time::RationalTime{0, rate}, durationOnTimeline};
+        }
 
         const bool hasVideo = video != nullptr;
         const auto target = hasVideo ? videoTrack : audioTrack;

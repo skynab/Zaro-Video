@@ -3185,7 +3185,22 @@ std::optional<time::TimeRange> draggedSourceRange(const model::Project& project,
                                                   const MediaDrag& dragged,
                                                   const time::Rational& sequenceRate) {
     const model::MediaRef* ref = project.findMedia(dragged.media);
-    if (ref == nullptr || !ref->info.duration.isPositive()) {
+    if (ref == nullptr) {
+        return std::nullopt;
+    }
+    // A still has no duration to take, so it is given one. At the sequence's
+    // rate rather than the file's invented 25fps, and as long as the timeline
+    // range it will be placed against -- a still clip whose source range is as
+    // long as its timeline range is what makes keyframes on it advance, since
+    // animation is read in source time and a degenerate one-frame source would
+    // hold every keyframe at the same instant. See model::Clip::sourceSecondsAt.
+    if (ref->info.isStill()) {
+        return time::TimeRange{
+            time::RationalTime{0, sequenceRate},
+            time::RationalTime::fromSeconds(time::Rational::fromInt(media::kDefaultStillSeconds),
+                                            sequenceRate)};
+    }
+    if (!ref->info.duration.isPositive()) {
         return std::nullopt;
     }
     const media::VideoStreamInfo* video = ref->info.primaryVideo();

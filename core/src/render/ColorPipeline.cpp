@@ -338,16 +338,67 @@ Status toLinear(const media::VideoFrame& source, RgbaImage& out) {
     }
 
     const media::PixelFormatInfo& format = media::info(source.format());
-    if (!format.isPlanarYuv) {
+    const bool packedRgb = source.format() == media::PixelFormat::RGB24 ||
+                           source.format() == media::PixelFormat::RGBA8;
+    if (!format.isPlanarYuv && !packedRgb) {
         return Error{ErrorCode::Unsupported, std::string{"pixel format "} +
                                                  media::toString(source.format()) +
-                                                 " is not a planar or semi-planar Y'CbCr layout"};
+                                                 " is not a planar Y'CbCr or packed RGB layout"};
     }
 
     const std::int32_t width = source.width();
     const std::int32_t height = source.height();
     if (out.width() != width || out.height() != height) {
         out = RgbaImage{width, height};
+    }
+
+    // Packed RGB, which is how a still arrives.
+    //
+    // A .png or a .tiff decodes to rgb24 or rgba, and until this existed every
+    // one of them was refused here -- which the render graph swallows, because
+    // one unreadable clip must not take a whole frame with it, so a photograph
+    // composited as a black rectangle and said nothing. The pictures that came
+    // out were the right size, the right length and entirely empty.
+    //
+    // No Y'CbCr arithmetic: there is no matrix to undo and no chroma to
+    // upsample. What is left is the same two steps the Y'CbCr path below ends with --
+    // linearise through the transfer curve, then convert the primaries -- and
+    // they are done here rather than by converting to Y'CbCr first, because
+    // that would subsample the chroma of a picture that has none and throw the
+    // alpha away.
+    if (packedRgb) {
+        const TransferLut& rgbLut = lutFor(source.color().transfer, true);
+        const GamutMatrix rgbGamut =
+            gamutMatrix(source.color().primaries, media::ColorPrimaries::BT709);
+        const bool convertRgbGamut = !rgbGamut.isIdentity();
+        const std::int32_t components = format.hasAlpha ? 4 : 3;
+        // Full range, always. RGB is not tagged with a range in practice and a
+        // limited-range RGB file is not a thing cameras or editors produce.
+        constexpr float kInv255 = 1.0F / 255.0F;
+
+        for (std::int32_t y = 0; y < height; ++y) {
+            const std::uint8_t* row =
+                source.plane(0) +
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(source.stride(0));
+            Rgba* destination = out.row(y);
+            for (std::int32_t x = 0; x < width; ++x) {
+                const std::int32_t at = x * components;
+                const float r = rgbLut(static_cast<float>(row[at]) * kInv255);
+                const float g = rgbLut(static_cast<float>(row[at + 1]) * kInv255);
+                const float b = rgbLut(static_cast<float>(row[at + 2]) * kInv255);
+                // Straight alpha, as every RGBA still stores it. The compositor
+                // premultiplies where it needs to; doing it here would be doing
+                // it twice.
+                const float a = format.hasAlpha ? static_cast<float>(row[at + 3]) * kInv255 : 1.0F;
+                if (convertRgbGamut) {
+                    const auto converted = rgbGamut.apply(r, g, b);
+                    destination[x] = Rgba{converted[0], converted[1], converted[2], a};
+                } else {
+                    destination[x] = Rgba{r, g, b, a};
+                }
+            }
+        }
+        return {};
     }
 
     const LumaCoefficients luma = coefficientsFor(source.color().matrix);

@@ -86,7 +86,15 @@ void SourceMonitor::load(const model::MediaRef& media) {
                       video != nullptr ? video->height : 1080);
     sequence_.addTrack(model::TrackId{1}, model::TrackKind::Video, "Source");
 
-    const auto duration = time::RationalTime::fromSeconds(media.info.duration, rate);
+    // A still has no running time to show, so it is shown at the length it
+    // would be given on a timeline. Marking an in and an out inside that is
+    // meaningless -- every frame is the same picture -- but the monitor is
+    // still how somebody looks at what they are about to cut in, and an empty
+    // viewer for a photograph would say the file was broken.
+    const auto duration = media.info.isStill()
+                              ? time::RationalTime::fromSeconds(
+                                    time::Rational::fromInt(media::kDefaultStillSeconds), rate)
+                              : time::RationalTime::fromSeconds(media.info.duration, rate);
     if (duration.frames() > 0) {
         model::Clip clip;
         clip.id = model::ClipId{1};

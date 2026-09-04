@@ -19,6 +19,18 @@ std::optional<TimeRange> availableSource(const Project& project, const Clip& cli
     if (ref == nullptr || !ref->info.duration.isPositive()) {
         return std::nullopt;
     }
+    // A still never runs out. There is one picture and it can be held for as
+    // long as somebody wants, so there is no end for a trim to run past --
+    // which is the one way a still has to behave differently from footage, and
+    // it is spelled here so that every operation gets it at once rather than
+    // each having to know what a photograph is.
+    //
+    // Deliberately, not by accident: an unprobed file also lands in the
+    // `nullopt` case above, and leaving a still to fall through that would mean
+    // this worked only for as long as nobody filled the duration in.
+    if (ref->info.isStill()) {
+        return std::nullopt;
+    }
     const time::Rational& rate = clip.sourceRange.start().rate();
     return TimeRange{RationalTime{0, rate}, RationalTime::fromSeconds(ref->info.duration, rate)};
 }

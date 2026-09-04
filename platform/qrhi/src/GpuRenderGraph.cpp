@@ -94,8 +94,8 @@ bool GpuRenderGraph::drawTransitionSide(const model::Clip& clip, const model::Se
     return drawClip(clip, **frame, transform, at, wipe);
 }
 
-bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
-                                      const time::RationalTime& at) {
+bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence, const time::RationalTime& at,
+                                      const model::Project* project) {
     for (const model::Track& track : sequence.videoTracks()) {
         if (!sequence.isAudible(track)) {
             continue;
@@ -118,6 +118,24 @@ bool GpuRenderGraph::needsCpuFallback(const model::Sequence& sequence,
             clip->mask.shape == model::MaskShape::Path) {
             return true;
         }
+        // A still is a fourth. A .png or a .tiff decodes to packed RGB, and
+        // this compositor uploads one R8 texture per plane and undoes a Y'CbCr
+        // matrix in the shader -- it has no packed-RGB path, and handed one it
+        // would read the interleaved bytes as a luma plane and show something
+        // that is not the picture.
+        //
+        // Sent to the CPU graph rather than given a shader of its own, for the
+        // same reason as the three above: that graph already produces exactly
+        // the right answer, and it is what the export uses, so the preview and
+        // the delivered file cannot disagree. The cost is the one thing a still
+        // does not mind paying -- it is decoded once and held in the frame
+        // cache, so the work per frame is a composite and not a decode.
+        if (project != nullptr && clip->activeSource().isValid()) {
+            const model::MediaRef* media = project->findMedia(clip->activeSource());
+            if (media != nullptr && media->info.isStill()) {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -136,7 +154,7 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
     // The result is not merely close to the export: it is the same code. The
     // cost is a slow frame wherever an adjustment layer is, and that is a
     // trade worth stating rather than hiding.
-    if (needsCpuFallback(sequence, at) && nestedSource_ != nullptr) {
+    if (needsCpuFallback(sequence, at, project_) && nestedSource_ != nullptr) {
         if (nested_ == nullptr) {
             nested_ = std::make_unique<render::RenderGraph>(*nestedSource_);
             nested_->setProject(project_);

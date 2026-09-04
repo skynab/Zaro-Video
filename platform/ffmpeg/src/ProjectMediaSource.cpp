@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 
 #include "zaro/core/media/Decoder.h"
 #include "zaro/core/render/ColorPipeline.h"
@@ -43,6 +44,8 @@ struct ProjectMediaSource::State {
     std::map<std::uint64_t, media::ColorPrimaries> gamutOverrides;
     std::map<std::uint64_t, VideoEntry> video;
     std::map<std::uint64_t, AudioEntry> audio;
+    /// Which media are single pictures, taken from the project once.
+    std::set<std::uint64_t> stills;
     render::FrameCache cache;
 
     explicit State(std::size_t budget) : cache{budget} {}
@@ -60,6 +63,9 @@ Result<std::unique_ptr<ProjectMediaSource>> ProjectMediaSource::open(const model
         // told when the toggle moved, and the decoders it already opened would
         // still be on the old files.
         source->state_->paths[ref.id.value()] = project.resolvedPath(ref);
+        if (ref.info.isStill()) {
+            source->state_->stills.insert(ref.id.value());
+        }
         if (ref.transferOverride != media::TransferFunction::Unknown) {
             source->state_->overrides[ref.id.value()] = ref.transferOverride;
         }
@@ -98,7 +104,14 @@ void ProjectMediaSource::applyOverride(model::MediaRefId media, media::VideoFram
 
 Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
     model::MediaRefId media, const time::RationalTime& sourceTime) {
-    if (const render::RgbaImage* cached = state_->cache.find(media, sourceTime)) {
+    // A still is the same picture at every instant, so it is cached under one
+    // key rather than one per frame. Without this a photograph held for ten
+    // seconds would fill the whole cache budget with identical copies of itself
+    // and evict the footage around it.
+    const time::RationalTime at = state_->stills.count(media.value()) != 0
+                                      ? time::RationalTime{0, sourceTime.rate()}
+                                      : sourceTime;
+    if (const render::RgbaImage* cached = state_->cache.find(media, at)) {
         return cached;
     }
 
@@ -116,7 +129,7 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
         entry.decoder = std::move(*opened);
     }
 
-    auto decoded = entry.decoder->frameAtTime(sourceTime);
+    auto decoded = entry.decoder->frameAtTime(at);
     if (!decoded) {
         return decoded.error();
     }
@@ -126,7 +139,7 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
     if (Status status = render::toLinear(*decoded, image); !status) {
         return status.error();
     }
-    const render::RgbaImage* stored = state_->cache.insert(media, sourceTime, std::move(image));
+    const render::RgbaImage* stored = state_->cache.insert(media, at, std::move(image));
     if (stored == nullptr) {
         return Error{ErrorCode::Internal,
                      "the frame is larger than the entire cache budget; raise it"};
@@ -136,8 +149,15 @@ Result<const render::RgbaImage*> ProjectMediaSource::imageFor(
 
 Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
     model::MediaRefId media, const time::RationalTime& sourceTime) {
+    // Pinned to zero for a still, for the same reason as `imageFor`: the GPU
+    // path keeps one frame, and re-decoding a photograph on every frame of the
+    // sequence because its requested time moved would be the one case where
+    // this cache never hits.
+    const time::RationalTime sourceAt = state_->stills.count(media.value()) != 0
+                                            ? time::RationalTime{0, sourceTime.rate()}
+                                            : sourceTime;
     if (state_->haveLastSourceFrame && state_->lastSourceMedia == media.value() &&
-        state_->lastSourceTime == sourceTime) {
+        state_->lastSourceTime == sourceAt) {
         return &state_->lastSourceFrame;
     }
 
@@ -155,7 +175,7 @@ Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
         entry.decoder = std::move(*opened);
     }
 
-    auto decoded = entry.decoder->frameAtTime(sourceTime);
+    auto decoded = entry.decoder->frameAtTime(sourceAt);
     if (!decoded) {
         return decoded.error();
     }
@@ -164,7 +184,7 @@ Result<const media::VideoFrame*> ProjectMediaSource::sourceFrameFor(
     // caller wants is the one the decoder just produced.
     state_->lastSourceFrame = std::move(*decoded);
     state_->lastSourceMedia = media.value();
-    state_->lastSourceTime = sourceTime;
+    state_->lastSourceTime = sourceAt;
     state_->haveLastSourceFrame = true;
     return &state_->lastSourceFrame;
 }

@@ -59,6 +59,34 @@ struct Fixture {
         return project.addMedia(std::move(ref));
     }
 
+    /// A single picture: no duration of its own, and unbounded to trim against.
+    model::MediaRefId addStill(const std::string& name = "photo.png") {
+        model::MediaRef ref;
+        ref.id = project.ids().next<model::MediaRefTag>();
+        ref.path = "/media/" + name;
+        ref.name = name;
+        media::VideoStreamInfo video;
+        video.width = 1920;
+        video.height = 1080;
+        // The rate a still demuxer invents, kept here precisely because it is
+        // fiction: anything reading it as a real rate should be caught.
+        video.frameRate = time::rates::fps25;
+        video.isStill = true;
+        video.frameCountHint = 1;
+        ref.info.videoStreams.push_back(video);
+        return project.addMedia(std::move(ref));
+    }
+
+    /// A clip on a still, whose source range mirrors its timeline range -- the
+    /// shape every path that places a photograph produces.
+    model::Clip stillClip(std::int64_t timelineStart, std::int64_t duration,
+                          model::MediaRefId source) {
+        model::Clip out = clip(timelineStart, duration, 0, source);
+        out.sourceRange = time::TimeRange{time::RationalTime{0, time::rates::fps25},
+                                          time::RationalTime{duration, time::rates::fps25}};
+        return out;
+    }
+
     model::Sequence& sequence() { return *project.findSequence(sequenceId); }
     const model::Sequence& sequence() const { return *project.findSequence(sequenceId); }
     model::Track& track(model::TrackId id) { return *sequence().findTrack(id); }

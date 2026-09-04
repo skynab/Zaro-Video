@@ -791,6 +791,10 @@ Result<model::MediaRef> decodeMedia(const json& node) {
                 video.averageFrameRate = *rate;
             }
             video.duration = ref.info.duration;
+            video.isStill = cached.value("still", false);
+            if (video.isStill) {
+                video.frameCountHint = 1;
+            }
             ref.info.videoStreams.push_back(std::move(video));
         }
     }

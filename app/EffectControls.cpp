@@ -1895,8 +1895,15 @@ void EffectControls::applyToWidgets() {
     // control says so by standing down rather than by showing one of them.
     speed_->setValue(clip->speed() * 100.0);
     reverse_->setChecked(clip->reversed);
-    speed_->setEnabled(!clip->isTimeRemapped());
-    reverse_->setEnabled(!clip->isTimeRemapped());
+    // A still has no speed to change and nothing to play backwards: it is one
+    // picture, and its length is set by trimming it. The controls stand down
+    // rather than disappearing, so the panel does not change shape depending on
+    // which clip is selected.
+    const model::MediaRef* source =
+        project_ != nullptr ? project_->findMedia(clip->source) : nullptr;
+    const bool still = source != nullptr && source->info.isStill();
+    speed_->setEnabled(!clip->isTimeRemapped() && !still);
+    reverse_->setEnabled(!clip->isTimeRemapped() && !still);
 
     if (clip->isMulticam()) {
         showAngles();

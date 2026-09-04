@@ -143,6 +143,14 @@ SmartRenderPlan smartRenderPlan(const model::Project& project, const model::Sequ
         plan.reason = "that file has no picture in it";
         return plan;
     }
+    if (video->isStill) {
+        // A still holds one picture for as long as it is on screen, and the
+        // file contains exactly one frame of it. There is nothing to copy: the
+        // export needs as many frames as the clip is long, and the copy path
+        // hands over the packets a file already has.
+        plan.reason = "a still has to be encoded, not copied";
+        return plan;
+    }
     if (video->width != target.width || video->height != target.height) {
         plan.reason = "the file is a different size from the export";
         return plan;

@@ -504,3 +504,68 @@ TEST_CASE("An RGBA encode refuses a buffer sized for three components", "[render
     std::vector<std::uint8_t> tooSmall(4 * 3, 0);
     CHECK_FALSE(render::toDisplayRgba32(image, tooSmall.data(), 4 * 3));
 }
+
+// Packed RGB, which is how a still arrives.
+//
+// The regression these guard shipped black pictures. toLinear refused every
+// pixel format that was not planar Y'CbCr, a .png decodes to rgb24 or rgba, and
+// the render graph swallows an unreadable clip on purpose -- so an imported
+// photograph composited as nothing at all and said nothing about it. The
+// exported file was the right size and the right length and entirely empty.
+TEST_CASE("Packed RGB converts to the working space", "[render][color][still]") {
+    const std::int32_t size = 4;
+    media::VideoFrame frame = media::VideoFrame::allocate(size, size, PixelFormat::RGB24);
+    // Full range and no matrix, which is how every still decoder tags its
+    // output: there is no Y'CbCr here to undo.
+    frame.setColor(ColorInfo{media::ColorPrimaries::BT709, TransferFunction::BT709,
+                             ColorMatrix::Identity, ColorRange::Full});
+    for (std::int32_t row = 0; row < size; ++row) {
+        std::uint8_t* pixels = frame.plane(0) + row * frame.stride(0);
+        for (std::int32_t x = 0; x < size; ++x) {
+            pixels[(x * 3) + 0] = 255;
+            pixels[(x * 3) + 1] = 128;
+            pixels[(x * 3) + 2] = 0;
+        }
+    }
+
+    render::RgbaImage out;
+    REQUIRE(render::toLinear(frame, out));
+    const render::Rgba pixel = out.at(2, 2);
+
+    // Linearised, not passed through: 128/255 encoded is about a fifth of the
+    // light, which is the whole reason the working space exists.
+    CHECK(pixel.r == Approx(1.0F).margin(1e-4));
+    CHECK(pixel.g ==
+          Approx(render::toLinearScalar(128.0F / 255.0F, TransferFunction::BT709)).margin(1e-4));
+    CHECK(pixel.b == Approx(0.0F).margin(1e-4));
+    // Opaque: RGB without an alpha channel covers what is beneath it.
+    CHECK(pixel.a == Approx(1.0F).margin(1e-6));
+}
+
+TEST_CASE("A packed RGBA still keeps its transparency", "[render][color][still]") {
+    // The reason alpha has to survive: a logo or a lower third arrives as an
+    // RGBA .png, and the whole point of laying one over a shot is that the
+    // shot shows through. Converting it to Y'CbCr on the way in -- the obvious
+    // shortcut -- would drop the alpha and composite it onto black.
+    const std::int32_t size = 2;
+    media::VideoFrame frame = media::VideoFrame::allocate(size, size, PixelFormat::RGBA8);
+    frame.setColor(ColorInfo{media::ColorPrimaries::BT709, TransferFunction::BT709,
+                             ColorMatrix::Identity, ColorRange::Full});
+    for (std::int32_t row = 0; row < size; ++row) {
+        std::uint8_t* pixels = frame.plane(0) + row * frame.stride(0);
+        for (std::int32_t x = 0; x < size; ++x) {
+            pixels[(x * 4) + 0] = 255;
+            pixels[(x * 4) + 1] = 255;
+            pixels[(x * 4) + 2] = 255;
+            // Opaque on the left, half covered on the right.
+            pixels[(x * 4) + 3] = x == 0 ? 255 : 128;
+        }
+    }
+
+    render::RgbaImage out;
+    REQUIRE(render::toLinear(frame, out));
+    CHECK(out.at(0, 0).a == Approx(1.0F).margin(1e-4));
+    CHECK(out.at(1, 0).a == Approx(128.0F / 255.0F).margin(1e-4));
+    // Straight, not premultiplied: the colour is untouched by the coverage.
+    CHECK(out.at(1, 0).r == Approx(1.0F).margin(1e-4));
+}

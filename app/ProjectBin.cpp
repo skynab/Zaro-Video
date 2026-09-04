@@ -108,7 +108,8 @@ icons::Glyph glyphFor(const model::MediaRef& ref) {
         return icons::Glyph::Waveform;
     }
     // A still has a picture and no running time; a movie has both.
-    return ref.info.duration.isPositive() ? icons::Glyph::FilmStrip : icons::Glyph::Image;
+    return ref.info.isStill() || !ref.info.duration.isPositive() ? icons::Glyph::Image
+                                                                 : icons::Glyph::FilmStrip;
 }
 
 /// Minutes and seconds, as the design's badge writes them. Not timecode: the
@@ -131,7 +132,13 @@ QString metaFor(const model::MediaRef& ref) {
             parts << QString::fromStdString(video->codecName);
         }
         parts << QString("%1×%2").arg(video->width).arg(video->height);
-        if (const double rate = video->frameRate.toDouble(); rate > 0.0) {
+        // A still says so instead of quoting a frame rate. The rate FFmpeg
+        // reports for a .png is 25fps because the demuxer has to say something,
+        // and printing it would be stating a fact about the file that is not
+        // true of it.
+        if (video->isStill) {
+            parts << QStringLiteral("still");
+        } else if (const double rate = video->frameRate.toDouble(); rate > 0.0) {
             parts << QString("%1 fps").arg(rate, 0, 'g', 4);
         }
     } else if (const media::AudioStreamInfo* audio = ref.info.primaryAudio()) {
@@ -1486,7 +1493,10 @@ void ProjectBin::appendSelectedToTimeline() {
     const model::MediaRefId id = chosen.media;
     const model::MediaRef* ref = project_->findMedia(id);
     const model::Sequence* sequence = project_->findSequence(sequenceId_);
-    if (ref == nullptr || sequence == nullptr || !ref->info.duration.isPositive()) {
+    // A still has no running time of its own and is appended all the same:
+    // it is given one below.
+    if (ref == nullptr || sequence == nullptr ||
+        (!ref->info.duration.isPositive() && !ref->info.isStill())) {
         return;
     }
 
@@ -1504,8 +1514,14 @@ void ProjectBin::appendSelectedToTimeline() {
     // calling it again later cannot do harm.
     if (const media::VideoStreamInfo* first = ref->info.primaryVideo();
         first != nullptr && sequence->duration().frames() == 0) {
-        auto conformed = edit::makeConformSequence(*project_, sequenceId_, first->frameRate,
-                                                   first->width, first->height);
+        // A still's frame rate is fiction -- FFmpeg reports 25fps for a .png
+        // because it has to report something -- so an empty sequence takes its
+        // size from the picture and keeps the rate it already had. Its size is
+        // real and worth having: a sequence built around a photograph should be
+        // the shape of the photograph.
+        const time::Rational rate = ref->info.isStill() ? sequence->frameRate() : first->frameRate;
+        auto conformed =
+            edit::makeConformSequence(*project_, sequenceId_, rate, first->width, first->height);
         if (conformed) {
             commands_->execute(*project_, std::move(*conformed));
             commands_->breakMerge();
@@ -1521,8 +1537,16 @@ void ProjectBin::appendSelectedToTimeline() {
     // place a subclip means anything: what lands on the timeline is an
     // ordinary clip either way.
     const model::Subclip* subclip = project_->findSubclip(chosen.subclip);
+    // A still is given the default length, at the sequence's rate rather than
+    // its own invented one, and a source range as long as the timeline range it
+    // will occupy -- which is what makes keyframes on it advance. See
+    // model::Clip::sourceSecondsAt.
     const time::TimeRange sourceRange =
-        subclip != nullptr
+        ref->info.isStill()
+            ? time::TimeRange{time::RationalTime{0, rate},
+                              time::RationalTime::fromSeconds(
+                                  time::Rational::fromInt(media::kDefaultStillSeconds), rate)}
+        : subclip != nullptr
             ? subclip->range.rescaledTo(sourceRate)
             : time::TimeRange{time::RationalTime{0, sourceRate},
                               time::RationalTime::fromSeconds(ref->info.duration, sourceRate)};

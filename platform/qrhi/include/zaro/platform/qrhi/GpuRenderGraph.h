@@ -82,10 +82,16 @@ private:
     /// Draw a clip whose picture is already an image -- a generated shape, or a
     /// nested sequence composited on the CPU.
     /// Whether anything live at this moment is beyond what one queued sampling
-    /// pass can do -- an adjustment layer, or an effect -- which sends the
-    /// whole frame down the CPU path.
+    /// pass can do -- an adjustment layer, an effect, or a still, whose packed
+    /// RGB this compositor cannot upload -- which sends the whole frame down
+    /// the CPU path.
+    ///
+    /// `project` is needed to tell a still from footage, which is a fact about
+    /// the media rather than about the clip. Null is allowed and simply means
+    /// that question goes unasked.
     [[nodiscard]] static bool needsCpuFallback(const model::Sequence& sequence,
-                                               const time::RationalTime& at);
+                                               const time::RationalTime& at,
+                                               const model::Project* project);
 
     bool drawClipImage(const model::Clip& clip, const render::RgbaImage& image,
                        const model::Transform& transform, const time::RationalTime& at,

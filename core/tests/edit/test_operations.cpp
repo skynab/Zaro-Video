@@ -6,6 +6,7 @@
 
 #include "zaro/core/edit/Operations.h"
 #include "zaro/core/io/ProjectIo.h"
+#include "zaro/core/render/SmartRender.h"
 
 #include "ModelFixtures.h"
 
@@ -1549,4 +1550,125 @@ TEST_CASE("A title's clip name follows its words until somebody renames it", "[e
     shape.width = 900.0;
     REQUIRE(f.run(edit::makeSetGraphic(f.project, f.on(f.v2), shapeId, shape)));
     CHECK(f.track(f.v2).find(shapeId)->name == "rectangle");
+}
+
+// Stills: one picture, held for as long as somebody wants it.
+//
+// The whole behaviour is one rule -- a still has no end to run out of -- and
+// the tests below are the consequences of it. Everything else about a still
+// clip is deliberately not tested here, because it is not special: it is placed,
+// moved, razored and removed by the same operations that do those things to
+// footage, and a test asserting that would be testing the operations again.
+TEST_CASE("A still has no end to trim past", "[edit][still]") {
+    Fixture f;
+    const model::MediaRefId photo = f.addStill();
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 125, photo))));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    SECTION("it can be stretched far beyond the one frame the file holds") {
+        // Twenty times the length it was placed at. Footage would be refused
+        // here for want of source; a photograph has as much as is asked for.
+        REQUIRE(f.run(edit::makeTrim(f.project, f.on(f.v1), id, edit::Edge::Out, f.at(2500))));
+        CHECK(f.track(f.v1).clips().front().duration() == f.at(2625));
+
+        // And the two ranges stay in step, which is what keeps keyframes on it
+        // animating after a trim rather than only when it was first placed.
+        // Nothing enforces this: it falls out of trimmedOut mapping the new end
+        // through sourceTimeAt, and this is what would catch that changing.
+        const model::Clip& stretched = f.track(f.v1).clips().front();
+        CHECK(stretched.sourceRange.duration() == stretched.timelineRange.duration());
+        CHECK(stretched.speed() == Approx(1.0));
+    }
+
+    SECTION("and shortened again") {
+        REQUIRE(f.run(edit::makeTrim(f.project, f.on(f.v1), id, edit::Edge::Out, f.at(-100))));
+        CHECK(f.track(f.v1).clips().front().duration() == f.at(25));
+    }
+
+    SECTION("footage, by contrast, still runs out") {
+        // The same trim on a short file is refused, which is what says the rule
+        // above is about stills rather than about trimming having gone slack.
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v2),
+                                          f.clip(0, Fixture::kShortMediaFrames, 0, f.shortMedia))));
+        const model::ClipId footage = f.track(f.v2).clips().front().id;
+        CHECK_FALSE(
+            f.run(edit::makeTrim(f.project, f.on(f.v2), footage, edit::Edge::Out, f.at(2500))));
+    }
+}
+
+TEST_CASE("A still clip's source range tracks its length", "[edit][still]") {
+    // This is what makes keyframes on a photograph animate. Animation is read
+    // in source time (ADR 0008), so a still whose source range were one frame
+    // long would hold every keyframe at the same instant and nothing would
+    // move. Mirroring the timeline range makes source time advance with the
+    // playhead, exactly as it does for footage at normal speed.
+    Fixture f;
+    const model::MediaRefId photo = f.addStill();
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 125, photo))));
+    const model::Clip& placed = f.track(f.v1).clips().front();
+
+    CHECK(placed.sourceRange.duration() == placed.timelineRange.duration());
+    // Which means it reads as an ordinary, unretimed clip -- speed 1, not a
+    // 125x speed-up of a one-frame source.
+    CHECK(placed.speed() == Approx(1.0));
+
+    // And source time advances across it, one second in being one second along.
+    const double atStart = placed.sourceSecondsAt(f.at(0));
+    const double halfway = placed.sourceSecondsAt(f.at(62));
+    const double atEnd = placed.sourceSecondsAt(f.at(124));
+    CHECK(halfway > atStart);
+    CHECK(atEnd > halfway);
+    CHECK(atEnd - atStart == Approx(124.0 / 25.0).margin(1e-6));
+}
+
+TEST_CASE("A still is encoded rather than copied", "[edit][still][render]") {
+    // Smart render hands over a file's own packets. A still's file holds one
+    // packet and the export needs as many frames as the clip is long, so the
+    // copy is refused and says why.
+    Fixture f;
+    const model::MediaRefId photo = f.addStill();
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 125, photo))));
+
+    render::SmartRenderTarget wanted;
+    wanted.width = f.sequence().width();
+    wanted.height = f.sequence().height();
+    wanted.frameRate = f.sequence().frameRate();
+    wanted.videoCodec = "png";
+    wanted.includeAudio = false;
+
+    const render::SmartRenderPlan plan =
+        render::smartRenderPlan(f.project, f.sequence(), 0, 125, wanted);
+    CHECK_FALSE(plan.possible);
+    CHECK(plan.reason.find("still") != std::string::npos);
+}
+
+TEST_CASE("A still survives a round trip through a project file", "[edit][still][io]") {
+    // The flag has to be saved. It is what says a clip has no end to be
+    // trimmed past, so a project reopened without it would find every
+    // photograph in it suddenly bounded by a duration of nothing -- and the
+    // failure would appear on load, long after the import that looked fine.
+    Fixture f;
+    const model::MediaRefId photo = f.addStill("holiday.png");
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 125, photo))));
+
+    const auto text = io::saveProjectToString(f.project);
+    REQUIRE(text);
+    auto loaded = io::loadProjectFromString(*text);
+    REQUIRE(loaded);
+
+    model::Project& reloaded = loaded->project;
+    const model::MediaRef* ref = reloaded.findMedia(photo);
+    REQUIRE(ref != nullptr);
+    CHECK(ref->info.isStill());
+
+    // And it is still unbounded: the trim only a still allows works on the
+    // reloaded project, which is the thing the flag is actually for.
+    edit::CommandStack stack;
+    const model::ClipId id =
+        reloaded.findSequence(f.sequenceId)->findTrack(f.v1)->clips().front().id;
+    auto stretched = edit::makeTrim(reloaded, {f.sequenceId, f.v1}, id, edit::Edge::Out, f.at(500));
+    REQUIRE(stretched.hasValue());
+    stack.execute(reloaded, std::move(*stretched));
+    CHECK(reloaded.findSequence(f.sequenceId)->findTrack(f.v1)->clips().front().duration() ==
+          f.at(625));
 }

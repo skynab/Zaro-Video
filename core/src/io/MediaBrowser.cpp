@@ -13,9 +13,17 @@ namespace {
 ///
 /// A list rather than a probe, and a short one: the point is to find the
 /// footage on a card, not to be exhaustive about formats nobody shoots.
-constexpr std::array<const char*, 19> kMediaExtensions{
-    ".mov", ".mp4", ".m4v", ".mxf",  ".avi", ".mkv", ".webm", ".mts", ".m2ts", ".braw",
-    ".r3d", ".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac", ".png", ".jpg"};
+constexpr std::array<const char*, 25> kMediaExtensions{
+    ".mov", ".mp4", ".m4v", ".mxf", ".avi", ".mkv", ".webm", ".mts", ".m2ts", ".braw", ".r3d",
+    ".wav", ".aif", ".aiff", ".mp3", ".m4a", ".flac",
+    // Stills. A photograph is footage that does not move: it is imported,
+    // dragged, trimmed, graded and keyframed by the same code, so it belongs on
+    // this list rather than behind a second kind of import.
+    //
+    // Only what this build actually decodes. HEIC is deliberately absent: the
+    // list is a promise that a file will open, and offering one that then
+    // fails to probe is worse than not offering it.
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif"};
 
 [[nodiscard]] std::string lowered(const std::string& text) {
     std::string out;

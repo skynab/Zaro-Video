@@ -744,3 +744,76 @@ TEST_CASE("An adjustment layer over nothing does nothing", "[render][graph][adju
     CHECK(frame->at(8, 8).a == Approx(0.0F));
     CHECK(frame->at(8, 8).r == Approx(0.0F));
 }
+
+// A still animates when its properties are keyframed.
+//
+// This is the point of importing pictures at all: a photograph that can only
+// sit there is a photograph, and one that can be pushed in on is a shot. It is
+// also the part that was not obviously going to work. Keyframes are stored in
+// *source* time (ADR 0008) so that a fade set on a frame stays on that frame
+// through any trim -- and a still has one frame of source. Had a still clip
+// been given a one-frame source range, every keyframe on it would map to the
+// same instant and nothing would ever move.
+//
+// What makes it work is that a still's source range mirrors its timeline range,
+// so source time advances across the clip exactly as it does for footage. This
+// renders the same photograph at three points and checks the picture moves.
+TEST_CASE("A keyframed still animates", "[render][graph][still]") {
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    const model::MediaRefId photo = f.addStill();
+    SolidFrameSource source{16, 16};
+    source.define(photo, opaque(1.0F, 0.0F, 0.0F));
+    render::RenderGraph graph{source};
+
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 100, photo))));
+    const model::ClipId id = f.track(f.v1).clips().front().id;
+
+    // Fade the picture up across the clip: opaque at the end, invisible at the
+    // start. Keyframes are placed in source time, which for this clip runs from
+    // zero to its own length.
+    REQUIRE(f.run(
+        edit::makeSetKeyframe(f.project, f.on(f.v1), id, model::Param::Opacity, f.at(0), 0.0)));
+    REQUIRE(f.run(
+        edit::makeSetKeyframe(f.project, f.on(f.v1), id, model::Param::Opacity, f.at(99), 1.0)));
+
+    const auto alphaAt = [&](std::int64_t frame) {
+        auto composited = graph.composite(f.sequence(), f.at(frame));
+        REQUIRE(composited);
+        return composited->at(8, 8).a;
+    };
+
+    const float start = alphaAt(0);
+    const float middle = alphaAt(50);
+    const float end = alphaAt(99);
+
+    CHECK(start == Approx(0.0F).margin(1e-3));
+    CHECK(end == Approx(1.0F).margin(1e-3));
+    // The one that would fail if source time did not advance: a still whose
+    // keyframes all landed on the same instant would hold one value throughout.
+    CHECK(middle > start);
+    CHECK(middle < end);
+    CHECK(middle == Approx(0.5F).margin(0.05F));
+}
+
+TEST_CASE("A still shows the same picture at every frame", "[render][graph][still]") {
+    // The other half of the bargain: source time advances so that animation
+    // works, and the picture does *not* change with it, because there is only
+    // one. A still asked for at frame 90 must not come back empty because the
+    // source has run out.
+    Fixture f;
+    f.sequence().setSize(16, 16);
+    const model::MediaRefId photo = f.addStill();
+    SolidFrameSource source{16, 16};
+    source.define(photo, opaque(0.0F, 1.0F, 0.0F));
+    render::RenderGraph graph{source};
+
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.stillClip(0, 100, photo))));
+
+    for (const std::int64_t frame : {std::int64_t{0}, std::int64_t{50}, std::int64_t{99}}) {
+        auto composited = graph.composite(f.sequence(), f.at(frame));
+        REQUIRE(composited);
+        CHECK(composited->at(8, 8).g == Approx(1.0F).margin(1e-3));
+        CHECK(composited->at(8, 8).a == Approx(1.0F).margin(1e-3));
+    }
+}

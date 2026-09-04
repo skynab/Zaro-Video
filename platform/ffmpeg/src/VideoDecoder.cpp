@@ -43,6 +43,18 @@ private:
     /// timebase units. If `target` precedes the first frame, the first frame.
     [[nodiscard]] Result<media::VideoFrame> frameAtStreamPts(std::int64_t target);
 
+    /// The one picture in a still, decoded once and kept.
+    ///
+    /// A still gets a path of its own rather than going through the seek
+    /// machinery above, because none of what that machinery is for applies: it
+    /// exists to land accurately in a long stream of timestamped frames, and a
+    /// .png is one frame with, very often, no timestamp at all. The pipe
+    /// demuxers also seek poorly or not at all. So the frame is pulled once
+    /// from the top of the file and every later request is answered from it --
+    /// which is also the cheapest possible answer, and a still is asked for
+    /// once per rendered frame for as long as it is on screen.
+    [[nodiscard]] Result<media::VideoFrame> stillPicture();
+
     [[nodiscard]] Status seekTo(std::int64_t streamPts);
 
     [[nodiscard]] static std::int64_t timestampOf(const AVFrame& frame) {
@@ -55,6 +67,10 @@ private:
     CodecContextPtr codec_;
     BufferRefPtr hardwareDevice_;
     SwsContextPtr scaler_;
+
+    /// The decoded still, once something has asked for it.
+    media::VideoFrame still_;
+    bool haveStill_{false};
 
     FramePtr working_;   ///< Frame currently being decoded into.
     FramePtr software_;  ///< Landing pad for hardware surface downloads.
@@ -394,7 +410,50 @@ Result<media::VideoFrame> FFmpegVideoDecoder::nextFrame() {
     return frame;
 }
 
+Result<media::VideoFrame> FFmpegVideoDecoder::stillPicture() {
+    if (haveStill_) {
+        return still_.clone();
+    }
+    // Read first, rewind only if that finds nothing.
+    //
+    // The order matters and is not the obvious one. Seeking first looks safer
+    // and breaks `image2`, the demuxer a .jpg usually arrives on: a seek there
+    // leaves the read head past the single frame the file holds, and the pull
+    // that follows reports end of stream on a picture that decodes perfectly
+    // well. A decoder nobody has read from is already in the right place, so
+    // the seek is only wanted for the second caller -- and it is allowed to
+    // fail, because several still demuxers do not seek at all.
+    Status status = pull();
+    if (!status && status.error().code() == ErrorCode::EndOfStream) {
+        if (Status rewound = seekTo(0); rewound) {
+            status = pull();
+        }
+    }
+    if (!status) {
+        return status.error();
+    }
+    auto frame = toVideoFrame(*working_, scaler_);
+    if (!frame) {
+        return frame.error();
+    }
+    // Time zero, whatever the container claimed. A still is the picture at
+    // every instant it is on screen, and giving it the timestamp it happened to
+    // carry would make the frame cache hold it under a key nothing asks for.
+    frame->setPts(time::RationalTime{0, info_.frameRate});
+    frame->setSourceIndex(0);
+    still_ = std::move(*frame);
+    haveStill_ = true;
+    return still_.clone();
+}
+
 Result<media::VideoFrame> FFmpegVideoDecoder::frameAtTime(const time::RationalTime& t) {
+    if (info_.isStill) {
+        // Every instant of a still is the same picture, so the time asked for
+        // is not consulted. This is what lets a photograph be stretched to any
+        // length: there is no source to run out of, and no frame to fail to
+        // find.
+        return stillPicture();
+    }
     const time::Rational seconds = t.toSeconds();
     const time::Rational inTimeBase = seconds / fromAv(timeBase_);
     return frameAtStreamPts(inTimeBase.floorToInt());
@@ -403,6 +462,13 @@ Result<media::VideoFrame> FFmpegVideoDecoder::frameAtTime(const time::RationalTi
 Result<media::VideoFrame> FFmpegVideoDecoder::frameAtIndex(std::int64_t index) {
     if (index < 0) {
         return Error{ErrorCode::NotFound, "negative frame index"};
+    }
+    if (info_.isStill) {
+        if (index > 0) {
+            return Error{ErrorCode::NotFound,
+                         "a still has one frame; there is no frame " + std::to_string(index)};
+        }
+        return stillPicture();
     }
     if (!conformed_) {
         if (Status status = conform(); !status) {
@@ -423,6 +489,17 @@ Result<media::VideoFrame> FFmpegVideoDecoder::frameAtIndex(std::int64_t index) {
 
 Status FFmpegVideoDecoder::conform() {
     if (conformed_) {
+        return {};
+    }
+
+    // A still is one frame at time zero, and scanning the file to discover that
+    // finds nothing: the image2 and *_pipe demuxers routinely hand over their
+    // single packet with neither a pts nor a dts, so the scan below recorded no
+    // timestamps and reported "0 frames" -- which is why a .jpg could be probed
+    // and then not opened.
+    if (info_.isStill) {
+        conformIndex_ = {0};
+        conformed_ = true;
         return {};
     }
 
