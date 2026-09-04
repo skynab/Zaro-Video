@@ -1,13 +1,17 @@
 #include "Theme.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFont>
 #include <QFontDatabase>
 #include <QPalette>
+#include <QStandardPaths>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+
+#include "Icons.h"
 
 namespace zaro::app::theme {
 namespace {
@@ -89,6 +93,34 @@ QColor divider() {
     return textAt(0.16);
 }
 
+namespace {
+
+/// The caret, written where a stylesheet url can reach it.
+///
+/// Rebuilt every run rather than cached across them: it is a few hundred bytes,
+/// and the alternative is a stale arrow in the wrong colour surviving a retune
+/// of the palette. Drawn at the ratio of the screen the app started on, so the
+/// 10px the rule asks for lands on whole device pixels.
+///
+/// An empty path leaves `image: url()` naming nothing, which Qt treats as no
+/// image -- the arrow is missing, exactly as it was before, rather than the
+/// application refusing to start over a piece of chrome.
+QString caretFile(const QString& name, const QColor& ink) {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (dir.isEmpty() || !QDir{}.mkpath(dir)) {
+        return {};
+    }
+    const QString path = dir + '/' + name + ".png";
+    if (!icons::pixmap(icons::Glyph::CaretDown, 10, ink).save(path)) {
+        return {};
+    }
+    // Forward slashes, and no Windows drive colon left for the parser to read
+    // as the end of a url scheme.
+    return QDir::fromNativeSeparators(path);
+}
+
+}  // namespace
+
 QString styleSheet() {
     const QString accentHex = hex(accent());
     const QString surfaceHex = hex(surface());
@@ -142,7 +174,22 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 }
 QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: %NEUTRAL600%; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: %ACCENT%; }
-QComboBox::drop-down { border: none; width: 16px; }
+/* The arrow, and why it is a file.
+
+   Styling `::drop-down` at all takes the combo off the native painter, and Qt
+   then draws no arrow unless `::down-arrow` names an image -- so the rule that
+   removed the border was also removing the one mark that said "this opens".
+   Every combo in the app read as a text field; the font picker read as a field
+   somebody was expected to type a family name into.
+
+   A stylesheet takes a url and nothing else: there is no way to hand it a
+   painted path. So the caret this project already draws is written out once and
+   pointed at. Generated rather than vendored, at the running screen's ratio,
+   which is what keeps it the same caret as the one in the bin's group headings
+   instead of a second arrow from somebody else's icon set. */
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox::down-arrow { image: url(%CARET%); width: 10px; height: 10px; margin-right: 6px; }
+QComboBox::down-arrow:disabled { image: url(%CARETOFF%); }
 QComboBox QAbstractItemView {
     background: %SURFACE%; border: 1px solid %DIVIDER%; border-radius: 6px;
     selection-background-color: %ACCENT800%; selection-color: %ACCENT100%; padding: 3px;
@@ -378,6 +425,8 @@ QPushButton[class="inspector-tab"]:disabled { color: %FAINT%; background: transp
 #mixer-console { background: %WELL%; }
 #loudness-measure { font-size: 10px; padding: 2px 8px; border-radius: 6px; }
 )")
+        .replace("%CARET%", caretFile("caret", textAt(0.62)))
+        .replace("%CARETOFF%", caretFile("caret-off", textAt(0.30)))
         .replace("%BG%", bgHex)
         .replace("%SURFACE%", surfaceHex)
         .replace("%WELL%", hex(well()))

@@ -1,5 +1,6 @@
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
 #include <QPushButton>
 // Titles, captions and the things pinned to a shot.
 //
@@ -752,6 +753,125 @@ TEST_CASE("A title is placed by dragging it on the picture", "[gui]") {
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());
     }
+    QApplication::processEvents();
+}
+
+// Typing the text on the picture, which is where somebody is looking at it.
+//
+// The text was editable in one place: a field in the inspector, on the far side
+// of the window from the thing it changes. This is a double-click on the title
+// itself -- the editor opens over the box, in roughly the face it will be drawn
+// in, and what is typed reaches the model as it is typed. Escape puts back what
+// was there, and a whole typing pass is one undo step rather than one per
+// letter.
+TEST_CASE("A title's text is typed on the picture", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    auto* overlay = window.findChild<zaro::app::TitleOverlay*>();
+    REQUIRE(overlay != nullptr);
+    REQUIRE(overlay->isEditing());
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(titleNow() != nullptr);
+    const std::string before = titleNow()->graphic.text;
+
+    const QPointF centre = window.monitor()->pictureRect().center();
+    const auto doubleClick = [overlay](const QPointF& at) {
+        for (const QEvent::Type type :
+             {QEvent::MouseButtonPress, QEvent::MouseButtonRelease, QEvent::MouseButtonDblClick}) {
+            QMouseEvent event{type, at, at, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier};
+            QCoreApplication::sendEvent(overlay, &event);
+        }
+        QApplication::processEvents();
+    };
+
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("the overlay was already open for typing\n");
+    }
+    doubleClick(centre);
+    if (!overlay->isTyping()) {
+        zaro::app::testing::failf("a double-click on the title did not open it for typing\n");
+        return;
+    }
+
+    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    REQUIRE(editor != nullptr);
+    // Selected on open, so typing replaces the placeholder rather than landing
+    // beside it -- a title arrives saying "Title" and nobody wants that kept.
+    if (!editor->textCursor().hasSelection()) {
+        zaro::app::testing::failf("the text was not selected when the editor opened\n");
+    }
+
+    const std::size_t stepsBefore = window.commands().position();
+    editor->setPlainText("Kestrel Bay");
+    QApplication::processEvents();
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("typing did not reach the model: the title says \"%s\"\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+
+    // Return finishes. Shift+Return would be a line break, which is why the
+    // plain one is what closes.
+    QKeyEvent done{QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(editor, &done);
+    QApplication::processEvents();
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("Return did not finish typing\n");
+    }
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("finishing threw away what was typed\n");
+    }
+    if (window.commands().position() - stepsBefore != 1) {
+        zaro::app::testing::failf("typing took %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+
+    // Escape puts back whatever the text was when the pass started.
+    doubleClick(centre);
+    REQUIRE(overlay->isTyping());
+    editor->setPlainText("thrown away");
+    QApplication::processEvents();
+    const std::size_t stepsBeforeEscape = window.commands().position();
+    QKeyEvent give{QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QCoreApplication::sendEvent(editor, &give);
+    QApplication::processEvents();
+    // Abandoned, so nothing is left on the history: a step that changes nothing
+    // is a Ctrl+Z that appears to do nothing.
+    if (window.commands().position() >= stepsBeforeEscape) {
+        zaro::app::testing::failf("Escape left a step on the history\n");
+    }
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("Escape did not close the editor\n");
+    }
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("Escape left \"%s\" behind instead of putting the text back\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+
+    // And one undo takes the whole typing pass back to what the title said when
+    // it was made.
+    window.commands().undo(window.project());
+    if (titleNow()->graphic.text != before) {
+        zaro::app::testing::failf("undo left \"%s\", not the text the title arrived with\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+    window.monitor()->update();
     QApplication::processEvents();
 }
 
