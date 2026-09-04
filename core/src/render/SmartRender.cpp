@@ -171,6 +171,21 @@ SmartRenderPlan smartRenderPlan(const model::Project& project, const model::Sequ
             plan.reason = "the clip's level or pan has been changed";
             return plan;
         }
+        // A fade or a crossfade on a sound track is a change to the samples,
+        // and copying the file's own packets would deliver the version without
+        // it. The picture's transitions are caught by the walk above; the
+        // sound's are on tracks that walk never visits.
+        for (const model::Track& track : sequence.audioTracks()) {
+            if (!sequence.isAudible(track)) {
+                continue;
+            }
+            for (const model::Transition& transition : track.transitions()) {
+                if (transition.range.endExclusive() > from && transition.range.start() < to) {
+                    plan.reason = "there is a fade on the sound in that range";
+                    return plan;
+                }
+            }
+        }
         plan.copyAudio = true;
     }
 

@@ -603,6 +603,62 @@ TEST_CASE("Cross dissolves need a cut and handles either side", "[edit][transiti
     }
 }
 
+TEST_CASE("A dissolve can be stretched by its edges", "[edit][transition]") {
+    // What dragging a dissolve's edge on the timeline calls. Re-adding one
+    // instead would recentre the span on the cut, which is exactly what a drag
+    // of a single edge must not do.
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+    const model::TransitionId id = f.track(f.v1).transitions().front().id;
+
+    SECTION("longer, still centred") {
+        REQUIRE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                   time::TimeRange{f.at(40), f.at(20)})));
+        const model::Transition& stretched = f.track(f.v1).transitions().front();
+        CHECK(stretched.range.start() == f.at(40));
+        CHECK(stretched.range.duration() == f.at(20));
+        // The clips do not move: a transition is still not an overlap.
+        CHECK(f.layout(f.v1) == "0-50@500 50-100@600");
+    }
+
+    SECTION("asymmetric, which is how a fade is shaped") {
+        // Starting on the cut and running into the incoming clip.
+        REQUIRE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                   time::TimeRange{f.at(50), f.at(15)})));
+        CHECK(f.track(f.v1).transitions().front().range.start() == f.at(50));
+        CHECK(f.track(f.v1).transitions().front().range.duration() == f.at(15));
+    }
+
+    SECTION("dragged clear of its cut, refused") {
+        CHECK_FALSE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                       time::TimeRange{f.at(10), f.at(10)})));
+        CHECK(f.lastError.find("across its cut") != std::string::npos);
+    }
+
+    SECTION("longer than the clips it joins, refused") {
+        CHECK_FALSE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                       time::TimeRange{f.at(40), f.at(80)})));
+        CHECK(f.lastError.find("longer than the clips") != std::string::npos);
+    }
+
+    SECTION("zero length, refused") {
+        CHECK_FALSE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                       time::TimeRange{f.at(50), f.at(0)})));
+    }
+
+    SECTION("a drag is one undo step, not one per frame") {
+        const std::size_t before = f.stack.position();
+        for (std::int64_t span = 11; span <= 20; ++span) {
+            REQUIRE(f.run(edit::makeSetTransitionRange(
+                f.project, f.on(f.v1), id, time::TimeRange{f.at(50 - (span / 2)), f.at(span)})));
+        }
+        CHECK(f.stack.position() == before + 1);
+        CHECK(f.track(f.v1).transitions().front().range.duration() == f.at(20));
+    }
+}
+
 TEST_CASE("A dissolve longer than the clips it joins is refused", "[edit][transition]") {
     // Placed far enough along that the span does not run off the front of the
     // sequence, so it is the clip length that binds rather than frame zero.
@@ -632,12 +688,105 @@ TEST_CASE("A dissolve is refused where there are no handles", "[edit][transition
     CHECK(f.lastError.find("no handles") != std::string::npos);
 }
 
-TEST_CASE("A gap is not a cut", "[edit][transition]") {
+TEST_CASE("A gap is not a cut: it fades instead", "[edit][transition]") {
+    // A gap has no second clip to dissolve into, so there is no crossfade to
+    // make -- but both of its sides are a clip ending or starting against
+    // nothing, which is exactly what a fade is. Asking here used to be refused
+    // outright; it now gives the thing that was actually wanted.
     Fixture f;
     REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
     REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(80, 50, 600))));
-    CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(65), f.at(10))));
-    CHECK(f.lastError.find("no cut here") != std::string::npos);
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(65), f.at(10))));
+
+    REQUIRE(f.track(f.v1).transitions().size() == 1);
+    const model::Transition& fade = f.track(f.v1).transitions().front();
+    CHECK(fade.isFadeOut());
+    CHECK_FALSE(fade.isCrossFade());
+    CHECK(fade.from == f.track(f.v1).clips()[0].id);
+    // Inside the clip and anchored to the end it fades at, rather than
+    // straddling anything.
+    CHECK(fade.range.endExclusive() == f.at(50));
+    CHECK(fade.range.duration() == f.at(10));
+}
+
+TEST_CASE("The dissolve button fades a clip that has nothing beside it", "[edit][transition]") {
+    Fixture f;
+
+    SECTION("at the tail, a fade out") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(12))));
+        const model::Transition& fade = f.track(f.v1).transitions().front();
+        CHECK(fade.isFadeOut());
+        CHECK(fade.range == time::TimeRange{f.at(38), f.at(12)});
+    }
+
+    SECTION("at the head, a fade in") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(0), f.at(12))));
+        const model::Transition& fade = f.track(f.v1).transitions().front();
+        CHECK(fade.isFadeIn());
+        CHECK(fade.range == time::TimeRange{f.at(0), f.at(12)});
+    }
+
+    SECTION("a clip using every frame of its source can still fade") {
+        // The whole point of a fade lying inside its clip: it reads no handles,
+        // so the material a crossfade would need is material it never asks for.
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1),
+                                          f.clip(0, Fixture::kShortMediaFrames, 0, f.shortMedia))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1),
+                                                 f.at(Fixture::kShortMediaFrames), f.at(10))));
+        CHECK(f.track(f.v1).transitions().front().isFadeOut());
+    }
+
+    SECTION("longer than the clip it is on, refused") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+        CHECK_FALSE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(80))));
+        CHECK(f.lastError.find("longer than the clip") != std::string::npos);
+    }
+
+    SECTION("a cut nearer than the free end still wins") {
+        // Two clips meeting at 50, the run ending at 100. Asked at 48, the cut
+        // is two frames away and the tail fifty-two: a crossfade, not a fade.
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(48), f.at(10))));
+        CHECK(f.track(f.v1).transitions().front().isCrossFade());
+    }
+
+    SECTION("and the free end wins when it is the nearer one") {
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+        REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(50, 50, 600))));
+        REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(99), f.at(10))));
+        const model::Transition& fade = f.track(f.v1).transitions().front();
+        CHECK(fade.isFadeOut());
+        CHECK(fade.range.endExclusive() == f.at(100));
+    }
+}
+
+TEST_CASE("A fade is resized from its free edge only", "[edit][transition]") {
+    Fixture f;
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.v1), f.at(50), f.at(10))));
+    const model::TransitionId id = f.track(f.v1).transitions().front().id;
+
+    SECTION("dragging the free edge sets the length") {
+        REQUIRE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                   time::TimeRange{f.at(20), f.at(30)})));
+        CHECK(f.track(f.v1).transitions().front().range == time::TimeRange{f.at(20), f.at(30)});
+    }
+
+    SECTION("moving the anchored end is refused") {
+        // A fade out that stops before the clip does is not a shorter fade,
+        // it is a fade somewhere in the middle of a shot.
+        CHECK_FALSE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                       time::TimeRange{f.at(30), f.at(10)})));
+        CHECK(f.lastError.find("stays at the end") != std::string::npos);
+    }
+
+    SECTION("longer than its clip is refused") {
+        CHECK_FALSE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.v1), id,
+                                                       time::TimeRange{f.at(-10), f.at(60)})));
+    }
 }
 
 TEST_CASE("Transitions and track gain survive a round trip", "[edit][transition][io]") {

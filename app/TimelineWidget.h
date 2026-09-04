@@ -143,6 +143,23 @@ public:
     /// nothing whenever anything else had focus.
     void removeSelected(bool ripple);
 
+    /// Break the link between what is selected and whatever it moves with.
+    ///
+    /// Picture and its sound arrive linked and should stay that way for most
+    /// of a cut, but not all of it: a shot held over the sound of the next
+    /// one, a take whose sync has to be nudged a frame, a music bed that
+    /// should not follow the picture it was dropped beside. Every one of those
+    /// needs the pair broken first, and until this there was no way to ask.
+    ///
+    /// Acts on every group in the selection, as one undo step.
+    void unlinkSelected();
+    /// Join what is selected into one link group, so it moves and trims as one.
+    void linkSelected();
+    /// Whether the items above have anything to do. The menu reads these so it
+    /// can offer the one that applies rather than both.
+    [[nodiscard]] bool canUnlinkSelection() const;
+    [[nodiscard]] bool canLinkSelection() const;
+
     /// Where video clips get their filmstrip frames. Not owned; may be null,
     /// in which case clips are drawn as plain blocks. Set by the window, which
     /// is also what shares one cache between the panels that want frames.
@@ -523,8 +540,34 @@ private:
         MaybeBand,
         Keyframe,
         Slip,
-        Pan
+        Pan,
+        TransitionStart,
+        TransitionEnd
     };
+
+    /// Which transition an edge drag is stretching.
+    ///
+    /// Held by id rather than by pointer, for the reason KeyframeDrag is: an
+    /// edit rebuilds the track's transitions and a pointer into them would be
+    /// dangling by the second mouse-move of the gesture.
+    struct TransitionDrag {
+        model::TrackId track;
+        model::TransitionId transition;
+    };
+    TransitionDrag transitionDrag_;
+
+    /// The transition edge under the pointer, if there is one.
+    ///
+    /// Tested before clips, the way keyframes are: a dissolve is drawn over
+    /// the cut between two clips, so its edges sit on top of clip bodies and a
+    /// clip-first test would never let one be grabbed.
+    struct TransitionHit {
+        model::TrackId track;
+        model::TransitionId transition;
+        bool atStart{false};
+    };
+    [[nodiscard]] std::optional<TransitionHit> transitionEdgeAt(int x, int y) const;
+    void updateTransitionDrag(int x);
 
     /// The keyframe being dragged, or an invalid clip id when none is.
     ///

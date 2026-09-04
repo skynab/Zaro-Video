@@ -89,7 +89,37 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             if (!clip.enabled) {
                 continue;
             }
-            const time::TimeRange clipRange = clip.timelineRange.rescaledTo(rate);
+            // A transition on a sound track is a crossfade, and the two clips
+            // it joins are read past the cut into their handles -- exactly as
+            // the picture is. Without this a dissolve dropped on a sound track
+            // was drawn on the timeline and did nothing whatever to what came
+            // out of it, which is the worst kind of control: one that looks
+            // like it worked.
+            const model::Transition* fadingOut = nullptr;
+            const model::Transition* fadingIn = nullptr;
+            for (const model::Transition& transition : track.transitions()) {
+                if (transition.from == clip.id) {
+                    fadingOut = &transition;
+                }
+                if (transition.to == clip.id) {
+                    fadingIn = &transition;
+                }
+            }
+
+            time::TimeRange clipRange = clip.timelineRange.rescaledTo(rate);
+            // Extended to cover the span, so the handles either side of the cut
+            // are actually read. The span straddles the cut, so this only ever
+            // grows the range outwards.
+            if (fadingIn != nullptr) {
+                clipRange = time::TimeRange::fromStartEnd(
+                    std::min(clipRange.start(), fadingIn->range.start().rescaledTo(rate)),
+                    clipRange.endExclusive());
+            }
+            if (fadingOut != nullptr) {
+                clipRange = time::TimeRange::fromStartEnd(
+                    clipRange.start(), std::max(clipRange.endExclusive(),
+                                                fadingOut->range.endExclusive().rescaledTo(rate)));
+            }
             const auto overlap = clipRange.intersection(block);
             if (!overlap) {
                 continue;
@@ -249,20 +279,40 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
             // not know which speaker it is feeding.
             const bool automated = clip.animation.find(model::Param::GainDb) != nullptr ||
                                    clip.animation.find(model::Param::Pan) != nullptr;
-            if (automated) {
+            // A crossfade is a gain that moves too, so it takes the same
+            // per-sample path rather than a second one of its own. Equal power
+            // -- cos and sin of a quarter turn -- because two takes of the same
+            // room are correlated at the join and a linear pair dips audibly in
+            // the middle. It is the same law the pan control uses, for the same
+            // reason.
+            const bool crossfaded = fadingOut != nullptr || fadingIn != nullptr;
+            const bool perSample = automated || crossfaded;
+            if (perSample) {
                 clipGains.resize(static_cast<std::size_t>(available));
                 leftPan.resize(static_cast<std::size_t>(available));
                 rightPan.resize(static_cast<std::size_t>(available));
+                const double quarterTurn = std::acos(-1.0) * 0.5;
                 for (std::int64_t i = 0; i < available; ++i) {
                     const time::RationalTime when{overlap->start().frames() + i, rate};
-                    clipGains[static_cast<std::size_t>(i)] = gainFromDb(clip.gainDbAt(when));
-                    float left = 1.0F;
-                    float right = 1.0F;
-                    if (sourceChannels == 1) {
-                        panGains(clip.panAt(when), left, right);
-                    } else {
-                        balanceGains(clip.panAt(when), left, right);
+                    float gain = automated ? gainFromDb(clip.gainDbAt(when)) : clipGain;
+                    float left = clipLeft;
+                    float right = clipRight;
+                    if (automated) {
+                        if (sourceChannels == 1) {
+                            panGains(clip.panAt(when), left, right);
+                        } else {
+                            balanceGains(clip.panAt(when), left, right);
+                        }
                     }
+                    if (fadingOut != nullptr) {
+                        gain *=
+                            static_cast<float>(std::cos(fadingOut->progressAt(when) * quarterTurn));
+                    }
+                    if (fadingIn != nullptr) {
+                        gain *=
+                            static_cast<float>(std::sin(fadingIn->progressAt(when) * quarterTurn));
+                    }
+                    clipGains[static_cast<std::size_t>(i)] = gain;
                     leftPan[static_cast<std::size_t>(i)] = left;
                     rightPan[static_cast<std::size_t>(i)] = right;
                 }
@@ -287,7 +337,7 @@ Result<media::AudioBuffer> AudioGraph::mix(const model::Sequence& sequence,
                         continue;
                     }
                     const float* in = scratch.channel(from);
-                    if (!automated) {
+                    if (!perSample) {
                         for (std::int64_t i = 0; i < available; ++i) {
                             out[offsetInBlock + i] += in[i] * gain * share;
                         }

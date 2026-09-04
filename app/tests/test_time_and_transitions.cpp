@@ -13,6 +13,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "zaro/core/edit/Operations.h"
+
 #include "../FrameGrab.h"
 #include "GuiFixture.h"
 
@@ -872,5 +874,105 @@ TEST_CASE("Auto-reframe for a different shape", "[gui]") {
     }
     window.setActiveSequence(originalSequenceId);
     window.renderCache().clear();
+    QApplication::processEvents();
+}
+
+// Stretching a dissolve by dragging its edge.
+//
+// The span's length is the length of the fade, so being able to pull it is the
+// whole control: a dissolve that could only ever be the second it was created
+// at is a dissolve nobody can shape. This drives the real widget, so it covers
+// the hit test as well as the edit -- and the hit test is the part that had to
+// be got right, because a dissolve is drawn on top of the two clips it joins
+// and a clip-first test would start a trim every time.
+TEST_CASE("A dissolve can be stretched by dragging its edge", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto trackId = videoTrack.id();
+    const auto rate = sequence.frameRate();
+    const auto row = timeline->rowFor(trackId);
+    REQUIRE(row.has_value());
+    const int y = row->top + row->height / 2;
+
+    // A cut with material either side of it, which is what a dissolve needs.
+    const auto first = videoTrack.clips().front();
+    const auto cutAt = first.start() + zaro::time::RationalTime{
+                                           first.duration().rescaledTo(rate).frames() / 2, rate};
+    auto razored = zaro::edit::makeRazor(window.project(), {sequence.id(), trackId}, cutAt);
+    if (!razored) {
+        zaro::app::testing::failf("%s\n", razored.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*razored));
+
+    auto dissolve = zaro::edit::makeAddCrossDissolve(window.project(), {sequence.id(), trackId},
+                                                     cutAt, zaro::time::RationalTime{10, rate});
+    if (!dissolve) {
+        zaro::app::testing::failf("%s\n", dissolve.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*dissolve));
+    window.commands().breakMerge();
+    QApplication::processEvents();
+
+    const auto spanOf = [&] {
+        const auto& list =
+            window.project().findSequence(sequence.id())->findTrack(trackId)->transitions();
+        REQUIRE(!list.empty());
+        return list.front().range;
+    };
+    const auto before = spanOf();
+
+    // Snapping off: the cut and the playhead are both right there, and a guide
+    // latching the edge onto one of them would measure the drag rather than
+    // the code under test.
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+
+    const int endX = static_cast<int>(timeline->layout().xForTime(before.endExclusive()));
+    const int wantedX = static_cast<int>(
+        timeline->layout().xForTime(before.endExclusive() + zaro::time::RationalTime{8, rate}));
+    const std::size_t stepsBefore = window.commands().position();
+    dragOnTimeline(timeline, endX, wantedX, y);
+    QApplication::processEvents();
+
+    const auto after = spanOf();
+    if (after.duration() <= before.duration()) {
+        zaro::app::testing::failf("dragging the end left the dissolve %lld frames, was %lld\n",
+                                  static_cast<long long>(after.duration().frames()),
+                                  static_cast<long long>(before.duration().frames()));
+    }
+    // The start does not move: dragging one edge stretches, it does not
+    // recentre the span on the cut the way re-adding one would.
+    if (after.start() != before.start()) {
+        zaro::app::testing::failf("dragging the end moved the start too\n");
+    }
+    // The clips are untouched -- a transition is still not an overlap, and a
+    // drag that reached the trim path instead would have moved a clip edge.
+    const auto& clipsNow =
+        window.project().findSequence(sequence.id())->findTrack(trackId)->clips();
+    const zaro::model::Clip* outgoing = nullptr;
+    for (const auto& clip : clipsNow) {
+        if (clip.endExclusive() == cutAt) {
+            outgoing = &clip;
+        }
+    }
+    if (outgoing == nullptr) {
+        zaro::app::testing::failf("the cut moved: the drag trimmed a clip instead\n");
+    }
+    // And the whole gesture is one undo step, not one per mouse move.
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the drag made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    std::printf("  stretched dissolve: %lld -> %lld frames, one step\n",
+                static_cast<long long>(before.duration().frames()),
+                static_cast<long long>(after.duration().frames()));
+
+    timeline->setSnapEnabled(snapWas);
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
     QApplication::processEvents();
 }

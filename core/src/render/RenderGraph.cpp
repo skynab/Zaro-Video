@@ -274,6 +274,32 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
         if (const model::Transition* transition = track.transitionAt(at)) {
             const model::Clip* outgoing = track.find(transition->from);
             const model::Clip* incoming = track.find(transition->to);
+
+            // A span with one side empty is a fade against whatever is below --
+            // black, where this is the bottom track. The one clip is drawn at
+            // the fade's opacity and nothing is composited under it, which is
+            // what makes a fade out on V1 go to black and one on V2 reveal the
+            // track beneath instead of punching a hole in it.
+            if (transition->isFadeIn() || transition->isFadeOut()) {
+                const model::Clip* only = transition->isFadeIn() ? incoming : outgoing;
+                if (only != nullptr && only->enabled) {
+                    const double progress = transition->progressAt(at);
+                    // Linear, not equal power: this is coverage against a
+                    // background, and the eye reads a straight opacity ramp as
+                    // an even fade. The sound version is equal power for the
+                    // opposite reason -- see render::AudioGraph.
+                    const double opacity = transition->isFadeIn() ? progress : 1.0 - progress;
+                    if (const RgbaImage* image =
+                            clipImage(*only, at, generated_, out.width(), out.height())) {
+                        model::Transform faded = pinnedTransformAt(sequence, *only, at);
+                        faded.opacity *= opacity;
+                        drawClip(*only, *image, out, faded, at);
+                        ++lastClipCount_;
+                    }
+                }
+                continue;
+            }
+
             if (outgoing != nullptr && incoming != nullptr) {
                 const auto progress = transition->progressAt(at);
 

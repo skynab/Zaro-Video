@@ -675,6 +675,26 @@ struct PastedClip {
                                                       const EditTarget& target,
                                                       model::TransitionId transition);
 
+/// Change how long an existing transition lasts, and where it sits.
+///
+/// This is what dragging a dissolve's edge calls. Separate from adding one
+/// because the cut is already chosen: a drag says how much of it to show, not
+/// which join it belongs to -- and re-adding would recentre the span on the
+/// cut, which is the one thing a drag of a single edge must not do.
+///
+/// The span has to stay across its cut and within the two clips, and both
+/// clips still need the handles the new length reads into. An asymmetric span
+/// is allowed: a dissolve that starts on the cut and runs into the incoming
+/// clip is an ordinary thing to ask for, and on a sound track it is how a fade
+/// is shaped.
+///
+/// Merged under the transition's id, so a drag across many frames is one undo
+/// step.
+[[nodiscard]] Result<CommandPtr> makeSetTransitionRange(model::Project& project,
+                                                        const EditTarget& target,
+                                                        model::TransitionId transition,
+                                                        const time::TimeRange& range);
+
 // --- The project ------------------------------------------------------------
 
 /// Add a media reference to the project.

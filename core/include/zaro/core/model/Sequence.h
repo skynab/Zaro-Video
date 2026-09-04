@@ -94,8 +94,14 @@ public:
     [[nodiscard]] CaptionTrack& captions() noexcept { return captions_; }
 
     [[nodiscard]] bool isAudible(const Track& track) const;
-    /// Whether any track of either kind is soloed.
-    [[nodiscard]] bool hasSolo() const;
+    /// Whether any track of `kind` is soloed.
+    ///
+    /// Scoped to one kind, because picture and sound are two independent
+    /// solo groups. Soloing a video track means "show me only this shot"; it
+    /// cannot also mean "and silence the whole mix", and asking across both
+    /// lists made it mean exactly that -- an export with a video track left
+    /// soloed came out silent, with the picture perfectly fine.
+    [[nodiscard]] bool hasSolo(TrackKind kind) const;
 
     [[nodiscard]] const Track* findTrack(TrackId id) const;
 

@@ -340,16 +340,39 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
     const float heard = loudest(meter);
     const float masterHeard = loudest(master);
 
-    // Solo a *video* track: the audio track is not soloed, so it falls
-    // silent even though nobody muted it.
+    // Soloing a *video* track must leave the mix exactly as it was. This
+    // used to silence everything: solo was asked across both lists at once,
+    // so isolating a shot -- an ordinary thing to do while cutting -- muted
+    // the whole sequence, and an export with that solo still set came out
+    // with a perfect picture and no sound at all.
     auto* videoSolo = window.project()
                           .findSequence(sequence.id())
                           ->tracksMutable(zaro::model::TrackKind::Video)
                           .data();
     zaro::edit::TrackState soloed;
     soloed.soloed = true;
-    auto built =
+    auto isolatedPicture =
         zaro::edit::makeSetTrackState(window.project(), sequence.id(), videoSolo->id(), soloed);
+    if (!isolatedPicture) {
+        zaro::app::testing::failf("%s\n", isolatedPicture.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*isolatedPicture));
+    window.mixer()->refresh();
+    const float pictureSoloed = loudest(meter);
+    window.commands().undo(window.project());
+    window.mixer()->refresh();
+
+    // Solo a second *sound* track: this one is not soloed, so it falls silent
+    // even though nobody muted it. Picture and sound are separate solo groups,
+    // so it takes a sound track to silence a sound track.
+    auto addTrack = zaro::edit::makeAddTrack(window.project(), sequence.id(),
+                                             zaro::model::TrackKind::Audio, "A-solo");
+    if (!addTrack) {
+        zaro::app::testing::failf("%s\n", addTrack.error().toString().c_str());
+    }
+    window.commands().execute(window.project(), std::move(*addTrack));
+    const auto otherAudio = window.project().findSequence(sequence.id())->audioTracks().back().id();
+    auto built = zaro::edit::makeSetTrackState(window.project(), sequence.id(), otherAudio, soloed);
     if (!built) {
         zaro::app::testing::failf("%s\n", built.error().toString().c_str());
     }
@@ -358,10 +381,10 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
     const float silenced = loudest(meter);
 
     std::printf(
-        "  mixer meters: %.3f heard, %.3f once something else is soloed "
-        "(master %.3f)\n",
+        "  mixer meters: %.3f heard, %.3f once another sound track is soloed, "
+        "%.3f with a video track soloed (master %.3f)\n",
         static_cast<double>(heard), static_cast<double>(silenced),
-        static_cast<double>(masterHeard));
+        static_cast<double>(pictureSoloed), static_cast<double>(masterHeard));
     if (!(heard > 0.01F)) {
         zaro::app::testing::failf("the meters read nothing on a clip with sound\n");
     }
@@ -369,7 +392,11 @@ TEST_CASE("The mixer: solo, and the meters", "[gui]") {
         zaro::app::testing::failf("the master meter reads nothing\n");
     }
     if (!(silenced < heard * 0.05F)) {
-        zaro::app::testing::failf("soloing another track did not silence this one\n");
+        zaro::app::testing::failf("soloing another sound track did not silence this one\n");
+    }
+    if (!(pictureSoloed > heard * 0.5F)) {
+        zaro::app::testing::failf("soloing a video track silenced the mix: %.3f, was %.3f\n",
+                                  static_cast<double>(pictureSoloed), static_cast<double>(heard));
     }
 
     while (window.commands().canUndo()) {

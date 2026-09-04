@@ -1628,12 +1628,42 @@ void TimelineWidget::paintTransitions(QPainter& painter, const ui::TimelineLayou
             box.setLeft(metrics.headerWidth);
         }
 
-        painter.fillRect(box,
-                         QColor(kTransition.red(), kTransition.green(), kTransition.blue(), 90));
+        const bool stretching = (drag_ == Drag::TransitionStart || drag_ == Drag::TransitionEnd) &&
+                                transitionDrag_.transition == transition.id;
+
+        painter.fillRect(box, QColor(kTransition.red(), kTransition.green(), kTransition.blue(),
+                                     stretching ? 140 : 90));
         painter.setPen(kTransition);
         painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
-        // A diagonal, the shape every editor draws for a dissolve.
-        painter.drawLine(box.bottomLeft(), box.topRight());
+        // A diagonal, the shape every editor draws for a dissolve -- and for a
+        // one-sided span it slopes the way the level goes, so a fade out is
+        // told from a fade in without reading a label.
+        if (transition.isFadeOut()) {
+            painter.drawLine(box.topLeft(), box.bottomRight());
+        } else {
+            painter.drawLine(box.bottomLeft(), box.topRight());
+        }
+
+        // A grip at each end, so the span reads as something with edges to
+        // pull rather than as a label painted over the cut. Skipped once the
+        // box is too narrow to hold them, where they would be the whole shape
+        // and say nothing.
+        if (box.width() >= 9.0) {
+            painter.setPen(QPen(kTransition, 2.0));
+            const double inset = 1.5;
+            // Only where there is something to pull. A fade is pinned to the
+            // end of the clip it fades at, and a grip drawn on that end would
+            // advertise a drag the edit refuses.
+            if (!transition.isFadeIn()) {
+                painter.drawLine(QPointF(box.left() + inset, box.top() + 3.0),
+                                 QPointF(box.left() + inset, box.bottom() - 3.0));
+            }
+            if (!transition.isFadeOut()) {
+                painter.drawLine(QPointF(box.right() - inset, box.top() + 3.0),
+                                 QPointF(box.right() - inset, box.bottom() - 3.0));
+            }
+            painter.setPen(kTransition);
+        }
     }
 }
 
@@ -1908,6 +1938,22 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    // Transition edges next, and for the same reason keyframes come first: a
+    // dissolve is drawn across the cut between two clips, so its edges sit on
+    // top of clip bodies. Testing clips first would start a trim or a move
+    // every time and the span could never be grabbed at all.
+    if (tool_ == Tool::Select) {
+        if (const auto edge = transitionEdgeAt(x, y)) {
+            const model::Track* track = seq->findTrack(edge->track);
+            if (track != nullptr && !track->isLocked()) {
+                transitionDrag_ = TransitionDrag{edge->track, edge->transition};
+                drag_ = edge->atStart ? Drag::TransitionStart : Drag::TransitionEnd;
+                update();
+                return;
+            }
+        }
+    }
+
     const auto hit = layout_.hitTest(*seq, x, y);
 
     if (hit && pressWithTool(&*hit, x, y, event->modifiers())) {
@@ -1980,6 +2026,88 @@ void TimelineWidget::beginDrag(const ui::TimelineLayout::Hit& hit, int x, bool r
             drag_ = Drag::MoveClip;
             return;
     }
+}
+
+std::optional<TimelineWidget::TransitionHit> TimelineWidget::transitionEdgeAt(int x, int y) const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || layout_.isInHeaders(x)) {
+        return std::nullopt;
+    }
+    // The same grab width a clip edge uses, so a dissolve's edge and a clip's
+    // feel the same under the pointer.
+    constexpr double kGrab = 5.0;
+
+    for (const auto* tracks : {&seq->videoTracks(), &seq->audioTracks()}) {
+        for (const model::Track& track : *tracks) {
+            const auto row = rowFor(track.id());
+            if (!row || y < row->top || y >= row->top + row->height) {
+                continue;
+            }
+            for (const model::Transition& transition : track.transitions()) {
+                const double startX = layout_.xForTime(transition.range.start());
+                const double endX = layout_.xForTime(transition.range.endExclusive());
+                // A fade has one edge that can be pulled and one that is
+                // pinned to the end of the clip it fades at. Offering the
+                // pinned one would be offering a drag the edit then refuses,
+                // which reads as the timeline having stopped responding.
+                // A fade out is pinned at the clip's end and pulled from its
+                // start; a fade in is the other way about.
+                const bool startGrabs = !transition.isFadeIn();
+                const bool endGrabs = !transition.isFadeOut();
+                // The end first. On a dissolve squeezed down to a couple of
+                // pixels both edges are under the pointer at once, and the end
+                // is the one somebody dragging a fade out is reaching for.
+                if (endGrabs && std::fabs(static_cast<double>(x) - endX) <= kGrab) {
+                    return TransitionHit{track.id(), transition.id, false};
+                }
+                if (startGrabs && std::fabs(static_cast<double>(x) - startX) <= kGrab) {
+                    return TransitionHit{track.id(), transition.id, true};
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+void TimelineWidget::updateTransitionDrag(int x) {
+    model::Sequence* seq = project_->findSequence(sequenceId_);
+    if (seq == nullptr || commands_ == nullptr || !transitionDrag_.transition.isValid()) {
+        return;
+    }
+    const model::Track* track = seq->findTrack(transitionDrag_.track);
+    const model::Transition* transition =
+        track != nullptr ? track->findTransition(transitionDrag_.transition) : nullptr;
+    if (transition == nullptr) {
+        return;
+    }
+
+    // Snapped like any other edge, and against nothing in particular -- a
+    // dissolve's edge wants the cuts and the playhead around it, which is what
+    // an invalid clip id asks for.
+    const time::RationalTime wanted = maybeSnap(layout_.timeForX(x, seq->frameRate()), {});
+
+    const bool movingStart = drag_ == Drag::TransitionStart;
+    const time::TimeRange range =
+        movingStart ? time::TimeRange::fromStartEnd(wanted, transition->range.endExclusive())
+                    : time::TimeRange::fromStartEnd(transition->range.start(), wanted);
+    if (range.duration().frames() <= 0) {
+        return;
+    }
+    if (range == transition->range) {
+        return;
+    }
+
+    auto built = edit::makeSetTransitionRange(*project_, {sequenceId_, transitionDrag_.track},
+                                              transitionDrag_.transition, range);
+    if (!built) {
+        // Refused -- out of handles, or off its cut. The pointer can keep
+        // moving and the stretch resumes when it becomes legal again, which is
+        // how a trim behaves at the end of its source.
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    emit edited();
+    update();
 }
 
 void TimelineWidget::updateTrim(int x) {
@@ -2094,7 +2222,16 @@ void TimelineWidget::clipMenu(const ui::TimelineLayout::Hit& hit, const QPoint& 
     // The pointer decides what the menu is about. Selecting before the menu
     // opens also means the item can act on the selection, which is what every
     // other route into this operation already does.
-    selectOnly(hit);
+    //
+    // Unless the pointer is already inside the selection: right-clicking one of
+    // several selected clips means "do this to all of them", and collapsing the
+    // set to the one under the cursor would make the items that act on a
+    // selection -- linking, above all -- impossible to reach with a menu.
+    if (isSelected(hit.clip)) {
+        makePrimary(hit);
+    } else {
+        selectOnly(hit);
+    }
 
     // Only a piece of decoded picture has scene changes in it. A shape, a
     // title and a nested sequence are all generated rather than shot, and a
@@ -2104,8 +2241,23 @@ void TimelineWidget::clipMenu(const ui::TimelineLayout::Hit& hit, const QPoint& 
         row->kind == model::TrackKind::Video && !clip->nested.isValid() && !clip->graphic.isSet();
 
     QMenu menu;
+
+    // Linking first: it is what a right-click on a clip is most often for, and
+    // the two are one idea shown in whichever direction applies.
+    QAction* unlink = nullptr;
+    QAction* link = nullptr;
+    if (canUnlinkSelection()) {
+        unlink = menu.addAction(QStringLiteral("Unlink Audio and Video"));
+    }
+    if (canLinkSelection()) {
+        link = menu.addAction(QStringLiteral("Link Audio and Video"));
+    }
+
     QAction* detect = nullptr;
     if (analysable) {
+        if (!menu.isEmpty()) {
+            menu.addSeparator();
+        }
         detect = menu.addAction(QStringLiteral("Detect Cuts in This Clip"));
         // Refused by the edit rather than half-done, and an analysis that
         // decodes every frame before being told no is a long wait for nothing.
@@ -2115,7 +2267,15 @@ void TimelineWidget::clipMenu(const ui::TimelineLayout::Hit& hit, const QPoint& 
         return;
     }
 
-    if (const QAction* picked = menu.exec(at); picked != nullptr && picked == detect) {
+    const QAction* picked = menu.exec(at);
+    if (picked == nullptr) {
+        return;
+    }
+    if (picked == unlink) {
+        unlinkSelected();
+    } else if (picked == link) {
+        linkSelected();
+    } else if (picked == detect) {
         emit detectScenesRequested();
     }
 }
@@ -2238,6 +2398,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
         updateTrim(x);
         return;
     }
+    if (drag_ == Drag::TransitionStart || drag_ == Drag::TransitionEnd) {
+        updateTransitionDrag(x);
+        return;
+    }
     if (drag_ == Drag::Slip) {
         updateSlip(x);
         return;
@@ -2250,6 +2414,12 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     // A cursor that tells you what a click will do, before you make it.
     const model::Sequence* seq = sequence();
     if (seq == nullptr) {
+        return;
+    }
+    if (tool_ == Tool::Select && transitionEdgeAt(x, y)) {
+        // The same cursor a clip edge shows: this is a horizontal resize, and
+        // saying so is how somebody discovers the span can be stretched at all.
+        setCursor(Qt::SizeHorCursor);
         return;
     }
     const auto hit = layout_.hitTest(*seq, x, y);
@@ -2397,6 +2567,17 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         // The guide belongs to the gesture, and the gesture is over -- these
         // early returns skip finishDrag, which is where that normally happens.
         snapMark_ = {};
+        update();
+        return;
+    }
+    if (drag_ == Drag::TransitionStart || drag_ == Drag::TransitionEnd) {
+        drag_ = Drag::None;
+        transitionDrag_ = {};
+        snapMark_ = {};
+        if (commands_ != nullptr) {
+            // One drag is one undo step; the next one is a new gesture.
+            commands_->breakMerge();
+        }
         update();
         return;
     }
@@ -2791,6 +2972,112 @@ void TimelineWidget::removeSelected(bool ripple) {
     commands_->execute(*project_, std::move(*built));
     commands_->breakMerge();
     selection_.clear();
+    announceSelection();
+    emit edited();
+    update();
+}
+
+bool TimelineWidget::canUnlinkSelection() const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return false;
+    }
+    for (const edit::ClipRef& ref : selection_) {
+        const model::Track* track = seq->findTrack(ref.track);
+        if (track == nullptr || track->isLocked()) {
+            continue;
+        }
+        if (const model::Clip* clip = track->find(ref.clip);
+            clip != nullptr && clip->link.isValid()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TimelineWidget::canLinkSelection() const {
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr || selection_.size() < 2) {
+        return false;
+    }
+    // Already one group is not something to offer: re-linking a pair that is
+    // already a pair would be an undo step that changes nothing, and the item
+    // would read as though the clips were not linked when they are.
+    model::LinkId shared;
+    bool first = true;
+    for (const edit::ClipRef& ref : selection_) {
+        const model::Track* track = seq->findTrack(ref.track);
+        if (track == nullptr || track->isLocked()) {
+            return false;
+        }
+        const model::Clip* clip = track->find(ref.clip);
+        if (clip == nullptr) {
+            return false;
+        }
+        if (first) {
+            shared = clip->link;
+            first = false;
+        } else if (clip->link != shared || !shared.isValid()) {
+            return true;
+        }
+    }
+    return !shared.isValid();
+}
+
+void TimelineWidget::unlinkSelected() {
+    if (project_ == nullptr || commands_ == nullptr) {
+        return;
+    }
+    const model::Sequence* seq = sequence();
+    if (seq == nullptr) {
+        return;
+    }
+
+    // Every group represented in the selection, unlinked as one undo step.
+    // Selecting a pair and unlinking it should take one press of undo to put
+    // back, not one per clip -- and the command already clears a whole group,
+    // so asking twice for the same group would be two steps that undo to the
+    // same place.
+    std::vector<model::LinkId> done;
+    const edit::CommandStack::Group step{*commands_};
+    for (const edit::ClipRef& ref : selection_) {
+        const model::Track* track = seq->findTrack(ref.track);
+        if (track == nullptr) {
+            continue;
+        }
+        const model::Clip* clip = track->find(ref.clip);
+        if (clip == nullptr || !clip->link.isValid()) {
+            continue;
+        }
+        if (std::find(done.begin(), done.end(), clip->link) != done.end()) {
+            continue;
+        }
+        done.push_back(clip->link);
+        if (auto built = edit::makeUnlinkClips(*project_, {sequenceId_, ref.track}, ref.clip)) {
+            commands_->execute(*project_, std::move(*built));
+        }
+    }
+    if (done.empty()) {
+        return;
+    }
+    commands_->breakMerge();
+    // Re-announced so the outline stops drawing the partners as one: the link
+    // is what `selectedLink_` is read from, and it has just gone.
+    announceSelection();
+    emit edited();
+    update();
+}
+
+void TimelineWidget::linkSelected() {
+    if (project_ == nullptr || commands_ == nullptr || selection_.size() < 2) {
+        return;
+    }
+    auto built = edit::makeLinkClips(*project_, sequenceId_, selection_);
+    if (!built) {
+        return;
+    }
+    commands_->execute(*project_, std::move(*built));
+    commands_->breakMerge();
     announceSelection();
     emit edited();
     update();

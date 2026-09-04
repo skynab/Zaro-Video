@@ -30,6 +30,10 @@ void printUsage() {
     std::puts("  --start <frame>   first frame to render (default 0)");
     std::puts("  --frames <n>      how many frames (default: the whole sequence)");
     std::puts("  --no-audio        render picture only");
+    std::puts("  --video-codec <n> FFmpeg encoder name (default: the container's)");
+    std::puts("  --audio-codec <n> FFmpeg encoder name (default: the container's)");
+    std::puts("  --bit-rate <n>    picture bits per second (default: the encoder's)");
+    std::puts("  --no-copy         re-encode even where the export is a piece of one file");
     std::puts("  --cache-mb <n>    frame cache budget in MB (default 64; export is");
     std::puts("                    linear, so a big cache buys nothing here)");
     std::puts("  --quiet           no progress output");
@@ -57,6 +61,10 @@ int main(int argc, char** argv) {
     std::size_t cacheMegabytes = 64;
     bool includeAudio = true;
     bool quiet = false;
+    bool allowCopy = true;
+    std::string videoCodec;
+    std::string audioCodec;
+    std::int64_t videoBitRate = 0;
 
     for (int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -68,6 +76,14 @@ int main(int argc, char** argv) {
             cacheMegabytes = static_cast<std::size_t>(std::atoll(argv[++i]));
         } else if (arg == "--no-audio") {
             includeAudio = false;
+        } else if (arg == "--video-codec" && i + 1 < argc) {
+            videoCodec = argv[++i];
+        } else if (arg == "--audio-codec" && i + 1 < argc) {
+            audioCodec = argv[++i];
+        } else if (arg == "--bit-rate" && i + 1 < argc) {
+            videoBitRate = std::atoll(argv[++i]);
+        } else if (arg == "--no-copy") {
+            allowCopy = false;
         } else if (arg == "--quiet") {
             quiet = true;
         } else {
@@ -106,6 +122,10 @@ int main(int argc, char** argv) {
     request.frameCount = frameCount;
     request.includeAudio = includeAudio;
     request.cacheBudgetBytes = cacheMegabytes * 1024u * 1024u;
+    request.allowCopy = allowCopy;
+    request.videoCodec = videoCodec;
+    request.audioCodec = audioCodec;
+    request.videoBitRate = videoBitRate;
 
     // The same function the export dialog calls. Two loops doing this would
     // have to be kept agreeing, and the one nobody runs would be the one that

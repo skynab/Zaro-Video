@@ -392,6 +392,175 @@ TEST_CASE("Solo silences everything that is not soloed", "[render][audio][mixer]
     CHECK(bothSoloed->channel(0)[0] == Approx(2.0F).margin(1e-4));
 }
 
+TEST_CASE("A dissolve on a sound track crossfades it", "[render][audio][mixer][transition]") {
+    // The regression this guards: a dissolve dropped on a sound track was
+    // drawn on the timeline, saved in the project, and did nothing at all to
+    // what came out of the mixer -- the two clips butted, at full level,
+    // exactly as if it were not there.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+
+    // Two clips meeting at frame 50, both well inside their media so there are
+    // handles either side of the cut to fade across.
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.a1), f.at(50), f.at(10))));
+
+    // Frame 50 is the cut and the middle of a ten-frame dissolve centred on
+    // it, so both halves are at cos(pi/4) == sin(pi/4) and sum to sqrt(2).
+    // Equal power: two correlated takes hold their level across the join
+    // instead of dipping in the middle the way a linear pair does.
+    const std::int64_t middle = 50 * kSamplesPerFrame;
+    auto atCut = graph.mix(f.sequence(), samples(middle), 1);
+    REQUIRE(atCut);
+    CHECK(atCut->channel(0)[0] == Approx(std::sqrt(2.0F)).margin(1e-3));
+
+    // The far ends of the span are one clip alone, at full level.
+    const std::int64_t before = 44 * kSamplesPerFrame;
+    auto ahead = graph.mix(f.sequence(), samples(before), 1);
+    REQUIRE(ahead);
+    CHECK(ahead->channel(0)[0] == Approx(1.0F).margin(1e-3));
+
+    // And a quarter of the way through -- frame 47.5 of a span running 45 to
+    // 55 -- the halves are cos and sin of an eighth of a turn, not half each.
+    const std::int64_t quarter = 47 * kSamplesPerFrame + (kSamplesPerFrame / 2);
+    auto part = graph.mix(f.sequence(), samples(quarter), 1);
+    REQUIRE(part);
+    const double eighthTurn = std::acos(-1.0) * 0.125;
+    CHECK(part->channel(0)[0] ==
+          Approx(static_cast<float>(std::cos(eighthTurn) + std::sin(eighthTurn))).margin(1e-2));
+}
+
+TEST_CASE("A fade out on a sound clip goes to silence", "[render][audio][mixer][transition]") {
+    // The dissolve button at the tail of a clip, which is what "fade out"
+    // means and what there was previously no way to ask for: a clip with
+    // nothing after it has no cut to dissolve across.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.a1), f.at(50), f.at(10))));
+    REQUIRE(f.track(f.a1).transitions().front().isFadeOut());
+
+    // Before the span, untouched.
+    auto ahead = graph.mix(f.sequence(), samples(35 * kSamplesPerFrame), 1);
+    REQUIRE(ahead);
+    CHECK(ahead->channel(0)[0] == Approx(1.0F).margin(1e-4));
+
+    // The span runs frames 40 to 50. Half way through it is cos of an eighth
+    // turn; at the last sample it has all but gone.
+    auto middle = graph.mix(f.sequence(), samples(45 * kSamplesPerFrame), 1);
+    REQUIRE(middle);
+    CHECK(middle->channel(0)[0] ==
+          Approx(static_cast<float>(std::cos(std::acos(-1.0) * 0.25))).margin(1e-3));
+
+    auto last = graph.mix(f.sequence(), samples((50 * kSamplesPerFrame) - 1), 1);
+    REQUIRE(last);
+    CHECK(last->channel(0)[0] < 0.01F);
+
+    // And it descends the whole way, rather than stepping at a block boundary.
+    float previous = 2.0F;
+    for (std::int64_t frame = 40; frame < 50; ++frame) {
+        auto block = graph.mix(f.sequence(), samples(frame * kSamplesPerFrame), 1);
+        REQUIRE(block);
+        CHECK(block->channel(0)[0] < previous);
+        previous = block->channel(0)[0];
+    }
+}
+
+TEST_CASE("A fade in on a sound clip comes up from silence", "[render][audio][mixer][transition]") {
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.a1), f.at(0), f.at(10))));
+    REQUIRE(f.track(f.a1).transitions().front().isFadeIn());
+
+    auto first = graph.mix(f.sequence(), samples(0), 1);
+    REQUIRE(first);
+    CHECK(first->channel(0)[0] < 0.01F);
+
+    auto after = graph.mix(f.sequence(), samples(20 * kSamplesPerFrame), 1);
+    REQUIRE(after);
+    CHECK(after->channel(0)[0] == Approx(1.0F).margin(1e-4));
+}
+
+TEST_CASE("A stretched dissolve fades over its new length", "[render][audio][mixer][transition]") {
+    // The point of making the span draggable: the length of the span is the
+    // length of the fade, so where the old span had finished the new one is
+    // still going.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 50, 500))));
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(50, 50, 600))));
+    REQUIRE(f.run(edit::makeAddCrossDissolve(f.project, f.on(f.a1), f.at(50), f.at(10))));
+    const model::TransitionId id = f.track(f.a1).transitions().front().id;
+
+    // Frame 42 is outside a ten-frame dissolve centred on the cut and inside a
+    // thirty-frame one.
+    const std::int64_t probe = 42 * kSamplesPerFrame;
+    auto tight = graph.mix(f.sequence(), samples(probe), 1);
+    REQUIRE(tight);
+    CHECK(tight->channel(0)[0] == Approx(1.0F).margin(1e-3));
+
+    REQUIRE(f.run(edit::makeSetTransitionRange(f.project, f.on(f.a1), id,
+                                               time::TimeRange{f.at(35), f.at(30)})));
+    auto wide = graph.mix(f.sequence(), samples(probe), 1);
+    REQUIRE(wide);
+    // Part way through now, so the outgoing half is already coming down and
+    // the incoming half has started -- neither is at unity.
+    CHECK(wide->channel(0)[0] != Approx(1.0F).margin(1e-3));
+    CHECK(wide->channel(0)[0] > 1.0F);
+}
+
+TEST_CASE("Soloing a video track leaves the mix alone", "[render][audio][mixer]") {
+    // The bug this guards shipped silent files. Solo was asked across both
+    // lists at once, so isolating a shot on V1 -- an entirely ordinary thing
+    // to do while cutting -- made every audio track fail the solo test, and an
+    // export with that solo still set came out with a perfect picture and no
+    // sound at all. Picture and sound are two independent solo groups.
+    Fixture f;
+    ConstantAudioSource source;
+    source.define(f.longMedia, 1.0F, 2);
+    render::AudioGraph graph{source};
+    REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.a1), f.clip(0, 100, 500))));
+
+    auto before = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(before);
+    CHECK(before->channel(0)[0] == Approx(1.0F).margin(1e-4));
+
+    f.sequence().findTrack(f.v1)->setSoloed(true);
+    auto after = graph.mix(f.sequence(), samples(0), 480);
+    REQUIRE(after);
+    CHECK(after->channel(0)[0] == Approx(1.0F).margin(1e-4));
+}
+
+TEST_CASE("Solo is scoped to the kind of track it is on", "[model][sequence]") {
+    // The same rule from the other side, and the one the render graph reads to
+    // decide what to draw: a soloed audio track must not blank the picture.
+    Fixture f;
+    f.sequence().findTrack(f.a1)->setSoloed(true);
+    CHECK(f.sequence().hasSolo(model::TrackKind::Audio));
+    CHECK_FALSE(f.sequence().hasSolo(model::TrackKind::Video));
+    CHECK(f.sequence().isAudible(f.track(f.v1)));
+    CHECK(f.sequence().isAudible(f.track(f.v2)));
+    CHECK(f.sequence().isAudible(f.track(f.a1)));
+
+    f.sequence().findTrack(f.a1)->setSoloed(false);
+    f.sequence().findTrack(f.v1)->setSoloed(true);
+    CHECK(f.sequence().hasSolo(model::TrackKind::Video));
+    CHECK_FALSE(f.sequence().hasSolo(model::TrackKind::Audio));
+    CHECK(f.sequence().isAudible(f.track(f.a1)));
+    CHECK(f.sequence().isAudible(f.track(f.v1)));
+    CHECK_FALSE(f.sequence().isAudible(f.track(f.v2)));
+}
+
 TEST_CASE("Mute wins over solo", "[render][audio][mixer]") {
     // Soloing a track someone has muted and hearing it anyway would make mute
     // mean nothing.

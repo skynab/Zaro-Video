@@ -356,7 +356,10 @@ Result<model::Transition> decodeTransition(const json& node) {
     transition.id = model::TransitionId{node.value("id", std::uint64_t{0})};
     transition.from = model::ClipId{node.value("from", std::uint64_t{0})};
     transition.to = model::ClipId{node.value("to", std::uint64_t{0})};
-    if (!transition.id.isValid() || !transition.from.isValid() || !transition.to.isValid()) {
+    // One side may be absent: that is a fade against black or silence rather
+    // than a crossfade, and it is spelled as a missing clip. Both absent is
+    // not a fade of anything, and neither is a span with no id of its own.
+    if (!transition.id.isValid() || (!transition.from.isValid() && !transition.to.isValid())) {
         return Error{ErrorCode::InvalidData, "a transition is missing an id"};
     }
     if (node.contains("kind")) {

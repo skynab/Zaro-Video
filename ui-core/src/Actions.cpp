@@ -71,7 +71,7 @@ constexpr std::array kActions{
 
     // --- Sequence -----------------------------------------------------------
     ActionInfo{"razor", "Razor at Playhead", "Sequence", "Ctrl+K"},
-    ActionInfo{"add-dissolve", "Add Dissolve at Playhead", "Sequence", ""},
+    ActionInfo{"add-dissolve", "Add Dissolve or Fade at Playhead", "Sequence", ""},
     ActionInfo{"render-range", "Render Range…", "Sequence", ""},
     ActionInfo{"frame-size", "Frame Size…", "Sequence", ""},
     ActionInfo{"frame-rate", "Frame Rate…", "Sequence", ""},

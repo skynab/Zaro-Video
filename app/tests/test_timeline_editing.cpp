@@ -1617,3 +1617,76 @@ TEST_CASE("A title dragged from the pane lands as a graphic", "[gui]") {
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();
 }
+
+// Unlinking picture from sound, the way the clip menu asks for it.
+//
+// The menu itself is a modal QMenu and cannot be driven from here, so this
+// exercises what the menu item calls -- which is where all of the behaviour is.
+// Two things have to hold: the whole group goes, not just the clip that was
+// pointed at, and it is one undo step whichever half the pointer was over.
+TEST_CASE("Unlinking a clip breaks the whole pair, in one step", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto& audioTrack = sequence.audioTracks().front();
+
+    const auto picture = videoTrack.clips().front();
+    const auto sound = audioTrack.clips().front();
+    // The fixture's cut arrives linked; a suite that had already broken it
+    // would make this test pass without testing anything.
+    if (!picture.link.isValid() || sound.link != picture.link) {
+        zaro::app::testing::failf("the fixture's picture and sound are not linked\n");
+    }
+
+    timeline->selectOnly(videoTrack.id(), picture.id);
+    if (!timeline->canUnlinkSelection()) {
+        zaro::app::testing::failf("a linked clip did not offer to unlink\n");
+    }
+    if (timeline->canLinkSelection()) {
+        zaro::app::testing::failf("one clip on its own offered to link\n");
+    }
+
+    const std::size_t stepsBefore = window.commands().position();
+    timeline->unlinkSelected();
+
+    const auto& afterPicture = window.sequence()->videoTracks().front().clips().front();
+    const auto& afterSound = window.sequence()->audioTracks().front().clips().front();
+    if (afterPicture.link.isValid()) {
+        zaro::app::testing::failf("the picture is still linked\n");
+    }
+    // The half nobody pointed at: leaving it in a group of one is the state
+    // that makes a later drag take a partner that is no longer there.
+    if (afterSound.link.isValid()) {
+        zaro::app::testing::failf("the sound was left in a link group of its own\n");
+    }
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("unlinking made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    if (timeline->canUnlinkSelection()) {
+        zaro::app::testing::failf("an unlinked clip still offers to unlink\n");
+    }
+
+    // And back again, through the item the menu offers once they are apart.
+    timeline->selectOnly(videoTrack.id(), picture.id);
+    timeline->selectAlso(audioTrack.id(), sound.id);
+    if (!timeline->canLinkSelection()) {
+        zaro::app::testing::failf("two unlinked clips did not offer to link\n");
+    }
+    timeline->linkSelected();
+    const auto& relinkedPicture = window.sequence()->videoTracks().front().clips().front();
+    const auto& relinkedSound = window.sequence()->audioTracks().front().clips().front();
+    if (!relinkedPicture.link.isValid() || relinkedSound.link != relinkedPicture.link) {
+        zaro::app::testing::failf("linking the pair back together did not take\n");
+    }
+    if (timeline->canLinkSelection()) {
+        zaro::app::testing::failf("a pair that is already one group offered to link again\n");
+    }
+    std::printf("  unlink and relink: whole group, one step each\n");
+
+    window.commands().undo(window.project());
+    window.commands().undo(window.project());
+    QApplication::processEvents();
+}

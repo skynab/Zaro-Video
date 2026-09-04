@@ -94,12 +94,14 @@ time::RationalTime Sequence::duration() const {
     return longest;
 }
 
-bool Sequence::hasSolo() const {
-    for (const auto* list : {&videoTracks_, &audioTracks_}) {
-        for (const Track& track : *list) {
-            if (track.isSoloed()) {
-                return true;
-            }
+bool Sequence::hasSolo(TrackKind kind) const {
+    // One kind only. Solo answers "of the things I could be shown, show me
+    // just this one", and picture and sound are two separate sets of things:
+    // a soloed video track says nothing about what should be heard.
+    const std::vector<Track>& list = kind == TrackKind::Video ? videoTracks_ : audioTracks_;
+    for (const Track& track : list) {
+        if (track.isSoloed()) {
+            return true;
         }
     }
     return false;
@@ -111,7 +113,7 @@ bool Sequence::isAudible(const Track& track) const {
         // anyway would make mute mean nothing.
         return false;
     }
-    return track.isSoloed() || !hasSolo();
+    return track.isSoloed() || !hasSolo(track.kind());
 }
 
 const Clip* findClip(const Sequence& sequence, ClipId id) {

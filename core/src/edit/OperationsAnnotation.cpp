@@ -249,8 +249,78 @@ Result<CommandPtr> makeAddCrossDissolve(Project& project, const EditTarget& targ
             incoming = &clips[i + 1];
         }
     }
+    // The nearest edge that is *not* a cut: the head of a run, the tail of one,
+    // either side of a gap. A span there is a fade against nothing -- which is
+    // what the dissolve button means at the end of a cut, and the thing there
+    // was previously no way at all to ask for.
+    //
+    // Weighed against the nearest cut rather than used only when there is no
+    // cut at all: on a track of two clips the tail of the second is a perfectly
+    // ordinary place to want a fade out, and the cut behind it is not what
+    // somebody pointing at the end of the sequence meant.
+    const Clip* fading = nullptr;
+    bool atTail = true;
+    std::int64_t freeDistance = std::numeric_limits<std::int64_t>::max();
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        const bool joinedBefore = i > 0 && clips[i - 1].endExclusive() == clips[i].start();
+        const bool joinedAfter =
+            i + 1 < clips.size() && clips[i].endExclusive() == clips[i + 1].start();
+        for (const bool tail : {false, true}) {
+            if (tail ? joinedAfter : joinedBefore) {
+                continue;  // that end is a cut, and the search above owns it
+            }
+            const time::RationalTime edge = tail ? clips[i].endExclusive() : clips[i].start();
+            const std::int64_t distance =
+                std::abs((edge - when).rescaledTo(sequence.frameRate()).frames());
+            if (distance < freeDistance) {
+                freeDistance = distance;
+                fading = &clips[i];
+                atTail = tail;
+            }
+        }
+    }
+
+    // The span lies *inside* the clip rather than straddling a join, so it
+    // reads no handles and can always be added -- a fade out on a clip that
+    // uses every frame of its source is an ordinary thing to want, and refusing
+    // it for want of material past the end would be refusing material the fade
+    // never asks for.
+    if (fading != nullptr && (outgoing == nullptr || freeDistance < bestDistance)) {
+        const Clip* nearest = fading;
+        if (span > nearest->duration()) {
+            return Error{ErrorCode::InvalidData, "the fade is longer than the clip it is on"};
+        }
+
+        model::Transition fade;
+        fade.id = project.ids().next<model::TransitionTag>();
+        fade.kind = model::TransitionKind::CrossDissolve;
+        if (atTail) {
+            fade.from = nearest->id;
+            fade.range = time::TimeRange{nearest->endExclusive() - span, span};
+        } else {
+            fade.to = nearest->id;
+            fade.range = time::TimeRange{nearest->start(), span};
+        }
+
+        const TrackId onTrack = target.track;
+        return makeCommand(target.sequence, atTail ? "Add fade out" : "Add fade in", {},
+                           [fade, onTrack](Sequence& seq) {
+                               Track* t = seq.findTrack(onTrack);
+                               ZARO_CHECK(t != nullptr, "track vanished between build and apply");
+                               std::vector<model::Transition> rebuilt = t->transitions();
+                               // One fade per end, the same rule a cut has:
+                               // asking again replaces rather than stacks.
+                               std::erase_if(rebuilt, [&fade](const model::Transition& other) {
+                                   return other.from == fade.from && other.to == fade.to;
+                               });
+                               rebuilt.push_back(fade);
+                               t->setTransitions(std::move(rebuilt));
+                           });
+    }
+
     if (outgoing == nullptr) {
-        return Error{ErrorCode::NotFound, "there is no cut here to dissolve across"};
+        // Neither a cut nor an edge: an empty track.
+        return Error{ErrorCode::NotFound, "there is nothing here to dissolve"};
     }
 
     const time::RationalTime cut = outgoing->endExclusive();
@@ -304,6 +374,118 @@ Result<CommandPtr> makeAddCrossDissolve(Project& project, const EditTarget& targ
                                return other.from == transition.from && other.to == transition.to;
                            });
                            rebuilt.push_back(transition);
+                           t->setTransitions(std::move(rebuilt));
+                       });
+}
+
+Result<CommandPtr> makeSetTransitionRange(Project& project, const EditTarget& target,
+                                          model::TransitionId transitionId,
+                                          const time::TimeRange& range) {
+    auto located = locate(project, target);
+    if (!located) {
+        return located.error();
+    }
+    const Sequence& sequence = *located->sequence;
+    const Track& track = *located->track;
+    const model::Transition* existing = track.findTransition(transitionId);
+    if (existing == nullptr) {
+        return Error{ErrorCode::NotFound, "no such transition on that track"};
+    }
+
+    const time::TimeRange wanted{atRate(range.start(), sequence.frameRate()),
+                                 atRate(range.duration(), sequence.frameRate())};
+    if (wanted.duration().frames() <= 0) {
+        return Error{ErrorCode::InvalidData, "a transition needs a positive duration"};
+    }
+    if (wanted.start().frames() < 0) {
+        return Error{ErrorCode::InvalidData, "the transition would start before the sequence"};
+    }
+
+    const Clip* outgoing = track.find(existing->from);
+    const Clip* incoming = track.find(existing->to);
+
+    // A fade against nothing lies inside its one clip, so the rules are the
+    // clip's own edges: it is anchored to the end it fades at and free at the
+    // other, which is exactly the edge somebody drags to say how long it is.
+    if (existing->isFadeOut() || existing->isFadeIn()) {
+        const Clip* on = existing->isFadeOut() ? outgoing : incoming;
+        if (on == nullptr) {
+            return Error{ErrorCode::NotFound, "the transition's clip is not there"};
+        }
+        const bool tail = existing->isFadeOut();
+        // The anchored end must not move. Dragging the far edge is what sets
+        // the length; dragging the fade off its own clip is not a length.
+        if (tail ? wanted.endExclusive() != on->endExclusive() : wanted.start() != on->start()) {
+            return Error{ErrorCode::InvalidData, "a fade stays at the end it fades at"};
+        }
+        if (wanted.start() < on->start() || wanted.endExclusive() > on->endExclusive()) {
+            return Error{ErrorCode::InvalidData, "the fade is longer than the clip it is on"};
+        }
+
+        const TrackId fadeTrack = target.track;
+        return makeCommand(target.sequence, "Resize fade",
+                           "transition-range:" + std::to_string(transitionId.value()),
+                           [transitionId, wanted, fadeTrack](Sequence& seq) {
+                               Track* t = seq.findTrack(fadeTrack);
+                               ZARO_CHECK(t != nullptr, "track vanished between build and apply");
+                               std::vector<model::Transition> rebuilt = t->transitions();
+                               for (model::Transition& transition : rebuilt) {
+                                   if (transition.id == transitionId) {
+                                       transition.range = wanted;
+                                   }
+                               }
+                               t->setTransitions(std::move(rebuilt));
+                           });
+    }
+
+    if (outgoing == nullptr || incoming == nullptr) {
+        return Error{ErrorCode::NotFound, "the transition's clips are not both there"};
+    }
+
+    // Still across the cut it was made for. A span dragged clear of the join
+    // is not a shorter dissolve, it is a dissolve somewhere there is nothing
+    // to dissolve -- and the render reads both clips throughout the span, so
+    // it would show the outgoing clip's handles over the incoming one's.
+    const time::RationalTime cut = outgoing->endExclusive();
+    if (wanted.start() > cut || wanted.endExclusive() < cut) {
+        return Error{ErrorCode::InvalidData, "the transition has to stay across its cut"};
+    }
+    // And no longer than the material either side of it, which is the same
+    // rule adding one obeys.
+    if (wanted.start() < outgoing->start() || wanted.endExclusive() > incoming->endExclusive()) {
+        return Error{ErrorCode::InvalidData, "the transition is longer than the clips it joins"};
+    }
+
+    Clip extendedOut = *outgoing;
+    extendedOut.sourceRange = time::TimeRange::fromStartEnd(
+        outgoing->sourceRange.start(), outgoing->sourceTimeAt(wanted.endExclusive()));
+    if (Status fits = checkSourceFits(project, extendedOut); !fits) {
+        return Error{fits.error().code(),
+                     "the outgoing clip has no handles past the cut: " + fits.error().message()};
+    }
+
+    Clip extendedIn = *incoming;
+    extendedIn.sourceRange = time::TimeRange::fromStartEnd(incoming->sourceTimeAt(wanted.start()),
+                                                           incoming->sourceRange.endExclusive());
+    if (Status fits = checkSourceFits(project, extendedIn); !fits) {
+        return Error{fits.error().code(),
+                     "the incoming clip has no handles before the cut: " + fits.error().message()};
+    }
+
+    const TrackId trackId = target.track;
+    // Merged under one key, so dragging an edge across twenty frames is one
+    // undo step rather than twenty -- the same treatment a trim gets.
+    return makeCommand(target.sequence, "Resize transition",
+                       "transition-range:" + std::to_string(transitionId.value()),
+                       [transitionId, wanted, trackId](Sequence& seq) {
+                           Track* t = seq.findTrack(trackId);
+                           ZARO_CHECK(t != nullptr, "track vanished between build and apply");
+                           std::vector<model::Transition> rebuilt = t->transitions();
+                           for (model::Transition& transition : rebuilt) {
+                               if (transition.id == transitionId) {
+                                   transition.range = wanted;
+                               }
+                           }
                            t->setTransitions(std::move(rebuilt));
                        });
 }

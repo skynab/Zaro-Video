@@ -376,8 +376,10 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
     runs(razor, router, "razor");
     row->addWidget(razor);
 
-    QPushButton* dissolve =
-        iconButton(bar, app::icons::Glyph::CrossFade, "Put a dissolve on the cut at the playhead");
+    QPushButton* dissolve = iconButton(
+        bar, app::icons::Glyph::CrossFade,
+        "Put a dissolve on the cut at the playhead, or a fade on a clip's end where there is "
+        "no cut. Drag its edge to set how long it lasts.");
     runs(dissolve, router, "add-dissolve");
     row->addWidget(dissolve);
 

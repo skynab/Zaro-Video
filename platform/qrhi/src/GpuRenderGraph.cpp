@@ -169,6 +169,25 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
         if (const model::Transition* transition = track.transitionAt(at)) {
             const model::Clip* outgoing = track.find(transition->from);
             const model::Clip* incoming = track.find(transition->to);
+
+            // A span with one side empty is a fade against whatever is below.
+            // The CPU path's twin, and it has to stay its twin: a preview that
+            // faded differently from the export is the disagreement this whole
+            // traversal is written to avoid.
+            if (transition->isFadeIn() || transition->isFadeOut()) {
+                const model::Clip* only = transition->isFadeIn() ? incoming : outgoing;
+                if (only != nullptr && only->enabled) {
+                    const double progress = transition->progressAt(at);
+                    const double opacity = transition->isFadeIn() ? progress : 1.0 - progress;
+                    model::Transform faded = pinnedTransformAt(sequence, *only, at);
+                    faded.opacity *= opacity;
+                    if (drawTransitionSide(*only, sequence, faded, at, generated_, nullptr)) {
+                        ++lastClipCount_;
+                    }
+                }
+                continue;
+            }
+
             if (outgoing != nullptr && incoming != nullptr) {
                 const double progress = transition->progressAt(at);
 
