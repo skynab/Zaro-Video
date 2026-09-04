@@ -34,7 +34,12 @@ struct Bars {
     QLabel* autosaveLabel{nullptr};
 
     /// The tool bar: the format on the left, the workspace tabs in the middle.
-    QLabel* formatLabel{nullptr};
+    /// The format readout is a button rather than a label. It is the one place
+    /// in the window that says what the frame size and rate are, which makes it
+    /// the first place somebody looks to change them -- and until it could be
+    /// pressed, the answer was a menu they had to already know about.
+    QPushButton* formatButton{nullptr};
+    QPushButton* rateButton{nullptr};
     QMap<QString, QPushButton*> workspaceTabs;
     QMap<QString, QAction*> workspaceActions;
     QStackedWidget* actionStack{nullptr};

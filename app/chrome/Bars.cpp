@@ -14,10 +14,12 @@ void refresh(const Bars& bars, const Status& status) {
     bars.autosaveLabel->setText(status.modified ? "Unsaved changes" : "Saved");
 
     if (status.haveSequence) {
-        bars.formatLabel->setText(QString("%1×%2 · %3 fps · Rec.709")
-                                      .arg(status.width)
-                                      .arg(status.height)
-                                      .arg(status.frameRate, 0, 'g', 5));
+        // Split in two so each half opens the thing that sets it: the size is
+        // pressed to change the size, the rate to change the rate.
+        // The chevron is doing real work: it is what tells somebody scanning
+        // the bar that these two are openable at all.
+        bars.formatButton->setText(QString("%1×%2 ⌄").arg(status.width).arg(status.height));
+        bars.rateButton->setText(QString("%1 fps · Rec.709 ⌄").arg(status.frameRate, 0, 'g', 5));
         bars.timelineLabel->setText(
             QString("%1 · %2").arg(status.sequenceName, status.durationTimecode));
         bars.viewerLabel->setText(QString("%1 — %2").arg(status.projectName, status.sequenceName));
@@ -28,11 +30,19 @@ void refresh(const Bars& bars, const Status& status) {
         QString("%1 tool · %2 workspace").arg(status.toolName, status.workspace));
     if (status.inDeliver) {
         // In Deliver the interesting middle fact is the queue, not the bin, and
-        // the tool bar's left label is the range rather than the format.
+        // the tool bar's left readout is the range rather than the format. A
+        // range is not a setting, so it is shown plain and does not open a menu.
         bars.statusMiddle->setText(status.deliverStatus);
-        bars.formatLabel->setText(status.deliverRange);
+        bars.formatButton->setText(status.deliverRange);
+        bars.formatButton->setEnabled(false);
+        bars.formatButton->setCursor(Qt::ArrowCursor);
+        bars.rateButton->setVisible(false);
         bars.renderButton->setText(status.rendering ? "Stop render" : "Start render");
     } else {
+        bars.formatButton->setEnabled(status.haveSequence);
+        bars.formatButton->setCursor(status.haveSequence ? Qt::PointingHandCursor
+                                                         : Qt::ArrowCursor);
+        bars.rateButton->setVisible(status.haveSequence);
         bars.statusMiddle->setText(QString("%1 %2 · %3")
                                        .arg(status.binItems)
                                        .arg(status.binItems == 1 ? "item" : "items",
