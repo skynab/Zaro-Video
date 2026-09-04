@@ -951,8 +951,9 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     QApplication::processEvents();
 
     const auto drop = [timeline](zaro::model::MediaRefId media, int x, int y) {
-        const std::unique_ptr<QMimeData> mime{
-            zaro::app::encodeMediaDrag(zaro::app::MediaDrag{media, {}})};
+        zaro::app::MediaDrag dragged;
+        dragged.media = media;
+        const std::unique_ptr<QMimeData> mime{zaro::app::encodeMediaDrag(dragged)};
         QDragEnterEvent entering{QPoint{x, y}, Qt::CopyAction, mime.get(), Qt::LeftButton,
                                  Qt::NoModifier};
         QCoreApplication::sendEvent(timeline, &entering);
@@ -1178,8 +1179,9 @@ TEST_CASE("A take dropped on a sound row brings its picture too", "[gui]") {
     const std::size_t a1Before = window.sequence()->audioTracks().front().clips().size();
     const std::size_t stepsBefore = window.commands().position();
 
-    const std::unique_ptr<QMimeData> mime{
-        zaro::app::encodeMediaDrag(zaro::app::MediaDrag{picture, {}})};
+    zaro::app::MediaDrag asPicture;
+    asPicture.media = picture;
+    const std::unique_ptr<QMimeData> mime{zaro::app::encodeMediaDrag(asPicture)};
     QDragEnterEvent entering{QPoint{dropX, soundY}, Qt::CopyAction, mime.get(), Qt::LeftButton,
                              Qt::NoModifier};
     QCoreApplication::sendEvent(timeline, &entering);

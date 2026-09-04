@@ -191,6 +191,11 @@ constexpr model::Param kPlacementParams[] = {
                     return colour.saturation;
             }
         }
+        case model::Param::TextReveal:
+            // Not on the transform and not on the colour: the only parameter
+            // whose value lives nowhere but its own curve, and whose value
+            // without one is all of the text.
+            return clip.parameterAt(model::Param::TextReveal, at);
         default:
             break;
     }
@@ -1003,6 +1008,14 @@ void EffectControls::buildTextGroup() {
     style->addStretch(1);
     form->addRow(styleRow);
     form->addRow("Align", textAlign_);
+
+    // A typewriter, as a parameter rather than an effect: it animates with the
+    // same stopwatch as everything else, and a title showing all of itself is
+    // the value it has when nobody has touched it.
+    textReveal_ = makeSpin(0.0, 1.0, 0.05, 3);
+    textReveal_->setObjectName("text-reveal");
+    textReveal_->setToolTip("How much of the line is shown. Animate it for a typewriter.");
+    addRow(form, "Reveal", model::Param::TextReveal, textReveal_);
     textGroup_ = text;
     text->setObjectName("inspector-group-text");
 
@@ -1812,6 +1825,7 @@ void EffectControls::applyToWidgets() {
         textSize_->setValue(clip->graphic.pointSize);
         textBold_->setChecked(clip->graphic.bold);
         textItalic_->setChecked(clip->graphic.italic);
+        textReveal_->setValue(clip->parameterAt(model::Param::TextReveal, position_));
         const int alignIndex = textAlign_->findData(clip->graphic.alignment);
         textAlign_->setCurrentIndex(alignIndex >= 0 ? alignIndex : textAlign_->findData(0));
     }

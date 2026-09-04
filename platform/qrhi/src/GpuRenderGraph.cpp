@@ -76,7 +76,8 @@ bool GpuRenderGraph::drawTransitionSide(const model::Clip& clip, const model::Se
             scratch = render::RgbaImage{sequence.width(), sequence.height()};
         }
         if (clip.graphic.kind == model::GraphicKind::Text) {
-            if (!render::drawText(clip.graphic, text_, scratch)) {
+            if (!render::drawText(clip.graphic, text_, scratch,
+                                  clip.parameterAt(model::Param::TextReveal, at))) {
                 // No font engine, or it failed. A missing title is a visible,
                 // diagnosable gap; a failed render is a stalled edit.
                 return false;
@@ -235,7 +236,8 @@ Status GpuRenderGraph::drawClips(const model::Sequence& sequence, const time::Ra
                 generated_ = render::RgbaImage{sequence.width(), sequence.height()};
             }
             if (clip->graphic.kind == model::GraphicKind::Text) {
-                if (!render::drawText(clip->graphic, text_, generated_)) {
+                if (!render::drawText(clip->graphic, text_, generated_,
+                                      clip->parameterAt(model::Param::TextReveal, at))) {
                     continue;
                 }
             } else {

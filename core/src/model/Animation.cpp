@@ -201,7 +201,8 @@ std::span<const Param> allParams() noexcept {
         Param::Pan,        Param::Temperature,   Param::Tint,
         Param::Exposure,   Param::Contrast,      Param::Saturation,
         Param::MaskX,      Param::MaskY,         Param::StabiliseX,
-        Param::StabiliseY, Param::StabiliseZoom, Param::TimeRemap};
+        Param::StabiliseY, Param::StabiliseZoom, Param::TextReveal,
+        Param::TimeRemap};
     return kAll;
 }
 
@@ -247,6 +248,8 @@ const char* toString(Param param) noexcept {
             return "stabiliseY";
         case Param::StabiliseZoom:
             return "stabiliseZoom";
+        case Param::TextReveal:
+            return "textReveal";
         case Param::TimeRemap:
             return "timeRemap";
     }

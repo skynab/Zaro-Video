@@ -158,7 +158,8 @@ const RgbaImage* RenderGraph::clipImage(const model::Clip& clip, const time::Rat
             scratch = RgbaImage{width, height};
         }
         if (clip.graphic.kind == model::GraphicKind::Text) {
-            if (!drawText(clip.graphic, text_, scratch)) {
+            if (!drawText(clip.graphic, text_, scratch,
+                          clip.parameterAt(model::Param::TextReveal, at))) {
                 ++skippedText_;
                 return nullptr;
             }
@@ -338,7 +339,8 @@ Status RenderGraph::compositeInto(const model::Sequence& sequence, const time::R
                 generated_ = RgbaImage{out.width(), out.height()};
             }
             if (clip->graphic.kind == model::GraphicKind::Text) {
-                if (!drawText(clip->graphic, text_, generated_)) {
+                if (!drawText(clip->graphic, text_, generated_,
+                              clip->parameterAt(model::Param::TextReveal, at))) {
                     // No rasteriser, or it failed. Counted rather than
                     // ignored, so a caller can say "this render had no font
                     // engine" instead of leaving someone to notice the missing

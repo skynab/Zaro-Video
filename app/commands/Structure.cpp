@@ -310,6 +310,20 @@ Status animateTitle(const Context& context, TitleMotion motion) {
                 return Error{ErrorCode::Internal, "the fade could not be written"};
             }
             break;
+        case TitleMotion::Typewriter: {
+            // Over most of the clip rather than over half a second: a
+            // typewriter is the reading, not an entrance. The last part is
+            // left alone so the finished line holds before the clip ends --
+            // text that completes on its final frame reads as text nobody
+            // finished writing.
+            const time::RationalTime typed = time::RationalTime::fromSeconds(
+                time::Rational::approximate(range.duration().toSecondsDouble() * 0.7), rate);
+            if (!key(model::Param::TextReveal, first, 0.0) ||
+                !key(model::Param::TextReveal, first + typed, 1.0)) {
+                return Error{ErrorCode::Internal, "the typewriter could not be written"};
+            }
+            break;
+        }
         case TitleMotion::SlideOn: {
             // A short travel and a fade together, which is what a lower third
             // does: a slide with no fade reads as a mistake at the frame edge,

@@ -146,6 +146,7 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, text, "title-fade-in");
     addItem(router, text, "title-fade-out");
     addItem(router, text, "title-slide-on");
+    addItem(router, text, "title-typewriter");
     text->addSeparator();
     addItem(router, text, "show-transcript");
 

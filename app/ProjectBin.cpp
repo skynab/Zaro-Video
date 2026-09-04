@@ -437,9 +437,13 @@ protected:
             if (item == nullptr || item->data(kRoleHeader).toBool()) {
                 continue;  // a folder heading is a place, not a file
             }
-            return encodeMediaDrag(
-                MediaDrag{model::MediaRefId{item->data(kRoleMedia).toULongLong()},
-                          model::SubclipId{item->data(kRoleSubclip).toULongLong()}});
+            // Filled in by name rather than as an aggregate: the payload grew a
+            // third field for titles, and a brace list that named two of three
+            // is a warning on one compiler and a silent gap on the next.
+            MediaDrag dragged;
+            dragged.media = model::MediaRefId{item->data(kRoleMedia).toULongLong()};
+            dragged.subclip = model::SubclipId{item->data(kRoleSubclip).toULongLong()};
+            return encodeMediaDrag(dragged);
         }
         // Nothing draggable was picked. Qt takes null to mean "no drag", which
         // is the right answer for a heading rather than an empty one.

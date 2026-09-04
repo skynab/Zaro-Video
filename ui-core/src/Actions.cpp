@@ -85,6 +85,7 @@ constexpr std::array kActions{
     ActionInfo{"title-fade-in", "Fade the Title In", "Text", ""},
     ActionInfo{"title-fade-out", "Fade the Title Out", "Text", ""},
     ActionInfo{"title-slide-on", "Slide the Title On", "Text", ""},
+    ActionInfo{"title-typewriter", "Type the Title On", "Text", ""},
     ActionInfo{"show-transcript", "Transcript…", "Text", "Ctrl+T"},
     ActionInfo{"fit-music", "Fit Music to the Picture", "Audio", ""},
 

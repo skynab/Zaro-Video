@@ -282,6 +282,10 @@ double Clip::parameterValue(Param param) const {
             // would collapse the picture to nothing, which is not what "no
             // stabilisation" means.
             return 1.0;
+        case Param::TextReveal:
+            // All of it, for the same shape of reason: a title that is not
+            // being typed on is a title you can read.
+            return 1.0;
         case Param::StabiliseX:
         case Param::StabiliseY:
         case Param::MaskX:
@@ -355,6 +359,7 @@ void Clip::setParameterValue(Param param, double value) {
         case Param::StabiliseX:
         case Param::StabiliseY:
         case Param::StabiliseZoom:
+        case Param::TextReveal:
         case Param::TimeRemap:
             // Nothing to set: see parameterValue.
             return;

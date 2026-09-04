@@ -886,3 +886,91 @@ TEST_CASE("A missing font is named rather than silently swapped", "[gui]") {
     }
     QApplication::processEvents();
 }
+
+// A title typed on, a character at a time.
+//
+// The reveal is a parameter like any other -- a curve on the clip, read at the
+// frame being drawn -- and the only one that changes what the text says rather
+// than what is done to the picture of it. Both graphs read it through the same
+// call, so what this checks is the whole path: the preset writes a curve, the
+// curve reaches the compositor, and the picture at a third of the way through
+// carries less ink than the picture at the end.
+TEST_CASE("A title types itself on", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(titleNow() != nullptr);
+
+    // A longer line than "Title", so there is something to type: five glyphs
+    // at a third of the way through is one glyph, and one glyph on a 320-wide
+    // frame is not a measurable difference.
+    zaro::model::Graphic wordy = titleNow()->graphic;
+    wordy.text = "MMMMMMMMMMMMMMMM";
+    wordy.alignment = -1;
+    auto reworded = zaro::edit::makeSetGraphic(
+        window.project(), {sequence.id(), window.editContext().track}, titleNow()->id, wordy);
+    REQUIRE(reworded.hasValue());
+    window.commands().execute(window.project(), std::move(*reworded));
+    window.commands().breakMerge();
+    QApplication::processEvents();
+
+    const auto begins = titleNow()->start();
+    const auto ends = titleNow()->endExclusive();
+    const std::size_t stepsBefore = window.commands().position();
+    window.animateTitle(zaro::app::commands::TitleMotion::Typewriter);
+    QApplication::processEvents();
+
+    const zaro::model::Clip* title = titleNow();
+    REQUIRE(title != nullptr);
+    const zaro::model::Curve* reveal = title->animation.find(zaro::model::Param::TextReveal);
+    if (reveal == nullptr || reveal->keyframes().size() != 2) {
+        zaro::app::testing::failf("the typewriter did not write two keyframes\n");
+    }
+    if (title->parameterAt(zaro::model::Param::TextReveal, begins) > 0.01) {
+        zaro::app::testing::failf("the title shows something at its first frame\n");
+    }
+    // Finished before the clip ends, so the completed line holds.
+    const auto nearlyOver = ends - zaro::time::RationalTime{2, sequence.frameRate()};
+    if (title->parameterAt(zaro::model::Param::TextReveal, nearlyOver) < 0.99) {
+        zaro::app::testing::failf("the title never finishes typing\n");
+    }
+
+    // And the picture agrees. Measured a third of the way in against the end,
+    // through the real compositor and the real font engine.
+    const auto frames = (ends - begins).frames();
+    window.setPosition(begins + zaro::time::RationalTime{frames / 3, sequence.frameRate()});
+    const double early = meanGray(settledGrab(window.monitor()));
+    window.setPosition(nearlyOver);
+    const double late = meanGray(settledGrab(window.monitor()));
+    std::printf("  typewriter: %.2f a third in, %.2f at the end\n", early, late);
+    if (!(late > early + 0.05)) {
+        zaro::app::testing::failf("the line does not grow as it is typed (%.2f then %.2f)\n", early,
+                                  late);
+    }
+
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the typewriter took %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}

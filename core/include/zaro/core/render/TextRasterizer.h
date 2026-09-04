@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "zaro/core/Error.h"
 #include "zaro/core/model/Caption.h"
@@ -47,8 +48,22 @@ public:
 /// tool that was never given one renders the rest of the sequence and leaves
 /// the text out, which is visible and diagnosable. Silently drawing an empty
 /// frame instead would look like a bug in the text.
+///
+/// `reveal` is how much of the line is shown, from none of it to all of it --
+/// a typewriter. Applied by cutting the string before the glyphs are laid out
+/// rather than by masking the picture afterwards, because those are different
+/// pictures: a mask over centred text uncovers the middle of a line that is
+/// already fully laid out, and what a typewriter does is put characters down
+/// one at a time.
 [[nodiscard]] bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer,
-                            RgbaImage& out);
+                            RgbaImage& out, double reveal = 1.0);
+
+/// The first `reveal` of a string, by characters rather than by bytes.
+///
+/// Exposed for the test, and because "how much of this text is that" is the
+/// kind of arithmetic that is wrong in a way nobody sees until a title in a
+/// language with multi-byte characters comes out cut in half.
+[[nodiscard]] std::string revealedText(const std::string& text, double reveal);
 
 /// The graphic a caption is drawn as, at a given frame size.
 ///

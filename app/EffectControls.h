@@ -465,6 +465,9 @@ private:
     QFontComboBox* textFamily_{nullptr};
     /// Says so when the family a title asks for is not on this machine.
     QLabel* textFontNote_{nullptr};
+    /// How much of the line is shown: a typewriter, animated like any other
+    /// parameter.
+    QDoubleSpinBox* textReveal_{nullptr};
     QDoubleSpinBox* textSize_{nullptr};
     QCheckBox* textBold_{nullptr};
     QCheckBox* textItalic_{nullptr};

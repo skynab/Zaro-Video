@@ -2260,6 +2260,7 @@ void PreviewWindow::bindCommands() {
     actions_.bind("title-fade-in", [this] { animateTitle(commands::TitleMotion::FadeIn); });
     actions_.bind("title-fade-out", [this] { animateTitle(commands::TitleMotion::FadeOut); });
     actions_.bind("title-slide-on", [this] { animateTitle(commands::TitleMotion::SlideOn); });
+    actions_.bind("title-typewriter", [this] { animateTitle(commands::TitleMotion::Typewriter); });
     actions_.bind("add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
     actions_.bind("next-marker", [this] { doNextMarker(); });
     actions_.bind("previous-marker", [this] { doPreviousMarker(); });

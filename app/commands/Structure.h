@@ -70,6 +70,8 @@ enum class TitleMotion : std::uint8_t {
     FadeIn,
     FadeOut,
     SlideOn,
+    /// Typed on, a character at a time.
+    Typewriter,
 };
 
 /// Animate the selected title.

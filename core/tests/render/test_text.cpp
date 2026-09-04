@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cstdint>
+#include <string>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -58,6 +60,21 @@ model::Graphic textGraphic() {
 }
 
 }  // namespace
+
+/// Remembers how long the string it was handed was, which is what a reveal
+/// changes. Drawing nothing is fine here: what is under test is the cut, and
+/// the glyphs themselves are the font engine's business.
+class CountingRasterizer final : public zaro::render::TextRasterizer {
+public:
+    Status renderCoverage(const zaro::model::Graphic& graphic,
+                          zaro::render::RgbaImage& coverage) override {
+        lastLength = graphic.text.size();
+        coverage.clear();
+        return {};
+    }
+
+    std::size_t lastLength{0};
+};
 
 TEST_CASE("Coverage becomes premultiplied colour in linear light", "[render][text]") {
     // The font engine produces coverage, not colour. Asking it for coloured
@@ -214,4 +231,74 @@ TEST_CASE("Burned-in captions with no font engine are counted", "[render][graph]
 
     REQUIRE(graph.composite(f.sequence(), f.at(10)));
     CHECK(graph.lastSkippedTextCount() == 1);
+}
+
+TEST_CASE("A reveal cuts the line by characters, not by bytes", "[render][text]") {
+    using zaro::render::revealedText;
+
+    CHECK(revealedText("Kestrel Bay", 1.0) == "Kestrel Bay");
+    CHECK(revealedText("Kestrel Bay", 0.0).empty());
+    // Eleven characters: a reveal of a bit over half is six of them.
+    CHECK(revealedText("Kestrel Bay", 0.6) == "Kestre");
+    // Anything past the end is the whole line rather than a read off it.
+    CHECK(revealedText("Kestrel Bay", 2.0) == "Kestrel Bay");
+    CHECK(revealedText("", 0.5).empty());
+
+    // Multi-byte characters count as one each, and the cut never lands inside
+    // one: a half-written character is something no font can draw.
+    const std::string accented = "\u00e9\u00e9\u00e9\u00e9";  // four characters, eight bytes
+    CHECK(revealedText(accented, 0.5) == "\u00e9\u00e9");
+    CHECK(revealedText(accented, 0.25) == "\u00e9");
+    for (double reveal = 0.0; reveal <= 1.0; reveal += 0.05) {
+        const std::string shown = revealedText(accented, reveal);
+        CHECK(shown.size() % 2 == 0);  // never half of a two-byte character
+    }
+}
+
+TEST_CASE("A revealed title draws less of itself", "[render][text]") {
+    zaro::model::Graphic title;
+    title.kind = zaro::model::GraphicKind::Text;
+    title.text = "MMMMMMMMMM";
+    title.pointSize = 40.0;
+    title.width = 600.0;
+    title.height = 100.0;
+    title.alignment = -1;  // left, so the line grows rightwards as it is typed
+    title.red = 1.0;
+    title.green = 1.0;
+    title.blue = 1.0;
+
+    CountingRasterizer rasterizer;
+    zaro::render::RgbaImage out{200, 80};
+
+    const auto covered = [&](double reveal) {
+        REQUIRE(zaro::render::drawText(title, &rasterizer, out, reveal));
+        return rasterizer.lastLength;
+    };
+
+    // What the engine was asked to draw grows with the reveal, and the ends are
+    // the whole line and none of it.
+    const std::size_t none = covered(0.0);
+    const std::size_t third = covered(0.34);
+    const std::size_t most = covered(0.7);
+    const std::size_t all = covered(1.0);
+    CHECK(none == 0);
+    CHECK(third > none);
+    CHECK(most > third);
+    CHECK(all == title.text.size());
+}
+
+TEST_CASE("The reveal survives a trip through a project file", "[render][text][io]") {
+    // A parameter that cannot be saved is a parameter somebody loses when they
+    // close the project. The name is the only thing the file carries, so the
+    // round trip is what proves the pair of conversions agree.
+    zaro::model::Param decoded{};
+    REQUIRE(zaro::model::paramFromString("textReveal", decoded));
+    CHECK(decoded == zaro::model::Param::TextReveal);
+    CHECK(std::string{zaro::model::toString(zaro::model::Param::TextReveal)} == "textReveal");
+
+    // And it is in the list everything that visits every parameter walks, which
+    // is what makes it appear in the file, the keyframe panel and the curve
+    // editor without any of them naming it.
+    const auto all = zaro::model::allParams();
+    CHECK(std::find(all.begin(), all.end(), zaro::model::Param::TextReveal) != all.end());
 }

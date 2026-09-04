@@ -168,6 +168,20 @@ enum class Param : std::uint8_t {
     /// value where the other analysis parameters do not.
     StabiliseZoom,
 
+    /// How much of a title's text is shown, from none of it to all of it.
+    ///
+    /// A typewriter, and the only parameter that changes what the text *says*
+    /// rather than what is done to the picture of it. Absent means one -- the
+    /// whole line -- which puts it with `StabiliseZoom` among the parameters
+    /// whose "not animated" value is not zero: a title that defaulted to
+    /// showing none of itself would be a title nobody could read until they
+    /// found this.
+    ///
+    /// It has no static value to set. A reveal that is not animated is not a
+    /// reveal, and a half-revealed title held for five seconds is a typo
+    /// rather than a choice.
+    TextReveal,
+
     /// Which frame of the media is shown, in seconds of source time.
     ///
     /// The odd one out, and deliberately so. Every other parameter answers

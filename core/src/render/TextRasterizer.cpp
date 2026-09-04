@@ -1,11 +1,48 @@
 #include "zaro/core/render/TextRasterizer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <string>
 
 namespace zaro::render {
 
-bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer, RgbaImage& out) {
+std::string revealedText(const std::string& text, double reveal) {
+    if (reveal >= 1.0) {
+        return text;
+    }
+    if (reveal <= 0.0) {
+        return {};
+    }
+    // Counted in characters, not bytes: a continuation byte is the second half
+    // of something, and cutting between the two makes a character no font can
+    // draw. This counts UTF-8 lead bytes, which is what "how many characters"
+    // means for everything short of a combining accent -- and an accent that
+    // arrives a frame after its letter is a typewriter working, not a bug.
+    std::size_t characters = 0;
+    for (const char byte : text) {
+        characters += (static_cast<unsigned char>(byte) & 0xC0U) != 0x80U ? 1U : 0U;
+    }
+    const auto wanted =
+        static_cast<std::size_t>(std::floor(static_cast<double>(characters) * reveal));
+    if (wanted >= characters) {
+        return text;
+    }
+
+    std::size_t seen = 0;
+    for (std::size_t at = 0; at < text.size(); ++at) {
+        if ((static_cast<unsigned char>(text[at]) & 0xC0U) != 0x80U) {
+            if (seen == wanted) {
+                return text.substr(0, at);
+            }
+            ++seen;
+        }
+    }
+    return text;
+}
+
+bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer, RgbaImage& out,
+              double reveal) {
     if (!out.isValid()) {
         return false;
     }
@@ -16,7 +53,17 @@ bool drawText(const model::Graphic& graphic, TextRasterizer* rasterizer, RgbaIma
     if (rasterizer == nullptr) {
         return false;
     }
-    if (Status drawn = rasterizer->renderCoverage(graphic, out); !drawn) {
+
+    // The reveal is applied to the string rather than to the frame, so the
+    // rasteriser sees an ordinary graphic that happens to say less. Nothing
+    // downstream -- the engine, the colour maths, either graph -- has to know
+    // this parameter exists.
+    model::Graphic shown = graphic;
+    shown.text = revealedText(graphic.text, reveal);
+    if (shown.text.empty()) {
+        return true;  // typed nothing yet, which is not a failure either
+    }
+    if (Status drawn = rasterizer->renderCoverage(shown, out); !drawn) {
         return false;
     }
 
