@@ -311,6 +311,12 @@ QPainterPath pathFor(Glyph glyph) {
             path.lineTo(11.8, 6.3);
             return path;
 
+        case Glyph::CaretUp:
+            path.moveTo(4.2, 9.7);
+            path.lineTo(8.0, 5.9);
+            path.lineTo(11.8, 9.7);
+            return path;
+
         case Glyph::CaretRight:
             path.moveTo(6.3, 4.2);
             path.lineTo(10.1, 8.0);

@@ -1,5 +1,6 @@
 #include "TitleOverlay.h"
 
+#include <QApplication>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -65,6 +66,7 @@ void TitleOverlay::setTarget(model::Project* project, model::SequenceId sequence
     clipId_ = clip;
     commands_ = commands;
     dragging_ = Part::None;
+    pending_ = Part::None;
     snappedX_.reset();
     snappedY_.reset();
     setVisible(isEditing());
@@ -392,9 +394,10 @@ void TitleOverlay::mousePressEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
-    dragging_ = part;
+    pending_ = part;
     grabbedAt_ = event->position();
     startedFrom_ = *found;
+    stepsAtPress_ = commands_ != nullptr ? commands_->position() : 0;
     event->accept();
 }
 
@@ -403,6 +406,16 @@ void TitleOverlay::mouseMoveEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
+    const QPointF fromPress = event->position() - grabbedAt_;
+    const double travelled =
+        std::sqrt(fromPress.x() * fromPress.x() + fromPress.y() * fromPress.y());
+    if (dragging_ == Part::None && pending_ != Part::None &&
+        travelled >= static_cast<double>(QApplication::startDragDistance())) {
+        // Far enough to be a drag rather than an unsteady click.
+        dragging_ = pending_;
+        pending_ = Part::None;
+    }
+
     if (dragging_ == Part::None) {
         // Only the cursor changes: a box that is not being dragged still says
         // where its handles are.
@@ -468,9 +481,13 @@ void TitleOverlay::mouseMoveEvent(QMouseEvent* event) {
 
 void TitleOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (dragging_ == Part::None) {
+        // A press that never became a drag. Nothing was written, so there is
+        // nothing to close off -- but the press is spent either way.
+        pending_ = Part::None;
         event->ignore();
         return;
     }
+    pending_ = Part::None;
     dragging_ = Part::None;
     snappedX_.reset();
     snappedY_.reset();
@@ -497,8 +514,18 @@ void TitleOverlay::mouseDoubleClickEvent(QMouseEvent* event) {
     // still open, and leaving it open means the next pointer move resizes the
     // box somebody is trying to type into.
     dragging_ = Part::None;
+    pending_ = Part::None;
     snappedX_.reset();
     snappedY_.reset();
+    // Whatever that press managed to do before the second click identified the
+    // gesture, undone. A threshold keeps a steady hand from starting a drag at
+    // all, but a hand that drifts far enough is indistinguishable from somebody
+    // beginning to drag -- until the second click arrives and says it was not.
+    if (commands_ != nullptr && project_ != nullptr) {
+        while (commands_->position() > stepsAtPress_ && commands_->undo(*project_)) {
+        }
+        emit edited();
+    }
     beginTyping();
     event->accept();
 }

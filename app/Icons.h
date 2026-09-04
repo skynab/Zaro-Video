@@ -42,6 +42,7 @@ enum class Glyph {
     Waveform,      ///< A sound file, in the bin
     Image,         ///< A still, in the bin
     CaretDown,     ///< An open group heading
+    CaretUp,       ///< The other half of a spin box's pair
     CaretRight,    ///< A closed group heading
     DotsThree,     ///< The overflow menu: the second filled glyph
     Rows,          ///< The list/thumbnail view toggle

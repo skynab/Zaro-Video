@@ -109,6 +109,14 @@ private:
     edit::CommandStack* commands_{nullptr};
 
     Part dragging_{Part::None};
+    /// What a press landed on, while it is still only a press.
+    ///
+    /// A drag does not begin until the pointer has gone far enough to mean one.
+    /// Without that, the press inside a double-click started a gesture, the
+    /// hand's own tremor between the two clicks was a move, and snapping pulled
+    /// the box onto the nearest guide -- so opening a title to type in it moved
+    /// the title.
+    Part pending_{Part::None};
     /// Where the pointer was when the gesture started, and the box it started
     /// from: every move is measured against those rather than against the last
     /// one, so a clamped drag does not accumulate error the pointer never
@@ -123,6 +131,13 @@ private:
     /// time is a widget whose focus and geometry have to be re-established each
     /// time. Null until then; a child, so the overlay owns it.
     QPlainTextEdit* editor_{nullptr};
+    /// Where the history stood when the button went down.
+    ///
+    /// A double-click arrives as a press, a release and then the double-click,
+    /// and the press is a press like any other: it may already have dragged the
+    /// box before the second click says what the gesture actually was. This is
+    /// what that gets unwound to.
+    std::size_t stepsAtPress_{0};
     /// Where the history stood when typing started. Escape unwinds back to it,
     /// which is how abandoning a pass leaves no step behind rather than leaving
     /// a step that changes nothing.
