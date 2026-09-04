@@ -4,6 +4,7 @@
 #include <QDataStream>
 #include <QIODevice>
 #include <QMimeData>
+#include <QString>
 #include <cstdint>
 
 namespace zaro::app {
@@ -23,7 +24,8 @@ QMimeData* encodeMediaDrag(const MediaDrag& dragged) {
     QByteArray payload;
     QDataStream out{&payload, QIODevice::WriteOnly};
     out << static_cast<quint64>(dragged.media.value())
-        << static_cast<quint64>(dragged.subclip.value());
+        << static_cast<quint64>(dragged.subclip.value())
+        << QString::fromStdString(dragged.titlePreset);
 
     auto* mime = new QMimeData;
     mime->setData(kMimeType, payload);
@@ -38,14 +40,16 @@ std::optional<MediaDrag> decodeMediaDrag(const QMimeData* mime) {
     QDataStream in{&payload, QIODevice::ReadOnly};
     quint64 media = 0;
     quint64 subclip = 0;
-    in >> media >> subclip;
+    QString preset;
+    in >> media >> subclip >> preset;
     if (in.status() != QDataStream::Ok) {
         return std::nullopt;
     }
     MediaDrag dragged;
     dragged.media = model::MediaRefId{static_cast<std::uint64_t>(media)};
     dragged.subclip = model::SubclipId{static_cast<std::uint64_t>(subclip)};
-    if (!dragged.media.isValid()) {
+    dragged.titlePreset = preset.toStdString();
+    if (!dragged.isSomething()) {
         return std::nullopt;  // a heading, or a row with nothing behind it
     }
     return dragged;

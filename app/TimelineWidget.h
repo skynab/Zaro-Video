@@ -204,6 +204,13 @@ signals:
     /// window owns both -- so the timeline says what was asked for and leaves
     /// the doing to whoever is listening.
     void detectScenesRequested();
+    /// Somebody asked for a title from the timeline's own menu.
+    ///
+    /// A request rather than the edit: what a title is made of -- how big the
+    /// text is for this frame, how long it runs, which row it lands on -- is
+    /// decided by the command the window owns, and the timeline would only be
+    /// a second copy of those decisions.
+    void addTitleRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;

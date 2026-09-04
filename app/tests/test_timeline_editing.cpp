@@ -1482,3 +1482,124 @@ TEST_CASE("A clip being dragged cuts nothing until it is let go of", "[gui]") {
     timeline->setSnapEnabled(snapWas);
     QApplication::processEvents();
 }
+
+// A title dragged out of the pane's Titles tab.
+//
+// The same gesture as a file, and the same landing rules -- a row of its own
+// when the one under the pointer is busy, a row regardless from the band at the
+// top -- but what lands is generated rather than read. What this covers is the
+// half that differs: a title has no media and no sound, so nothing may go
+// looking for either.
+TEST_CASE("A title dragged from the pane lands as a graphic", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    auto* timeline = window.timeline();
+    auto* bin = window.bin();
+    if (timeline == nullptr || bin == nullptr) {
+        zaro::app::testing::failf("there is no timeline or no media pane\n");
+    }
+    const bool snapWas = timeline->snapEnabled();
+    timeline->setSnapEnabled(false);
+
+    // The drag the Titles tab actually starts, rather than one made up here:
+    // the list has to be draggable and its payload has to be what the timeline
+    // reads.
+    auto* titleList = bin->findChild<QListWidget*>("title-list");
+    if (titleList == nullptr || titleList->count() == 0 || !titleList->dragEnabled()) {
+        zaro::app::testing::failf("the Titles tab offers nothing to drag\n");
+    }
+    const std::unique_ptr<QMimeData> fromBin{
+        titleList->model()->mimeData({titleList->model()->index(0, 0)})};
+    const auto decoded = zaro::app::decodeMediaDrag(fromBin.get());
+    if (!decoded || !decoded->isTitle()) {
+        zaro::app::testing::failf("the Titles tab's drag does not carry a title\n");
+    }
+
+    const auto drop = [timeline, &decoded](int x, int y) {
+        const std::unique_ptr<QMimeData> mime{zaro::app::encodeMediaDrag(*decoded)};
+        QDragEnterEvent entering{QPoint{x, y}, Qt::CopyAction, mime.get(), Qt::LeftButton,
+                                 Qt::NoModifier};
+        QCoreApplication::sendEvent(timeline, &entering);
+        if (!entering.isAccepted()) {
+            zaro::app::testing::failf("the timeline refused a title at %d,%d\n", x, y);
+        }
+        QDropEvent dropping{QPointF{static_cast<double>(x), static_cast<double>(y)}, Qt::CopyAction,
+                            mime.get(), Qt::LeftButton, Qt::NoModifier};
+        QCoreApplication::sendEvent(timeline, &dropping);
+        QApplication::processEvents();
+    };
+    const auto rowY = [&window, timeline](model::TrackId track) {
+        const auto row = timeline->rowFor(track);
+        REQUIRE(row.has_value());
+        return row->top + row->height / 2;
+    };
+
+    timeline->zoomToFit();
+    QApplication::processEvents();
+    const auto v1 = window.sequence()->videoTracks().front().id();
+    const auto a1 = window.sequence()->audioTracks().front().id();
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+    const std::size_t audioTracksBefore = window.sequence()->audioTracks().size();
+    const std::size_t v1ClipsBefore = window.sequence()->findTrack(v1)->clips().size();
+    const std::size_t a1ClipsBefore = window.sequence()->findTrack(a1)->clips().size();
+    const std::size_t stepsBefore = window.commands().position();
+
+    // Over the clip already cut on V1: a picture row of its own, and no sound
+    // row anywhere -- a title has no other half to bring.
+    const int overX = static_cast<int>(timeline->layout().xForTime(
+                          window.sequence()->findTrack(v1)->extent().endExclusive())) /
+                      2;
+    drop(overX, rowY(v1));
+    if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
+        zaro::app::testing::failf("the title did not take a picture row of its own\n");
+    }
+    if (window.sequence()->audioTracks().size() != audioTracksBefore ||
+        window.sequence()->findTrack(a1)->clips().size() != a1ClipsBefore) {
+        zaro::app::testing::failf("a title reached the sound rows\n");
+    }
+    if (window.sequence()->findTrack(v1)->clips().size() != v1ClipsBefore) {
+        zaro::app::testing::failf("the title overwrote what was already on V1\n");
+    }
+    const zaro::model::Track& made = window.sequence()->videoTracks().back();
+    if (made.clips().size() != 1 ||
+        made.clips().front().graphic.kind != zaro::model::GraphicKind::Text) {
+        zaro::app::testing::failf("what landed is not a text layer\n");
+    }
+    // Sized to this frame, and saying what the preset is called.
+    const zaro::model::Graphic& graphic = made.clips().front().graphic;
+    if (graphic.text.empty() || graphic.width > static_cast<double>(window.sequence()->width())) {
+        zaro::app::testing::failf("the title's box does not fit the frame\n");
+    }
+
+    // Aimed at a sound row, a title still goes to the picture: it is picture
+    // and nothing else, whatever it was let go of over.
+    const std::size_t audioAfterFirst = window.sequence()->audioTracks().size();
+    std::size_t pictureClips = 0;
+    for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+        pictureClips += track.clips().size();
+    }
+    drop(overX, rowY(a1));
+    if (window.sequence()->audioTracks().size() != audioAfterFirst) {
+        zaro::app::testing::failf("a title dropped on a sound row made a sound row\n");
+    }
+    std::size_t pictureClipsAfter = 0;
+    for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+        pictureClipsAfter += track.clips().size();
+    }
+    if (pictureClipsAfter != pictureClips + 1) {
+        zaro::app::testing::failf("the title did not fall through to the picture rows\n");
+    }
+
+    // One undo step each, as any other drop.
+    if (window.commands().position() != stepsBefore + 2) {
+        zaro::app::testing::failf("two title drops made %zu undo steps, not two\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    std::printf("  dragged titles: %s, on picture rows only\n", graphic.text.c_str());
+
+    for (int i = 0; i < 2; ++i) {
+        window.commands().undo(window.project());
+    }
+    timeline->setSnapEnabled(snapWas);
+    QApplication::processEvents();
+}

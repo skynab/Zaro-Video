@@ -2,9 +2,12 @@
 
 #include "Structure.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <string>
 
 #include "zaro/core/edit/Operations.h"
+#include "zaro/core/model/Graphic.h"
 #include "zaro/core/render/SceneDetect.h"
 
 namespace zaro::app::commands {
@@ -165,6 +168,165 @@ Result<MatchedFrame> frameToMatch(const Context& context) {
         return Error{ErrorCode::InvalidData, "this clip is generated: there is no frame to match"};
     }
     return MatchedFrame{ref->id, clip->activeSourceTimeAt(context.position)};
+}
+
+Result<edit::ClipRef> addTitle(const Context& context, const std::string& text,
+                               const time::RationalTime& duration) {
+    const model::Sequence* sequence = context.sequence();
+    if (sequence == nullptr) {
+        return Error{ErrorCode::InvalidData, "there is no sequence to put a title in"};
+    }
+    if (duration.toSecondsDouble() <= 0.0) {
+        return Error{ErrorCode::InvalidData, "a title needs a length"};
+    }
+
+    // Sized to the frame rather than to a number of points. `pointSize` is read
+    // as pixels by the rasteriser -- deliberately, so a title is the same size
+    // in a delivered frame whatever the machine that rendered it thought its
+    // screen was -- which means the default has to scale with the sequence or a
+    // title on a 4K cut comes out the size it would be on a thumbnail.
+    const auto frameHeight = static_cast<double>(sequence->height());
+    const auto frameWidth = static_cast<double>(sequence->width());
+    model::Graphic graphic;
+    graphic.kind = model::GraphicKind::Text;
+    graphic.text = text;
+    // No family: the rasteriser then uses the machine's default, which is a
+    // typeface that is certainly installed. Somebody choosing one is the first
+    // thing the inspector offers.
+    graphic.pointSize = std::max(12.0, frameHeight / 12.0);
+    graphic.alignment = 0;
+    // A box the width of the title-safe area, tall enough for two lines of it.
+    graphic.width = frameWidth * 0.8;
+    graphic.height = std::max(graphic.pointSize * 2.4, frameHeight * 0.2);
+    graphic.centreX = 0.0;
+    graphic.centreY = 0.0;
+    graphic.red = 1.0;
+    graphic.green = 1.0;
+    graphic.blue = 1.0;
+    graphic.alpha = 1.0;
+
+    const time::Rational& rate = sequence->frameRate();
+    const time::TimeRange range{context.position.rescaledTo(rate), duration.rescaledTo(rate)};
+
+    // One undo step for the whole thing, including the row it may have to make:
+    // the row is part of putting the title down rather than a separate thing
+    // anybody asked for.
+    const edit::CommandStack::Group step{context.commands()};
+
+    model::TrackId target = context.track;
+    const model::Track* picked = sequence->findTrack(target);
+    if (picked == nullptr || picked->kind() != model::TrackKind::Video) {
+        target = sequence->videoTracks().empty() ? model::TrackId{}
+                                                 : sequence->videoTracks().front().id();
+        picked = target.isValid() ? sequence->findTrack(target) : nullptr;
+    }
+    const bool needsRow =
+        picked == nullptr || picked->isLocked() || !picked->clipsIn(range).empty();
+    if (needsRow) {
+        const std::size_t count = sequence->videoTracks().size();
+        auto track = edit::makeAddTrack(context.project(), sequence->id(), model::TrackKind::Video,
+                                        "V" + std::to_string(count + 1));
+        if (!track) {
+            return track.error();
+        }
+        context.commands().execute(context.project(), std::move(*track));
+        // The command replaced the sequence wholesale, so nothing read before
+        // this line may be used after it.
+        sequence = context.sequence();
+        if (sequence == nullptr || sequence->videoTracks().empty()) {
+            return Error{ErrorCode::Internal, "the row for the title did not appear"};
+        }
+        target = sequence->videoTracks().back().id();
+    }
+
+    auto built = edit::makeAddGraphic(context.project(), {sequence->id(), target}, graphic, range);
+    if (!built) {
+        return built.error();
+    }
+    context.commands().execute(context.project(), std::move(*built));
+    context.commands().breakMerge();
+
+    sequence = context.sequence();
+    const model::Track* landed = sequence != nullptr ? sequence->findTrack(target) : nullptr;
+    if (landed == nullptr) {
+        return Error{ErrorCode::Internal, "the title's row went missing"};
+    }
+    for (const model::Clip& clip : landed->clips()) {
+        if (clip.start() == range.start() && clip.graphic.kind == model::GraphicKind::Text) {
+            return edit::ClipRef{target, clip.id};
+        }
+    }
+    return Error{ErrorCode::Internal, "the title did not land anywhere"};
+}
+
+Status animateTitle(const Context& context, TitleMotion motion) {
+    const model::Sequence* sequence = context.sequence();
+    const model::Clip* clip = context.selectedClip();
+    if (sequence == nullptr || clip == nullptr) {
+        return Error{ErrorCode::InvalidData, "select a title first"};
+    }
+    if (clip->graphic.kind != model::GraphicKind::Text) {
+        return Error{ErrorCode::Unsupported, "that clip is not a title"};
+    }
+
+    // Keyframes are written in the clip's own source time, which for a graphic
+    // runs alongside its time on the timeline: `makeAddGraphic` gives it a
+    // source range identical to its timeline range for exactly this reason.
+    const time::TimeRange range = clip->sourceRange;
+    const time::Rational& rate = range.duration().rate();
+    const double seconds = std::min(0.5, range.duration().toSecondsDouble() / 3.0);
+    if (seconds <= 0.0) {
+        return Error{ErrorCode::InvalidData, "that title is too short to animate"};
+    }
+    const time::RationalTime span =
+        time::RationalTime::fromSeconds(time::Rational::approximate(seconds), rate);
+    const time::RationalTime first = range.start();
+    const time::RationalTime last = range.endExclusive() - time::RationalTime{1, rate};
+
+    // One undo step for the pair, or the four: a move is one decision, and
+    // taking half of it back leaves a title that fades in from nothing and
+    // never arrives.
+    const edit::CommandStack::Group step{context.commands()};
+    const edit::EditTarget target{sequence->id(), context.track};
+
+    const auto key = [&](model::Param param, const time::RationalTime& when, double value) {
+        auto built = edit::makeSetKeyframe(context.project(), target, clip->id, param, when, value);
+        if (built) {
+            context.commands().execute(context.project(), std::move(*built));
+        }
+        return static_cast<bool>(built);
+    };
+
+    switch (motion) {
+        case TitleMotion::FadeIn:
+            if (!key(model::Param::Opacity, first, 0.0) ||
+                !key(model::Param::Opacity, first + span, 1.0)) {
+                return Error{ErrorCode::Internal, "the fade could not be written"};
+            }
+            break;
+        case TitleMotion::FadeOut:
+            if (!key(model::Param::Opacity, last - span, 1.0) ||
+                !key(model::Param::Opacity, last, 0.0)) {
+                return Error{ErrorCode::Internal, "the fade could not be written"};
+            }
+            break;
+        case TitleMotion::SlideOn: {
+            // A short travel and a fade together, which is what a lower third
+            // does: a slide with no fade reads as a mistake at the frame edge,
+            // and the distance is a fraction of the frame so it looks the same
+            // whatever the sequence is.
+            const double travel = -static_cast<double>(sequence->width()) * 0.12;
+            if (!key(model::Param::PositionX, first, travel) ||
+                !key(model::Param::PositionX, first + span, 0.0) ||
+                !key(model::Param::Opacity, first, 0.0) ||
+                !key(model::Param::Opacity, first + span, 1.0)) {
+                return Error{ErrorCode::Internal, "the slide could not be written"};
+            }
+            break;
+        }
+    }
+    context.commands().breakMerge();
+    return {};
 }
 
 }  // namespace zaro::app::commands

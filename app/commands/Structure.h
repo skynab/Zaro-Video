@@ -42,6 +42,46 @@ Status replaceSelectedSource(const Context& context, model::MediaRefId media);
 Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId source,
                                      const time::TimeRange& range);
 
+/// Put a title on the timeline at the playhead.
+///
+/// A title is a clip whose picture is generated -- see `model::Graphic` -- so
+/// this is `makeAddGraphic` with the decisions a person should not have to make
+/// filled in: how big the text is for this frame size, how long the clip runs,
+/// and which row it lands on.
+///
+/// The row is the one the timeline says is picked, unless something is already
+/// there over that span, in which case the title gets a row of its own above
+/// it. That is the rule a drop from the media pane already follows, and it is
+/// the one that cannot overwrite a cut somebody has made.
+///
+/// Returns the clip and the track it ended up on, so the caller can select what
+/// it just made: a title arrives empty of anything but the word "Title", and
+/// the next thing anybody does is type over it.
+Result<edit::ClipRef> addTitle(const Context& context, const std::string& text,
+                               const time::RationalTime& duration);
+
+/// The ready-made moves a title can be given.
+///
+/// Built out of the curves a clip already has -- opacity and position -- rather
+/// than out of anything a title owns, which is why they are presets and not
+/// features: everything here is something somebody could keyframe by hand, and
+/// the point is not having to.
+enum class TitleMotion : std::uint8_t {
+    FadeIn,
+    FadeOut,
+    SlideOn,
+};
+
+/// Animate the selected title.
+///
+/// Refused on a clip that is not a title. The motions are about the way words
+/// arrive, and a preset applied to a shot would be a surprise rather than a
+/// convenience.
+///
+/// Half a second, or a third of the clip when the clip is shorter than that: a
+/// fade that outlasts the title it is fading is one nobody can read through.
+Status animateTitle(const Context& context, TitleMotion motion);
+
 /// Which frame of which file the selected clip is showing at the playhead.
 struct MatchedFrame {
     model::MediaRefId media;

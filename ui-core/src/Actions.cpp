@@ -81,6 +81,10 @@ constexpr std::array kActions{
     ActionInfo{"overwrite-from-source", "Overwrite from Source", "Sequence", "Period"},
 
     // --- Text and audio -----------------------------------------------------
+    ActionInfo{"add-title", "Add Title", "Text", "Ctrl+Shift+T"},
+    ActionInfo{"title-fade-in", "Fade the Title In", "Text", ""},
+    ActionInfo{"title-fade-out", "Fade the Title Out", "Text", ""},
+    ActionInfo{"title-slide-on", "Slide the Title On", "Text", ""},
     ActionInfo{"show-transcript", "Transcript…", "Text", "Ctrl+T"},
     ActionInfo{"fit-music", "Fit Music to the Picture", "Audio", ""},
 

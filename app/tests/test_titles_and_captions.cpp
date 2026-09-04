@@ -1,3 +1,4 @@
+#include <QMouseEvent>
 // Titles, captions and the things pinned to a shot.
 //
 // Driven through the real window against the real compositor. See GuiFixture.h
@@ -8,6 +9,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "../FrameGrab.h"
+#include "../TitleOverlay.h"
+#include "../commands/Structure.h"
 #include "GuiFixture.h"
 
 // The suite was written inside main(), which had this at file scope; the
@@ -322,6 +325,93 @@ TEST_CASE("A text layer, through the real font engine", "[gui]") {
     QApplication::processEvents();
 }
 
+// Making a title, the way somebody makes one.
+//
+// The model, the font engine and the compositor for text have all been in the
+// tree since the graphics work; what was missing was any way to ask for a
+// title. The bin's own Titles tab said "add a title clip to a video track" and
+// nothing anywhere added one. This covers the action behind that sentence: it
+// makes a clip that says something, at the playhead, on a picture row, without
+// overwriting what is already cut there -- and one undo takes it back.
+TEST_CASE("Adding a title from the action", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+    const auto v1 = sequence.videoTracks().front().id();
+
+    // Parked over the fixture's own clip, so the row under the playhead is
+    // busy: a title dropped on top of it would overwrite the cut.
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+    const std::size_t v1ClipsBefore = window.sequence()->findTrack(v1)->clips().size();
+    const std::size_t stepsBefore = window.commands().position();
+    const double blank = meanGray(settledGrab(window.monitor()));
+
+    window.addTitle();
+    QApplication::processEvents();
+
+    if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
+        zaro::app::testing::failf("the title did not take a picture row of its own\n");
+    }
+    if (window.sequence()->findTrack(v1)->clips().size() != v1ClipsBefore) {
+        zaro::app::testing::failf("the title overwrote what was already on V1\n");
+    }
+    const zaro::model::Track& made = window.sequence()->videoTracks().back();
+    if (made.clips().size() != 1) {
+        zaro::app::testing::failf("the new row holds %zu clips, not one\n", made.clips().size());
+    }
+    const zaro::model::Clip& title = made.clips().front();
+    if (title.graphic.kind != zaro::model::GraphicKind::Text) {
+        zaro::app::testing::failf("what was added is not a text layer\n");
+    }
+    if (title.graphic.text.empty()) {
+        zaro::app::testing::failf("the title says nothing at all\n");
+    }
+    if (title.start() != zaro::time::RationalTime{10, sequence.frameRate()}) {
+        zaro::app::testing::failf("the title starts at %lld, not at the playhead\n",
+                                  static_cast<long long>(title.start().frames()));
+    }
+    // Sized to this frame rather than to a fixed number of pixels: the
+    // rasteriser reads `pointSize` as pixels, so a default that ignored the
+    // sequence would be illegible on one cut and enormous on another.
+    if (!(title.graphic.pointSize > 0.0) ||
+        title.graphic.width > static_cast<double>(sequence.width())) {
+        zaro::app::testing::failf("the title's box does not fit the frame\n");
+    }
+    // Selected, because the next thing anybody does is type over it.
+    if (window.editContext().clip != title.id) {
+        zaro::app::testing::failf("the new title is not the selection\n");
+    }
+
+    // And it reaches the picture.
+    //
+    // A small number on purpose: the fixture is 320x240 and the default title
+    // is sized to the frame, so five glyphs at twenty pixels cover a fraction
+    // of a percent of it. Against a frame that reads 0.00 it is still
+    // unambiguous, and what it guards against is nothing at all -- a title that
+    // never reached the compositor, or a font engine never asked for glyphs.
+    const double withTitle = meanGray(settledGrab(window.monitor()));
+    std::printf("  title: %.2f with it, %.2f without, %s at %lld\n", withTitle, blank,
+                title.graphic.text.c_str(), static_cast<long long>(title.start().frames()));
+    if (!(withTitle > blank + 0.05)) {
+        zaro::app::testing::failf("the title did not reach the monitor (%.2f against %.2f)\n",
+                                  withTitle, blank);
+    }
+
+    // One undo step, including the row it had to make.
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("making a title took %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    window.commands().undo(window.project());
+    if (window.sequence()->videoTracks().size() != videoTracksBefore) {
+        zaro::app::testing::failf("undo left the row the title made behind\n");
+    }
+    window.monitor()->update();
+    QApplication::processEvents();
+}
+
 // Pinning a title to the shot under it, through the real panel.
 TEST_CASE("Pinning a title to the shot under it", "[gui]") {
     auto& window = zaro::app::testing::gui();
@@ -485,5 +575,234 @@ TEST_CASE("Pinning a title to the shot under it", "[gui]") {
     }
     window.renderCache().clear();
     window.monitor()->update();
+    QApplication::processEvents();
+}
+// Placing a title on the picture, by dragging it.
+//
+// `centreX` and `width` are spin boxes in the inspector, and nobody composes a
+// frame by typing numbers into it. The overlay edits the same two properties
+// where the answer is visible. What this covers is that the gesture reaches the
+// model in the right units and the right direction, that a whole drag is one
+// undo step, and that the box is only up for a clip that is a title.
+TEST_CASE("A title is placed by dragging it on the picture", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    auto* overlay = window.findChild<zaro::app::TitleOverlay*>();
+    if (overlay == nullptr) {
+        zaro::app::testing::failf("the window has no title overlay\n");
+    }
+    if (!overlay->isEditing()) {
+        zaro::app::testing::failf("the overlay is not up for the title just made\n");
+    }
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    const zaro::model::Clip* title = titleNow();
+    REQUIRE(title != nullptr);
+    const zaro::model::Graphic before = title->graphic;
+
+    // Alt held throughout: snapping is what the gesture is for, but a test that
+    // let an edge latch would be measuring the snap rather than the drag.
+    const QPointF centre = window.monitor()->pictureRect().center();
+    const auto drag = [overlay](const QPointF& from, const QPointF& to) {
+        const auto send = [overlay](QEvent::Type type, const QPointF& at, Qt::MouseButton button,
+                                    Qt::MouseButtons buttons) {
+            QMouseEvent event{type, at, at, button, buttons, Qt::AltModifier};
+            QCoreApplication::sendEvent(overlay, &event);
+        };
+        send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        for (int step = 1; step <= 6; ++step) {
+            const QPointF at{from.x() + (to.x() - from.x()) * step / 6.0,
+                             from.y() + (to.y() - from.y()) * step / 6.0};
+            send(QEvent::MouseMove, at, Qt::NoButton, Qt::LeftButton);
+        }
+        send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+        QApplication::processEvents();
+    };
+
+    // How many pixels of frame one pixel of widget is worth, which is what the
+    // drag has to be measured in: the monitor letterboxes the picture, so the
+    // two are not the same number.
+    const double perPixel = static_cast<double>(sequence.width()) /
+                            std::max(1.0, window.monitor()->pictureRect().width());
+
+    const std::size_t stepsBefore = window.commands().position();
+    drag(centre, QPointF{centre.x() + 40.0, centre.y() + 20.0});
+
+    title = titleNow();
+    REQUIRE(title != nullptr);
+    const double movedX = title->graphic.centreX - before.centreX;
+    const double movedY = title->graphic.centreY - before.centreY;
+    if (!(movedX > 0.0) || !(movedY > 0.0)) {
+        zaro::app::testing::failf("the box did not follow the pointer (%.1f, %.1f)\n", movedX,
+                                  movedY);
+    }
+    // Within a pixel of frame: the drag is in widget pixels and the model is in
+    // output pixels, and getting the conversion wrong is the bug this catches.
+    if (std::abs(movedX - 40.0 * perPixel) > perPixel ||
+        std::abs(movedY - 20.0 * perPixel) > perPixel) {
+        zaro::app::testing::failf("the box moved %.1f,%.1f, not %.1f,%.1f\n", movedX, movedY,
+                                  40.0 * perPixel, 20.0 * perPixel);
+    }
+    // The box moved and nothing else did.
+    if (title->graphic.width != before.width || title->graphic.height != before.height) {
+        zaro::app::testing::failf("moving the box resized it\n");
+    }
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("one drag made %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+
+    // A corner sizes the box and leaves the opposite corner where it was.
+    const zaro::model::Graphic moved = title->graphic;
+    const QPointF picture = window.monitor()->pictureRect().center();
+    const QPointF corner{picture.x() + (moved.centreX + moved.width * 0.5) / perPixel,
+                         picture.y() + (moved.centreY + moved.height * 0.5) / perPixel};
+    const double leftEdge = moved.centreX - moved.width * 0.5;
+    drag(corner, QPointF{corner.x() - 30.0, corner.y()});
+
+    title = titleNow();
+    REQUIRE(title != nullptr);
+    if (!(title->graphic.width < moved.width)) {
+        zaro::app::testing::failf("dragging the corner in did not narrow the box (%.1f to %.1f)\n",
+                                  moved.width, title->graphic.width);
+    }
+    if (std::abs((title->graphic.centreX - title->graphic.width * 0.5) - leftEdge) > 1.0) {
+        zaro::app::testing::failf("the far edge moved while a corner was dragged\n");
+    }
+    if (std::abs(title->graphic.height - moved.height) > 0.001) {
+        zaro::app::testing::failf("a horizontal drag changed the height\n");
+    }
+
+    std::printf("  title box: moved %.0f,%.0f px of frame, narrowed to %.0f\n", movedX, movedY,
+                title->graphic.width);
+
+    // And the box belongs to titles alone: pick the shot underneath and it goes
+    // away rather than sitting over a clip it cannot edit.
+    const auto& pictureTrack = window.sequence()->videoTracks().front();
+    if (!pictureTrack.clips().empty()) {
+        window.timeline()->selectOnly(pictureTrack.id(), pictureTrack.clips().front().id);
+        QApplication::processEvents();
+        if (overlay->isEditing() || overlay->isVisible()) {
+            zaro::app::testing::failf("the title box stayed up over a clip that is not a title\n");
+        }
+    }
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
+    QApplication::processEvents();
+}
+
+// A title that fades in.
+//
+// The curves a title animates on are the clip's own -- opacity, position -- and
+// they have worked on every other kind of clip for a long time. That is exactly
+// why this is worth a test: "it should already work on a graphic" is how a
+// feature goes missing. What it checks is both halves, the numbers the model
+// holds and the picture that comes out of them.
+TEST_CASE("A title fades in", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    // Somewhere the fixture's own clip is dark, so white glyphs are the only
+    // thing that could brighten the frame.
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(titleNow() != nullptr);
+    const auto begins = titleNow()->start();
+    const double lit = meanGray(settledGrab(window.monitor()));
+
+    const std::size_t stepsBefore = window.commands().position();
+    window.animateTitle(zaro::app::commands::TitleMotion::FadeIn);
+    QApplication::processEvents();
+
+    const zaro::model::Clip* title = titleNow();
+    REQUIRE(title != nullptr);
+    const zaro::model::Curve* opacity = title->animation.find(zaro::model::Param::Opacity);
+    if (opacity == nullptr || opacity->keyframes().size() != 2) {
+        zaro::app::testing::failf("the fade did not write two keyframes\n");
+    }
+    // Invisible where it starts, and there a moment later.
+    if (title->parameterAt(zaro::model::Param::Opacity, begins) > 0.01) {
+        zaro::app::testing::failf("the title is not transparent at its first frame\n");
+    }
+    const auto after = begins + zaro::time::RationalTime{15, sequence.frameRate()};
+    if (title->parameterAt(zaro::model::Param::Opacity, after) < 0.99) {
+        zaro::app::testing::failf("the title never becomes opaque\n");
+    }
+
+    // And the picture agrees: the first frame of the title carries no text.
+    const double faded = meanGray(settledGrab(window.monitor()));
+    std::printf("  title fade: %.2f at the first frame, %.2f before the fade was added\n", faded,
+                lit);
+    if (!(faded < lit - 0.05)) {
+        zaro::app::testing::failf("the first frame still carries the title (%.2f against %.2f)\n",
+                                  faded, lit);
+    }
+
+    // One undo step for the pair: a fade is one decision, and half of it is a
+    // title that fades in from nothing and never arrives.
+    if (window.commands().position() != stepsBefore + 1) {
+        zaro::app::testing::failf("the fade took %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+    window.commands().undo(window.project());
+    QApplication::processEvents();
+    const zaro::model::Clip* back = titleNow();
+    if (back == nullptr || back->animation.find(zaro::model::Param::Opacity) != nullptr) {
+        zaro::app::testing::failf("undo left the fade behind\n");
+    }
+
+    // A preset asked for on something that is not a title is refused rather
+    // than quietly animating a shot.
+    const auto& pictureTrack = window.sequence()->videoTracks().front();
+    if (!pictureTrack.clips().empty() &&
+        pictureTrack.clips().front().graphic.kind != zaro::model::GraphicKind::Text) {
+        window.timeline()->selectOnly(pictureTrack.id(), pictureTrack.clips().front().id);
+        QApplication::processEvents();
+        const std::size_t steps = window.commands().position();
+        if (Status refused = zaro::app::commands::animateTitle(
+                window.editContext(), zaro::app::commands::TitleMotion::FadeIn);
+            refused) {
+            zaro::app::testing::failf("a shot was given a title's fade\n");
+        }
+        if (window.commands().position() != steps) {
+            zaro::app::testing::failf("the refusal still changed the cut\n");
+        }
+    }
+
+    while (window.commands().canUndo()) {
+        window.commands().undo(window.project());
+    }
     QApplication::processEvents();
 }

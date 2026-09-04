@@ -6,6 +6,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "zaro/core/model/Ids.h"
 
@@ -25,6 +26,18 @@ struct MediaDrag {
     /// Invalid unless the row dragged was a subclip, in which case the clip
     /// takes the subclip's range instead of the whole file.
     model::SubclipId subclip;
+
+    /// Set instead of `media` when what is being dragged is a title.
+    ///
+    /// A title has no media to point at -- it generates its picture -- so the
+    /// drag carries which preset it came from and the timeline builds the
+    /// graphic on landing. One payload for both because it is one gesture: the
+    /// pane hands something over, the timeline decides where it goes, and only
+    /// the last step differs.
+    std::string titlePreset;
+
+    [[nodiscard]] bool isTitle() const noexcept { return !titlePreset.empty(); }
+    [[nodiscard]] bool isSomething() const noexcept { return media.isValid() || isTitle(); }
 };
 
 /// How a media drag spells itself on the clipboard.
@@ -33,7 +46,7 @@ struct MediaDrag {
 /// The payload for one. The caller owns it until Qt takes the drag over.
 [[nodiscard]] QMimeData* encodeMediaDrag(const MediaDrag& dragged);
 
-/// What a drag carries, if it is one of ours and names a file.
+/// What a drag carries, if it is one of ours and names something.
 [[nodiscard]] std::optional<MediaDrag> decodeMediaDrag(const QMimeData* mime);
 
 }  // namespace zaro::app

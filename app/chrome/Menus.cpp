@@ -139,6 +139,14 @@ QMenuBar* buildMenuBar(QWidget* parent, ActionRouter& router, const QStringList&
     addItem(router, sequence, "loudness");
 
     QMenu* text = bar->addMenu("Text");
+    addItem(router, text, "add-title");
+    text->addSeparator();
+    // The ready-made moves, on the selected title. Under Text rather than
+    // Effects: they are about the way words arrive, not about the picture.
+    addItem(router, text, "title-fade-in");
+    addItem(router, text, "title-fade-out");
+    addItem(router, text, "title-slide-on");
+    text->addSeparator();
     addItem(router, text, "show-transcript");
 
     QMenu* audio = bar->addMenu("Audio");

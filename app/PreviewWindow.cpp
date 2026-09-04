@@ -105,11 +105,26 @@ void PreviewWindow::createPanels() {
         updateTitle();
     });
 
+    // The title's box, on the same terms as the mask handles: a transparent
+    // widget over the picture, which is where the answer to "is it in the
+    // right place" is. Only one of the two is ever up, since a clip is either
+    // a title or something with a mask on it.
+    titleOverlay_ = new app::TitleOverlay(monitor_, monitor_);
+    connect(titleOverlay_, &app::TitleOverlay::edited, this, [this] {
+        renderCache_.clear();
+        monitor_->update();
+        timeline_->update();
+        effects_->refresh();
+        updateCacheBar();
+        updateTitle();
+    });
+
     // The burn-in: what the frame is, over the frame. Below the mask
     // handles, and transparent to the mouse, so it never takes a click the
     // mask editor wanted.
     viewerOverlay_ = new app::ViewerOverlay(monitor_, monitor_);
     maskOverlay_->raise();
+    titleOverlay_->raise();
 
     bars_.timecode = new QLabel(this);
     bars_.timecode->setObjectName("timecode-big");
@@ -413,6 +428,7 @@ void PreviewWindow::wireWorkspacePanels() {
     // The same call the media browser's own import makes, for the same reason;
     // it is only the Import button and a drop onto the pane that arrived here
     // without it.
+    connect(bin_, &app::ProjectBin::addTitleRequested, this, [this] { addTitle(); });
     connect(bin_, &app::ProjectBin::mediaImported, this, [this] {
         if (Status reopened = openMedia(); !reopened) {
             app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
@@ -476,6 +492,8 @@ void PreviewWindow::wireEditingSignals() {
                 refreshGradeChain();
                 maskOverlay_->setTarget(&document_.project(), sequenceId_, track, clip,
                                         &document_.commands());
+                titleOverlay_->setTarget(&document_.project(), sequenceId_, track, clip,
+                                         &document_.commands());
             });
     connect(scopes_, &app::ScopesPanel::measurementNeeded, this, [this] { refreshInstruments(); });
     connect(mixer_, &app::MixerPanel::edited, this, [this] {
@@ -511,6 +529,7 @@ void PreviewWindow::wireEditingSignals() {
     });
     // The analysis needs a progress dialog and a way to cancel it, both of
     // which are the window's, so the timeline asks rather than acts.
+    connect(timeline_, &app::TimelineWidget::addTitleRequested, this, [this] { addTitle(); });
     connect(timeline_, &app::TimelineWidget::detectScenesRequested, this,
             [this] { static_cast<void>(detectScenes()); });
     connect(timeline_, &app::TimelineWidget::toolChanged, this, [this] { updateChrome(); });
@@ -867,6 +886,39 @@ void PreviewWindow::saveTemplateDialog() {
     if (Status saved = saveGraphicTemplate(path.toStdString()); !saved) {
         app::warn(this, "Template", QString::fromStdString(saved.error().message()));
     }
+}
+
+void PreviewWindow::addTitle() {
+    // Five seconds, which is a title somebody can read and a length they can
+    // trim. The alternative -- as long as whatever is under the playhead -- is
+    // right for a lower third and wrong for a card on black, and this is the
+    // one that is easy to change by dragging an edge.
+    constexpr double kTitleSeconds = 5.0;
+    const time::RationalTime length = time::RationalTime::fromSeconds(
+        time::Rational::approximate(kTitleSeconds), liveSequence()->frameRate());
+
+    auto made = commands::addTitle(editContext(), "Title", length);
+    if (!made) {
+        app::warn(this, "Title", QString::fromStdString(made.error().toString()));
+        return;
+    }
+    // Selected, because a title arrives saying nothing but "Title" and the next
+    // thing anybody does is type over it -- which happens in the inspector, on
+    // whatever is selected.
+    timeline_->selectOnly(made->track, made->clip);
+    bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
+    afterEdit();
+    refresh();
+}
+
+void PreviewWindow::animateTitle(commands::TitleMotion motion) {
+    if (Status animated = commands::animateTitle(editContext(), motion); !animated) {
+        app::warn(this, "Title", QString::fromStdString(animated.error().toString()));
+        return;
+    }
+    effects_->refresh();
+    timeline_->update();
+    afterEdit();
 }
 
 void PreviewWindow::placeTemplateDialog() {
@@ -2054,6 +2106,7 @@ void PreviewWindow::keyPressEvent(QKeyEvent* event) {
 bool PreviewWindow::eventFilter(QObject* watched, QEvent* event) {
     if (watched == monitor_ && event->type() == QEvent::Resize) {
         maskOverlay_->setGeometry(monitor_->rect());
+        titleOverlay_->setGeometry(monitor_->rect());
         viewerOverlay_->setGeometry(monitor_->rect());
     }
     return QWidget::eventFilter(watched, event);
@@ -2203,6 +2256,10 @@ void PreviewWindow::bindCommands() {
                      .arg(plan->cutAt, 0, 'f', 2)
                      .arg(plan->seconds, 0, 'f', 2));
     });
+    actions_.bind("add-title", [this] { addTitle(); });
+    actions_.bind("title-fade-in", [this] { animateTitle(commands::TitleMotion::FadeIn); });
+    actions_.bind("title-fade-out", [this] { animateTitle(commands::TitleMotion::FadeOut); });
+    actions_.bind("title-slide-on", [this] { animateTitle(commands::TitleMotion::SlideOn); });
     actions_.bind("add-marker", [this] { timeline_->addMarkerAtPlayhead(); });
     actions_.bind("next-marker", [this] { doNextMarker(); });
     actions_.bind("previous-marker", [this] { doPreviousMarker(); });

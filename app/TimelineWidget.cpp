@@ -31,6 +31,7 @@
 #include "Icons.h"
 #include "Theme.h"
 #include "ThumbnailCache.h"
+#include "TitlePresets.h"
 
 namespace zaro::app {
 namespace {
@@ -2136,6 +2137,17 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* event) {
     }
     const auto clip = layout_.hitTest(*seq, event->pos().x(), event->pos().y());
     if (!clip) {
+        // Empty timeline, over the rows: the one thing that can be made here
+        // out of nothing is a title. Anything else needs something to act on.
+        if (event->pos().y() >= layout_.metrics().rulerHeight) {
+            event->accept();
+            QMenu menu{this};
+            QAction* title = menu.addAction("Add Title");
+            if (menu.exec(event->globalPos()) == title) {
+                emit addTitleRequested();
+            }
+            return;
+        }
         QWidget::contextMenuEvent(event);
         return;
     }
@@ -2921,8 +2933,11 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     if (project_ == nullptr || commands_ == nullptr || seq == nullptr) {
         return std::nullopt;
     }
-    const model::MediaRef* ref = project_->findMedia(dragged.media);
-    if (ref == nullptr) {
+    // A title carries no media -- it generates its picture -- so what is being
+    // dragged is a preset, and its length is the preset's rather than a file's.
+    const TitlePreset* preset = dragged.isTitle() ? findTitlePreset(dragged.titlePreset) : nullptr;
+    const model::MediaRef* ref = preset != nullptr ? nullptr : project_->findMedia(dragged.media);
+    if (preset == nullptr && ref == nullptr) {
         return std::nullopt;
     }
     const auto& metrics = layout_.metrics();
@@ -2931,12 +2946,16 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     }
 
     const time::Rational& rate = seq->frameRate();
-    const auto sourceRange = draggedSourceRange(*project_, dragged, rate);
-    if (!sourceRange) {
-        return std::nullopt;
-    }
     DropSpot spot;
-    spot.duration = sourceRange->duration().rescaledTo(rate);
+    if (preset != nullptr) {
+        spot.duration = defaultTitleLength(rate);
+    } else {
+        const auto sourceRange = draggedSourceRange(*project_, dragged, rate);
+        if (!sourceRange) {
+            return std::nullopt;
+        }
+        spot.duration = sourceRange->duration().rescaledTo(rate);
+    }
     if (spot.duration.frames() <= 0) {
         return std::nullopt;
     }
@@ -2954,7 +2973,12 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     // would draw as a blank block and show nothing. A take with picture in it
     // may be aimed at either block, and brings both halves either way; where
     // the pointer is decides which half lands under it.
-    if (ref->info.primaryVideo() == nullptr) {
+    //
+    // A title is the mirror of the first case: it is picture and nothing else,
+    // so a sound row is not somewhere it can go, whatever it was aimed at.
+    if (preset != nullptr) {
+        spot.at.kind = model::TrackKind::Video;
+    } else if (ref->info.primaryVideo() == nullptr) {
         spot.at.kind = model::TrackKind::Audio;
     }
 
@@ -2973,7 +2997,8 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     // "above": the ruler is there, and the rows start directly under it.
     constexpr std::int32_t kNewRowBand = 12;
     bool wantsNewRow = false;
-    if (at.y() < metrics.rulerHeight + kNewRowBand && ref->info.primaryVideo() != nullptr) {
+    if (at.y() < metrics.rulerHeight + kNewRowBand &&
+        (preset != nullptr || ref->info.primaryVideo() != nullptr)) {
         // Named as picture even where there are no picture rows yet, which is
         // the one case where the top of the block and the top of the sound
         // block are the same pixel.
@@ -3005,10 +3030,12 @@ std::optional<TimelineWidget::DropSpot> TimelineWidget::dropSpotFor(const MediaD
     // way. Dropping a take on a sound row used to bring in its sound alone,
     // which meant the same file behaved as two different files depending on
     // which row it was let go of over.
-    const bool wantsSound =
-        spot.at.kind == model::TrackKind::Video && ref->info.primaryAudio() != nullptr;
-    const bool wantsPicture =
-        spot.at.kind == model::TrackKind::Audio && ref->info.primaryVideo() != nullptr;
+    //
+    // A title has no other half at all: it is picture and nothing else.
+    const bool wantsSound = ref != nullptr && spot.at.kind == model::TrackKind::Video &&
+                            ref->info.primaryAudio() != nullptr;
+    const bool wantsPicture = ref != nullptr && spot.at.kind == model::TrackKind::Audio &&
+                              ref->info.primaryVideo() != nullptr;
     if (wantsSound || wantsPicture) {
         const model::TrackKind kind =
             wantsSound ? model::TrackKind::Audio : model::TrackKind::Video;
@@ -3280,7 +3307,8 @@ void TimelineWidget::dropEvent(QDropEvent* event) {
     // The first file on an empty timeline decides its shape, exactly as it does
     // when the bin appends one. Before the drop is worked out rather than
     // after: conforming changes the frame rate the start time is counted in.
-    if (const model::MediaRef* ref = project_->findMedia(dragged->media)) {
+    if (const model::MediaRef* ref =
+            dragged->isTitle() ? nullptr : project_->findMedia(dragged->media)) {
         const media::VideoStreamInfo* video = ref->info.primaryVideo();
         if (video != nullptr && sequence()->duration().frames() == 0) {
             if (auto conformed = edit::makeConformSequence(*project_, sequenceId_, video->frameRate,
@@ -3301,13 +3329,20 @@ void TimelineWidget::dropEvent(QDropEvent* event) {
 model::TrackId TimelineWidget::placeOne(const MediaDrag& dragged, const DropSpot& where,
                                         const DropSpot::Landing& landing, model::ClipId& placed) {
     const model::Sequence* seq = sequence();
-    const model::MediaRef* ref = project_ != nullptr ? project_->findMedia(dragged.media) : nullptr;
-    if (seq == nullptr || ref == nullptr) {
+    if (seq == nullptr || project_ == nullptr) {
         return {};
     }
-    const auto sourceRange = draggedSourceRange(*project_, dragged, seq->frameRate());
-    if (!sourceRange) {
-        return {};
+    const TitlePreset* preset = dragged.isTitle() ? findTitlePreset(dragged.titlePreset) : nullptr;
+    const model::MediaRef* ref = preset != nullptr ? nullptr : project_->findMedia(dragged.media);
+    std::optional<time::TimeRange> sourceRange;
+    if (preset == nullptr) {
+        if (ref == nullptr) {
+            return {};
+        }
+        sourceRange = draggedSourceRange(*project_, dragged, seq->frameRate());
+        if (!sourceRange) {
+            return {};
+        }
     }
 
     model::TrackId target = landing.track;
@@ -3327,13 +3362,39 @@ model::TrackId TimelineWidget::placeOne(const MediaDrag& dragged, const DropSpot
         target = tracks.back().id();
     }
 
+    const time::TimeRange range{where.start, where.duration};
+
+    // A title is added rather than overwritten in: `makeAddGraphic` is what
+    // knows how to give a clip with no media a source range, and going through
+    // it means a dragged title and one made from the menu are the same clip.
+    if (preset != nullptr) {
+        const model::Graphic graphic = graphicFor(*preset, seq->width(), seq->height());
+        auto builtTitle = edit::makeAddGraphic(*project_, {sequenceId_, target}, graphic, range);
+        if (!builtTitle) {
+            return {};
+        }
+        commands_->execute(*project_, std::move(*builtTitle));
+        const model::Sequence* after = sequence();
+        const model::Track* landed = after != nullptr ? after->findTrack(target) : nullptr;
+        if (landed == nullptr) {
+            return {};
+        }
+        for (const model::Clip& made : landed->clips()) {
+            if (made.start() == range.start() && made.graphic.kind == model::GraphicKind::Text) {
+                placed = made.id;
+                return target;
+            }
+        }
+        return {};
+    }
+
     const model::Subclip* subclip = project_->findSubclip(dragged.subclip);
     model::Clip clip;
     clip.id = project_->ids().next<model::ClipTag>();
     clip.source = dragged.media;
     clip.name = subclip != nullptr && !subclip->name.empty() ? subclip->name : ref->name;
     clip.sourceRange = *sourceRange;
-    clip.timelineRange = time::TimeRange{where.start, where.duration};
+    clip.timelineRange = range;
 
     auto built = edit::makeOverwrite(*project_, {sequenceId_, target}, clip);
     if (!built) {

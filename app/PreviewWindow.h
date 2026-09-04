@@ -118,6 +118,7 @@
 #include "Theme.h"
 #include "ThumbnailCache.h"
 #include "TimelineWidget.h"
+#include "TitleOverlay.h"
 #include "Transcript.h"
 #include "ViewerOverlay.h"
 #include "chrome/Bars.h"
@@ -506,6 +507,16 @@ public:
 
     /// Show the source frame the picture is currently made from.
     void matchFrame();
+
+    /// Put a title at the playhead and select it.
+    ///
+    /// Public because it is the action itself, without a menu in the way: the
+    /// Text menu, the Titles tab, the timeline's own menu and the self-test all
+    /// ask for the same thing.
+    void addTitle();
+
+    /// Give the selected title one of the ready-made moves.
+    void animateTitle(commands::TitleMotion motion);
 
     /// Make a subclip of what is marked in the source monitor.
     void makeSubclip();
@@ -913,6 +924,8 @@ private:
 
     app::ProgramMonitor* monitor_{nullptr};
     app::MaskOverlay* maskOverlay_{nullptr};
+    /// The box a title is dragged by, over the picture.
+    app::TitleOverlay* titleOverlay_{nullptr};
     app::TimelineWidget* timeline_{nullptr};
     /// Frames for the timeline's filmstrips. Owned by the window rather than by
     /// the timeline so that the decoder thread it holds is torn down with the

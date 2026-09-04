@@ -67,6 +67,10 @@ add_library(zaro_app_ui STATIC
     SupportButton.h
     Theme.cpp
     Theme.h
+    TitleOverlay.cpp
+    TitleOverlay.h
+    TitlePresets.cpp
+    TitlePresets.h
     ThumbnailCache.cpp
     ThumbnailCache.h
     TimelineWidget.cpp

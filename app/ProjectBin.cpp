@@ -52,6 +52,7 @@
 #include "Say.h"
 #include "Theme.h"
 #include "ThumbnailCache.h"
+#include "TitlePresets.h"
 #include "chrome/FlowLayout.h"
 
 namespace zaro::app {
@@ -446,6 +447,30 @@ protected:
     }
 };
 
+/// The Titles tab's list, with its rows draggable onto the timeline.
+///
+/// The same gesture as a media row and the same payload, carrying a preset id
+/// where a media row carries an id. What lands is decided by the timeline,
+/// which is where the rules about rows and overlaps already live.
+class TitleList : public QListWidget {
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override {
+        for (const QListWidgetItem* item : items) {
+            const QString preset =
+                item != nullptr ? item->data(Qt::UserRole).toString() : QString{};
+            if (!preset.isEmpty()) {
+                MediaDrag dragged;
+                dragged.titlePreset = preset.toStdString();
+                return encodeMediaDrag(dragged);
+            }
+        }
+        return nullptr;
+    }
+};
+
 /// A path in the one spelling the project stores.
 ///
 /// The same file arrives spelled two ways: Qt hands out forward slashes, the
@@ -592,17 +617,62 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     // pointing at the panel that does own them.
     pages_ = new QStackedWidget(this);
     pages_->addWidget(list_);
-    for (const QString& elsewhere :
-         {QStringLiteral("Effects live in the Effects panel, beside the monitor."),
-          QStringLiteral("Titles are made on the timeline: add a title clip to a video track."),
-          QStringLiteral("Audio levels and sends live in the Mixer, under the Audio workspace.")}) {
-        auto* note = new QLabel(elsewhere, this);
-        note->setWordWrap(true);
-        note->setAlignment(Qt::AlignCenter);
-        note->setContentsMargins(20, 0, 20, 0);
-        note->setProperty("muted", true);
-        pages_->addWidget(note);
+    const auto note = [this](const QString& text) {
+        auto* label = new QLabel(text, this);
+        label->setWordWrap(true);
+        label->setAlignment(Qt::AlignCenter);
+        label->setContentsMargins(20, 0, 20, 0);
+        label->setProperty("muted", true);
+        return label;
+    };
+    pages_->addWidget(
+        note(QStringLiteral("Effects live in the Effects panel, beside the monitor.")));
+
+    // The Titles tab used to say "add a title clip to a video track", which was
+    // true and useless: there was nothing anywhere that added one. The button
+    // is the shortest way to make the sentence actionable.
+    auto* titles = new QWidget(this);
+    auto* titlesColumn = new QVBoxLayout(titles);
+    titlesColumn->setContentsMargins(0, 0, 0, 0);
+    titlesColumn->setSpacing(8);
+
+    titleList_ = new TitleList(titles);
+    titleList_->setObjectName("title-list");
+    titleList_->setFrameShape(QFrame::NoFrame);
+    titleList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    titleList_->setDragEnabled(true);
+    titleList_->setDragDropMode(QAbstractItemView::DragOnly);
+    titleList_->setDefaultDropAction(Qt::CopyAction);
+    titleList_->viewport()->setAutoFillBackground(false);
+    for (const TitlePreset& preset : titlePresets()) {
+        auto* item = new QListWidgetItem(QString::fromStdString(preset.name), titleList_);
+        item->setData(Qt::UserRole, QString::fromStdString(preset.id));
+        item->setToolTip(QString::fromStdString(preset.blurb));
+        item->setSizeHint(QSize{0, 34});
     }
+    // Double-click is the same as the button: some people drag, some people
+    // put the playhead where they want it and ask.
+    connect(titleList_, &QListWidget::itemDoubleClicked, this,
+            [this] { emit addTitleRequested(); });
+    titlesColumn->addWidget(titleList_, 1);
+
+    titlesColumn->addWidget(
+        note(QStringLiteral("Drag one onto a picture row, or add it at the playhead.")));
+    auto* addTitle = new QPushButton(QStringLiteral("Add Title"), titles);
+    addTitle->setObjectName("add-title");
+    addTitle->setCursor(Qt::PointingHandCursor);
+    connect(addTitle, &QPushButton::clicked, this, [this] { emit addTitleRequested(); });
+    auto* buttonRow = new QHBoxLayout;
+    buttonRow->setContentsMargins(12, 0, 12, 12);
+    buttonRow->addStretch(1);
+    buttonRow->addWidget(addTitle);
+    buttonRow->addStretch(1);
+    titlesColumn->addLayout(buttonRow);
+    pages_->addWidget(titles);
+
+    pages_->addWidget(
+        note(QStringLiteral("Audio levels and sends live in the Mixer, under the Audio "
+                            "workspace.")));
     connect(tabs, &QButtonGroup::idClicked, this, [this](int id) { pages_->setCurrentIndex(id); });
 
     auto* layout = new QVBoxLayout(this);

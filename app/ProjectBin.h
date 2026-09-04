@@ -106,6 +106,13 @@ signals:
     /// The footage's curve was corrected, so anything showing it must redraw
     /// and the media has to be reopened.
     void colorChanged();
+    /// Somebody asked for a title from the Titles tab.
+    ///
+    /// The pane does not make one: a title is a clip on a sequence, and what
+    /// the pane knows about is the project's media. The window owns the
+    /// decision and the command.
+    void addTitleRequested();
+
     /// Point the selected timeline clip at this media instead.
     ///
     /// The bin does not know what is selected on the timeline, and should not:
@@ -144,6 +151,8 @@ private:
 
     ThumbnailCache* thumbnails_{nullptr};
     QListWidget* list_{nullptr};
+    /// The Titles tab's presets. Draggable; it holds no project state.
+    QListWidget* titleList_{nullptr};
     QLineEdit* search_{nullptr};
     QLabel* footer_{nullptr};
     QWidget* chipHolder_{nullptr};
