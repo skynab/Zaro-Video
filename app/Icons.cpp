@@ -436,6 +436,18 @@ QPainterPath pathFor(Glyph glyph) {
             path.lineTo(7.4, 4.4);
             return path;
 
+        case Glyph::TextT:
+            // The letter, drawn rather than typed: a glyph from whatever font
+            // is installed is the thing the rest of this file exists to avoid.
+            // Wide bar, centred stem, and the two ends of the bar dropped a
+            // little the way a serif face turns them down -- which is what
+            // stops it reading as a plain cross at 17px.
+            path.moveTo(3.0, 3.6);
+            path.lineTo(13.0, 3.6);
+            path.moveTo(8.0, 3.6);
+            path.lineTo(8.0, 12.8);
+            return path;
+
         case Glyph::CheckCircle:
             // The same ring with a tick in it. The design draws the lit state
             // at Phosphor's fill weight; stroked keeps it in one set with every

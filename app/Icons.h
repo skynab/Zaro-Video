@@ -25,6 +25,7 @@ enum class Glyph {
     Bookmark,      ///< Add marker
     Split,         ///< Razor at the playhead
     CrossFade,     ///< Add dissolve
+    TextT,         ///< Put a title on the timeline
     Link,          ///< Picture and sound edited as one
     Sparkle,       ///< A clip carrying effects: the fourth filled glyph
     Eye,           ///< A video track that is on

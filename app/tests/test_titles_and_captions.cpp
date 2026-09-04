@@ -1,5 +1,6 @@
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPushButton>
 // Titles, captions and the things pinned to a shot.
 //
 // Driven through the real window against the real compositor. See GuiFixture.h
@@ -409,6 +410,50 @@ TEST_CASE("Adding a title from the action", "[gui]") {
     if (window.sequence()->videoTracks().size() != videoTracksBefore) {
         zaro::app::testing::failf("undo left the row the title made behind\n");
     }
+    window.monitor()->update();
+    QApplication::processEvents();
+}
+
+// The same thing again, from the button on the timeline rather than from the
+// action behind it.
+//
+// The action was reachable by keystroke, from the right-click menu and from the
+// bin's Titles tab, and from nothing visible on the timeline -- so the answer to
+// "how do I put text on this" was three places none of which were where somebody
+// was looking. This is that button: it exists, and pressing it does what the
+// action does.
+TEST_CASE("Adding a title from the timeline button", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    auto* button = window.findChild<QPushButton*>("timeline-add-title");
+    if (button == nullptr) {
+        zaro::app::testing::failf("there is no Add Title button on the timeline\n");
+        return;
+    }
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+
+    button->click();
+    QApplication::processEvents();
+
+    if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
+        zaro::app::testing::failf("the button did not put a title on a row of its own\n");
+        return;
+    }
+    const zaro::model::Track& made = window.sequence()->videoTracks().back();
+    if (made.clips().size() != 1 ||
+        made.clips().front().graphic.kind != zaro::model::GraphicKind::Text) {
+        zaro::app::testing::failf("the button made something that is not a text layer\n");
+        return;
+    }
+    if (made.clips().front().start() != zaro::time::RationalTime{10, sequence.frameRate()}) {
+        zaro::app::testing::failf("the title did not land at the playhead\n");
+    }
+    window.commands().undo(window.project());
     window.monitor()->update();
     QApplication::processEvents();
 }
