@@ -81,6 +81,17 @@ public:
     /// The time at a widget x. Clamped at zero.
     [[nodiscard]] time::RationalTime timeForX(double x, const time::Rational& frameRate) const;
 
+    /// The frame nearest a widget x, rather than the one it is standing in.
+    ///
+    /// `timeForX` floors, because a pixel is inside a frame for that frame's
+    /// whole width and hit-testing has to agree with that. Aiming is the other
+    /// question: a pointer a hair to the left of an edit point is inside the
+    /// frame *before* it, and measuring from that frame's start says the hand
+    /// is up to a whole frame further away than it is. Anything asking "what is
+    /// this pointer near" -- snapping, above all -- wants this one.
+    [[nodiscard]] time::RationalTime nearestTimeForX(double x,
+                                                     const time::Rational& frameRate) const;
+
     /// The span currently on screen. What painting and hit-testing iterate
     /// over, so that a four-hour sequence costs the same to draw as a
     /// four-minute one.

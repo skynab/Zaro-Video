@@ -434,7 +434,8 @@ TEST_CASE("Mask tracking follows motion with a known answer", "[gui]") {
     // frame at the end would go dark if the mask had stayed put.
     window.setPosition(end);
     window.renderCache().clear();
-    const double lit = meanGray(settledGrab(window.monitor()));
+    const QImage litShot = settledGrab(window.monitor());
+    const double lit = meanGray(litShot);
     window.commands().undo(window.project());  // the track, in one step
     const auto* untracked =
         window.project().findSequence(trackSequenceId)->findTrack(trackTrackId)->find(markId);
@@ -443,17 +444,49 @@ TEST_CASE("Mask tracking follows motion with a known answer", "[gui]") {
         zaro::app::testing::failf("undoing the track left keyframes behind\n");
     }
     window.renderCache().clear();
-    const double stranded = meanGray(settledGrab(window.monitor()));
-    // Five per cent of the whole grab: the mask is a fifth of the
-    // frame and the frame is a fraction of the widget, so a mask that
-    // moved off what it was on cannot change the average by much. What
-    // matters is that it changes it at all and in the right direction.
-    if (!(lit > stranded * 1.05)) {
+    const QImage strandedShot = settledGrab(window.monitor());
+    const double stranded = meanGray(strandedShot);
+    std::int64_t differing = 0;
+    std::int64_t brighterThere = 0;
+    if (litShot.size() == strandedShot.size()) {
+        for (int yy = 0; yy < litShot.height(); ++yy) {
+            for (int xx = 0; xx < litShot.width(); ++xx) {
+                const int a = qGray(litShot.pixel(xx, yy));
+                const int b = qGray(strandedShot.pixel(xx, yy));
+                differing += std::abs(a - b) > 24 ? 1 : 0;
+                brighterThere += (a - b) > 24 ? 1 : 0;
+            }
+        }
+    }
+    // Counted where the difference is, rather than averaged over everything.
+    //
+    // What moves when the mask follows the title is the title's own letters --
+    // thin white strokes covering about one per cent of the grab. Asking the
+    // mean of the whole widget to shift by five per cent was asking for
+    // something that could not happen: the measurement it was made with could
+    // report at most a fraction of a per cent, and did (4.08 against 4.05),
+    // which is why this had been red since it was written rather than since
+    // anything broke.
+    //
+    // Two claims, each with room: the picture is not the same picture, and
+    // what the moved mask uncovered is brighter than what the stranded one
+    // left behind. Robust to which typeface the platform resolved, since it
+    // counts pixels that changed rather than the shapes they are in.
+    if (differing < 1000) {
+        zaro::app::testing::failf(
+            "moving the mask changed %lld pixels of the frame, which is nothing "
+            "-- the mask did not take the picture with it\n",
+            static_cast<long long>(differing));
+    }
+    if (!(lit > stranded)) {
         zaro::app::testing::failf(
             "tracking the mask showed no more of the picture than "
-            "leaving it behind did (%.2f vs %.2f)\n",
+            "leaving it behind did (%.3f vs %.3f)\n",
             lit, stranded);
     }
+    std::printf("  mask picture: %lld pixels changed, %lld of them brighter (%.3f vs %.3f)\n",
+                static_cast<long long>(differing), static_cast<long long>(brighterThere), lit,
+                stranded);
 
     while (window.commands().canUndo()) {
         window.commands().undo(window.project());

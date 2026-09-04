@@ -61,6 +61,28 @@ TEST_CASE("Time maps to pixels through the header offset", "[ui][timeline]") {
     }
 }
 
+TEST_CASE("The frame under a pointer and the frame nearest it are different questions",
+          "[ui][timeline]") {
+    const TimelineLayout layout = makeLayout();  // 100 px/s at 25fps: a frame is 4px
+
+    // A pixel is inside a frame for that frame's whole width, which is what
+    // hit-testing needs.
+    CHECK(layout.timeForX(150.0, kRate) == at(0));
+    CHECK(layout.timeForX(153.0, kRate) == at(0));
+    CHECK(layout.timeForX(154.0, kRate) == at(1));
+
+    // Aiming is the other question. Three pixels past the start of frame zero
+    // is a pixel short of frame one, and a hand there is aiming at frame one --
+    // which is what snapping has to measure from, or an edit point a pixel away
+    // reads as a whole frame away.
+    CHECK(layout.nearestTimeForX(150.0, kRate) == at(0));
+    CHECK(layout.nearestTimeForX(151.0, kRate) == at(0));
+    CHECK(layout.nearestTimeForX(153.0, kRate) == at(1));
+    CHECK(layout.nearestTimeForX(154.0, kRate) == at(1));
+    // Never before the sequence, the same as the flooring one.
+    CHECK(layout.nearestTimeForX(0.0, kRate) == at(0));
+}
+
 TEST_CASE("Scrolling shifts the mapping", "[ui][timeline]") {
     TimelineLayout layout = makeLayout();
     layout.setScroll(at(50));  // two seconds in

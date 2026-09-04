@@ -2503,7 +2503,7 @@ bool TimelineWidget::pressWithTool(const ui::TimelineLayout::Hit* hit, int x, in
             // Snapped, so a cut aimed at a neighbouring edit point lands on it
             // rather than a frame away from it -- and at exactly the time the
             // preview line was drawn at, since both go through maybeSnap.
-            razorAt(hit->track, maybeSnap(layout_.timeForX(x, seq->frameRate()), {}));
+            razorAt(hit->track, maybeSnap(layout_.nearestTimeForX(x, seq->frameRate()), {}));
             // The cut just made is an edit point of its own; the preview is
             // now describing a boundary rather than a cut.
             bladeMark_ = {};
@@ -2566,7 +2566,9 @@ void TimelineWidget::updateBladeHover(int x, int y) {
 
     // The same call the press will make, so what is drawn is what will happen
     // rather than a second opinion about it.
-    const time::RationalTime at = maybeSnap(layout_.timeForX(x, seq->frameRate()), {});
+    // The same question the press asks, so the line promises where the cut
+    // will land rather than where the pointer happens to be standing.
+    const time::RationalTime at = maybeSnap(layout_.nearestTimeForX(x, seq->frameRate()), {});
     if (bladeMark_.active && bladeMark_.track == hit->track && bladeMark_.time == at) {
         return;
     }

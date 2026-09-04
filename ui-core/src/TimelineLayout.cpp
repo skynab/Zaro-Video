@@ -69,6 +69,16 @@ time::TimeRange TimelineLayout::visibleRange(const time::Rational& frameRate) co
     return time::TimeRange{start, duration};
 }
 
+time::RationalTime TimelineLayout::nearestTimeForX(double x,
+                                                   const time::Rational& frameRate) const {
+    // Half a frame further along, then floored: the frame boundary the pointer
+    // is closest to, using the flooring that everything else in this class
+    // agrees on rather than a second rounding rule of its own.
+    const double halfFrame =
+        frameRate.toDouble() > 0.0 ? metrics_.pixelsPerSecond / frameRate.toDouble() * 0.5 : 0.0;
+    return timeForX(x + halfFrame, frameRate);
+}
+
 void TimelineLayout::zoomBy(double factor, double anchorX, const time::Rational& frameRate) {
     if (factor <= 0.0) {
         return;

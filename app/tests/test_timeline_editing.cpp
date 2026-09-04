@@ -673,6 +673,18 @@ TEST_CASE("Copy a clip and paste it at the playhead", "[gui]") {
     if (clipX == 0) {
         zaro::app::testing::failf("no part of the first clip is hit-testable on row y=%d\n", y);
     }
+    // Park the selection on a different clip first. This suite shares one
+    // window and does not reset the selection between cases, and pressing a
+    // clip that is *already* selected deliberately keeps the rest of the set so
+    // a multi-selection can be dragged by any of its members. So a case that
+    // happened to run earlier and leave this clip in a set of two made the
+    // click below a no-op and the count read 2 -- the editor behaving exactly
+    // as designed, and the test asking its question from an unknown starting
+    // point. Starting somewhere known keeps the assertion about the click.
+    const auto& clips = videoTrack.clips();
+    timeline->selectOnly(videoTrack.id(), clips.back().id);
+    QApplication::processEvents();
+
     dragOnTimeline(timeline, clipX, clipX, y);
     QApplication::processEvents();
     // That the click selected *this* clip, not merely that something is
