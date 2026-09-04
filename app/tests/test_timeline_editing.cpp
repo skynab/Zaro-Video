@@ -1542,7 +1542,7 @@ TEST_CASE("A title dragged from the pane lands as a graphic", "[gui]") {
         QCoreApplication::sendEvent(timeline, &dropping);
         QApplication::processEvents();
     };
-    const auto rowY = [&window, timeline](model::TrackId track) {
+    const auto rowY = [timeline](model::TrackId track) {
         const auto row = timeline->rowFor(track);
         REQUIRE(row.has_value());
         return row->top + row->height / 2;

@@ -151,6 +151,22 @@ void runs(QPushButton* button, ActionRouter& router, const char* actionId) {
                      [&router, id = std::string{actionId}] { router.trigger(id); });
 }
 
+/// A readout you can press: it says a fact and opens the thing that sets it.
+/// Styled as the muted text beside it rather than as a button, so the bar still
+/// reads as a bar -- the pointer and the hover are what say it can be pressed.
+QPushButton* readout(QWidget* parent, const QString& tip, ActionRouter& router,
+                     const char* actionId) {
+    auto* made = new QPushButton(parent);
+    made->setObjectName("chrome-readout");
+    made->setFlat(true);
+    made->setProperty("flat", true);
+    made->setCursor(Qt::PointingHandCursor);
+    made->setFocusPolicy(Qt::NoFocus);
+    made->setToolTip(tip);
+    runs(made, router, actionId);
+    return made;
+}
+
 }  // namespace
 
 QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const Hooks& hooks,
@@ -165,8 +181,17 @@ QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const H
     // Snapping and markers used to be here. They belong with the timeline --
     // both of them are about where an edit lands, and the timeline is where
     // edits land -- so they moved down with the tools.
-    bars.formatLabel = mutedLabel(bar);
-    row->addWidget(bars.formatLabel);
+    bars.formatButton = readout(bar,
+                                "Frame size — the resolution this sequence renders and\n"
+                                "exports at. Click to pick one, 1080\u00d71920 vertical\n"
+                                "included. Also at Sequence \u25b8 Frame Size.",
+                                router, "frame-size");
+    bars.rateButton = readout(bar,
+                              "Frame rate — how fast this sequence plays.\n"
+                              "Click to change. Also at Sequence \u25b8 Frame Rate.",
+                              router, "frame-rate");
+    row->addWidget(bars.formatButton);
+    row->addWidget(bars.rateButton);
     row->addStretch(1);
 
     auto* tabGroup = new QWidget(bar);

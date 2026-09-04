@@ -234,6 +234,18 @@ QLabel { background: transparent; }
 #chrome-timeline-bar QLabel[muted="true"], #chrome-viewer-bar QLabel[muted="true"] {
     color: %MUTED%; font-size: 11px;
 }
+/* A readout that can be pressed. It carries a border at rest rather than
+   growing one on hover: the fact it states -- the frame size -- is the thing
+   people go looking for a way to change, and an affordance that only appears
+   under the pointer is no help to somebody who never thought to point at it. */
+#chrome-readout {
+    color: %MUTED%; font-size: 11px;
+    background: transparent; border: 1px solid %DIVIDER%; border-radius: 6px;
+    padding: 3px 7px; min-height: 16px;
+}
+#chrome-readout:hover { background: %HOVER%; color: %TEXT%; border-color: %DIVIDER%; }
+#chrome-readout:pressed { background: %PRESS%; }
+#chrome-readout:disabled { color: %MUTED%; background: transparent; border-color: transparent; }
 #chrome-brand { font-weight: 600; padding: 0 6px; }
 #viewer-well { background: %WELL%; }
 #deliver-side { background: %SURFACE%; }
