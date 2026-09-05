@@ -34,26 +34,27 @@
 namespace zaro::app::chrome {
 namespace {
 
-/// Keeps an empty-list sentence the size of the viewport it sits on.
+/// Runs something whenever the widget it watches is resized.
 ///
-/// A filter rather than a resizeEvent override, because the point of
-/// `setEmptyText` is that it works on the list views the panels already build
-/// -- a subclass would mean changing every one of them to use it.
-class ViewportWatcher : public QObject {
+/// A filter rather than a resizeEvent override, because the point of the
+/// helpers that use it -- `setEmptyText`, `setElidedText` -- is that they work
+/// on the widgets the panels already build. A subclass would mean changing
+/// every one of them to use it.
+class ResizeWatcher : public QObject {
 public:
-    ViewportWatcher(QWidget* label, std::function<void()> sync, QObject* parent)
-        : QObject{parent}, label_{label}, sync_{std::move(sync)} {}
+    ResizeWatcher(QWidget* subject, std::function<void()> sync, QObject* parent)
+        : QObject{parent}, subject_{subject}, sync_{std::move(sync)} {}
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override {
-        if (event->type() == QEvent::Resize && label_ != nullptr) {
+        if (event->type() == QEvent::Resize && subject_ != nullptr) {
             sync_();
         }
         return QObject::eventFilter(watched, event);
     }
 
 private:
-    QWidget* label_{nullptr};
+    QWidget* subject_{nullptr};
     std::function<void()> sync_;
 };
 
@@ -94,6 +95,34 @@ QLabel* mutedLabel(QWidget* parent, const QString& text) {
     return label;
 }
 
+void setElidedText(QLabel* label, const QString& text, Qt::TextElideMode mode) {
+    if (label == nullptr) {
+        return;
+    }
+    label->setToolTip(text);
+    // Ignored horizontally: the point is that the label stops asking for the
+    // width of its whole string, which is what was widening the row.
+    label->setSizePolicy(QSizePolicy::Ignored, label->sizePolicy().verticalPolicy());
+    const auto paint = [label, text, mode] {
+        label->setText(label->fontMetrics().elidedText(text, mode, std::max(0, label->width())));
+    };
+    label->installEventFilter(new ResizeWatcher{label, paint, label});
+    paint();
+}
+
+QString humanSize(double bytes) {
+    constexpr double kUnit = 1024.0;
+    if (bytes >= kUnit * kUnit * kUnit) {
+        return QString("%1 GB").arg(bytes / (kUnit * kUnit * kUnit), 0, 'f', 1);
+    }
+    if (bytes >= kUnit * kUnit) {
+        return QString("%1 MB").arg(bytes / (kUnit * kUnit), 0, 'f', 1);
+    }
+    // Down to kilobytes, and no further: a file smaller than a kilobyte is not
+    // one anybody is deciding anything about, and "0 kB" says enough.
+    return QString("%1 kB").arg(bytes / kUnit, 0, 'f', 0);
+}
+
 void setEmptyText(QAbstractItemView* view, const QString& text) {
     if (view == nullptr || view->viewport() == nullptr) {
         return;
@@ -124,7 +153,7 @@ void setEmptyText(QAbstractItemView* view, const QString& text) {
     QObject::connect(view->model(), &QAbstractItemModel::rowsInserted, label, sync);
     QObject::connect(view->model(), &QAbstractItemModel::rowsRemoved, label, sync);
     QObject::connect(view->model(), &QAbstractItemModel::modelReset, label, sync);
-    view->viewport()->installEventFilter(new ViewportWatcher{label, sync, view->viewport()});
+    view->viewport()->installEventFilter(new ResizeWatcher{label, sync, view->viewport()});
     sync();
 }
 

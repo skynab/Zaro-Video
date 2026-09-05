@@ -54,6 +54,7 @@
 #include "ThumbnailCache.h"
 #include "TitlePresets.h"
 #include "chrome/FlowLayout.h"
+#include "chrome/Widgets.h"
 
 namespace zaro::app {
 namespace {
@@ -168,18 +169,6 @@ QString describe(const model::Subclip& subclip, const model::MediaRef& source) {
 
 /// Bytes as the footer says them. One decimal, because the number is a sense of
 /// scale and not an accounting.
-QString humanSize(std::uintmax_t bytes) {
-    constexpr double kUnit = 1024.0;
-    const double value = static_cast<double>(bytes);
-    if (value >= kUnit * kUnit * kUnit) {
-        return QString("%1 GB").arg(value / (kUnit * kUnit * kUnit), 0, 'f', 1);
-    }
-    if (value >= kUnit * kUnit) {
-        return QString("%1 MB").arg(value / (kUnit * kUnit), 0, 'f', 1);
-    }
-    return QString("%1 kB").arg(value / kUnit, 0, 'f', 0);
-}
-
 /// Every media id any sequence puts on a track.
 ///
 /// The design marks used footage with a dot, and the honest answer to "is this
@@ -938,7 +927,7 @@ QString ProjectBin::summary() const {
     }
     return QString("%1 %2 · %3 · %4")
         .arg(total)
-        .arg(total == 1 ? "item" : "items", humanSize(bytes), proxies);
+        .arg(total == 1 ? "item" : "items", chrome::humanSize(static_cast<double>(bytes)), proxies);
 }
 
 /// The actions that used to be four buttons under the list.

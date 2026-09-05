@@ -26,6 +26,27 @@ QPushButton* iconButton(QWidget* parent, app::icons::Glyph glyph, const QString&
 QFrame* separator(QWidget* parent);
 QLabel* mutedLabel(QWidget* parent, const QString& text = {});
 
+/// A number of bytes, in the unit somebody can read at a glance.
+///
+/// One of these, because there were three and they had drifted. The media
+/// browser stopped at megabytes, so every file under half a megabyte listed as
+/// "0.0 MB" -- and the Deliver panel carried a comment saying that "0 MB reads
+/// as an arithmetic bug rather than as a small file", having hit exactly that
+/// and fixed it in its own copy alone. They also disagreed about the spelling
+/// of the unit and how many decimals to show, in the same window.
+[[nodiscard]] QString humanSize(double bytes);
+
+/// Put text on a label that shortens itself rather than widening its row.
+///
+/// A QLabel asks for the width of its whole string and cannot be squeezed
+/// below it, so one long line pushes its layout wider than the panel around it
+/// and the end is simply cut off -- which is what a finished render's note did
+/// to the delivery queue's cards. The full text goes in the tooltip, so nothing
+/// is lost by shortening what is drawn.
+///
+/// Re-elided whenever the label is resized, so it follows a splitter.
+void setElidedText(QLabel* label, const QString& text, Qt::TextElideMode mode = Qt::ElideRight);
+
 /// Say what a list is for while it is empty.
 ///
 /// Every pane in this window says what it is for when it has nothing in it --

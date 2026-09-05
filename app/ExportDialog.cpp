@@ -56,7 +56,9 @@ ExportDialog::ExportDialog(const model::Project& project, model::SequenceId sequ
     layout->addLayout(buttons);
 
     if (const model::Sequence* seq = project_->findSequence(sequenceId_)) {
-        status_->setText(QString("%1 frames at %2")
+        // "at 25 fps", not "at 25". The rate is a rate, and the sentence read
+        // as though it had been cut off before its last word.
+        status_->setText(QString("%1 frames at %2 fps")
                              .arg(seq->duration().frames())
                              .arg(QString::fromStdString(seq->frameRate().toString())));
     }

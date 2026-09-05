@@ -474,6 +474,50 @@ TEST_CASE("Multicam sync across angles", "[gui]") {
 }
 
 // Hotkeys: what the keys do, and changing it.
+TEST_CASE("A menu says the bare keys as well as the chords", "[gui]") {
+    // A bare letter is never made a Qt shortcut -- it would fire while somebody
+    // is typing into a field -- so those commands reach their handler through
+    // the key handler instead. Clearing the QAction's shortcut also cleared the
+    // only place a menu mentions a key, which left twenty-three commands
+    // looking unbound: Delete, Mark In, Add Marker, every tool. The keyboard
+    // manager listed them the whole time, because it reads the catalogue, so
+    // the two disagreed about what the program could do.
+    //
+    // A tab in the item's text is drawn in the shortcut column, which says the
+    // key without binding it.
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    auto* addMarker = window.findChild<QAction*>("add-marker");
+    REQUIRE(addMarker != nullptr);
+    // Still not a Qt shortcut: that is the part that must not change.
+    if (!addMarker->shortcut().isEmpty()) {
+        zaro::app::testing::failf("a bare letter became a Qt shortcut, which fires while typing\n");
+    }
+    const QStringList shown = addMarker->text().split('\t');
+    if (shown.size() != 2 || shown.at(1) != "M") {
+        zaro::app::testing::failf("the menu does not show M for Add Marker (%s)\n",
+                                  addMarker->text().toUtf8().constData());
+    }
+    if (shown.at(0) != "Add Marker") {
+        zaro::app::testing::failf("the label lost its name (%s)\n",
+                                  shown.at(0).toUtf8().constData());
+    }
+
+    // And a chord is untouched: it stays a real shortcut, with no tab in the
+    // label for Qt to draw twice.
+    auto* save = window.findChild<QAction*>("save-project");
+    REQUIRE(save != nullptr);
+    if (save->shortcut() != QKeySequence("Ctrl+S") || save->text().contains('\t')) {
+        zaro::app::testing::failf("a chord was rewritten as display text (%s / %s)\n",
+                                  save->text().toUtf8().constData(),
+                                  save->shortcut().toString().toUtf8().constData());
+    }
+    std::printf("  menus: bare keys shown (%s), chords still bound (%s)\n",
+                addMarker->text().replace('\t', ' ').toUtf8().constData(),
+                save->shortcut().toString().toUtf8().constData());
+}
+
 TEST_CASE("Hotkeys: what the keys do, and changing it", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

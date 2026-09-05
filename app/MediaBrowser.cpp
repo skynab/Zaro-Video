@@ -15,19 +15,10 @@
 #include "zaro/core/media/Waveform.h"
 #include "zaro/platform/ffmpeg/FFmpegMedia.h"
 
+#include "chrome/Widgets.h"
+
 namespace zaro::app {
-namespace {
-
-/// A size somebody can read at a glance rather than count digits in.
-QString readable(std::uint64_t bytes) {
-    const double megabytes = static_cast<double>(bytes) / (1024.0 * 1024.0);
-    if (megabytes >= 1024.0) {
-        return QString("%1 GB").arg(megabytes / 1024.0, 0, 'f', 1);
-    }
-    return QString("%1 MB").arg(megabytes, 0, 'f', 1);
-}
-
-}  // namespace
+namespace {}  // namespace
 
 MediaBrowser::MediaBrowser(QWidget* parent) : QDialog{parent} {
     setWindowTitle("Browse media");
@@ -105,9 +96,10 @@ Status MediaBrowser::showFolder(const std::string& path) {
         // Folders marked rather than coloured: what somebody is scanning for
         // is "can I go in there", and a symbol survives any theme.
         auto* item = new QListWidgetItem(
-            entry.isFolder ? QString("▸ %1").arg(QString::fromStdString(entry.name))
-                           : QString("   %1   %2")
-                                 .arg(QString::fromStdString(entry.name), readable(entry.bytes)),
+            entry.isFolder
+                ? QString("▸ %1").arg(QString::fromStdString(entry.name))
+                : QString("   %1   %2")
+                      .arg(QString::fromStdString(entry.name), chrome::humanSize(entry.bytes)),
             list_);
         item->setData(Qt::UserRole, QString::fromStdString(entry.path));
         item->setData(Qt::UserRole + 1, entry.isFolder);

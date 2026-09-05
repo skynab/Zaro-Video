@@ -82,15 +82,38 @@ QAction* ActionRouter::find(const QString& actionId) const {
 
 void ActionRouter::applyShortcut(const QString& actionId, QAction* action) {
     const std::string shortcut = keymap_.shortcutFor(actionId.toStdString());
-    // A bare letter is not made a Qt shortcut: it would fire while somebody is
-    // typing into a field. Those reach their command through the key handler
-    // instead, which is why every command is in the one registry whether or not
-    // it can carry a shortcut.
     const bool hasModifier = shortcut.find('+') != std::string::npos;
-    if (shortcut.empty() || !hasModifier) {
+
+    // Rebuilt from the catalogue every time, because a previous keymap may have
+    // written a key into the label below.
+    const ui::ActionInfo* info = ui::findAction(actionId.toStdString());
+    const QString label = info != nullptr ? QString::fromUtf8(info->label.data(),
+                                                              static_cast<int>(info->label.size()))
+                                          : action->text().section('\t', 0, 0);
+
+    if (shortcut.empty()) {
+        action->setText(label);
         action->setShortcut(QKeySequence{});
         return;
     }
+    if (!hasModifier) {
+        // A bare letter is not made a Qt shortcut: it would fire while somebody
+        // is typing into a field. Those reach their command through the key
+        // handler instead, which is why every command is in the one registry
+        // whether or not it can carry a shortcut.
+        //
+        // Said in the menu all the same. Clearing the shortcut also cleared the
+        // only place a menu mentions a key, so the menus quietly claimed that
+        // none of the twenty-three commands with a bare key had one -- Delete,
+        // Mark In, Add Marker, every tool -- while the keyboard manager, which
+        // reads the catalogue rather than the QAction, listed them all. A tab
+        // in a menu item's text is drawn in the shortcut column, which says it
+        // without binding it.
+        action->setShortcut(QKeySequence{});
+        action->setText(label + '\t' + QString::fromStdString(shortcut));
+        return;
+    }
+    action->setText(label);
     action->setShortcut(
         QKeySequence::fromString(QString::fromStdString(shortcut), QKeySequence::PortableText));
     action->setShortcutContext(Qt::WindowShortcut);

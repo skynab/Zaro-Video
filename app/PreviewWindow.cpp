@@ -865,7 +865,7 @@ void PreviewWindow::relinkDialog() {
     if (byName > 0) {
         // Said plainly: a file matched only by its name is one somebody
         // should look at before trusting the cut.
-        said += QString("\n%1 matched by name only -- check they are the right takes.").arg(byName);
+        said += QString("\n%1 matched by name only — check they are the right takes.").arg(byName);
     }
     app::say(this, "Relink", said);
 }
@@ -889,8 +889,7 @@ void PreviewWindow::consolidateDialog() {
     if (!report->missing.empty()) {
         // Named, because a consolidate that quietly left files behind is
         // an archive somebody will discover is incomplete much later.
-        said +=
-            QString("\n%1 could not be found -- relink them first.").arg(report->missing.size());
+        said += QString("\n%1 could not be found — relink them first.").arg(report->missing.size());
     }
     app::say(this, "Consolidate", said);
 }
