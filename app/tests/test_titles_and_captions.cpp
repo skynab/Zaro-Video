@@ -1,11 +1,21 @@
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFontMetrics>
+#include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QStyle>
+#include <QStyleOptionComboBox>
+#include <QStyleOptionSpinBox>
 // Titles, captions and the things pinned to a shot.
 //
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
 #include <cstdint>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -413,6 +423,50 @@ TEST_CASE("Adding a title from the action", "[gui]") {
     QApplication::processEvents();
 }
 
+// The same thing again, from the button on the timeline rather than from the
+// action behind it.
+//
+// The action was reachable by keystroke, from the right-click menu and from the
+// bin's Titles tab, and from nothing visible on the timeline -- so the answer to
+// "how do I put text on this" was three places none of which were where somebody
+// was looking. This is that button: it exists, and pressing it does what the
+// action does.
+TEST_CASE("Adding a title from the timeline button", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    auto* button = window.findChild<QPushButton*>("timeline-add-title");
+    if (button == nullptr) {
+        zaro::app::testing::failf("there is no Add Title button on the timeline\n");
+        return;
+    }
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    const std::size_t videoTracksBefore = window.sequence()->videoTracks().size();
+
+    button->click();
+    QApplication::processEvents();
+
+    if (window.sequence()->videoTracks().size() != videoTracksBefore + 1) {
+        zaro::app::testing::failf("the button did not put a title on a row of its own\n");
+        return;
+    }
+    const zaro::model::Track& made = window.sequence()->videoTracks().back();
+    if (made.clips().size() != 1 ||
+        made.clips().front().graphic.kind != zaro::model::GraphicKind::Text) {
+        zaro::app::testing::failf("the button made something that is not a text layer\n");
+        return;
+    }
+    if (made.clips().front().start() != zaro::time::RationalTime{10, sequence.frameRate()}) {
+        zaro::app::testing::failf("the title did not land at the playhead\n");
+    }
+    window.commands().undo(window.project());
+    window.monitor()->update();
+    QApplication::processEvents();
+}
+
 // Pinning a title to the shot under it, through the real panel.
 TEST_CASE("Pinning a title to the shot under it", "[gui]") {
     auto& window = zaro::app::testing::gui();
@@ -708,6 +762,301 @@ TEST_CASE("A title is placed by dragging it on the picture", "[gui]") {
         window.commands().undo(window.project());
     }
     QApplication::processEvents();
+}
+
+// Typing the text on the picture, which is where somebody is looking at it.
+//
+// The text was editable in one place: a field in the inspector, on the far side
+// of the window from the thing it changes. This is a double-click on the title
+// itself -- the editor opens over the box, in roughly the face it will be drawn
+// in, and what is typed reaches the model as it is typed. Escape puts back what
+// was there, and a whole typing pass is one undo step rather than one per
+// letter.
+TEST_CASE("A title's text is typed on the picture", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+
+    window.setPosition(zaro::time::RationalTime{10, sequence.frameRate()});
+    QApplication::processEvents();
+    window.addTitle();
+    QApplication::processEvents();
+
+    auto* overlay = window.findChild<zaro::app::TitleOverlay*>();
+    REQUIRE(overlay != nullptr);
+    REQUIRE(overlay->isEditing());
+
+    const auto titleNow = [&window]() -> const zaro::model::Clip* {
+        for (const zaro::model::Track& track : window.sequence()->videoTracks()) {
+            for (const zaro::model::Clip& clip : track.clips()) {
+                if (clip.graphic.kind == zaro::model::GraphicKind::Text) {
+                    return &clip;
+                }
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(titleNow() != nullptr);
+    const std::string before = titleNow()->graphic.text;
+
+    const QPointF centre = window.monitor()->pictureRect().center();
+    // `wobble` is how far the hand drifts between the two clicks, in pixels.
+    // Zero is a machine; a few pixels is a person.
+    const auto doubleClick = [overlay](const QPointF& at, double wobble = 0.0) {
+        const auto send = [overlay](QEvent::Type type, const QPointF& where) {
+            QMouseEvent event{type, where, where, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier};
+            QCoreApplication::sendEvent(overlay, &event);
+        };
+        send(QEvent::MouseButtonPress, at);
+        if (wobble > 0.0) {
+            const QPointF drifted{at.x() + wobble, at.y() + wobble};
+            QMouseEvent moved{QEvent::MouseMove, drifted,        drifted,
+                              Qt::NoButton,      Qt::LeftButton, Qt::NoModifier};
+            QCoreApplication::sendEvent(overlay, &moved);
+        }
+        send(QEvent::MouseButtonRelease, at);
+        send(QEvent::MouseButtonDblClick, at);
+        QApplication::processEvents();
+    };
+
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("the overlay was already open for typing\n");
+    }
+    // Dragged off the guides first, with Alt so it does not latch onto one.
+    // A title arrives sitting exactly on the centre line, and a box already on
+    // a guide is the one case where snapping it again moves nothing -- so a
+    // test that double-clicked a fresh title would pass whatever the press did.
+    {
+        const auto send = [overlay](QEvent::Type type, const QPointF& where, Qt::MouseButton button,
+                                    Qt::MouseButtons buttons) {
+            QMouseEvent event{type, where, where, button, buttons, Qt::AltModifier};
+            QCoreApplication::sendEvent(overlay, &event);
+        };
+        send(QEvent::MouseButtonPress, centre, Qt::LeftButton, Qt::LeftButton);
+        for (int step = 1; step <= 4; ++step) {
+            const QPointF at{centre.x() + 9.0 * step, centre.y() + 7.0 * step};
+            send(QEvent::MouseMove, at, Qt::NoButton, Qt::LeftButton);
+        }
+        send(QEvent::MouseButtonRelease, QPointF{centre.x() + 36.0, centre.y() + 28.0},
+             Qt::LeftButton, Qt::NoButton);
+        QApplication::processEvents();
+    }
+    const QPointF box = window.monitor()->pictureRect().center() + QPointF{36.0, 28.0};
+
+    // Where the box is before the double-click, and a hand that is not
+    // perfectly still between the two clicks. Opening a title to type in it
+    // must not move it: the press used to start a drag straight away, so the
+    // tremor was a move and snapping pulled the box onto the nearest guide.
+    const zaro::model::Graphic placed = titleNow()->graphic;
+    if (placed.centreX == 0.0 && placed.centreY == 0.0) {
+        zaro::app::testing::failf("the title did not move off the guides to begin with\n");
+    }
+    const std::size_t stepsAtOpen = window.commands().position();
+    doubleClick(box, 6.0);
+    if (!overlay->isTyping()) {
+        zaro::app::testing::failf("a double-click on the title did not open it for typing\n");
+        return;
+    }
+    if (titleNow()->graphic.centreX != placed.centreX ||
+        titleNow()->graphic.centreY != placed.centreY) {
+        zaro::app::testing::failf("the double-click moved the title to %.1f,%.1f from %.1f,%.1f\n",
+                                  titleNow()->graphic.centreX, titleNow()->graphic.centreY,
+                                  placed.centreX, placed.centreY);
+    }
+    if (window.commands().position() != stepsAtOpen) {
+        zaro::app::testing::failf("opening the editor put a step on the history\n");
+    }
+
+    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    REQUIRE(editor != nullptr);
+    // Selected on open, so typing replaces the placeholder rather than landing
+    // beside it -- a title arrives saying "Title" and nobody wants that kept.
+    if (!editor->textCursor().hasSelection()) {
+        zaro::app::testing::failf("the text was not selected when the editor opened\n");
+    }
+
+    const std::size_t stepsBefore = window.commands().position();
+    editor->setPlainText("Kestrel Bay");
+    QApplication::processEvents();
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("typing did not reach the model: the title says \"%s\"\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+
+    // Return finishes. Shift+Return would be a line break, which is why the
+    // plain one is what closes.
+    QKeyEvent done{QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(editor, &done);
+    QApplication::processEvents();
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("Return did not finish typing\n");
+    }
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("finishing threw away what was typed\n");
+    }
+    if (window.commands().position() - stepsBefore != 1) {
+        zaro::app::testing::failf("typing took %zu undo steps, not one\n",
+                                  window.commands().position() - stepsBefore);
+    }
+
+    // Escape puts back whatever the text was when the pass started.
+    doubleClick(box);
+    REQUIRE(overlay->isTyping());
+    editor->setPlainText("thrown away");
+    QApplication::processEvents();
+    const std::size_t stepsBeforeEscape = window.commands().position();
+    QKeyEvent give{QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QCoreApplication::sendEvent(editor, &give);
+    QApplication::processEvents();
+    // Abandoned, so nothing is left on the history: a step that changes nothing
+    // is a Ctrl+Z that appears to do nothing.
+    if (window.commands().position() >= stepsBeforeEscape) {
+        zaro::app::testing::failf("Escape left a step on the history\n");
+    }
+    if (overlay->isTyping()) {
+        zaro::app::testing::failf("Escape did not close the editor\n");
+    }
+    if (titleNow()->graphic.text != "Kestrel Bay") {
+        zaro::app::testing::failf("Escape left \"%s\" behind instead of putting the text back\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+
+    // And one undo takes the whole typing pass back to what the title said when
+    // it was made.
+    window.commands().undo(window.project());
+    if (titleNow()->graphic.text != before) {
+        zaro::app::testing::failf("undo left \"%s\", not the text the title arrived with\n",
+                                  titleNow()->graphic.text.c_str());
+    }
+    window.monitor()->update();
+    QApplication::processEvents();
+}
+
+// The controls the title panel is operated through, measured off what is
+// actually painted.
+//
+// Both of these broke on the same thing: styling a subcontrol takes a widget
+// off Qt's native painter, and Qt then draws no arrow unless the sheet names an
+// image. Every combo lost its caret and every number field lost its steppers --
+// and once the caret was drawn back, the zone it sits in was wider than the one
+// Qt reserves when it decides how wide a combo wants to be, so the text under it
+// was clipped.
+//
+// Measured from pixels, and only from pixels. Two easier tests were written
+// first and both passed against the broken build: asking the style for a
+// subcontrol's rectangle reports the same field width whether or not the sheet
+// has taken 26px out of it, and asking a laid-out combo whether its text fits
+// asks the wrong widget, since the panel is wide enough to hide the problem.
+// What clipped was a combo at the width it asks for, so that is the width drawn
+// here.
+TEST_CASE("The title panel's controls have room for their chrome", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    window.addTitle();
+    QApplication::processEvents();
+
+    auto* align = window.effects()->findChild<QComboBox*>("text-align");
+    auto* size = window.effects()->findChild<QDoubleSpinBox*>("text-size");
+    REQUIRE(align != nullptr);
+    REQUIRE(size != nullptr);
+
+    /// Which columns of an image have something drawn in them, against the
+    /// colour found at `ground`. Used to tell an arrow from an empty button.
+    const auto inkedColumns = [](const QImage& image, const QPoint& ground, const QRect& within) {
+        std::vector<int> columns;
+        const QRgb base = image.pixel(ground);
+        const QRect box = within.intersected(image.rect());
+        for (int x = box.left(); x <= box.right(); ++x) {
+            for (int y = box.top(); y <= box.bottom(); ++y) {
+                const QRgb here = image.pixel(x, y);
+                const int apart = std::abs(qRed(here) - qRed(base)) +
+                                  std::abs(qGreen(here) - qGreen(base)) +
+                                  std::abs(qBlue(here) - qBlue(base));
+                if (apart > 24) {
+                    columns.push_back(x);
+                    break;
+                }
+            }
+        }
+        return columns;
+    };
+
+    // The combo has to reserve room for its own arrow.
+    //
+    // Not measured off pixels, though that was tried: the text does not clip in
+    // this run's fallback face, and it clipped in Inter -- a test that renders
+    // and looks passes on the machine that is not the one with the problem. The
+    // fault is in the arithmetic behind the render, so the arithmetic is what is
+    // checked. Qt decides how wide a combo wants to be from the *native* arrow,
+    // while the sheet then spends 26px of that on a drop-down zone of its own;
+    // when the difference came to a pixel the word fitted here and was cut off
+    // there.
+    //
+    // 40px is that zone plus the padding and border either side of the text,
+    // plus enough over to be a margin rather than a coincidence.
+    {
+        constexpr int kChromeAndMargin = 40;
+        const QFontMetrics metrics{align->font()};
+        for (int item = 0; item < align->count(); ++item) {
+            auto* probe = new QComboBox(window.effects());
+            probe->addItem(align->itemText(item));
+            const int needs = metrics.horizontalAdvance(align->itemText(item));
+            const int asks = probe->sizeHint().width();
+            if (asks - needs < kChromeAndMargin) {
+                zaro::app::testing::failf(
+                    "\"%s\" measures %dpx and its combo asks for %dpx: %dpx for chrome that "
+                    "needs %d\n",
+                    align->itemText(item).toUtf8().constData(), needs, asks, asks - needs,
+                    kChromeAndMargin);
+            }
+            probe->deleteLater();
+        }
+    }
+
+    // The steppers, counted as ink against the field beside them -- not against
+    // the image corner, which is outside the rounded border and transparent, so
+    // every pixel of the field counted as an arrow.
+    {
+        QImage shot{size->size(), QImage::Format_ARGB32};
+        shot.fill(Qt::transparent);
+        size->render(&shot);
+        QStyleOptionSpinBox spin;
+        spin.initFrom(size);
+        spin.rect = size->rect();
+        const QRect up =
+            size->style()->subControlRect(QStyle::CC_SpinBox, &spin, QStyle::SC_SpinBoxUp, size);
+        const QRect down =
+            size->style()->subControlRect(QStyle::CC_SpinBox, &spin, QStyle::SC_SpinBoxDown, size);
+        if (up.isEmpty() || down.isEmpty()) {
+            zaro::app::testing::failf("the size field has no stepper buttons at all\n");
+            return;
+        }
+        const QPoint ground{std::max(0, up.left() - 6), shot.height() / 2};
+        // Inset, so the field's own border and its rounded corners are not
+        // mistaken for something drawn in the button.
+        const auto arrowInk = [&](const QRect& button) {
+            return static_cast<int>(
+                inkedColumns(shot, ground, button.adjusted(2, 2, -3, -2)).size());
+        };
+        constexpr int kLeastColumns = 4;
+        if (arrowInk(up) < kLeastColumns) {
+            zaro::app::testing::failf("nothing is drawn in the up stepper (%d columns of ink)\n",
+                                      arrowInk(up));
+        }
+        if (arrowInk(down) < kLeastColumns) {
+            zaro::app::testing::failf("nothing is drawn in the down stepper (%d columns of ink)\n",
+                                      arrowInk(down));
+        }
+    }
+
+    // And they step: the arrows are chrome, but the chrome has to be attached
+    // to the thing it claims to do.
+    const double before = size->value();
+    size->stepBy(1);
+    if (!(size->value() > before)) {
+        zaro::app::testing::failf("stepping the size field changed nothing\n");
+    }
 }
 
 // A title that fades in.

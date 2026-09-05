@@ -1,13 +1,17 @@
 #include "Theme.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFont>
 #include <QFontDatabase>
 #include <QPalette>
+#include <QStandardPaths>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+
+#include "Icons.h"
 
 namespace zaro::app::theme {
 namespace {
@@ -89,6 +93,35 @@ QColor divider() {
     return textAt(0.16);
 }
 
+namespace {
+
+/// The caret, written where a stylesheet url can reach it.
+///
+/// Rebuilt every run rather than cached across them: it is a few hundred bytes,
+/// and the alternative is a stale arrow in the wrong colour surviving a retune
+/// of the palette. Drawn at the ratio of the screen the app started on, so the
+/// 10px the rule asks for lands on whole device pixels.
+///
+/// An empty path leaves `image: url()` naming nothing, which Qt treats as no
+/// image -- the arrow is missing, exactly as it was before, rather than the
+/// application refusing to start over a piece of chrome.
+QString caretFile(const QString& name, const QColor& ink, bool pointingUp = false) {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (dir.isEmpty() || !QDir{}.mkpath(dir)) {
+        return {};
+    }
+    const QString path = dir + '/' + name + ".png";
+    const icons::Glyph glyph = pointingUp ? icons::Glyph::CaretUp : icons::Glyph::CaretDown;
+    if (!icons::pixmap(glyph, 10, ink).save(path)) {
+        return {};
+    }
+    // Forward slashes, and no Windows drive colon left for the parser to read
+    // as the end of a url scheme.
+    return QDir::fromNativeSeparators(path);
+}
+
+}  // namespace
+
 QString styleSheet() {
     const QString accentHex = hex(accent());
     const QString surfaceHex = hex(surface());
@@ -142,13 +175,69 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 }
 QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: %NEUTRAL600%; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: %ACCENT%; }
-QComboBox::drop-down { border: none; width: 16px; }
+/* The arrow, and why it is a file.
+
+   Styling `::drop-down` at all takes the combo off the native painter, and Qt
+   then draws no arrow unless `::down-arrow` names an image -- so the rule that
+   removed the border was also removing the one mark that said "this opens".
+   Every combo in the app read as a text field; the font picker read as a field
+   somebody was expected to type a family name into.
+
+   A stylesheet takes a url and nothing else: there is no way to hand it a
+   painted path. So the caret this project already draws is written out once and
+   pointed at. Generated rather than vendored, at the running screen's ratio,
+   which is what keeps it the same caret as the one in the bin's group headings
+   instead of a second arrow from somebody else's icon set. */
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox::down-arrow { image: url(%CARET%); width: 10px; height: 10px; margin-right: 6px; }
+QComboBox::down-arrow:disabled { image: url(%CARETOFF%); }
+/* Room for the arrow, reserved rather than hoped for.
+
+   Qt works out how wide a combo wants to be from the *native* arrow, not from
+   the zone named above -- so the widget asked for 81px, of which the rule then
+   spent 26 on the drop-down, leaving 47 for a word that measures 46. It fitted
+   by a pixel, and a pixel is not a margin: on a machine whose Inter renders
+   "Centre" a hair wider, the right-hand end of the word was cut off.
+
+   Padding is the one part of the box Qt does count, so this is what makes the
+   space real instead of borrowed from the text. */
+QComboBox { padding-right: 22px; }
 QComboBox QAbstractItemView {
     background: %SURFACE%; border: 1px solid %DIVIDER%; border-radius: 6px;
     selection-background-color: %ACCENT800%; selection-color: %ACCENT100%; padding: 3px;
 }
-QSpinBox::up-button, QSpinBox::down-button,
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 13px; border: none; background: transparent; }
+/* The steppers, missing for the same reason the combo's arrow was: styling the
+   buttons takes the box off the native painter, and Qt then draws no arrow
+   unless one is named. A spin box with no steppers is a field -- the value can
+   be typed, and the nudge that is the whole point of a spin box is not offered.
+
+   Positioned against the border rather than the padding box, stacked, and each
+   given half the height: left to itself Qt puts both in the same place. */
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border; subcontrol-position: top right;
+    width: 17px; height: 12px; border: none; background: transparent;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border; subcontrol-position: bottom right;
+    width: 17px; height: 12px; border: none; background: transparent;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url(%CARETUP%); width: 9px; height: 9px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url(%CARET%); width: 9px; height: 9px;
+}
+/* At the end of the range the button does nothing, and says so. */
+QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,
+QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {
+    image: url(%CARETUPOFF%);
+}
+QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,
+QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {
+    image: url(%CARETOFF%);
+}
+/* Room for them, so a stepper never sits on top of the number. */
+QSpinBox, QDoubleSpinBox { padding-right: 19px; }
 
 QCheckBox, QRadioButton { spacing: 7px; }
 QCheckBox::indicator, QRadioButton::indicator {
@@ -389,6 +478,10 @@ QPushButton[class="inspector-tab"]:disabled { color: %FAINT%; background: transp
 #mixer-console { background: %WELL%; }
 #loudness-measure { font-size: 10px; padding: 2px 8px; border-radius: 6px; }
 )")
+        .replace("%CARET%", caretFile("caret", textAt(0.62)))
+        .replace("%CARETOFF%", caretFile("caret-off", textAt(0.30)))
+        .replace("%CARETUP%", caretFile("caret-up", textAt(0.62), true))
+        .replace("%CARETUPOFF%", caretFile("caret-up-off", textAt(0.30), true))
         .replace("%BG%", bgHex)
         .replace("%SURFACE%", surfaceHex)
         .replace("%WELL%", hex(well()))

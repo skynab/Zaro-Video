@@ -1,7 +1,14 @@
 #include "TitleOverlay.h"
 
+#include <QApplication>
+#include <QFont>
+#include <QFontMetricsF>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPlainTextEdit>
+#include <QResizeEvent>
+#include <QTextOption>
 #include <algorithm>
 #include <cmath>
 
@@ -16,6 +23,8 @@ const QColor kBox{150, 190, 255};
 const QColor kHandle{255, 255, 255};
 const QColor kShadow{20, 20, 24};
 const QColor kGuide{255, 214, 102};
+/// The ring round a box that is open for typing.
+const QColor kTyping{150, 190, 255};
 
 /// How near a corner counts as grabbing it, in widget pixels. Generous: a
 /// handle is a few pixels across and nobody aims at the middle of one.
@@ -46,12 +55,18 @@ TitleOverlay::TitleOverlay(ProgramMonitor* monitor, QWidget* parent)
 void TitleOverlay::setTarget(model::Project* project, model::SequenceId sequence,
                              model::TrackId track, model::ClipId clip,
                              edit::CommandStack* commands) {
+    // Before anything is repointed: closing writes what was typed, and it has
+    // to be written to the clip it was typed into rather than to the new one.
+    if (isTyping()) {
+        endTyping();
+    }
     project_ = project;
     sequenceId_ = sequence;
     trackId_ = track;
     clipId_ = clip;
     commands_ = commands;
     dragging_ = Part::None;
+    pending_ = Part::None;
     snappedX_.reset();
     snappedY_.reset();
     setVisible(isEditing());
@@ -77,6 +92,167 @@ const model::Graphic* TitleOverlay::graphic() const {
 
 bool TitleOverlay::isEditing() const {
     return graphic() != nullptr;
+}
+
+bool TitleOverlay::isTyping() const {
+    return typing_ && editor_ != nullptr;
+}
+
+void TitleOverlay::beginTyping() {
+    const model::Graphic* found = graphic();
+    if (found == nullptr || isTyping()) {
+        return;
+    }
+    if (editor_ == nullptr) {
+        editor_ = new QPlainTextEdit(this);
+        // No frame and no scrollbars: the box drawn round it is the frame, and
+        // a scrollbar inside a title box is chrome sitting on the picture. Text
+        // longer than the box is what the box being resizable is for.
+        editor_->setFrameShape(QFrame::NoFrame);
+        editor_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        editor_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        editor_->installEventFilter(this);
+        // Live, so the picture under the box keeps up with what is being
+        // typed. Every keystroke is a command that coalesces on the clip's
+        // merge key, the same way a drag does -- a typing pass is one undo
+        // step, not one per letter.
+        connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
+            const model::Graphic* current = graphic();
+            if (fillingEditor_ || current == nullptr) {
+                return;
+            }
+            model::Graphic typed = *current;
+            typed.text = editor_->toPlainText().toStdString();
+            if (typed != *current) {
+                apply(typed);
+            }
+        });
+    }
+
+    // Broken first, so the pass cannot merge into whatever came before it -- a
+    // drag of the box, most likely. Without this, unwinding the pass would take
+    // the drag with it.
+    if (commands_ != nullptr) {
+        commands_->breakMerge();
+    }
+    stepsBefore_ = commands_ != nullptr ? commands_->position() : 0;
+    fillingEditor_ = true;
+    editor_->setPlainText(QString::fromStdString(found->text));
+    fillingEditor_ = false;
+    layOutEditor();
+    typing_ = true;
+    editor_->show();
+    editor_->setFocus(Qt::MouseFocusReason);
+    editor_->selectAll();
+    update();
+}
+
+void TitleOverlay::endTyping() {
+    if (!isTyping()) {
+        return;
+    }
+    typing_ = false;
+    editor_->hide();
+    if (commands_ != nullptr) {
+        // Close the merge group: the next thing anybody does is a separate undo
+        // step, so one Ctrl+Z takes back the whole typing pass and no more.
+        commands_->breakMerge();
+    }
+    update();
+}
+
+void TitleOverlay::abandonTyping() {
+    if (!isTyping()) {
+        return;
+    }
+    // Unwound rather than typed back. Writing the old text again would restore
+    // the words and leave a command on the stack that does nothing -- so the
+    // next Ctrl+Z would appear to do nothing too, which is the behaviour that
+    // makes people stop trusting undo. Everything the pass added comes off.
+    if (commands_ != nullptr && project_ != nullptr) {
+        while (commands_->position() > stepsBefore_ && commands_->undo(*project_)) {
+        }
+        emit edited();
+    }
+    endTyping();
+}
+
+void TitleOverlay::layOutEditor() {
+    const model::Graphic* found = graphic();
+    if (editor_ == nullptr || found == nullptr) {
+        return;
+    }
+    const QRectF box = boxRect();
+    if (box.isEmpty()) {
+        return;
+    }
+    editor_->setGeometry(box.toAlignedRect());
+
+    // The face the title is drawn in, as near as a widget can get to it. The
+    // rasteriser reads `pointSize` as pixels of the output frame, so it is
+    // scaled by however much of the frame the monitor is showing -- otherwise
+    // what is typed is the right words at the wrong size, and the box it has to
+    // fit in is the one on screen.
+    QFont face = editor_->font();
+    if (!found->family.empty()) {
+        face.setFamily(QString::fromStdString(found->family));
+    }
+    face.setBold(found->bold);
+    face.setItalic(found->italic);
+    const model::Sequence* sequence =
+        project_ != nullptr ? project_->findSequence(sequenceId_) : nullptr;
+    const QRectF picture = monitor_->pictureRect();
+    double pixels = found->pointSize;
+    if (sequence != nullptr && sequence->width() > 0 && picture.width() > 0.0) {
+        pixels = found->pointSize * picture.width() / static_cast<double>(sequence->width());
+    }
+    face.setPixelSize(std::max(6, static_cast<int>(std::lround(pixels))));
+    editor_->setFont(face);
+
+    QTextOption option = editor_->document()->defaultTextOption();
+    option.setAlignment(found->alignment < 0   ? Qt::AlignLeft
+                        : found->alignment > 0 ? Qt::AlignRight
+                                               : Qt::AlignHCenter);
+    editor_->document()->setDefaultTextOption(option);
+
+    // The title's own ink, over a wash dark enough to read it against whatever
+    // the picture happens to be doing under the box. Not the title's own
+    // background, which is usually nothing at all: this is the editor saying it
+    // is open, and it goes away with it.
+    const QColor ink =
+        QColor::fromRgbF(static_cast<float>(found->red), static_cast<float>(found->green),
+                         static_cast<float>(found->blue));
+    editor_->setStyleSheet(QString("background: rgba(12, 14, 22, 190); color: %1; "
+                                   "selection-background-color: rgba(150, 190, 255, 110);")
+                               .arg(ink.name(QColor::HexRgb)));
+}
+
+bool TitleOverlay::eventFilter(QObject* watched, QEvent* event) {
+    if (watched != editor_) {
+        return QWidget::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Escape) {
+            abandonTyping();
+            return true;
+        }
+        // Return finishes; Shift+Return is the line break, because a title on
+        // two lines is the ordinary case and a modifier to end typing would be
+        // the thing nobody guesses.
+        const bool plainReturn = (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+                                 (key->modifiers() & Qt::ShiftModifier) == 0;
+        if (plainReturn) {
+            endTyping();
+            return true;
+        }
+    }
+    // Clicking anywhere else is finishing: the click is meant for whatever it
+    // landed on, and leaving the editor open over the picture would swallow it.
+    if (event->type() == QEvent::FocusOut) {
+        endTyping();
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 QPointF TitleOverlay::toWidget(double x, double y) const {
@@ -201,6 +377,13 @@ void TitleOverlay::apply(const model::Graphic& graphic) {
 
 void TitleOverlay::mousePressEvent(QMouseEvent* event) {
     const model::Graphic* found = graphic();
+    // A press while typing is somebody putting the caret somewhere, or leaving:
+    // either way it is the editor's, and dragging the box out from under a
+    // caret is not what the press meant.
+    if (isTyping()) {
+        event->ignore();
+        return;
+    }
     if (found == nullptr || event->button() != Qt::LeftButton) {
         event->ignore();
         return;
@@ -211,13 +394,28 @@ void TitleOverlay::mousePressEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
-    dragging_ = part;
+    pending_ = part;
     grabbedAt_ = event->position();
     startedFrom_ = *found;
+    stepsAtPress_ = commands_ != nullptr ? commands_->position() : 0;
     event->accept();
 }
 
 void TitleOverlay::mouseMoveEvent(QMouseEvent* event) {
+    if (isTyping()) {
+        event->ignore();
+        return;
+    }
+    const QPointF fromPress = event->position() - grabbedAt_;
+    const double travelled =
+        std::sqrt(fromPress.x() * fromPress.x() + fromPress.y() * fromPress.y());
+    if (dragging_ == Part::None && pending_ != Part::None &&
+        travelled >= static_cast<double>(QApplication::startDragDistance())) {
+        // Far enough to be a drag rather than an unsteady click.
+        dragging_ = pending_;
+        pending_ = Part::None;
+    }
+
     if (dragging_ == Part::None) {
         // Only the cursor changes: a box that is not being dragged still says
         // where its handles are.
@@ -283,9 +481,13 @@ void TitleOverlay::mouseMoveEvent(QMouseEvent* event) {
 
 void TitleOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (dragging_ == Part::None) {
+        // A press that never became a drag. Nothing was written, so there is
+        // nothing to close off -- but the press is spent either way.
+        pending_ = Part::None;
         event->ignore();
         return;
     }
+    pending_ = Part::None;
     dragging_ = Part::None;
     snappedX_.reset();
     snappedY_.reset();
@@ -295,6 +497,44 @@ void TitleOverlay::mouseReleaseEvent(QMouseEvent* event) {
     }
     update();
     event->accept();
+}
+
+void TitleOverlay::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (graphic() == nullptr || event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    if (partAt(event->position()) == Part::None) {
+        // Outside the box: not this title's double-click.
+        event->ignore();
+        return;
+    }
+    // The press that opened this double-click started a drag. Nothing moved --
+    // a double-click is two clicks in the same place -- but the gesture is
+    // still open, and leaving it open means the next pointer move resizes the
+    // box somebody is trying to type into.
+    dragging_ = Part::None;
+    pending_ = Part::None;
+    snappedX_.reset();
+    snappedY_.reset();
+    // Whatever that press managed to do before the second click identified the
+    // gesture, undone. A threshold keeps a steady hand from starting a drag at
+    // all, but a hand that drifts far enough is indistinguishable from somebody
+    // beginning to drag -- until the second click arrives and says it was not.
+    if (commands_ != nullptr && project_ != nullptr) {
+        while (commands_->position() > stepsAtPress_ && commands_->undo(*project_)) {
+        }
+        emit edited();
+    }
+    beginTyping();
+    event->accept();
+}
+
+void TitleOverlay::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (isTyping()) {
+        layOutEditor();
+    }
 }
 
 void TitleOverlay::paintEvent(QPaintEvent* /*event*/) {
@@ -328,6 +568,14 @@ void TitleOverlay::paintEvent(QPaintEvent* /*event*/) {
     painter.drawRect(box);
     painter.setPen(QPen{kBox, 1.0});
     painter.drawRect(box);
+
+    // No handles while it is being typed into: they are for a gesture that is
+    // not available, and they sit exactly where the text does.
+    if (isTyping()) {
+        painter.setPen(QPen{kTyping, 1.0});
+        painter.drawRect(box.adjusted(-2.0, -2.0, 2.0, 2.0));
+        return;
+    }
 
     painter.setPen(QPen{kShadow, 1.0});
     painter.setBrush(kHandle);

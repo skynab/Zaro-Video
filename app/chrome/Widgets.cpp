@@ -10,6 +10,7 @@
 #include <QDesktopServices>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QPainter>
 #include <QRect>
@@ -153,6 +154,22 @@ namespace {
 void runs(QPushButton* button, ActionRouter& router, const char* actionId) {
     QObject::connect(button, &QPushButton::clicked, button,
                      [&router, id = std::string{actionId}] { router.trigger(id); });
+}
+
+/// The Add Title tooltip, with whatever key is actually bound to it.
+///
+/// Written from the keymap rather than spelled out, for two reasons: the
+/// shortcut is rebindable, and `Ctrl+Shift+T` is not what a Mac shows -- Qt
+/// renders the same binding as the platform writes it.
+QString titleTip(const std::string& shortcut) {
+    const QString base = QStringLiteral("Add a title at the playhead");
+    if (shortcut.empty()) {
+        return base;
+    }
+    const QString key =
+        QKeySequence::fromString(QString::fromStdString(shortcut), QKeySequence::PortableText)
+            .toString(QKeySequence::NativeText);
+    return key.isEmpty() ? base : QStringLiteral("%1 (%2)").arg(base, key);
 }
 
 /// A readout you can press: it says a fact and opens the thing that sets it.
@@ -475,6 +492,20 @@ QWidget* buildTimelinePane(QWidget* parent, Bars& bars, ActionRouter& router, co
         "no cut. Drag its edge to set how long it lasts.");
     runs(dissolve, router, "add-dissolve");
     row->addWidget(dissolve);
+
+    // Titles were reachable from the bin, the right-click menu and a
+    // keystroke, and from nothing anybody looking at the timeline could see --
+    // so the one control people went hunting for was the one that was not
+    // there. It sits with the razor and the dissolve because all three do the
+    // same kind of thing: put something down where the playhead is.
+    QPushButton* titleButton = iconButton(bar, app::icons::Glyph::TextT,
+                                          titleTip(router.keymap().shortcutFor("add-title")));
+    // Named, so the test that presses it can find it. The bin's own Add Title
+    // button already answers to "add-title"; this one says where it is, or a
+    // search from the window would turn up two buttons and pick either.
+    titleButton->setObjectName("timeline-add-title");
+    runs(titleButton, router, "add-title");
+    row->addWidget(titleButton);
 
     row->addWidget(separator(bar));
 
