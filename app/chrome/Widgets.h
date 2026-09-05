@@ -13,6 +13,7 @@
 #include "../TimelineWidget.h"
 #include "Bars.h"
 
+class QAbstractItemView;
 class QFrame;
 class QLabel;
 
@@ -24,6 +25,19 @@ QPushButton* iconButton(QWidget* parent, app::icons::Glyph glyph, const QString&
                         bool checkable = false);
 QFrame* separator(QWidget* parent);
 QLabel* mutedLabel(QWidget* parent, const QString& text = {});
+
+/// Say what a list is for while it is empty.
+///
+/// Every pane in this window says what it is for when it has nothing in it --
+/// the Effects tab, the Titles tab, the grading palette. The list views were
+/// the exception, and an empty one reads as a panel that failed to load rather
+/// than one waiting to be given something.
+///
+/// A label over the viewport rather than a paintEvent, so it needs no subclass
+/// per list and takes the same "muted" styling as every other such sentence. It
+/// follows the view's model, so a list that fills up hides it without anyone
+/// having to remember to.
+void setEmptyText(QAbstractItemView* view, const QString& text);
 
 /// The handful of things the bars do that are not commands.
 ///

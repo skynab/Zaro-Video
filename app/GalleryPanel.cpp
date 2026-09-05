@@ -14,6 +14,7 @@
 
 #include "Icons.h"
 #include "Theme.h"
+#include "chrome/Widgets.h"
 
 namespace zaro::app {
 namespace {
@@ -112,6 +113,16 @@ GalleryPanel::GalleryPanel(QWidget* parent) : QWidget{parent} {
     luts_->setIconSize(QSize{16, 16});
     connect(luts_, &QListWidget::itemDoubleClicked, this,
             [this](QListWidgetItem* item) { emit lutChosen(item->data(Qt::UserRole).toString()); });
+
+    // Both lists say what they are for while they are empty.
+    //
+    // The gallery's band is a fixed height by design, so on a project with no
+    // stills and no looks the rail was a heading, 238 pixels of nothing, a
+    // second heading, and the rest of the panel of nothing again -- which reads
+    // as a layout that did not finish rather than as two lists waiting to be
+    // given something. The bands stay; they just say what they are now.
+    chrome::setEmptyText(grid_, "Grab a still to compare a grade against it.");
+    chrome::setEmptyText(luts_, "No looks loaded.\n\nOpen a folder of .cube files.");
 
     auto* column = new QVBoxLayout(this);
     column->setContentsMargins(0, 0, 0, 0);

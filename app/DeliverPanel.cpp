@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
@@ -407,7 +408,11 @@ void DeliverPanel::buildSettings(QVBoxLayout* into) {
     destination->addWidget(fileName_, 1, 0);
 
     auto* locationRow = new QHBoxLayout;
-    folder_ = new QLineEdit(QDir::homePath(), content);
+    // Native separators throughout, because the line under this field is
+    // built with std::filesystem and comes out native whatever this said.
+    // The two sat one above the other reading C:/Users/... and
+    // C:\Users\...\delivery.mp4, which looks like two different places.
+    folder_ = new QLineEdit(QDir::toNativeSeparators(QDir::homePath()), content);
     folder_->setReadOnly(true);
     auto* browse = new QPushButton("Browse", content);
     browse->setProperty("flat", true);
@@ -780,7 +785,7 @@ std::string DeliverPanel::outputPath() const {
 }
 
 void DeliverPanel::setDestination(const QString& folder, const QString& name) {
-    folder_->setText(folder);
+    folder_->setText(QDir::toNativeSeparators(folder));
     fileName_->setText(name);
     updateDerived();
 }
@@ -803,7 +808,7 @@ QString DeliverPanel::lastMessage() const {
 void DeliverPanel::chooseFolder() {
     const QString chosen = QFileDialog::getExistingDirectory(this, "Deliver to", folder_->text());
     if (!chosen.isEmpty()) {
-        folder_->setText(chosen);
+        folder_->setText(QDir::toNativeSeparators(chosen));
         updateDerived();
     }
 }

@@ -408,7 +408,12 @@ TEST_CASE("Metadata and search, through the real bin", "[gui]") {
 
     auto* binPanel = window.bin();
     auto* binSearch = binPanel->findChild<QLineEdit*>();
-    auto* binList = binPanel->findChild<QListWidget*>();
+    // By name, like every other list this suite reaches for. Unnamed, this
+    // took whichever QListWidget the pane happened to build first, which was
+    // the media list only by accident -- rearranging the pane handed it the
+    // Titles tab's three presets instead, and the failure read as a search
+    // matching three files when the bin held two.
+    auto* binList = binPanel->findChild<QListWidget*>("bin-list");
     if (binSearch == nullptr || binList == nullptr) {
         zaro::app::testing::failf("the bin has no search box or list\n");
     }

@@ -6,8 +6,11 @@
 
 #include "Widgets.h"
 
+#include <QAbstractItemModel>
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QKeySequence>
@@ -20,6 +23,7 @@
 #include <QStackedWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <functional>
 #include <string>
 
 #include "../Icons.h"
@@ -28,6 +32,32 @@
 #include "Choices.h"
 
 namespace zaro::app::chrome {
+namespace {
+
+/// Keeps an empty-list sentence the size of the viewport it sits on.
+///
+/// A filter rather than a resizeEvent override, because the point of
+/// `setEmptyText` is that it works on the list views the panels already build
+/// -- a subclass would mean changing every one of them to use it.
+class ViewportWatcher : public QObject {
+public:
+    ViewportWatcher(QWidget* label, std::function<void()> sync, QObject* parent)
+        : QObject{parent}, label_{label}, sync_{std::move(sync)} {}
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::Resize && label_ != nullptr) {
+            sync_();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QWidget* label_{nullptr};
+    std::function<void()> sync_;
+};
+
+}  // namespace
 
 QPushButton* button(QWidget* parent, const QString& text, const QString& tip, bool checkable) {
     auto* made = new QPushButton(text, parent);
@@ -62,6 +92,40 @@ QLabel* mutedLabel(QWidget* parent, const QString& text) {
     auto* label = new QLabel(text, parent);
     label->setProperty("muted", true);
     return label;
+}
+
+void setEmptyText(QAbstractItemView* view, const QString& text) {
+    if (view == nullptr || view->viewport() == nullptr) {
+        return;
+    }
+    auto* label = new QLabel(text, view->viewport());
+    label->setWordWrap(true);
+    label->setAlignment(Qt::AlignCenter);
+    label->setContentsMargins(16, 0, 16, 0);
+    label->setProperty("muted", true);
+    // The list is still the thing being clicked and scrolled; this is only
+    // something to read while there is nothing to click.
+    label->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+    const auto sync = [view, label] {
+        const QAbstractItemModel* model = view->model();
+        const bool empty = model == nullptr || model->rowCount(view->rootIndex()) == 0;
+        label->setGeometry(view->viewport()->rect());
+        label->setVisible(empty);
+        if (empty) {
+            label->raise();
+        }
+    };
+
+    // Follow the viewport's size, and the model's contents. Both matter: a
+    // label left at its first geometry sits in the corner of a resized panel,
+    // and one that never hears about a row stays up over the list it is
+    // covering.
+    QObject::connect(view->model(), &QAbstractItemModel::rowsInserted, label, sync);
+    QObject::connect(view->model(), &QAbstractItemModel::rowsRemoved, label, sync);
+    QObject::connect(view->model(), &QAbstractItemModel::modelReset, label, sync);
+    view->viewport()->installEventFilter(new ViewportWatcher{label, sync, view->viewport()});
+    sync();
 }
 
 QWidget* buildTitleBar(QWidget* parent, Bars& bars) {

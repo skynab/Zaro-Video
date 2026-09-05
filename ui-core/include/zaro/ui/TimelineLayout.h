@@ -31,7 +31,13 @@ public:
         std::int32_t trackGap{1};
         std::int32_t rulerHeight{26};
         /// Width of the track headers, to the left of the time area.
-        std::int32_t headerWidth{150};
+        ///
+        /// Wide enough for the names this application gives tracks itself. The
+        /// header spends a badge column on the left and three control buttons
+        /// on the right, which left about fifty pixels in the middle for the
+        /// name -- so a new project elided its own default "Dialogue" to
+        /// "Dialog…" while the header still had free space in it.
+        std::int32_t headerWidth{170};
         /// How close to a clip edge counts as grabbing the edge rather than the
         /// body. Generous, because a trim handle that needs pixel accuracy is
         /// one nobody uses.

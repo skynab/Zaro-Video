@@ -627,7 +627,6 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     // Media is the only tab with a list behind it; the rest are a sentence
     // pointing at the panel that does own them.
     pages_ = new QStackedWidget(this);
-    pages_->addWidget(list_);
     const auto note = [this](const QString& text) {
         auto* label = new QLabel(text, this);
         label->setWordWrap(true);
@@ -636,6 +635,15 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
         label->setProperty("muted", true);
         return label;
     };
+    // The Media tab is a list *or* a sentence, so it is a stack of its own
+    // inside the tab stack. An empty bin used to be a blank rectangle -- on the
+    // tab a new project opens in, and on a pane that quietly accepts dropped
+    // files without anything on screen saying so. `applyFilter` picks which.
+    binEmpty_ = note(QString{});
+    mediaPage_ = new QStackedWidget(this);
+    mediaPage_->addWidget(list_);
+    mediaPage_->addWidget(binEmpty_);
+    pages_->addWidget(mediaPage_);
     pages_->addWidget(
         note(QStringLiteral("Effects live in the Effects panel, beside the monitor.")));
 
@@ -877,6 +885,23 @@ void ProjectBin::applyFilter() {
     footer_->setText(filter_.isEmpty() && bin_.isEmpty() && !usedOnly_
                          ? summary()
                          : QString("%1 of %2 shown").arg(shown).arg(rows));
+
+    // A list with nothing in it says why, and the two reasons are different
+    // things: a project with no footage yet wants to know how to get some, and
+    // a search that matched nothing wants to know that is what happened rather
+    // than that the bin emptied itself.
+    if (shown == 0) {
+        binEmpty_->setText(rows == 0
+                               ? QStringLiteral("No media yet.\n\nPress Import, or drop files here "
+                                                "from the file manager.")
+                               : QStringLiteral("Nothing here matches what you are looking for."));
+    }
+    mediaPage_->setCurrentWidget(shown == 0 ? static_cast<QWidget*>(binEmpty_)
+                                            : static_cast<QWidget*>(list_));
+
+    // Chips count things; with nothing to count they are a row of zeroes above
+    // a sentence explaining there is nothing yet.
+    chipHolder_->setVisible(rows > 0);
 }
 
 /// How many files, what they weigh, and where the proxies stand.
