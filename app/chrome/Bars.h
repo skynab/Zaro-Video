@@ -12,6 +12,7 @@
 #pragma once
 
 #include <QAction>
+#include <QComboBox>
 #include <QLabel>
 #include <QMap>
 #include <QMenuBar>
@@ -34,10 +35,16 @@ struct Bars {
     QLabel* autosaveLabel{nullptr};
 
     /// The tool bar: the format on the left, the workspace tabs in the middle.
-    /// The format readout is a button rather than a label. It is the one place
-    /// in the window that says what the frame size and rate are, which makes it
-    /// the first place somebody looks to change them -- and until it could be
-    /// pressed, the answer was a menu they had to already know about.
+    ///
+    /// The frame size is a dropdown rather than a button that opens a menu.
+    /// Both can be clicked to the same list, but only one of them looks like a
+    /// setting with a value: a dropdown says "this is a choice, here is what it
+    /// is currently set to" without being pressed, which is what somebody
+    /// scanning the top of the window for the project's resolution is after.
+    QComboBox* formatBox{nullptr};
+    /// The same slot in Deliver, where the left readout is the render range
+    /// rather than the format. A range is not a setting, so it is shown plain
+    /// and does not open anything -- and the two swap places by visibility.
     QPushButton* formatButton{nullptr};
     QPushButton* rateButton{nullptr};
     QMap<QString, QPushButton*> workspaceTabs;
@@ -95,6 +102,11 @@ struct Status {
 
     std::int32_t width{0};
     std::int32_t height{0};
+    /// The largest picture on the timeline, for the dropdown's "Match the
+    /// footage" entry. Zero when there is nothing to match, and then the entry
+    /// is absent rather than offering to match nothing.
+    std::int32_t sourceWidth{0};
+    std::int32_t sourceHeight{0};
     double frameRate{0.0};
     QString durationTimecode;
 

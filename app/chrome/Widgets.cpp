@@ -6,10 +6,13 @@
 
 #include "Widgets.h"
 
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
+#include <QRect>
 #include <QSize>
 #include <QSizePolicy>
 #include <QSlider>
@@ -21,6 +24,7 @@
 #include "../Icons.h"
 #include "../SupportButton.h"
 #include "../Theme.h"
+#include "Choices.h"
 
 namespace zaro::app::chrome {
 
@@ -167,6 +171,35 @@ QPushButton* readout(QWidget* parent, const QString& tip, ActionRouter& router,
     return made;
 }
 
+/// The frame-size dropdown, with the chevron the rest of this bar uses.
+///
+/// Nothing in this program draws a combo box arrow: the stylesheet gives every
+/// QComboBox a bare drop-down area and no image for the indicator, so a combo
+/// in the toolbar is a rounded rectangle with a number in it and nothing says
+/// it opens. The readouts beside it solve that with a literal "⌄" in their
+/// text, and this draws the same glyph in the same place -- matching the bar's
+/// existing signal for "this can be opened" rather than inventing a second one.
+///
+/// Drawn rather than styled because the stylesheet route needs an image asset:
+/// the usual CSS zero-size-border triangle is not something Qt's stylesheet
+/// engine implements, and asking for one paints a filled square.
+class FormatCombo final : public QComboBox {
+public:
+    using QComboBox::QComboBox;
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QComboBox::paintEvent(event);
+        if (!isEnabled()) {
+            return;
+        }
+        QPainter painter{this};
+        painter.setPen(underMouse() ? app::theme::text() : app::theme::textAt(0.55));
+        painter.drawText(QRect(width() - 15, 0, 12, height()), Qt::AlignCenter,
+                         QStringLiteral("⌄"));
+    }
+};
+
 }  // namespace
 
 QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const Hooks& hooks,
@@ -181,15 +214,50 @@ QWidget* buildToolBar(QWidget* parent, Bars& bars, ActionRouter& router, const H
     // Snapping and markers used to be here. They belong with the timeline --
     // both of them are about where an edit lands, and the timeline is where
     // edits land -- so they moved down with the tools.
+    // A dropdown rather than another readout button. It is the project's
+    // resolution, it is a setting with a value, and the top left of the window
+    // is where somebody looks for it -- so it says what it is set to without
+    // being clicked, and opens its own list when it is.
+    bars.formatBox = new FormatCombo(bar);
+    bars.formatBox->setObjectName("chrome-format");
+    bars.formatBox->setToolTip(
+        "Frame size — the resolution this sequence renders and\n"
+        "exports at. Pick one, 1080\u00d71920 vertical included, or\n"
+        "Custom\u2026 to type a size. Also at Sequence \u25b8 Frame Size.");
+    bars.formatBox->setFocusPolicy(Qt::NoFocus);
+    bars.formatBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    {
+        // `activated` and not `currentIndexChanged`: the box is repopulated
+        // whenever the sequence changes, and a change signal would fire on
+        // every one of those and resize the sequence to whatever the refresh
+        // had just selected.
+        const auto choose = hooks.chooseFrameSize;
+        QObject::connect(bars.formatBox, &QComboBox::activated, bars.formatBox,
+                         [box = bars.formatBox, choose](int index) {
+                             if (!choose) {
+                                 return;
+                             }
+                             const QVariant size = box->itemData(index);
+                             if (!size.isValid()) {
+                                 return;
+                             }
+                             const QPoint pair = size.toPoint();
+                             choose(pair.x(), pair.y());
+                         });
+    }
+
+    // The same slot in Deliver, where what belongs there is the render range.
     bars.formatButton = readout(bar,
                                 "Frame size — the resolution this sequence renders and\n"
                                 "exports at. Click to pick one, 1080\u00d71920 vertical\n"
                                 "included. Also at Sequence \u25b8 Frame Size.",
                                 router, "frame-size");
+    bars.formatButton->hide();
     bars.rateButton = readout(bar,
                               "Frame rate — how fast this sequence plays.\n"
                               "Click to change. Also at Sequence \u25b8 Frame Rate.",
                               router, "frame-rate");
+    row->addWidget(bars.formatBox);
     row->addWidget(bars.formatButton);
     row->addWidget(bars.rateButton);
     row->addStretch(1);

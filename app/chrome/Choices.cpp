@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QCursor>
 #include <QMenu>
+#include <algorithm>
 #include <cstdint>
 #include <map>
 
@@ -138,6 +139,42 @@ DeliveryChoice deliveryMenu(media::TransferFunction currentTransfer, double curr
     return choice;
 }
 
+std::vector<FrameSizePreset> frameSizePresets(std::int32_t sourceWidth, std::int32_t sourceHeight) {
+    std::vector<FrameSizePreset> out;
+    // The footage first. A sequence that does not match what is on it is the
+    // reason somebody comes looking for this, and matching it is nearly always
+    // the answer -- the export does not scale, so anything else crops or pads.
+    //
+    // Rounded down to even, because that is what a resize will accept.
+    if (sourceWidth > 0 && sourceHeight > 0) {
+        out.push_back({QStringLiteral("Match the footage"), sourceWidth - (sourceWidth % 2),
+                       sourceHeight - (sourceHeight % 2)});
+    }
+    out.push_back({QStringLiteral("HD"), 1920, 1080});
+    out.push_back({QStringLiteral("HD ready"), 1280, 720});
+    out.push_back({QStringLiteral("4K UHD"), 3840, 2160});
+    out.push_back({QStringLiteral("Vertical HD"), 1080, 1920});
+    out.push_back({QStringLiteral("Vertical, small"), 720, 1280});
+    out.push_back({QStringLiteral("Square"), 1080, 1080});
+
+    // Footage that happens to be exactly one of the presets would otherwise
+    // appear twice, and two rows carrying the same numbers read as a bug. The
+    // footage entry is the one kept, because it is the one that says why the
+    // size is being offered.
+    std::vector<FrameSizePreset> unique;
+    for (const FrameSizePreset& preset : out) {
+        const bool seen =
+            std::any_of(unique.begin(), unique.end(), [&preset](const FrameSizePreset& kept) {
+                return kept.width == preset.width && kept.height == preset.height;
+            });
+        if (!seen) {
+            unique.push_back(preset);
+        }
+    }
+    unique.push_back({QStringLiteral("Custom…"), 0, 0});
+    return unique;
+}
+
 FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHeight,
                               std::int32_t sourceWidth, std::int32_t sourceHeight) {
     QMenu menu;
@@ -146,36 +183,26 @@ FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHei
     menu.addSeparator();
 
     std::map<QAction*, std::pair<std::int32_t, std::int32_t>> sizes;
-    const auto offer = [&](const QString& label, std::int32_t width, std::int32_t height) {
-        if (width <= 0 || height <= 0) {
-            return;
+    QAction* custom = nullptr;
+    const std::vector<FrameSizePreset> presets = frameSizePresets(sourceWidth, sourceHeight);
+    for (std::size_t i = 0; i < presets.size(); ++i) {
+        const FrameSizePreset& preset = presets[i];
+        if (preset.isCustom()) {
+            menu.addSeparator();
+            custom = menu.addAction(preset.label);
+            continue;
         }
-        QAction* action =
-            menu.addAction(QString("%1  (%2 × %3)").arg(label).arg(width).arg(height));
+        // A rule after the footage entry and before the vertical ones, which is
+        // where the list changes subject.
+        if ((i == 1 && sourceWidth > 0) || preset.label == QStringLiteral("Vertical HD")) {
+            menu.addSeparator();
+        }
+        QAction* action = menu.addAction(
+            QString("%1  (%2 × %3)").arg(preset.label).arg(preset.width).arg(preset.height));
         action->setCheckable(true);
-        action->setChecked(currentWidth == width && currentHeight == height);
-        sizes.emplace(action, std::pair{width, height});
-    };
-
-    // The footage first. A sequence that does not match what is on it is the
-    // reason somebody opened this menu, and matching it is nearly always the
-    // answer -- the export does not scale, so anything else crops or pads.
-    if (sourceWidth > 0 && sourceHeight > 0) {
-        offer("Match the footage", sourceWidth - (sourceWidth % 2),
-              sourceHeight - (sourceHeight % 2));
-        menu.addSeparator();
+        action->setChecked(currentWidth == preset.width && currentHeight == preset.height);
+        sizes.emplace(action, std::pair{preset.width, preset.height});
     }
-
-    offer("HD", 1920, 1080);
-    offer("HD ready", 1280, 720);
-    offer("4K UHD", 3840, 2160);
-    menu.addSeparator();
-    offer("Vertical HD", 1080, 1920);
-    offer("Vertical, small", 720, 1280);
-    offer("Square", 1080, 1080);
-
-    menu.addSeparator();
-    QAction* custom = menu.addAction("Custom…");
 
     QAction* chosen = menu.exec(QCursor::pos());
     FrameSizeChoice choice;

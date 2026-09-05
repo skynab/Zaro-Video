@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QWidget>
+#include <cstdint>
 #include <functional>
 
 #include "../ActionRouter.h"
@@ -43,6 +44,10 @@ struct Hooks {
     std::function<void(double)> setTrackHeightFraction;
     std::function<void()> queueRender;
     std::function<void()> toggleRendering;
+    /// A frame size picked from the toolbar's dropdown. Zeroes mean the
+    /// "Custom…" entry, which the window answers with a prompt -- the chrome
+    /// deliberately does not know how to ask for a number.
+    std::function<void(std::int32_t, std::int32_t)> chooseFrameSize;
 };
 
 QWidget* buildTitleBar(QWidget* parent, Bars& bars);

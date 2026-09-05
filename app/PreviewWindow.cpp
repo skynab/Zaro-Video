@@ -1531,18 +1531,13 @@ void PreviewWindow::pasteAtPlayhead() {
     afterEdit();
 }
 
-void PreviewWindow::frameSizeMenu() {
+void PreviewWindow::largestSourceSize(std::int32_t& width, std::int32_t& height) const {
+    width = 0;
+    height = 0;
     const model::Sequence* sequence = liveSequence();
     if (sequence == nullptr) {
         return;
     }
-
-    // The biggest picture on the timeline, offered as "match the footage".
-    // Biggest rather than the first: a cut of a 4K master and a phone clip
-    // should conform to the master, and a sequence smaller than its footage
-    // throws away detail that is already there.
-    std::int32_t sourceWidth = 0;
-    std::int32_t sourceHeight = 0;
     for (const model::Track& track : sequence->videoTracks()) {
         for (const model::Clip& clip : track.clips()) {
             if (clip.nested.isValid() || clip.graphic.isSet()) {
@@ -1557,22 +1552,24 @@ void PreviewWindow::frameSizeMenu() {
                 continue;
             }
             if (static_cast<std::int64_t>(video->width) * video->height >
-                static_cast<std::int64_t>(sourceWidth) * sourceHeight) {
-                sourceWidth = video->width;
-                sourceHeight = video->height;
+                static_cast<std::int64_t>(width) * height) {
+                width = video->width;
+                height = video->height;
             }
         }
     }
+}
 
-    const chrome::FrameSizeChoice chosen =
-        chrome::frameSizeMenu(sequence->width(), sequence->height(), sourceWidth, sourceHeight);
-    if (!chosen.chosen) {
+void PreviewWindow::applyFrameSize(std::int32_t width, std::int32_t height) {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
         return;
     }
 
-    std::int32_t width = chosen.width;
-    std::int32_t height = chosen.height;
-    if (chosen.custom) {
+    // Both zero is the "Custom…" entry, which is a request to be asked rather
+    // than a size. Asked here and not in the chrome: the chrome knows what the
+    // list contains, not how to prompt for something that is not on it.
+    if (width <= 0 || height <= 0) {
         bool ok = false;
         const QString typed = QInputDialog::getText(
             this, "Frame size",
@@ -1592,9 +1589,17 @@ void PreviewWindow::frameSizeMenu() {
         height = parts[1].toInt();
     }
 
+    if (width == sequence->width() && height == sequence->height()) {
+        // Picking the size it already is is not a mistake worth a dialog: the
+        // dropdown shows the current size selected, so choosing it again is the
+        // most ordinary thing somebody can do with an open list.
+        return;
+    }
+
     auto built = edit::makeResizeSequence(document_.project(), sequence->id(), width, height);
     if (!built) {
         app::warn(this, "Frame size", QString::fromStdString(built.error().toString()));
+        updateChrome();
         return;
     }
     document_.commands().execute(document_.project(), std::move(*built));
@@ -1602,6 +1607,27 @@ void PreviewWindow::frameSizeMenu() {
     // Every cached frame was composited at the old size.
     renderCache_.clear();
     afterEdit();
+}
+
+void PreviewWindow::frameSizeMenu() {
+    const model::Sequence* sequence = liveSequence();
+    if (sequence == nullptr) {
+        return;
+    }
+
+    std::int32_t sourceWidth = 0;
+    std::int32_t sourceHeight = 0;
+    largestSourceSize(sourceWidth, sourceHeight);
+
+    const chrome::FrameSizeChoice chosen =
+        chrome::frameSizeMenu(sequence->width(), sequence->height(), sourceWidth, sourceHeight);
+    if (!chosen.chosen) {
+        return;
+    }
+    // Custom is spelled as a zero size, which is what applyFrameSize prompts
+    // for -- so the menu and the dropdown reach the same code by the same
+    // route.
+    applyFrameSize(chosen.custom ? 0 : chosen.width, chosen.custom ? 0 : chosen.height);
 }
 
 void PreviewWindow::frameRateMenu() {
@@ -2325,6 +2351,9 @@ chrome::Hooks PreviewWindow::chromeHooks() {
         timeline_->setTrackHeightFraction(fraction);
     };
     hooks.queueRender = [this] { deliver_->queueCurrent(); };
+    hooks.chooseFrameSize = [this](std::int32_t width, std::int32_t height) {
+        applyFrameSize(width, height);
+    };
     hooks.toggleRendering = [this] {
         deliver_->toggleRendering();
         updateChrome();
@@ -2459,6 +2488,7 @@ void PreviewWindow::updateChrome() {
         status.sequenceName = QString::fromStdString(sequence->name());
         status.width = sequence->width();
         status.height = sequence->height();
+        largestSourceSize(status.sourceWidth, status.sourceHeight);
         status.frameRate = sequence->frameRate().toDouble();
         const bool dropFrame = time::supportsDropFrame(sequence->frameRate());
         status.durationTimecode =

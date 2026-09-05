@@ -3,7 +3,9 @@
 // Driven through the real window against the real compositor. See GuiFixture.h
 // for what is shared and why.
 
+#include <QComboBox>
 #include <QElapsedTimer>
+#include <QPoint>
 #include <QThread>
 #include <cstdint>
 
@@ -1259,4 +1261,79 @@ TEST_CASE("Every panel follows the sequence being edited", "[gui]") {
         zaro::app::testing::failf("the mixer is still showing the sequence that was left behind\n");
     }
     std::printf("  panels followed the sequence: mixer now on A1 of \"second\"\n");
+}
+
+// The toolbar's frame-size dropdown.
+//
+// The resolution was reachable only from Sequence ▸ Frame Size and from a
+// readout button that had to be pressed before it admitted it was a control.
+// The top left of the window is where somebody looks for a project's
+// resolution, so it is a dropdown there now.
+//
+// Driven through the real widget rather than by calling the window's method:
+// the wiring is the part that can break -- an item carrying the wrong data, a
+// signal that fires on a refresh and resizes the sequence to whatever was just
+// selected -- and none of that is exercised by calling applyFrameSize directly.
+TEST_CASE("The toolbar's frame size dropdown resizes the sequence", "[gui]") {
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    auto* box = window.findChild<QComboBox*>("chrome-format");
+    if (box == nullptr) {
+        zaro::app::testing::failf("the toolbar has no frame size dropdown\n");
+    }
+
+    const auto* sequence = window.sequence();
+    const std::int32_t wasWidth = sequence->width();
+    const std::int32_t wasHeight = sequence->height();
+
+    // It shows what the sequence actually is, even when that is nothing the
+    // list offers -- the fixture's is 320x240, which is not a preset.
+    if (!box->currentText().contains(QString::number(wasWidth)) ||
+        !box->currentText().contains(QString::number(wasHeight))) {
+        zaro::app::testing::failf("the dropdown says '%s', not the sequence's %dx%d\n",
+                                  box->currentText().toUtf8().constData(), wasWidth, wasHeight);
+    }
+
+    // Find HD and pick it the way the mouse does.
+    int hd = -1;
+    for (int i = 0; i < box->count(); ++i) {
+        if (box->itemData(i).toPoint() == QPoint{1920, 1080}) {
+            hd = i;
+        }
+    }
+    if (hd < 0) {
+        zaro::app::testing::failf("the dropdown does not offer 1920x1080\n");
+    }
+    box->setCurrentIndex(hd);
+    emit box->activated(hd);
+    QApplication::processEvents();
+
+    const auto* resized = window.sequence();
+    if (resized->width() != 1920 || resized->height() != 1080) {
+        zaro::app::testing::failf("picking HD left the sequence at %dx%d\n", resized->width(),
+                                  resized->height());
+    }
+    std::printf("  frame size dropdown: %dx%d -> %dx%d\n", wasWidth, wasHeight, resized->width(),
+                resized->height());
+
+    // One undo step, and it goes back. Through the timeline, which is what
+    // Ctrl+Z runs: undoing on the command stack directly leaves the window
+    // none the wiser, so a test that did that would be checking its own
+    // shortcut rather than the program's.
+    window.timeline()->undo();
+    QApplication::processEvents();
+    const auto* undone = window.sequence();
+    if (undone->width() != wasWidth || undone->height() != wasHeight) {
+        zaro::app::testing::failf("undo left the sequence at %dx%d, not %dx%d\n", undone->width(),
+                                  undone->height(), wasWidth, wasHeight);
+    }
+
+    // And the box followed the undo rather than still asserting HD. This is
+    // the failure a dropdown that only refreshed when it was itself used would
+    // produce: the sequence is 320x240 and the toolbar says 1920x1080.
+    if (!box->currentText().contains(QString::number(wasWidth))) {
+        zaro::app::testing::failf("after undo the dropdown still says '%s'\n",
+                                  box->currentText().toUtf8().constData());
+    }
 }

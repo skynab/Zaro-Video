@@ -405,6 +405,15 @@ public:
     /// Ask for a frame size and apply it. This is the export's resolution:
     /// the render path does not scale, so the sequence's size is the file's.
     void frameSizeMenu();
+    /// The largest picture on the timeline, for "match the footage". Biggest
+    /// rather than first: a cut of a 4K master and a phone clip should conform
+    /// to the master, and a sequence smaller than its footage throws away
+    /// detail that is already there.
+    void largestSourceSize(std::int32_t& width, std::int32_t& height) const;
+    /// Apply a frame size, or prompt for one when both are zero. Shared by the
+    /// Sequence menu and the toolbar's dropdown, so the two cannot come to
+    /// behave differently.
+    void applyFrameSize(std::int32_t width, std::int32_t height);
     /// Ask for a frame rate, on an empty sequence, or explain why not on one
     /// that already has clips on it. See chrome::frameRateMenu.
     void frameRateMenu();

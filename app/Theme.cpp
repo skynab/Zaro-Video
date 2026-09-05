@@ -246,6 +246,17 @@ QLabel { background: transparent; }
 #chrome-readout:hover { background: %HOVER%; color: %TEXT%; border-color: %DIVIDER%; }
 #chrome-readout:pressed { background: %PRESS%; }
 #chrome-readout:disabled { color: %MUTED%; background: transparent; border-color: transparent; }
+/* The frame-size dropdown, sized and coloured to sit beside the rate readout
+   rather than to look like a field in a form: same muted text, same hairline
+   border, same 6px radius. Its popup keeps the ordinary combo styling. */
+#chrome-format {
+    color: %MUTED%; font-size: 11px;
+    background: transparent; border: 1px solid %DIVIDER%; border-radius: 6px;
+    padding: 2px 4px 2px 7px; min-height: 16px;
+}
+#chrome-format:hover { background: %HOVER%; color: %TEXT%; }
+#chrome-format:disabled { color: %MUTED%; background: transparent; border-color: transparent; }
+#chrome-format::drop-down { border: none; width: 14px; }
 #chrome-brand { font-weight: 600; padding: 0 6px; }
 #viewer-well { background: %WELL%; }
 #deliver-side { background: %SURFACE%; }

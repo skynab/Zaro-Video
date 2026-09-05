@@ -90,6 +90,26 @@ struct FrameSizeChoice {
 FrameSizeChoice frameSizeMenu(std::int32_t currentWidth, std::int32_t currentHeight,
                               std::int32_t sourceWidth, std::int32_t sourceHeight);
 
+/// One entry in the frame-size list: a label and the size it stands for.
+///
+/// Zeroes mean "Custom…", which is not a size but a request to be asked for
+/// one.
+struct FrameSizePreset {
+    QString label;
+    std::int32_t width{0};
+    std::int32_t height{0};
+
+    [[nodiscard]] bool isCustom() const noexcept { return width <= 0 || height <= 0; }
+};
+
+/// The sizes offered, in the order they are offered in.
+///
+/// Shared by the menu and the toolbar's dropdown so the two cannot come to
+/// list different resolutions -- which they did for exactly as long as each
+/// had its own copy of the list.
+[[nodiscard]] std::vector<FrameSizePreset> frameSizePresets(std::int32_t sourceWidth,
+                                                            std::int32_t sourceHeight);
+
 /// A frame rate, or nothing when the menu was dismissed.
 struct FrameRateChoice {
     bool chosen{false};
