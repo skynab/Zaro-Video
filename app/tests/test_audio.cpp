@@ -219,7 +219,7 @@ TEST_CASE("The processing chain, through the mixer", "[gui]") {
     // which is where they were before the chain got a panel of its own.
     window.setWorkspace("Audio");
     QApplication::processEvents();
-    auto* eqBox = window.channel()->findChild<QCheckBox*>();
+    auto* eqBox = window.channel()->findChild<QCheckBox*>("eq-enabled");
     if (eqBox == nullptr) {
         zaro::app::testing::failf("the channel strip has no processing controls\n");
     }

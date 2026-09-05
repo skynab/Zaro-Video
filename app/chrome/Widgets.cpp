@@ -150,6 +150,9 @@ QWidget* buildTitleBar(QWidget* parent, Bars& bars) {
     row->addStretch(1);
 
     bars.autosaveLabel = mutedLabel(bar);
+    // Named: it is the readout somebody checks before deciding whether to
+    // press Save, so it is worth being able to assert on it.
+    bars.autosaveLabel->setObjectName("autosave-label");
     row->addWidget(bars.autosaveLabel);
     return bar;
 }

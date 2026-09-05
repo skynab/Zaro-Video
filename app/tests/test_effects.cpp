@@ -182,6 +182,42 @@ TEST_CASE("A keyframed fade reaches the GPU compositor", "[gui]") {
 // A generated shape, created and then edited through the panel, and
 // measured through the real GPU compositor. A shape is drawn on the CPU
 // and uploaded, so this also checks that path is reachable at all.
+TEST_CASE("The inspector is wide enough for its own value fields", "[gui]") {
+    // The panel deliberately has no horizontal scrollbar -- a scrollbar over a
+    // column of numbers hides values rather than revealing them -- which puts
+    // the whole burden on its width being right. That width was a number
+    // picked by eye twice over (250, then 300, capped at 330) against rows
+    // that measure 383, so the difference came off the right-hand end of every
+    // field: a position read "0.0 p" instead of "0.0 px" and a rotation lost
+    // its degree sign, at every window size.
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+    const auto& sequence = *window.sequence();
+    const auto& videoTrack = sequence.videoTracks().front();
+    const auto clip = videoTrack.clips().front();
+
+    window.effects()->setSelection(videoTrack.id(), clip.id);
+    QApplication::processEvents();
+
+    auto* panel = window.effects();
+    int checked = 0;
+    for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>()) {
+        if (!spin->isVisible()) {
+            continue;
+        }
+        // The field's right edge, in the panel's own coordinates. Anything past
+        // the panel's width is a number nobody can read or click into.
+        const int right = spin->mapTo(panel, QPoint{spin->width(), 0}).x();
+        INFO("field right edge " << right << " against a panel " << panel->width() << " wide");
+        CHECK(right <= panel->width());
+        ++checked;
+    }
+    if (checked == 0) {
+        zaro::app::testing::failf("no value fields were on screen to measure\n");
+    }
+    std::printf("  inspector: %d value fields inside a panel %d wide\n", checked, panel->width());
+}
+
 TEST_CASE("A shape layer, created and edited through the panel", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

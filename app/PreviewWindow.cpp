@@ -181,11 +181,16 @@ void PreviewWindow::createPanels() {
             [this] { clearStabilisation(); });
     scopes_ = new app::ScopesPanel(this);
     mixer_ = adopting(new app::MixerPanel(this));
-    // 250 was under what the parameter rows actually measure, so the
-    // splitter was free to squeeze the column until the value fields ran
-    // off the edge of it. Now it is the width the content needs.
-    effects_->setMinimumWidth(300);
-    effects_->setMaximumWidth(330);
+    // Asked, not guessed.
+    //
+    // This was 250, then 300, each time to stop the splitter squeezing the
+    // column until the value fields ran off the edge of it -- and each time a
+    // number chosen by eye rather than measured. The rows want 383, so the cap
+    // of 330 cut every field short at every window size: "0.0 p" for "0.0 px",
+    // a rotation with its degree sign gone. `EffectControls` measures its own
+    // widest row now, so the only thing left to decide here is how much room
+    // above that the splitter may give it.
+    effects_->setMaximumWidth(effects_->minimumWidth() + 30);
 
     // Monitor and parameters side by side, transport under them, timeline
     // across the bottom.
@@ -199,9 +204,6 @@ void PreviewWindow::createPanels() {
     // use the extra space if it were given any.
     bin_->setFixedWidth(296);
 
-    // Its own row of buttons -- In, Out, Subclip, Insert, Over -- is what
-    // sets this, not the picture: below this width the labels start losing
-    // letters, and a button reading "nsert" is worse than a narrow picture.
     thumb_ = new app::FrameThumb(this);
     loudness_ = new app::LoudnessPanel(this);
     stems_ = adopting(new app::StemsPanel(this));
@@ -217,7 +219,14 @@ void PreviewWindow::createPanels() {
     palette_->setFixedHeight(212);
 
     source_ = new app::SourceMonitor(this);
-    source_->setMinimumWidth(280);
+    // Its own row of buttons -- In, Out, Subclip, Insert, Over -- is what sets
+    // this, not the picture: below this width the labels start losing letters,
+    // and a button reading "nsert" is worse than a narrow picture.
+    //
+    // So ask the row rather than guess at it. 280 was 93 pixels under what
+    // those buttons measure, which left the splitter free to do the exact
+    // thing the paragraph above says must not happen.
+    source_->setMinimumWidth(source_->minimumSizeHint().width());
 }
 
 void PreviewWindow::buildViewerLayout() {
@@ -415,8 +424,16 @@ void PreviewWindow::wireWorkspacePanels() {
             [this] { placeFromSource(edit::PlaceMode::Overwrite); });
     connect(bin_, &app::ProjectBin::edited, this, [this] {
         bars_.scrubber->setRange(0, static_cast<int>(liveSequence()->duration().frames()));
-        timeline_->update();
-        monitor_->update();
+        // Through `afterEdit`, like every other thing that changes the project.
+        //
+        // This redrew the panels and stopped there, so the one fact it did not
+        // carry was that there was now something to save: double-clicking a
+        // file in the bin appended it to the cut and left the window saying
+        // "Saved", with no dot beside the name and no star in the title bar.
+        // Nothing was lost -- closing writes the recovery file either way --
+        // but the readout somebody uses to decide whether to press Save was
+        // telling them they had already pressed it.
+        afterEdit();
         refresh();
     });
     // A file imported into a session already running has no decoder until the

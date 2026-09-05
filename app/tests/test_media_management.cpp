@@ -6,6 +6,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEventLoop>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMimeData>
@@ -393,6 +394,50 @@ TEST_CASE("A proxy is swapped in for preview and ignored on export", "[gui]") {
 }
 
 // Metadata and search, through the real bin.
+TEST_CASE("An edit made in the bin says the project needs saving", "[gui]") {
+    // The bin's own edits reach the project through the command stack like any
+    // other, but the window only redrew the panels when it heard about them --
+    // so the one fact that did not travel was that there was now something to
+    // save. Double-clicking a file to append it left the header reading
+    // "Saved", with no dot by the name and no star in the title bar.
+    //
+    // Nothing was ever lost, since closing writes the recovery file either
+    // way. What was wrong is that the readout somebody uses to decide whether
+    // to press Save was telling them they already had.
+    auto& window = zaro::app::testing::gui();
+    const zaro::app::testing::Rewind rewind;
+
+    auto* label = window.findChild<QLabel*>("autosave-label");
+    REQUIRE(label != nullptr);
+    auto* bin = window.bin();
+    REQUIRE(bin != nullptr);
+    REQUIRE_FALSE(window.project().media().empty());
+    const auto media = window.project().media().front().id;
+
+    window.commands().markSaved();
+    QApplication::processEvents();
+    if (window.commands().isModified()) {
+        zaro::app::testing::failf("a project just marked saved reads as modified\n");
+    }
+    const QString whenSaved = label->text();
+
+    // Through the bin, and through a path that says nothing else: `setNotes`
+    // emits the edited signal alone, where importing also announces new media
+    // and would refresh the chrome by that other route.
+    bin->setNotes(media, "boom in shot");
+    QApplication::processEvents();
+
+    if (!window.commands().isModified()) {
+        zaro::app::testing::failf("a note written through the bin did not modify the project\n");
+    }
+    if (label->text() == whenSaved) {
+        zaro::app::testing::failf("the header still reads \"%s\" after an edit\n",
+                                  label->text().toUtf8().constData());
+    }
+    std::printf("  bin edit: header went from \"%s\" to \"%s\"\n", whenSaved.toUtf8().constData(),
+                label->text().toUtf8().constData());
+}
+
 TEST_CASE("Metadata and search, through the real bin", "[gui]") {
     auto& window = zaro::app::testing::gui();
     const zaro::app::testing::Rewind rewind;

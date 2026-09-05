@@ -1410,6 +1410,20 @@ void EffectControls::assemblePanel() {
     for (const Row& row : rows_) {
         widest = std::max(widest, row.spin->minimumWidth());
     }
+
+    // And the panel is as wide as its widest row, said here rather than assumed
+    // somewhere else.
+    //
+    // The scrollbar policy above promises the controls keep the width they
+    // need. That only holds if nothing narrower is imposed from outside, and
+    // something was: the window capped this panel at 330 while the rows asked
+    // for 383. With horizontal scrolling deliberately off, the difference came
+    // off the right-hand end of every value field -- "0.0 p" where "0.0 px" was
+    // meant, and a rotation reading "0.00" with the degree sign cut away. At
+    // every window size, since the cap did not depend on one.
+    setMinimumWidth(inner->minimumSizeHint().width() +
+                    scroll->verticalScrollBar()->sizeHint().width());
+
     for (const Row& row : rows_) {
         row.spin->setFixedWidth(widest);
 

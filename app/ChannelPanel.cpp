@@ -272,6 +272,10 @@ ChannelPanel::ChannelPanel(QWidget* parent) : QWidget{parent} {
     eqHead->addWidget(sectionHeading("Equaliser", body_));
     eqHead->addStretch(1);
     eqOn_ = new QCheckBox("On", body_);
+    // Named, because the panel carries two switches that both read "On" and
+    // anything looking for one of them by type alone gets whichever was built
+    // first -- which is a silent swap the day the sections are reordered.
+    eqOn_->setObjectName("eq-enabled");
     eqHead->addWidget(eqOn_);
     column->addLayout(eqHead);
 
@@ -300,6 +304,7 @@ ChannelPanel::ChannelPanel(QWidget* parent) : QWidget{parent} {
     compHead->addWidget(sectionHeading("Compressor", body_));
     compHead->addStretch(1);
     compOn_ = new QCheckBox("On", body_);
+    compOn_->setObjectName("compressor-enabled");
     compHead->addWidget(compOn_);
     column->addLayout(compHead);
 
