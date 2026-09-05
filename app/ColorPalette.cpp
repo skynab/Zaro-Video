@@ -266,7 +266,10 @@ ColorPalette::ColorPalette(QWidget* parent) : QWidget{parent} {
     rampColumn->addWidget(saturation_);
     rampColumn->addStretch(1);
 
-    empty_ = new QLabel("Select a clip on the timeline to grade it", this);
+    // The strip above, not the timeline: the Color workspace hides the timeline
+    // entirely -- see `PreviewWindow::setWorkspace` -- so this was telling
+    // somebody to use a panel that is not on the screen while they read it.
+    empty_ = new QLabel("Select a shot in the strip above to grade it", this);
     empty_->setAlignment(Qt::AlignCenter);
     empty_->setProperty("muted", true);
 

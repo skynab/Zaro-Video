@@ -393,6 +393,14 @@ void TimelineWidget::zoomToFit() {
     if (seq == nullptr) {
         return;
     }
+    // The deferred fit has now happened, so stop it happening again.
+    //
+    // `bind` arms it because a freshly bound timeline has not been laid out
+    // yet and cannot fit to a width it does not have. Left armed after an
+    // explicit fit, the next resizeEvent -- which under a window manager can
+    // arrive at any moment, including long after the window settled -- fits a
+    // second time and throws away whatever zoom has been set since.
+    pendingFit_ = false;
     layout_.setViewportSize(width(), height());
     const time::RationalTime duration = seq->duration();
     if (duration.frames() > 0) {
@@ -631,7 +639,6 @@ void TimelineWidget::paintRuler(QPainter& painter) {
 
     // Start on a multiple of the step, so labels do not crawl as you scroll.
     const std::int64_t first = (visible.start().frames() / step.frames()) * step.frames();
-    const bool dropFrame = time::supportsDropFrame(rate);
     const bool withHours = seq.duration().toSecondsDouble() >= 3600.0;
 
     QFont font = painter.font();
@@ -648,19 +655,14 @@ void TimelineWidget::paintRuler(QPainter& painter) {
         painter.setPen(kGridLine);
         painter.drawLine(QPointF(x, metrics.rulerHeight - 6), QPointF(x, metrics.rulerHeight));
 
-        // Minutes and seconds, not the full timecode. The ruler is for reading
-        // position at a glance; the frame-accurate answer is in the status
-        // line, and four fields at this size is a smear rather than a number.
-        // Hours come back only once the cut is long enough to need them --
-        // without that, a two-hour sequence labels 05:00 twice.
-        const time::Timecode code = time::timecodeFromFrames(frame, rate, dropFrame);
-        const QString label = withHours ? QStringLiteral("%1:%2:%3")
-                                              .arg(code.hours)
-                                              .arg(code.minutes, 2, 10, QLatin1Char('0'))
-                                              .arg(code.seconds, 2, 10, QLatin1Char('0'))
-                                        : QStringLiteral("%1:%2")
-                                              .arg(code.minutes, 2, 10, QLatin1Char('0'))
-                                              .arg(code.seconds, 2, 10, QLatin1Char('0'));
+        // As much of the timecode as this zoom needs, and no more: the ruler is
+        // for reading position at a glance, and four fields at this size is a
+        // smear rather than a number. The decision is `TimelineLayout`'s
+        // because it is the one that chose the tick spacing -- which is what
+        // says whether seconds are enough -- and because a rule about text is
+        // arithmetic that can be tested without a window.
+        const QString label =
+            QString::fromStdString(layout_.rulerLabel(time::RationalTime{frame, rate}, withHours));
         painter.setPen(kDimText);
         painter.drawText(QPointF(x + 4, fontMetrics.ascent() + 3), label);
     }

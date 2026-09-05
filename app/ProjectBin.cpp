@@ -662,9 +662,14 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
         item->setSizeHint(QSize{0, 34});
     }
     // Double-click is the same as the button: some people drag, some people
-    // put the playhead where they want it and ask.
-    connect(titleList_, &QListWidget::itemDoubleClicked, this,
-            [this] { emit addTitleRequested(); });
+    // put the playhead where they want it and ask. Whichever way, it is the row
+    // under the pointer that gets made -- a double-click on Caption that added
+    // a centred card was the pane offering three things and doing one.
+    connect(titleList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+        if (item != nullptr) {
+            emit addTitleRequested(item->data(Qt::UserRole).toString());
+        }
+    });
     titlesColumn->addWidget(titleList_, 1);
 
     titlesColumn->addWidget(
@@ -672,7 +677,14 @@ ProjectBin::ProjectBin(QWidget* parent) : QWidget{parent} {
     auto* addTitle = new QPushButton(QStringLiteral("Add Title"), titles);
     addTitle->setObjectName("add-title");
     addTitle->setCursor(Qt::PointingHandCursor);
-    connect(addTitle, &QPushButton::clicked, this, [this] { emit addTitleRequested(); });
+    // The button adds whatever is picked in the list, so selecting a row and
+    // pressing it agrees with double-clicking that row. Nothing picked means
+    // the plain title, which is what the button said before it had a list.
+    connect(addTitle, &QPushButton::clicked, this, [this] {
+        const QListWidgetItem* picked = titleList_->currentItem();
+        emit addTitleRequested(picked != nullptr ? picked->data(Qt::UserRole).toString()
+                                                 : QStringLiteral("title"));
+    });
     auto* buttonRow = new QHBoxLayout;
     buttonRow->setContentsMargins(12, 0, 12, 12);
     buttonRow->addStretch(1);

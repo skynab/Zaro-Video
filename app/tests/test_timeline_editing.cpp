@@ -392,11 +392,27 @@ TEST_CASE("A cut snaps to the edit point it was aimed at", "[gui]") {
     }
 
     // Snapping off means off: the same gesture then lands where the
-    // pointer actually was.
+    // pointer actually was, and not on the edit point eight pixels away.
+    //
+    // Near `looseAim` rather than exactly on it. The blade rounds a pixel to
+    // the nearest frame; `timeForX` truncates to the frame containing it. At
+    // some zooms those differ by one -- eight pixels was 2.02 frames here, so
+    // the cut landed on 122 and this asked for 121 -- and that is a rounding
+    // convention, not a snap. What the check is for is that the cut stayed
+    // where the pointer was instead of jumping to the edit point, so that is
+    // what it asks. It used to demand the exact frame and passed only at zooms
+    // where the two conventions happened to agree.
     timeline->setSnapEnabled(false);
     const zaro::time::RationalTime looseAim = timeline->layout().timeForX(alignX + 8, rate);
     dragOnTimeline(timeline, alignX + 8, alignX + 8, y);
-    if (!boundaryExists(looseAim)) {
+    const auto cutNearAim = [&] {
+        const auto& clips =
+            window.project().findSequence(sequence.id())->videoTracks().front().clips();
+        return std::any_of(clips.begin(), clips.end(), [&](const zaro::model::Clip& clip) {
+            return clip.start() != alignAt && (clip.start() - looseAim).abs().frames() <= 1;
+        });
+    };
+    if (!cutNearAim()) {
         zaro::app::testing::failf("with snapping off the cut still moved\n");
     }
     timeline->setSnapEnabled(true);
@@ -1010,6 +1026,17 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
     const std::size_t v1ClipsBefore = window.sequence()->videoTracks().front().clips().size();
     const std::size_t a1ClipsBefore = window.sequence()->audioTracks().front().clips().size();
 
+    // Where that pixel is in time, read before the drop rather than after it.
+    //
+    // The timeline fits itself to the sequence the first time it is given a
+    // real width, and under a window manager that resize can arrive whenever
+    // it likes -- including inside the processEvents() this drop does. Read
+    // afterwards, the expectation was measured against a scale the drop never
+    // saw: CI landed a clip correctly at 624 and then failed it for not being
+    // at 814. What the drop should do is land where it was let go of, and
+    // where it was let go of is a fact about the layout at the time.
+    const auto letGoAt = timeline->layout().timeForX(emptyX, rate);
+
     // 1. Onto empty timeline on V1: it joins the row it was let go of on, and
     // its sound goes under it. Two clips, because that is what the program can
     // hear -- the audio graph mixes clips on audio tracks and nothing else.
@@ -1021,11 +1048,10 @@ TEST_CASE("A file dragged from the media pane lands on the timeline", "[gui]") {
         zaro::app::testing::failf("the drop did not land on V1\n");
     }
     const auto landed = window.sequence()->videoTracks().front().clips().back();
-    if (landed.start() != timeline->layout().timeForX(emptyX, rate)) {
-        zaro::app::testing::failf(
-            "the clip starts at %lld, not where it was let go of (%lld)\n",
-            static_cast<long long>(landed.start().frames()),
-            static_cast<long long>(timeline->layout().timeForX(emptyX, rate).frames()));
+    if (landed.start() != letGoAt) {
+        zaro::app::testing::failf("the clip starts at %lld, not where it was let go of (%lld)\n",
+                                  static_cast<long long>(landed.start().frames()),
+                                  static_cast<long long>(letGoAt.frames()));
     }
     if (window.sequence()->audioTracks().size() != audioTracksBefore ||
         window.sequence()->audioTracks().front().clips().size() != a1ClipsBefore + 1) {

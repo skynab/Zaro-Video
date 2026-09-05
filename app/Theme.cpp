@@ -135,6 +135,10 @@ QString styleSheet() {
 
     // Written as one sheet rather than per-widget calls: a control's look
     // should not depend on which panel happened to construct it.
+    // Two literals rather than one: MSVC caps a single string literal at
+    // 16380 bytes and this sheet is longer than that, so the halves are
+    // concatenated by the compiler. The split is at a section boundary so
+    // that adding a rule means growing the half it belongs to.
     return QString(R"(
 QMenuBar { background: transparent; border: none; padding: 1px 4px; }
 QMenuBar::item { background: transparent; padding: 3px 8px; border-radius: 5px; }
@@ -312,7 +316,8 @@ QToolTip {
 }
 QLabel { background: transparent; }
 
-/* --- the window's own chrome ------------------------------------------- */
+)"
+                   R"(/* --- the window's own chrome ------------------------------------------- */
 
 #chrome-titlebar { background: %SURFACE%; border-bottom: 1px solid %DIVIDER%; }
 #chrome-toolbar, #chrome-timeline-bar, #chrome-viewer-bar {

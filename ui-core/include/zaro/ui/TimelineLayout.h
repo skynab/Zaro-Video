@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "zaro/core/model/Sequence.h"
@@ -186,6 +187,19 @@ public:
     /// A sensible tick interval for the ruler at the current zoom: the finest
     /// division that still leaves labels readable.
     [[nodiscard]] time::RationalTime rulerStep(const time::Rational& frameRate) const;
+
+    /// What the ruler writes under the tick at `at`.
+    ///
+    /// The format follows the tick spacing rather than only the length of the
+    /// cut. `rulerStep` hands back halves, fifths and tenths of a second, and
+    /// single frames when the zoom allows -- so a label that stopped at whole
+    /// seconds printed the same text under two, five or twenty-five ticks in a
+    /// row, which is a ruler that has spent its width repeating itself.
+    ///
+    /// `withHours` adds the hours field, for a cut long enough that minutes
+    /// alone would label 05:00 twice. Drop-frame numbering is taken from the
+    /// rate, so the separator says which it is.
+    [[nodiscard]] std::string rulerLabel(const time::RationalTime& at, bool withHours) const;
 
 private:
     Metrics metrics_{};

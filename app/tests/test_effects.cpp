@@ -637,13 +637,21 @@ TEST_CASE("Keyframing through the panel and the timeline", "[gui]") {
         const int lane = timeline->layout().keyframeLaneHeight();
         const int top = (laneRow->top + laneRow->height - lane) * dpr;
         const int bottom = std::min((laneRow->top + laneRow->height) * dpr, shot.height());
+        // From the first pixel of the clips area, not from the first pixel of
+        // the widget. The track header is in this band too, and its name and
+        // badge are drawn in almost the same near-white as the diamond -- the
+        // vertical crop already excludes the ruler and the clip names for
+        // exactly that reason, and the header is the same mistake sideways.
+        // It only showed on a short window, where the rows squash enough for
+        // the name to reach down into the lane.
+        const int firstX = timeline->layout().metrics().headerWidth * dpr;
         std::int64_t found = 0;
         for (int scanY = std::max(0, top); scanY < bottom; ++scanY) {
             // Asked of the theme rather than written out: the diamond
             // is painted in a token, and a literal here would have to
             // be chased every time the palette moves.
             const QColor diamond = zaro::app::theme::neutral(200);
-            for (int x = 0; x < shot.width(); ++x) {
+            for (int x = std::max(0, firstX); x < shot.width(); ++x) {
                 const QColor pixel = shot.pixelColor(x, scanY);
                 if (std::abs(pixel.red() - diamond.red()) <= 6 &&
                     std::abs(pixel.green() - diamond.green()) <= 6 &&
@@ -699,15 +707,20 @@ TEST_CASE("Keyframing through the panel and the timeline", "[gui]") {
     const std::int64_t drawn = lanePixels();
     std::printf("  keyframe diamonds cover %lld pixels in the lane (%lld before)\n",
                 static_cast<long long>(drawn), static_cast<long long>(bareLane));
-    if (bareLane != 0) {
+    // What the keyframes add to the lane, rather than what is in it.
+    //
+    // The lane is not perfectly empty at every row height: on a short window
+    // the rows squash enough that the tail of the clip's name sits inside the
+    // band, in almost the diamond's colour. Demanding an empty lane made this
+    // a test of the window size. It still refuses a lane so busy that the
+    // diamonds would be lost in it, which is what the guard was for.
+    if (bareLane < 0 || bareLane > 20) {
         zaro::app::testing::failf(
-            "something else is painting in the lane, so this check "
-            "proves nothing\n");
+            "something else is painting in the lane (%lld pixels), so this check "
+            "proves nothing\n",
+            static_cast<long long>(bareLane));
     }
-    if (drawn < 20) {
-        zaro::app::testing::failf("the keyframes are not drawn on the timeline\n");
-    }
-    if (drawn < 20) {
+    if (drawn - bareLane < 20) {
         zaro::app::testing::failf("the keyframes are not drawn on the timeline\n");
     }
 

@@ -371,6 +371,59 @@ TEST_CASE("The ruler step coarsens as you zoom out", "[ui][timeline]") {
     CHECK(previous > 25);  // coarser than a second
 }
 
+TEST_CASE("Every ruler tick gets a label of its own", "[ui][timeline]") {
+    // The ruler labelled minutes and seconds at every zoom, while the step
+    // ladder goes down to half, fifth and tenth seconds and then to single
+    // frames. So the default zoom printed "00:00 00:00 00:01 00:01 00:02
+    // 00:02", and at the finest zoom the same second twenty-five times over. A
+    // ruler whose ticks cannot be told apart is not measuring anything.
+    TimelineLayout layout = makeLayout();
+    // From fully zoomed in outwards, so the sweep actually crosses the
+    // sub-second part of the step ladder -- which is where the duplicates
+    // were. Starting at the default zoom and only zooming out never reaches
+    // it, and a sweep that never reaches it cannot fail.
+    layout.zoomBy(40.0, 150.0, kRate);
+    REQUIRE(layout.rulerStep(kRate).frames() == 1);
+
+    bool sawSubSecond = false;
+    for (int i = 0; i < 24; ++i) {
+        const time::RationalTime step = layout.rulerStep(kRate);
+        sawSubSecond = sawSubSecond || step.frames() < 25;
+        REQUIRE(step.frames() > 0);
+        INFO("pixels per second " << layout.metrics().pixelsPerSecond << ", step " << step.frames()
+                                  << " frames");
+
+        // Consecutive ticks, the way paintRuler walks them.
+        std::string previous;
+        for (std::int64_t frame = 0; frame < step.frames() * 8; frame += step.frames()) {
+            const std::string label = layout.rulerLabel(time::RationalTime{frame, kRate}, false);
+            INFO("frame " << frame << " -> " << label);
+            CHECK(label != previous);
+            previous = label;
+        }
+        layout.zoomBy(0.6, 150.0, kRate);
+    }
+    CHECK(sawSubSecond);
+}
+
+TEST_CASE("The ruler drops the frames field once a second is enough", "[ui][timeline]") {
+    // The other half of the rule: a label carries only what the spacing needs.
+    // Once the ticks are a second or more apart, ":00" on every one of them is
+    // two characters of nothing repeated across the width of the window.
+    TimelineLayout layout = makeLayout();
+
+    layout.zoomBy(40.0, 150.0, kRate);
+    REQUIRE(layout.rulerStep(kRate).frames() < 25);
+    CHECK(layout.rulerLabel(time::RationalTime{26, kRate}, false) == "00:01:01");
+
+    layout.zoomBy(0.02, 150.0, kRate);
+    REQUIRE(layout.rulerStep(kRate).frames() >= 25);
+    CHECK(layout.rulerLabel(time::RationalTime{25, kRate}, false) == "00:01");
+
+    // Hours only when asked for, and then the minutes stay two digits.
+    CHECK(layout.rulerLabel(time::RationalTime{25 * 3661, kRate}, true) == "1:01:01");
+}
+
 TEST_CASE("A rubber band selects what it touches", "[ui][timeline][hit]") {
     testing::Fixture f;
     REQUIRE(f.run(edit::makeOverwrite(f.project, f.on(f.v1), f.clip(0, 25))));    // 150..250

@@ -697,7 +697,13 @@ TEST_CASE("A title is placed by dragging it on the picture", "[gui]") {
                             std::max(1.0, window.monitor()->pictureRect().width());
 
     const std::size_t stepsBefore = window.commands().position();
-    drag(centre, QPointF{centre.x() + 40.0, centre.y() + 20.0});
+    // Grab the box where it actually is rather than in the middle of the
+    // frame. A Title sits across the top, so a press on the picture's centre
+    // lands on nothing and starts no drag -- which would make this a test of
+    // where the preset happens to put the box rather than of the gesture.
+    const QPointF grab{centre.x() + before.centreX / perPixel,
+                       centre.y() + before.centreY / perPixel};
+    drag(grab, QPointF{grab.x() + 40.0, grab.y() + 20.0});
 
     title = titleNow();
     REQUIRE(title != nullptr);
@@ -823,25 +829,33 @@ TEST_CASE("A title's text is typed on the picture", "[gui]") {
         zaro::app::testing::failf("the overlay was already open for typing\n");
     }
     // Dragged off the guides first, with Alt so it does not latch onto one.
-    // A title arrives sitting exactly on the centre line, and a box already on
-    // a guide is the one case where snapping it again moves nothing -- so a
-    // test that double-clicked a fresh title would pass whatever the press did.
+    // A title arrives sitting on the centre line horizontally, and a box
+    // already on a guide is the one case where snapping it again moves nothing
+    // -- so a test that double-clicked a fresh title would pass whatever the
+    // press did.
+    //
+    // The drag starts from the box rather than from the middle of the picture:
+    // a Title sits across the top, and pressing where it is not does nothing.
+    const double perPixel = static_cast<double>(sequence.width()) /
+                            std::max(1.0, window.monitor()->pictureRect().width());
+    const QPointF start{centre.x() + titleNow()->graphic.centreX / perPixel,
+                        centre.y() + titleNow()->graphic.centreY / perPixel};
     {
         const auto send = [overlay](QEvent::Type type, const QPointF& where, Qt::MouseButton button,
                                     Qt::MouseButtons buttons) {
             QMouseEvent event{type, where, where, button, buttons, Qt::AltModifier};
             QCoreApplication::sendEvent(overlay, &event);
         };
-        send(QEvent::MouseButtonPress, centre, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
         for (int step = 1; step <= 4; ++step) {
-            const QPointF at{centre.x() + 9.0 * step, centre.y() + 7.0 * step};
+            const QPointF at{start.x() + 9.0 * step, start.y() + 7.0 * step};
             send(QEvent::MouseMove, at, Qt::NoButton, Qt::LeftButton);
         }
-        send(QEvent::MouseButtonRelease, QPointF{centre.x() + 36.0, centre.y() + 28.0},
+        send(QEvent::MouseButtonRelease, QPointF{start.x() + 36.0, start.y() + 28.0},
              Qt::LeftButton, Qt::NoButton);
         QApplication::processEvents();
     }
-    const QPointF box = window.monitor()->pictureRect().center() + QPointF{36.0, 28.0};
+    const QPointF box = start + QPointF{36.0, 28.0};
 
     // Where the box is before the double-click, and a hand that is not
     // perfectly still between the two clicks. Opening a title to type in it

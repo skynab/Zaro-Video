@@ -170,7 +170,7 @@ Result<MatchedFrame> frameToMatch(const Context& context) {
     return MatchedFrame{ref->id, clip->activeSourceTimeAt(context.position)};
 }
 
-Result<edit::ClipRef> addTitle(const Context& context, const std::string& text,
+Result<edit::ClipRef> addTitle(const Context& context, const TitlePreset& preset,
                                const time::RationalTime& duration) {
     const model::Sequence* sequence = context.sequence();
     if (sequence == nullptr) {
@@ -180,30 +180,11 @@ Result<edit::ClipRef> addTitle(const Context& context, const std::string& text,
         return Error{ErrorCode::InvalidData, "a title needs a length"};
     }
 
-    // Sized to the frame rather than to a number of points. `pointSize` is read
-    // as pixels by the rasteriser -- deliberately, so a title is the same size
-    // in a delivered frame whatever the machine that rendered it thought its
-    // screen was -- which means the default has to scale with the sequence or a
-    // title on a 4K cut comes out the size it would be on a thumbnail.
-    const auto frameHeight = static_cast<double>(sequence->height());
-    const auto frameWidth = static_cast<double>(sequence->width());
-    model::Graphic graphic;
-    graphic.kind = model::GraphicKind::Text;
-    graphic.text = text;
-    // No family: the rasteriser then uses the machine's default, which is a
-    // typeface that is certainly installed. Somebody choosing one is the first
-    // thing the inspector offers.
-    graphic.pointSize = std::max(12.0, frameHeight / 12.0);
-    graphic.alignment = 0;
-    // A box the width of the title-safe area, tall enough for two lines of it.
-    graphic.width = frameWidth * 0.8;
-    graphic.height = std::max(graphic.pointSize * 2.4, frameHeight * 0.2);
-    graphic.centreX = 0.0;
-    graphic.centreY = 0.0;
-    graphic.red = 1.0;
-    graphic.green = 1.0;
-    graphic.blue = 1.0;
-    graphic.alpha = 1.0;
+    // The one catalogue, so that asking for a caption here and dragging one out
+    // of the Titles tab land the same clip. It is also what makes the preset
+    // scale with the frame: the rasteriser reads `pointSize` as pixels, so a
+    // fixed default would be illegible on a 4K cut and enormous on a thumbnail.
+    const model::Graphic graphic = graphicFor(preset, sequence->width(), sequence->height());
 
     const time::Rational& rate = sequence->frameRate();
     const time::TimeRange range{context.position.rescaledTo(rate), duration.rescaledTo(rate)};

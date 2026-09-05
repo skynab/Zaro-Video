@@ -2514,7 +2514,11 @@ void EffectControls::applyPaneVisibility() {
     // Whether the clip plays at all is a fact about the clip rather than about
     // any one page, but on a page of read-only answers it is the only thing
     // that would move, which reads as an oversight rather than as a control.
-    enabled_->setVisible(pane_ != Pane::Info);
+    //
+    // And it needs a clip to be a fact about. Every group hides when nothing
+    // is selected, but this box belongs to no group, so it was left behind as
+    // a lone dead tick under "No clip selected".
+    enabled_->setVisible(pane_ != Pane::Info && selectedClip() != nullptr);
 
     // A tab with nothing behind it is disabled rather than hidden: the design
     // draws three, and a strip that grew and shrank with the selection would

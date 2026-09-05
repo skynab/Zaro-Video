@@ -428,7 +428,8 @@ void PreviewWindow::wireWorkspacePanels() {
     // The same call the media browser's own import makes, for the same reason;
     // it is only the Import button and a drop onto the pane that arrived here
     // without it.
-    connect(bin_, &app::ProjectBin::addTitleRequested, this, [this] { addTitle(); });
+    connect(bin_, &app::ProjectBin::addTitleRequested, this,
+            [this](const QString& presetId) { addTitle(presetId.toStdString()); });
     connect(bin_, &app::ProjectBin::mediaImported, this, [this] {
         if (Status reopened = openMedia(); !reopened) {
             app::warn(this, "Import", QString::fromStdString(reopened.error().toString()));
@@ -888,7 +889,7 @@ void PreviewWindow::saveTemplateDialog() {
     }
 }
 
-void PreviewWindow::addTitle() {
+void PreviewWindow::addTitle(std::string_view presetId) {
     // Five seconds, which is a title somebody can read and a length they can
     // trim. The alternative -- as long as whatever is under the playhead -- is
     // right for a lower third and wrong for a card on black, and this is the
@@ -897,7 +898,13 @@ void PreviewWindow::addTitle() {
     const time::RationalTime length = time::RationalTime::fromSeconds(
         time::Rational::approximate(kTitleSeconds), liveSequence()->frameRate());
 
-    auto made = commands::addTitle(editContext(), "Title", length);
+    // An id from a build that knew about a preset this one does not still gets
+    // a title rather than nothing: the point of the action is a text clip at
+    // the playhead, and where it sits is the part that can be wrong quietly.
+    const TitlePreset* preset = findTitlePreset(presetId);
+    const TitlePreset& chosen = preset != nullptr ? *preset : titlePresets().front();
+
+    auto made = commands::addTitle(editContext(), chosen, length);
     if (!made) {
         app::warn(this, "Title", QString::fromStdString(made.error().toString()));
         return;
@@ -2410,7 +2417,7 @@ void PreviewWindow::setWorkspace(const QString& name) {
     // The arrangement of the workspace being left is remembered, so coming
     // back to it finds the splitters where they were.
     if (topSplitter_ != nullptr && !workspace_.isEmpty()) {
-        QSettings settings("CutReel", "CutReel");
+        QSettings settings = makeSettings();
         settings.setValue(layoutKey(workspace_, "top"), topSplitter_->saveState());
         settings.setValue(layoutKey(workspace_, "main"), mainSplitter_->saveState());
     }
@@ -2463,7 +2470,7 @@ void PreviewWindow::setWorkspace(const QString& name) {
          entry != bars_.workspaceActions.constEnd(); ++entry) {
         entry.value()->setChecked(entry.key() == name);
     }
-    QSettings settings("CutReel", "CutReel");
+    QSettings settings = makeSettings();
     if (const auto state = settings.value(layoutKey(name, "top")).toByteArray(); !state.isEmpty()) {
         topSplitter_->restoreState(state);
     }
@@ -2484,6 +2491,7 @@ void PreviewWindow::updateChrome() {
             : QFileInfo(QString::fromStdString(document_.path())).completeBaseName();
     status.haveSequence = sequence != nullptr;
     status.modified = document_.commands().isModified();
+    status.onDisk = !document_.path().empty();
     if (sequence != nullptr) {
         status.sequenceName = QString::fromStdString(sequence->name());
         status.width = sequence->width();
@@ -2525,8 +2533,18 @@ void PreviewWindow::goToEnd() {
     setPosition(liveSequence()->duration());
 }
 
+QSettings PreviewWindow::makeSettings() {
+    // Two returns rather than a ternary: QSettings is a QObject and so is
+    // neither copyable nor movable, and only a returned prvalue elides into
+    // the caller's object.
+    if (settingsPath_.isEmpty()) {
+        return QSettings("CutReel", "CutReel");
+    }
+    return QSettings(settingsPath_, QSettings::IniFormat);
+}
+
 void PreviewWindow::saveWorkspace() {
-    QSettings settings("CutReel", "CutReel");
+    QSettings settings = makeSettings();
     settings.setValue("window/geometry", saveGeometry());
     // Per workspace, because the panels differ between them: one saved
     // arrangement restored into a different set of visible panels is a
@@ -2537,7 +2555,7 @@ void PreviewWindow::saveWorkspace() {
 }
 
 void PreviewWindow::restoreWorkspace() {
-    QSettings settings("CutReel", "CutReel");
+    QSettings settings = makeSettings();
     // Each restored only if it was stored, so a first run gets the
     // stretch factors set above rather than a collapsed layout.
     if (const auto geometry = settings.value("window/geometry").toByteArray();

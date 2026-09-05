@@ -77,7 +77,12 @@ void refresh(const Bars& bars, const Status& status) {
                                    .arg(status.projectName,
                                         status.haveSequence ? status.sequenceName : QString{"—"},
                                         status.modified ? " •" : ""));
-    bars.autosaveLabel->setText(status.modified ? "Unsaved changes" : "Saved");
+    // Three states, not two. A project that has never been written is not
+    // "Saved" however untouched it is, and saying so on a window somebody just
+    // opened is the readout claiming work is safe that is not on disk at all.
+    bars.autosaveLabel->setText(status.modified ? "Unsaved changes"
+                                : status.onDisk ? "Saved"
+                                                : "Not saved yet");
 
     if (status.haveSequence) {
         // Split in two so each half opens the thing that sets it: the size is

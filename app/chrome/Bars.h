@@ -99,6 +99,10 @@ struct Status {
     QString sequenceName;
     bool haveSequence{false};
     bool modified{false};
+    /// Whether the project has a file at all. An untitled one has never been
+    /// written, so it is not "Saved" -- it is unmodified, which is a different
+    /// thing and the readout used to conflate them.
+    bool onDisk{false};
 
     std::int32_t width{0};
     std::int32_t height{0};

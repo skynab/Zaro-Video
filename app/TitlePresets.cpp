@@ -28,15 +28,17 @@ Shape shapeFor(std::string_view id) {
         // Along the bottom, inside the title-safe area, centred.
         return Shape{1.0 / 20.0, 0.8, 0.1, 0.36, 0};
     }
-    // A card in the middle of the frame.
-    return Shape{1.0 / 12.0, 0.8, 0.2, 0.0, 0};
+    // Across the top, centred, inside the title-safe area. A title belongs
+    // where the eye starts rather than over the middle of the shot, which is
+    // where the thing being titled usually is.
+    return Shape{1.0 / 12.0, 0.8, 0.2, -0.28, 0};
 }
 
 }  // namespace
 
 const std::vector<TitlePreset>& titlePresets() {
     static const std::vector<TitlePreset> presets{
-        {"title", "Title", "Centred in the frame"},
+        {"title", "Title", "Across the top, centred"},
         {"lower-third", "Lower third", "Name and role, lower left"},
         {"caption", "Caption", "Along the bottom, centred"},
     };

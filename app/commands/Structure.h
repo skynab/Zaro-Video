@@ -8,6 +8,7 @@
 #include "zaro/core/render/SceneDetect.h"
 
 #include "Context.h"
+#include "TitlePresets.h"
 
 namespace zaro::app::commands {
 
@@ -46,8 +47,10 @@ Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId s
 ///
 /// A title is a clip whose picture is generated -- see `model::Graphic` -- so
 /// this is `makeAddGraphic` with the decisions a person should not have to make
-/// filled in: how big the text is for this frame size, how long the clip runs,
-/// and which row it lands on.
+/// filled in: how long the clip runs and which row it lands on. What it *looks*
+/// like comes from the preset, and from nowhere else: this used to build its
+/// own centred card, so asking for a caption from the Titles tab and dragging
+/// one out of it produced two different clips.
 ///
 /// The row is the one the timeline says is picked, unless something is already
 /// there over that span, in which case the title gets a row of its own above
@@ -55,9 +58,9 @@ Result<model::SubclipId> makeSubclip(const Context& context, model::MediaRefId s
 /// the one that cannot overwrite a cut somebody has made.
 ///
 /// Returns the clip and the track it ended up on, so the caller can select what
-/// it just made: a title arrives empty of anything but the word "Title", and
+/// it just made: a title arrives saying nothing but the preset's own name, and
 /// the next thing anybody does is type over it.
-Result<edit::ClipRef> addTitle(const Context& context, const std::string& text,
+Result<edit::ClipRef> addTitle(const Context& context, const TitlePreset& preset,
                                const time::RationalTime& duration);
 
 /// The ready-made moves a title can be given.

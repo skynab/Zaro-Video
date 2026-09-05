@@ -75,6 +75,12 @@ int main(int argc, char** argv) {
     struct Source {
         zaro::model::MediaRefId id;
         zaro::media::MediaInfo info;
+        /// What the file is called, without the directories it sits in. Kept
+        /// beside the id so the clips made below are named the same way the
+        /// media reference is -- they used to take the whole path, which is
+        /// why the bin said "shaky_texture.mov" and the timeline said
+        /// "testdata/media/shaky_texture.mov" for the same file.
+        std::string name;
     };
     std::vector<Source> sources;
 
@@ -87,9 +93,11 @@ int main(int argc, char** argv) {
         zaro::model::MediaRef ref;
         ref.id = project.ids().next<zaro::model::MediaRefTag>();
         ref.path = path;
-        ref.name = path.substr(path.find_last_of('/') + 1);
+        // Either separator: a path handed to this on Windows uses backslashes,
+        // and splitting on '/' alone left the whole thing as the name.
+        ref.name = path.substr(path.find_last_of("/\\") + 1);
         ref.info = *probed;
-        sources.push_back({project.addMedia(ref), *probed});
+        sources.push_back({project.addMedia(ref), *probed, ref.name});
     }
 
     const zaro::media::VideoStreamInfo* firstVideo = sources.front().info.primaryVideo();
@@ -150,7 +158,7 @@ int main(int argc, char** argv) {
         zaro::model::Clip clip;
         clip.id = project.ids().next<zaro::model::ClipTag>();
         clip.source = source.id;
-        clip.name = source.info.path;
+        clip.name = source.name;
         clip.sourceRange =
             zaro::time::TimeRange{zaro::time::RationalTime{0, sourceRate},
                                   zaro::time::RationalTime::fromSeconds(useSeconds, sourceRate)};

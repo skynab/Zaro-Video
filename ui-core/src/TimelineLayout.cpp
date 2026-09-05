@@ -3,6 +3,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+
+#include "zaro/core/time/Timecode.h"
 
 namespace zaro::ui {
 namespace {
@@ -379,6 +382,41 @@ time::RationalTime TimelineLayout::rulerStep(const time::Rational& frameRate) co
     }
     return time::RationalTime::fromSeconds(time::Rational::approximate(kStepSeconds.back()),
                                            frameRate);
+}
+
+std::string TimelineLayout::rulerLabel(const time::RationalTime& at, bool withHours) const {
+    const time::Rational& rate = at.rate();
+    const bool dropFrame = time::supportsDropFrame(rate);
+    const time::Timecode code = time::timecodeFromFrames(at.frames(), rate, dropFrame);
+
+    // Frames only when the ticks are closer together than a second. Otherwise
+    // every label would carry ":00", which is two characters of nothing on
+    // every tick of the common case.
+    const std::int64_t framesPerSecond =
+        time::RationalTime::fromSeconds(time::Rational{1, 1}, rate).frames();
+    const time::RationalTime step = rulerStep(rate);
+    const bool withFrames =
+        step.frames() > 0 && framesPerSecond > 0 && step.frames() < framesPerSecond;
+
+    std::array<char, 32> buffer{};
+    int written = 0;
+    if (withHours && withFrames) {
+        written = std::snprintf(buffer.data(), buffer.size(), "%d:%02d:%02d%c%02d", code.hours,
+                                code.minutes, code.seconds, dropFrame ? ';' : ':', code.frames);
+    } else if (withHours) {
+        written = std::snprintf(buffer.data(), buffer.size(), "%d:%02d:%02d", code.hours,
+                                code.minutes, code.seconds);
+    } else if (withFrames) {
+        written = std::snprintf(buffer.data(), buffer.size(), "%02d:%02d%c%02d", code.minutes,
+                                code.seconds, dropFrame ? ';' : ':', code.frames);
+    } else {
+        written =
+            std::snprintf(buffer.data(), buffer.size(), "%02d:%02d", code.minutes, code.seconds);
+    }
+    if (written <= 0) {
+        return {};
+    }
+    return std::string{buffer.data(), static_cast<std::size_t>(written)};
 }
 
 }  // namespace zaro::ui

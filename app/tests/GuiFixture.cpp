@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QEventLoop>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QSize>
 #include <QThread>
 #include <array>
@@ -374,6 +375,19 @@ PreviewWindow& gui() {
         QString::fromStdString((std::filesystem::path{ZARO_SCRATCH_DIR} / "keymap.conf").string());
     std::filesystem::remove(keymap.toStdString());
     PreviewWindow::setKeymapPath(keymap);
+    // Settings of their own, for the same reason and one step further.
+    // `PreviewWindow::restoreWorkspace` reads the application's own settings
+    // and restores the window geometry, the splitter positions and the
+    // workspace that was last open -- so the suite came up at whatever size
+    // and in whatever workspace the developer last left the app in. That is
+    // not cosmetic: the timeline's pixels-per-second follows the window width,
+    // so a ten-pixel snap radius is a different number of frames on a
+    // maximised window than on CI's, and the Color workspace has no timeline
+    // at all. Set before the window is built, which is what reads them.
+    const QString settings =
+        QString::fromStdString((std::filesystem::path{ZARO_SCRATCH_DIR} / "settings.ini").string());
+    std::filesystem::remove(settings.toStdString());
+    PreviewWindow::setSettingsPath(settings);
     // Anything that would have opened a dialog says so on stderr instead. A
     // modal dialog in a test is a hang, and the run has no one to close it.
     setQuiet(true);

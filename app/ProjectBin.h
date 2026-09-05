@@ -111,7 +111,11 @@ signals:
     /// The pane does not make one: a title is a clip on a sequence, and what
     /// the pane knows about is the project's media. The window owns the
     /// decision and the command.
-    void addTitleRequested();
+    ///
+    /// `presetId` is the row they asked for -- one of `titlePresets()`. It is
+    /// carried because the pane lists three different graphics and used to ask
+    /// for the same one whichever was double-clicked.
+    void addTitleRequested(const QString& presetId);
 
     /// Point the selected timeline clip at this media instead.
     ///
